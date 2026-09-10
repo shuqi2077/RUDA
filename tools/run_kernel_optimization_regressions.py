@@ -15,7 +15,7 @@ SUITES=['oracle','plan','host','build','cuda','sanitizer','bench']
 def plans(suite,compiler,logs,offline=False,batch=256,order=16,rhs=4,samples=7,iterations=3,warmup=2):
     env=os.environ.copy();commands=[];required=[]
     base=['cargo'];extra=['--offline']if offline else[]
-    common=['--locked',*extra,'-p','rusolver','--no-default-features']
+    common=['--locked',*extra,'-p','ruda-solver','--no-default-features']
     if suite=='oracle':
         required=[sys.executable];commands=[([sys.executable,'tools/kernel_optimization/oracle.py','--out',str(logs/'oracle.json')],env)]
     elif suite=='plan':

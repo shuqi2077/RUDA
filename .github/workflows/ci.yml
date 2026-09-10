@@ -46,12 +46,12 @@ jobs:
             command: cargo test --locked -p ruda-optim --lib --features gradient-guard
           - name: Device libraries compile
             key: device-libraries
-            command: cargo check --locked --lib -p rublas -p ruPRIM -p ruDNN -p ruRAND -p ruFFT -p ruSPARSE -p ruTENSOR -p ruCCL -p ruLLM -p ruda-optim --features ruda-optim/gradient-guard-device
+            command: cargo check --locked --lib -p rublas -p ruPRIM -p ruDNN -p ruRAND -p ruda-fft -p ruSPARSE -p ruTENSOR -p ruCCL -p ruda-llm -p ruda-optim --features ruda-optim/gradient-guard-device
           - name: FFT CUDA and WGPU test compilation
             key: fft-device
             command: |
-              cargo test --locked -p ruFFT --features cpu-reference --test lib --no-run
-              cargo test --locked -p ruFFT --features cpu-reference,ruda-test-runtime/cuda --test lib --no-run
+              cargo test --locked -p ruda-fft --features cpu-reference --test lib --no-run
+              cargo test --locked -p ruda-fft --features cpu-reference,ruda-test-runtime/cuda --test lib --no-run
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:

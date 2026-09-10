@@ -74,17 +74,17 @@ def plans(suite: str, compiler: str, logs: Path, offline: bool = False):
             ])
         return ['rustc'], commands
     if suite == 'host':
-        return ['cargo', 'rustc'], [(['cargo','test',*flags,'-p','rusolver','-p','ruintegrate'], env),
-            (['cargo','test',*flags,'-p','rusolver','--features','sparse'], env)]
+        return ['cargo', 'rustc'], [(['cargo','test',*flags,'-p','ruda-solver','-p','ruintegrate'], env),
+            (['cargo','test',*flags,'-p','ruda-solver','--features','sparse'], env)]
     if suite == 'build':
-        return ['cargo', 'rustc'], [(['cargo','check',*flags,'-p','rusolver','-p','ruintegrate','--all-targets'], env),
-            (['cargo','check',*flags,'-p','rusolver','--features','sparse,tensor','--all-targets'], env),
-            (['cargo','check',*flags,'-p','rusolver','--features','sparse,cuda,collective','--all-targets'], env),
+        return ['cargo', 'rustc'], [(['cargo','check',*flags,'-p','ruda-solver','-p','ruintegrate','--all-targets'], env),
+            (['cargo','check',*flags,'-p','ruda-solver','--features','sparse,tensor','--all-targets'], env),
+            (['cargo','check',*flags,'-p','ruda-solver','--features','sparse,cuda,collective','--all-targets'], env),
             (['cargo','check',*flags,'-p','ruda-autodiff','--features','solver-host','--all-targets'],env)]
     commands = []
     for backend in (['nvrtc','ptx'] if compiler == 'both' else [compiler]):
         for target in ['device_cholesky','device_advanced']:
-            commands.append((['cargo','test',*flags,'--release','-p','rusolver','--features','cuda',
+            commands.append((['cargo','test',*flags,'--release','-p','ruda-solver','--features','cuda',
                              '--test',target,'--','--test-threads=1'], {**env,'RUDA_CUDA_COMPILER':backend}))
     return ['cargo','rustc'], commands
 

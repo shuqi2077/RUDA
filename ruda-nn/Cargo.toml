@@ -43,27 +43,32 @@ path = "src/lib.rs"
 
 [dependencies.ruda-tensor-remote]
 path = "../ruda-tensor-remote"
+version = "0.21.0"
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-rocm]
 path = "../ruda-tensor-rocm"
+version = "0.21.0"
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-router]
 path = "../ruda-tensor-router"
+version = "0.21.0"
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-tch]
 path = "../ruda-tensor-tch"
+version = "0.21.0"
 features = [ "default",]
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-wgpu]
 path = "../ruda-tensor-wgpu"
+version = "0.21.0"
 optional = true
 default-features = false
 
@@ -75,11 +80,13 @@ default-features = false
 [dependencies.ruda-model]
 default-features = false
 path = "../ruda-model"
+version = "0.21.0"
 
 [dependencies.ruda-tensor-device]
 optional = true
 default-features = false
 path = "../ruda-tensor-device"
+version = "0.21.0"
 features = [ "cuda",]
 
 [dependencies.ruda-fusion]
@@ -87,15 +94,18 @@ features = [ "std", "tracing",]
 optional = true
 default-features = false
 path = "../ruda-fusion"
+version = "0.21.0"
 
 [dependencies.ruda-kernel]
 path = "../ruda-kernel"
+version = "0.1.0"
 default-features = false
 optional = true
 features = [ "frontend",]
 
 [dependencies.ruda-core]
 path = "../ruda-core"
+version = "0.1.0"
 default-features = false
 optional = true
 
@@ -111,6 +121,7 @@ optional = true
 
 [dev-dependencies.ruda-tensor-host]
 path = "../ruda-tensor-host"
+version = "0.21.0"
 features = [ "default",]
 default-features = false
 
@@ -121,9 +132,11 @@ version = "0.26.1"
 features = [ "std", "tracing",]
 default-features = false
 path = "../ruda-autodiff"
+version = "0.21.0"
 
 [dev-dependencies.ruda-kernel]
 path = "../ruda-kernel"
+version = "0.1.0"
 default-features = false
 features = [ "frontend-std", "frontend-tracing",]
 

@@ -55,19 +55,23 @@ version = "0.22.0"
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
+version = "0.21.0"
 default-features = false
 
 [dependencies.ruda-core]
 path = "../ruda-core"
+version = "0.1.0"
 default-features = false
 features = [ "serde", "shared-bytes", "tensor-data", "id",]
 
 [dependencies.ruda-tensor-config]
 path = "../ruda-tensor-config"
+version = "0.21.0"
 default-features = false
 
 [dependencies.ruda-test-runtime]
 path = "../ruda-test-runtime"
+version = "0.1.0"
 default-features = false
 optional = true
 

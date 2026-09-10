@@ -37,7 +37,7 @@ After [setting up the environment](getting-started.md), run these commands from 
 
 ```powershell
 $env:RUDA_CUDA_COMPILER = 'nvrtc'
-cargo run --locked -p ruLLM --features nvidia --example qwen2_generate -- ./models/qwen2 "Hello" 32 1
+cargo run --locked -p ruda-llm --features nvidia --example qwen2_generate -- ./models/qwen2 "Hello" 32 1
 ```
 
 The Qwen3.5 example defaults to Ruda IR → PTX when `RUDA_CUDA_COMPILER` is unset. Use `--release` for optimized execution. Unsupported direct PTX operations return errors rather than falling back to NVRTC. The PTX version must match the target GPU and driver; see the [PTX backend reference](ptx.md).
@@ -45,14 +45,14 @@ The Qwen3.5 example defaults to Ruda IR → PTX when `RUDA_CUDA_COMPILER` is uns
 ```powershell
 Remove-Item Env:RUDA_CUDA_COMPILER -ErrorAction SilentlyContinue
 $env:RUDA_PTX_VERSION = '8.0'
-cargo run --release --locked -p ruLLM --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "Hello" 8 1
+cargo run --release --locked -p ruda-llm --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "Hello" 8 1
 ```
 
 The CUDA C++ / NVRTC path remains available with an explicit selection:
 
 ```powershell
 $env:RUDA_CUDA_COMPILER = 'nvrtc'
-cargo run --release --locked -p ruLLM --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "Hello" 8 1
+cargo run --release --locked -p ruda-llm --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "Hello" 8 1
 ```
 
 Arguments are the model directory, raw text prompt, maximum new tokens, and run count. The last two default to `32` and `1` for Qwen2, or `8` and `1` for Qwen3.5. Run count must be positive. Examples print JSON lines for loading and generation. Generation lines include `text`, `generated_token_ids`, and `stopped_on_eos`.

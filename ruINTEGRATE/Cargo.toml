@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license = "Apache-2.0"
 description = "Host FP64 finite/infinite quadrature, RK45/BDF1 ODEs and event location"
+repository = "https://github.com/shuqi2077/RUDA"
 
 [features]
 default = []
@@ -16,7 +17,7 @@ name = "integrate-demo"
 path = "examples/integrate_demo.rs"
 
 [dependencies]
-rusolver = { path = "../ruSOLVER", default-features = false }
+rusolver = { version = "0.1.0", package = "ruda-solver", path = "../ruSOLVER", default-features = false }
 
 [[example]]
 name = "advanced-integrate"

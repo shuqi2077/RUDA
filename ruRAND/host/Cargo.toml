@@ -6,6 +6,8 @@ authors = ["Dilshod Tadjibaev (@antimora)"]
 license = "MIT OR Apache-2.0"
 readme = false
 build = false
+description = "Random number generation for Ruda."
+repository = "https://github.com/shuqi2077/RUDA"
 
 [lib]
 name = "rurand_host"
@@ -23,5 +25,6 @@ default-features = false
 
 [dependencies.ruda-core]
 path = "../../ruda-core"
+version = "0.1.0"
 default-features = false
 features = ["tensor-host-storage"]

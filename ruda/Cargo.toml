@@ -11,6 +11,9 @@ required-features = [ "runtime", "runtime-storage-bytes",]
 
 [package]
 name = "ruda"
+description = "Ruda portable host runtime."
+license-file = "../LICENSE"
+repository = "https://github.com/shuqi2077/RUDA"
 
 [features]
 default = ["runtime-default"]
@@ -34,6 +37,7 @@ workspace = true
 
 [dependencies.ruda-core]
 path = "../ruda-core"
+version = "0.1.0"
 default-features = false
 features = [ "ir", "ir-serde", "tensor", "compiler", "communication",]
 optional = true
@@ -139,6 +143,7 @@ optional = true
 
 [target."cfg(any(target_os = \"windows\", target_os = \"linux\", target_os = \"macos\", target_os = \"android\"))".dependencies.ruda-core]
 path = "../ruda-core"
+version = "0.1.0"
 default-features = false
 features = [ "cache", "serde", "hash",]
 optional = true

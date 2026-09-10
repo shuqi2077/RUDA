@@ -41,20 +41,24 @@ tracing = ["dep:tracing", "ruda-kernel/frontend-tracing", "ruda-kernel/device-te
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
+version = "0.21.0"
 features = ["kernel", "graph"]
 default-features = false
 
 [dependencies.ruda-core]
 path = "../ruda-core"
+version = "0.1.0"
 features = ["ir", "tensor-host-data"]
 default-features = false
 
 [dependencies.ruda-tensor-config]
 path = "../ruda-tensor-config"
+version = "0.21.0"
 default-features = false
 
 [dependencies.ruda]
 path = "../ruda"
+version = "0.1.0"
 features = ["runtime"]
 default-features = false
 
@@ -84,14 +88,16 @@ broken_intra_doc_links = "deny"
 invalid_html_tags = "deny"
 
 [dependencies.rufft]
-package = "ruFFT"
+package = "ruda-fft"
 path = "../ruFFT"
+version = "0.1.0"
 default-features = false
 features = ["std", "tensor"]
 
 [dependencies.rusparse]
 package = "ruSPARSE"
 path = "../ruSPARSE"
+version = "0.1.0"
 default-features = false
 features = ["tensor", "serde"]
 optional = true
@@ -100,12 +106,14 @@ optional = true
 [dependencies.rurand]
 package = "ruRAND"
 path = "../ruRAND"
+version = "0.1.0"
 default-features = false
 features = ["std", "tensor"]
 
 
 [dependencies.rublas]
 path = "../ruBLAS"
+version = "0.1.0"
 default-features = false
 features = ["kernel-ir", "std", "tensor-vector", "tensor-matmul"]
 
@@ -113,6 +121,7 @@ features = ["kernel-ir", "std", "tensor-vector", "tensor-matmul"]
 [dependencies.rudnn]
 package = "ruDNN"
 path = "../ruDNN"
+version = "0.1.0"
 default-features = false
 features = ["kernel-ir", "std", "pooling", "interpolation", "grid-sample", "ctc", "tensor-convolution", "tensor-attention"]
 
@@ -120,23 +129,27 @@ features = ["kernel-ir", "std", "pooling", "interpolation", "grid-sample", "ctc"
 [dependencies.ruprim]
 package = "ruPRIM"
 path = "../ruPRIM"
+version = "0.1.0"
 default-features = false
 features = ["kernel-ir", "std", "elementwise", "indexing", "tensor-scan", "tensor-reduce"]
 
 
 [dependencies.ruda-kernel]
 path = "../ruda-kernel"
+version = "0.1.0"
 default-features = false
 features = ["kernel-ir", "quantization-kernels", "device-tensor", "device-tensor-dequantize", "device-tensor-quantize"]
 
 
 [dependencies.ruda-fusion]
 path = "../ruda-fusion"
+version = "0.21.0"
 default-features = false
 features = ["device-tensor"]
 optional = true
 
 [dependencies.ruda-driver-cuda]
 path = "../ruda-driver-cuda"
+version = "0.1.0"
 default-features = false
 optional = true

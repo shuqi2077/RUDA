@@ -52,7 +52,7 @@ The example runs FP32 addition on the GPU and prints `PASS` lines and compilatio
 Place a local Qwen3.5-0.8B model in `./models/qwen35`, or replace the path below with your model directory. Model files are not included; see [model setup](docs/en/model-inference.md#prepare-a-local-model).
 
 ```sh
-cargo run --release --locked -p ruLLM --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "The capital of France is" 8 1
+cargo run --release --locked -p ruda-llm --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "The capital of France is" 8 1
 ```
 
 The example prints the generated text and token IDs. To use the CUDA C++ / NVRTC path instead, set `RUDA_CUDA_COMPILER` to `nvrtc` before running either example.

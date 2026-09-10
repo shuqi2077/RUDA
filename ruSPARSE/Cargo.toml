@@ -2,6 +2,9 @@
 name = "ruSPARSE"
 version.workspace = true
 edition.workspace = true
+description = "Ruda's sparse-computing library, reusing shared tensors, runtimes, and device backends."
+license-file = "LICENSE"
+repository = "https://github.com/shuqi2077/RUDA"
 
 [lib]
 name = "rusparse"
@@ -15,9 +18,9 @@ cuda-tests = ["cuda"]
 
 [dependencies]
 serde = { version = "1.0.228", default-features = false, features = ["std"], optional = true }
-ruda-core = { path = "../ruda-core", default-features = false, features = ["std", "tensor-host-data"], optional = true }
-ruda-kernel = { path = "../ruda-kernel", default-features = false, features = ["frontend-std", "library", "device-tensor"], optional = true }
-ruda-driver-cuda = { path = "../ruda-driver-cuda", default-features = false, features = ["std"], optional = true }
+ruda-core = { version = "0.1.0", path = "../ruda-core", default-features = false, features = ["std", "tensor-host-data"], optional = true }
+ruda-kernel = { version = "0.1.0", path = "../ruda-kernel", default-features = false, features = ["frontend-std", "library", "device-tensor"], optional = true }
+ruda-driver-cuda = { version = "0.1.0", path = "../ruda-driver-cuda", default-features = false, features = ["std"], optional = true }
 
 [[test]]
 name = "tensor"

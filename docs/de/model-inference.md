@@ -39,7 +39,7 @@ Führen Sie nach dem [Einrichten der Umgebung](getting-started.md) diese Befehle
 
 ```powershell
 $env:RUDA_CUDA_COMPILER = 'nvrtc'
-cargo run --locked -p ruLLM --features nvidia --example qwen2_generate -- ./models/qwen2 "Hello" 32 1
+cargo run --locked -p ruda-llm --features nvidia --example qwen2_generate -- ./models/qwen2 "Hello" 32 1
 ```
 
 Das Qwen3.5-Beispiel verwendet standardmäßig Ruda IR → PTX, wenn `RUDA_CUDA_COMPILER` nicht festgelegt ist. Verwenden Sie `--release` für eine optimierte Ausführung. Nicht unterstützte direkte PTX-Vorgänge geben Fehler zurück, anstatt auf NVRTC zurückzugreifen. Die PTX-Version muss mit der Zielversion GPU und dem Treiber übereinstimmen. siehe die [PTX Backend-Referenz](ptx.md).
@@ -47,14 +47,14 @@ Das Qwen3.5-Beispiel verwendet standardmäßig Ruda IR → PTX, wenn `RUDA_CUDA_
 ```powershell
 Remove-Item Env:RUDA_CUDA_COMPILER -ErrorAction SilentlyContinue
 $env:RUDA_PTX_VERSION = '8.0'
-cargo run --release --locked -p ruLLM --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "Hello" 8 1
+cargo run --release --locked -p ruda-llm --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "Hello" 8 1
 ```
 
 Der Pfad CUDA C++ / NVRTC bleibt mit einer expliziten Auswahl verfügbar:
 
 ```powershell
 $env:RUDA_CUDA_COMPILER = 'nvrtc'
-cargo run --release --locked -p ruLLM --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "Hello" 8 1
+cargo run --release --locked -p ruda-llm --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "Hello" 8 1
 ```
 
 Argumente sind das Modellverzeichnis, die Rohtext-Eingabeaufforderung, die maximale Anzahl neuer Token und die Anzahl der Ausführungen. Die letzten beiden sind standardmäßig `32` und `1` für Qwen2 oder `8` und `1` für Qwen3.5. Die Laufanzahl muss positiv sein. Beispiele drucken JSON-Zeilen zum Laden und Generieren. Zu den Generationslinien gehören `text`, `generated_token_ids` und `stopped_on_eos`.

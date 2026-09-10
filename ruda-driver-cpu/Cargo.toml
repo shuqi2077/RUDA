@@ -56,6 +56,7 @@ version = "1.16.1"
 
 [dependencies.ruda-compiler]
 path = "../ruda-compiler"
+version = "0.1.0"
 features = [ "mlir",]
 default-features = false
 
@@ -117,20 +118,24 @@ invalid_html_tags = "warn"
 
 [dependencies.ruda-core]
 path = "../ruda-core"
+version = "0.1.0"
 default-features = false
 features = [ "std",]
 
 [dependencies.ruda]
 path = "../ruda"
+version = "0.1.0"
 default-features = false
 features = [ "runtime", "runtime-channel-mutex", "runtime-std", "runtime-storage-bytes",]
 
 [dependencies.ruda-kernel]
 path = "../ruda-kernel"
+version = "0.1.0"
 default-features = false
 features = [ "frontend", "frontend-std", "library", "lowering-mlir",]
 
 [dev-dependencies.ruda-kernel]
 path = "../ruda-kernel"
+version = "0.1.0"
 default-features = false
 features = [ "frontend", "frontend-default", "frontend-tests", "library", "library-tests",]

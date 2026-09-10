@@ -101,18 +101,21 @@ path = "examples/speech_commands.rs"
 
 [dependencies.ruda-io]
 path = "../ruda-io"
+version = "0.21.0"
 features = ["std", "network"]
 optional = true
 default-features = false
 
 [dependencies.ruda-core]
 path = "../ruda-core"
+version = "0.1.0"
 features = ["std", "serde", "shared-bytes", "tensor-data", "id-tests-std"]
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-config]
 path = "../ruda-tensor-config"
+version = "0.21.0"
 features = ["std"]
 optional = true
 default-features = false

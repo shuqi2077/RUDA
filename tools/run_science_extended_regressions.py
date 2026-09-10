@@ -20,7 +20,7 @@ def plans(suite,compiler,logs,offline=False,world=2,order=32):
     if suite=='autodiff':return ['cargo','rustc'],[(['cargo','test',*flags,'-p','ruda-autodiff','--features','solver-host','--lib','solver_host::tests','--','--test-threads=1'],env)]
     if suite=='collective':
         binary=str(ROOT/'target'/'debug'/'examples'/('distributed-cg.exe'if os.name=='nt'else'distributed-cg'))
-        return ['cargo','rustc'],[(['cargo','build',*flags,'-p','rusolver','--features','collective','--example','distributed-cg','--target-dir',str(ROOT/'target')],env),
+        return ['cargo','rustc'],[(['cargo','build',*flags,'-p','ruda-solver','--features','collective','--example','distributed-cg','--target-dir',str(ROOT/'target')],env),
             ([sys.executable,'tools/science_extended/tcp_demo.py','--binary',binary,'--world',str(world),'--order',str(order),'--output',str(logs/'tcp')],env)]
     return base_plans(suite,compiler,logs,offline)
 

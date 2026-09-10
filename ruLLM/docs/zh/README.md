@@ -16,7 +16,7 @@ ruLLM 将分词、模型加载、带缓存的自回归生成及请求调度与 R
 ```sh
 git clone https://github.com/shuqi2077/RUDA.git
 cd RUDA
-cargo run --release --locked -p ruLLM --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "The capital of France is" 8 1
+cargo run --release --locked -p ruda-llm --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "The capital of France is" 8 1
 ```
 
 将 `./models/qwen35` 替换为自己的模型目录。最后两个参数分别为最大新生成 token 数和运行次数。未设置 `RUDA_CUDA_COMPILER` 时，示例默认使用直接 PTX；设为 `nvrtc` 可改用 CUDA C++ 编译路径。目标版本选择见 [PTX 配置](https://github.com/shuqi2077/RUDA/blob/main/docs/zh/ptx.md)。
@@ -65,7 +65,7 @@ ruLLM 提供模型加载、分词、带缓存的自回归生成和请求调度�
 
 ```powershell
 $env:RUDA_CUDA_COMPILER = 'nvrtc'
-cargo run --locked -p ruLLM --features nvidia --example qwen2_generate -- ./models/qwen2 "Hello" 32 1
+cargo run --locked -p ruda-llm --features nvidia --example qwen2_generate -- ./models/qwen2 "Hello" 32 1
 ```
 
 Qwen3.5 示例在未设置 `RUDA_CUDA_COMPILER` 时默认使用 Ruda IR → PTX。使用 `--release` 启用优化构建。直接 PTX 不支持的操作会报错，不回退到 NVRTC。PTX 版本需与目标 GPU 和驱动匹配，见 [PTX 后端参考](https://github.com/shuqi2077/RUDA/blob/main/docs/zh/ptx.md)。
@@ -73,14 +73,14 @@ Qwen3.5 示例在未设置 `RUDA_CUDA_COMPILER` 时默认使用 Ruda IR → PTX�
 ```powershell
 Remove-Item Env:RUDA_CUDA_COMPILER -ErrorAction SilentlyContinue
 $env:RUDA_PTX_VERSION = '8.0'
-cargo run --release --locked -p ruLLM --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "Hello" 8 1
+cargo run --release --locked -p ruda-llm --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "Hello" 8 1
 ```
 
 保留 CUDA C++ / NVRTC 路径，可显式选择：
 
 ```powershell
 $env:RUDA_CUDA_COMPILER = 'nvrtc'
-cargo run --release --locked -p ruLLM --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "Hello" 8 1
+cargo run --release --locked -p ruda-llm --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "Hello" 8 1
 ```
 
 参数依次为模型目录、原始文本提示、最大新增 token 数、运行次数。Qwen2 示例后两个参数默认为 `32`、`1`；Qwen3.5 默认为 `8`、`1`，运行次数必须大于零。示例输出加载信息和生成结果的 JSON 行，生成行包含 `text`、`generated_token_ids`、`stopped_on_eos`。

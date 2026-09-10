@@ -2,6 +2,9 @@
 name = "ruda-kernel"
 version.workspace = true
 edition.workspace = true
+description = "Ruda Rust kernel DSL and device tensor operations."
+license-file = "../LICENSE"
+repository = "https://github.com/shuqi2077/RUDA"
 
 [features]
 source-template = ["frontend", "dep:text_placeholder"]
@@ -34,10 +37,10 @@ lowering-cpp = [ "frontend", "dep:ruda-compiler", "ruda-compiler/cpp",]
 lowering-metal = [ "lowering-cpp", "ruda-compiler/cpp-metal",]
 
 [dependencies]
-ruda-kernel-macros = { path = "../ruda-kernel-macros", default-features = false }
+ruda-kernel-macros = { version = "0.1.0", path = "../ruda-kernel-macros", default-features = false }
 
 [dev-dependencies]
-ruda = { path = "../ruda" }
+ruda = { version = "0.1.0", path = "../ruda" }
 half = "=2.7.1"
 
 [lints.rust]
@@ -51,6 +54,7 @@ optional = true
 
 [dev-dependencies.ruda-test-utils]
 path = "../ruda-test-utils"
+version = "0.1.0"
 default-features = false
 
 [dependencies.serde]
@@ -61,6 +65,7 @@ optional = true
 
 [dev-dependencies.ruda-test-runtime]
 path = "../ruda-test-runtime"
+version = "0.1.0"
 features = ["test-runtime"]
 default-features = false
 
@@ -81,6 +86,7 @@ required-features = ["frontend"]
 
 [dependencies.ruda-core]
 path = "../ruda-core"
+version = "0.1.0"
 default-features = false
 optional = true
 
@@ -163,6 +169,7 @@ optional = true
 
 [dependencies.ruda]
 path = "../ruda"
+version = "0.1.0"
 default-features = false
 optional = true
 
@@ -179,6 +186,7 @@ version = "1"
 
 [dependencies.ruda-compiler]
 path = "../ruda-compiler"
+version = "0.1.0"
 default-features = false
 optional = true
 

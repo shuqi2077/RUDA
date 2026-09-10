@@ -52,7 +52,7 @@ cargo run --release --locked -p ruda-driver-cuda --features direct-ptx --example
 ローカルの Qwen3.5-0.8B モデルを `./models/qwen35` に配置するか、以下のパスをモデルのディレクトリに置き換えてください。モデルファイルは付属しません。[モデルの準備](model-inference.md#ローカルモデルの準備)を参照してください。
 
 ```sh
-cargo run --release --locked -p ruLLM --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "The capital of France is" 8 1
+cargo run --release --locked -p ruda-llm --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "The capital of France is" 8 1
 ```
 
 このサンプルは生成されたテキストとトークン ID を表示します。代わりに CUDA C++ / NVRTC 経路を使う場合は、いずれのサンプルも実行前に `RUDA_CUDA_COMPILER` を `nvrtc` に設定してください。

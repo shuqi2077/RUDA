@@ -117,25 +117,30 @@ invalid_html_tags = "warn"
 
 [dependencies.ruda-core]
 path = "../ruda-core"
+version = "0.1.0"
 default-features = false
 features = [ "compilation-cache", "std", "hash",]
 
 [dependencies.ruda]
 path = "../ruda"
+version = "0.1.0"
 default-features = false
 features = [ "runtime", "runtime-channel-mutex",]
 
 [dependencies.ruda-kernel]
 path = "../ruda-kernel"
+version = "0.1.0"
 default-features = false
 features = [ "frontend", "lowering-cpp",]
 
 [dev-dependencies.ruda-kernel]
 path = "../ruda-kernel"
+version = "0.1.0"
 default-features = false
 features = [ "frontend", "frontend-default", "frontend-tests", "library", "library-tests",]
 
 [dependencies.ruda-compiler]
 path = "../ruda-compiler"
+version = "0.1.0"
 default-features = false
 features = [ "cpp",]

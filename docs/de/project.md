@@ -52,7 +52,7 @@ Das Beispiel führt FP32-Addition auf der GPU aus und gibt `PASS`-Zeilen sowie Z
 Legen Sie ein lokales Qwen3.5-0.8B-Modell unter `./models/qwen35` ab oder ersetzen Sie den folgenden Pfad durch Ihr Modellverzeichnis. Modelldateien sind nicht enthalten; siehe [Modell vorbereiten](model-inference.md#bereiten-sie-ein-lokales-modell-vor).
 
 ```sh
-cargo run --release --locked -p ruLLM --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "The capital of France is" 8 1
+cargo run --release --locked -p ruda-llm --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "The capital of France is" 8 1
 ```
 
 Das Beispiel gibt den erzeugten Text und die Token-IDs aus. Um stattdessen den CUDA-C++-/NVRTC-Pfad zu verwenden, setzen Sie `RUDA_CUDA_COMPILER` vor dem Start des jeweiligen Beispiels auf `nvrtc`.

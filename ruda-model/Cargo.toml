@@ -72,6 +72,7 @@ default-features = false
 
 [dependencies.ruda-dataset]
 path = "../ruda-dataset"
+version = "0.21.0"
 optional = true
 default-features = false
 
@@ -142,41 +143,49 @@ default-features = false
 
 [dependencies.ruda-core]
 path = "../ruda-core"
+version = "0.1.0"
 default-features = false
 features = [ "serde", "shared-bytes", "tensor-data", "id",]
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
+version = "0.21.0"
 default-features = false
 features = [ "api",]
 
 [dependencies.ruda-model-macros]
 path = "../ruda-model-macros"
+version = "0.21.0"
 default-features = false
 
 [dependencies.ruda-kernel]
 path = "../ruda-kernel"
+version = "0.1.0"
 default-features = false
 optional = true
 features = ["frontend"]
 
 [dependencies.ruda-tensor-config]
 path = "../ruda-tensor-config"
+version = "0.21.0"
 default-features = false
 
 [dependencies.ruda-io]
 path = "../ruda-io"
+version = "0.21.0"
 default-features = false
 optional = true
 features = [ "network",]
 
 [dev-dependencies.ruda-dataset]
 path = "../ruda-dataset"
+version = "0.21.0"
 features = [ "default", "fake",]
 default-features = false
 
 [dev-dependencies.ruda-tensor-host]
 path = "../ruda-tensor-host"
+version = "0.21.0"
 features = [ "default",]
 default-features = false
 
@@ -190,9 +199,11 @@ version = "3.2.0"
 features = [ "std", "tracing",]
 default-features = false
 path = "../ruda-autodiff"
+version = "0.21.0"
 
 [dev-dependencies.ruda-kernel]
 path = "../ruda-kernel"
+version = "0.1.0"
 default-features = false
 features = ["frontend-std", "frontend-tracing"]
 
@@ -215,27 +226,32 @@ features = [ "alloc",]
 
 [target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-tensor-remote]
 path = "../ruda-tensor-remote"
+version = "0.21.0"
 optional = true
 default-features = false
 
 [target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-tensor-rocm]
 path = "../ruda-tensor-rocm"
+version = "0.21.0"
 optional = true
 default-features = false
 
 [target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-tensor-router]
 path = "../ruda-tensor-router"
+version = "0.21.0"
 optional = true
 default-features = false
 
 [target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-tensor-tch]
 path = "../ruda-tensor-tch"
+version = "0.21.0"
 features = [ "default",]
 optional = true
 default-features = false
 
 [target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-tensor-wgpu]
 path = "../ruda-tensor-wgpu"
+version = "0.21.0"
 optional = true
 default-features = false
 
@@ -248,6 +264,7 @@ default-features = false
 optional = true
 default-features = false
 path = "../ruda-tensor-device"
+version = "0.21.0"
 features = [ "cuda",]
 
 [target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-fusion]
@@ -255,3 +272,4 @@ features = [ "std", "tracing",]
 optional = true
 default-features = false
 path = "../ruda-fusion"
+version = "0.21.0"

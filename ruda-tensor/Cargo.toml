@@ -155,32 +155,38 @@ invalid_html_tags = "deny"
 
 [dependencies.ruda-core]
 path = "../ruda-core"
+version = "0.1.0"
 default-features = false
 features = ["tensor-host-data", "tensor-device-settings", "serde", "shared-bytes", "tensor-data"]
 
 [dependencies.ruda-driver-cpu]
 path = "../ruda-driver-cpu"
+version = "0.1.0"
 default-features = false
 optional = true
 
 [dependencies.ruda-driver-cuda]
 path = "../ruda-driver-cuda"
+version = "0.1.0"
 default-features = false
 optional = true
 
 [dependencies.ruda-driver-hip]
 path = "../ruda-driver-hip"
+version = "0.1.0"
 default-features = false
 optional = true
 
 [dependencies.ruda-driver-wgpu]
 path = "../ruda-driver-wgpu"
+version = "0.1.0"
 default-features = false
 optional = true
 
 [dependencies.rudnn]
 package = "ruDNN"
 path = "../ruDNN"
+version = "0.1.0"
 default-features = false
 features = ["attention-fallback"]
 
@@ -195,11 +201,13 @@ optional = true
 
 [dependencies.ruda-tensor-config]
 path = "../ruda-tensor-config"
+version = "0.21.0"
 default-features = false
 optional = true
 
 [dependencies.ruda-kernel]
 path = "../ruda-kernel"
+version = "0.1.0"
 default-features = false
 features = ["frontend"]
 optional = true

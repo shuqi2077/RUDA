@@ -4,7 +4,7 @@
 
 Fast Fourier transforms for Ruda.
 
-- Cargo package: `ruFFT`
+- Cargo package: `ruda-fft`
 - Rust crate: `rufft`
 
 ## Features
@@ -22,7 +22,7 @@ Build from the RUDA workspace:
 ```sh
 git clone https://github.com/shuqi2077/RUDA.git
 cd RUDA
-cargo build --release --locked -p ruFFT --no-default-features --features std,tensor
+cargo build --release --locked -p ruda-fft --no-default-features --features std,tensor
 ```
 
 ## Documentation

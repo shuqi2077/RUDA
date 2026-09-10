@@ -64,16 +64,19 @@ path = "src/lib.rs"
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
+version = "0.21.0"
 default-features = false
 features = ["api"]
 
 [dependencies.ruda-core]
 path = "../ruda-core"
+version = "0.1.0"
 default-features = false
 features = ["tensor"]
 
 [dependencies.ruda-tensor-config]
 path = "../ruda-tensor-config"
+version = "0.21.0"
 default-features = false
 
 [dependencies.derive-new]
@@ -122,11 +125,14 @@ invalid_html_tags = "deny"
 
 [dependencies.rusolver]
 path = "../ruSOLVER"
+version = "0.1.0"
+package = "ruda-solver"
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-host]
 path = "../ruda-tensor-host"
+version = "0.21.0"
 optional = true
 default-features = false
 features = ["std"]

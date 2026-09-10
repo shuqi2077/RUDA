@@ -41,8 +41,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 多个右端项放在 B 的多列中；同一个 A 可先分解一次，再多次 `solve`。这是减少重复工作，不是已实测加速比。
 
 ```bash
-cargo run --locked -p rusolver --example solver-demo
-cargo run --locked -p rusolver --features sparse --example sparse-poisson
+cargo run --locked -p ruda-solver --example solver-demo
+cargo run --locked -p ruda-solver --features sparse --example sparse-poisson
 ```
 
 ## 存储、精度与失败语义
@@ -64,8 +64,8 @@ CG 默认每 32 步重算真实残差 `b-Ax`，在准备报告收敛前也重算
 
 ```bash
 # CUDA toolkit、驱动与 NVIDIA GPU 环境。
-RUDA_CUDA_COMPILER=nvrtc cargo run --locked -p rusolver --features cuda --example solver-cuda
-RUDA_CUDA_COMPILER=ptx cargo run --locked -p rusolver --features cuda --example solver-cuda
+RUDA_CUDA_COMPILER=nvrtc cargo run --locked -p ruda-solver --features cuda --example solver-cuda
+RUDA_CUDA_COMPILER=ptx cargo run --locked -p ruda-solver --features cuda --example solver-cuda
 ```
 
 入口接收 `RudaTensor<R>`：A `[batch,n,n]`，B `[batch,n,nrhs]`，限制 n=1..32、nrhs=1..8，未量化 FP32、行优先连续布局、同设备且同执行队列。空 batch 不提交 kernel。

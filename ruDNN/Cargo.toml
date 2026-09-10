@@ -5,6 +5,8 @@ edition.workspace = true
 authors = ["Genna Wingert", "louisfd <louisfd94@gmail.com>"]
 license = "MIT OR Apache-2.0"
 autotests = false
+description = "Neural network operators for Ruda."
+repository = "https://github.com/shuqi2077/RUDA"
 
 [lib]
 name = "rudnn"
@@ -31,18 +33,18 @@ extended = ["heavy"]
 full = ["extended"]
 
 [dependencies]
-rublas = { path = "../ruBLAS", default-features = false, optional = true }
-ruda-kernel = { path = "../ruda-kernel", default-features = false, features = ["kernel-ir"], optional = true }
+rublas = { version = "0.1.0", path = "../ruBLAS", default-features = false, optional = true }
+ruda-kernel = { version = "0.1.0", path = "../ruda-kernel", default-features = false, features = ["kernel-ir"], optional = true }
 bytemuck = { version = "1.16.1", optional = true }
 derive-new = { version = "0.7.0", default-features = false, optional = true }
 enumset = { version = "1.1.10", default-features = false, optional = true }
 half = { version = "=2.7.1", default-features = false, features = ["alloc", "num-traits", "serde", "bytemuck"], optional = true }
 serde = { version = "1.0.204", default-features = false, features = ["derive", "alloc"], optional = true }
-ruda-test-utils = { path = "../ruda-test-utils", default-features = false, optional = true }
+ruda-test-utils = { version = "0.1.0", path = "../ruda-test-utils", default-features = false, optional = true }
 
 [dev-dependencies]
-ruda-test-runtime = { path = "../ruda-test-runtime", default-features = false, features = ["test-runtime"] }
-ruda-test-utils = { path = "../ruda-test-utils", default-features = false }
+ruda-test-runtime = { version = "0.1.0", path = "../ruda-test-runtime", default-features = false, features = ["test-runtime"] }
+ruda-test-utils = { version = "0.1.0", path = "../ruda-test-utils", default-features = false }
 pretty_assertions = "1.4"
 trybuild = "1"
 
@@ -58,12 +60,14 @@ required-features = ["kernel-ir", "cpu-reference"]
 
 [dependencies.ruda-core]
 path = "../ruda-core"
+version = "0.1.0"
 default-features = false
 optional = true
 
 [dependencies.ruprim]
 package = "ruPRIM"
 path = "../ruPRIM"
+version = "0.1.0"
 default-features = false
 optional = true
 
@@ -72,4 +76,3 @@ version = "0.2.19"
 default-features = false
 features = ["libm"]
 optional = true
-

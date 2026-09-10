@@ -37,7 +37,7 @@ ruLLM 提供模型加载、分词、带缓存的自回归生成和请求调度�
 
 ```powershell
 $env:RUDA_CUDA_COMPILER = 'nvrtc'
-cargo run --locked -p ruLLM --features nvidia --example qwen2_generate -- ./models/qwen2 "Hello" 32 1
+cargo run --locked -p ruda-llm --features nvidia --example qwen2_generate -- ./models/qwen2 "Hello" 32 1
 ```
 
 Qwen3.5 示例在未设置 `RUDA_CUDA_COMPILER` 时默认使用 Ruda IR → PTX。使用 `--release` 启用优化构建。直接 PTX 不支持的操作会报错，不回退到 NVRTC。PTX 版本需与目标 GPU 和驱动匹配，见 [PTX 后端参考](ptx.md)。
@@ -45,14 +45,14 @@ Qwen3.5 示例在未设置 `RUDA_CUDA_COMPILER` 时默认使用 Ruda IR → PTX�
 ```powershell
 Remove-Item Env:RUDA_CUDA_COMPILER -ErrorAction SilentlyContinue
 $env:RUDA_PTX_VERSION = '8.0'
-cargo run --release --locked -p ruLLM --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "Hello" 8 1
+cargo run --release --locked -p ruda-llm --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "Hello" 8 1
 ```
 
 保留 CUDA C++ / NVRTC 路径，可显式选择：
 
 ```powershell
 $env:RUDA_CUDA_COMPILER = 'nvrtc'
-cargo run --release --locked -p ruLLM --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "Hello" 8 1
+cargo run --release --locked -p ruda-llm --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "Hello" 8 1
 ```
 
 参数依次为模型目录、原始文本提示、最大新增 token 数、运行次数。Qwen2 示例后两个参数默认为 `32`、`1`；Qwen3.5 默认为 `8`、`1`，运行次数必须大于零。示例输出加载信息和生成结果的 JSON 行，生成行包含 `text`、`generated_token_ids`、`stopped_on_eos`。

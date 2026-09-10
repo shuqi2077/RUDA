@@ -115,7 +115,7 @@ CG 每32次以及疑似收敛/结束时复核真实残差；没有自动放宽�
 GPU路径是小矩阵功能基线；无分块 GEMM、warp协作、分布式 GPU 求解或实测加速比。
 
 ```sh
-cargo run --release --locked -p rusolver --features cuda --example solver-cuda-advanced
+cargo run --release --locked -p ruda-solver --features cuda --example solver-cuda-advanced
 ```
 
 ## 6. 刚性方程、事件、无限积分

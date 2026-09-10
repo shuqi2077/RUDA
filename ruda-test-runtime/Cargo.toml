@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 build = "build.rs"
 license = "MIT OR Apache-2.0"
+description = "Kernel test utilities for Ruda."
+repository = "https://github.com/shuqi2077/RUDA"
 
 [features]
 default = ["std", "ruda-kernel/frontend-default", "ruda-kernel/library", "ruda-driver-cpu?/default", "ruda-driver-cuda?/default", "ruda-driver-hip?/default", "ruda-driver-wgpu?/default"]
@@ -16,8 +18,8 @@ std = ["ruda-kernel/frontend-std", "ruda-driver-wgpu?/std", "ruda-driver-cuda?/s
 tracing = ["ruda-kernel/frontend-tracing", "ruda-driver-cpu?/tracing", "ruda-driver-cuda?/tracing", "ruda-driver-hip?/tracing", "ruda-driver-wgpu?/tracing"]
 
 [dependencies]
-ruda-kernel = { path = "../ruda-kernel", default-features = false, features = ["frontend"] }
-ruda-driver-cpu = { path = "../ruda-driver-cpu", default-features = false, optional = true }
-ruda-driver-cuda = { path = "../ruda-driver-cuda", default-features = false, optional = true }
-ruda-driver-hip = { path = "../ruda-driver-hip", default-features = false, optional = true }
-ruda-driver-wgpu = { path = "../ruda-driver-wgpu", default-features = false, optional = true }
+ruda-kernel = { version = "0.1.0", path = "../ruda-kernel", default-features = false, features = ["frontend"] }
+ruda-driver-cpu = { version = "0.1.0", path = "../ruda-driver-cpu", default-features = false, optional = true }
+ruda-driver-cuda = { version = "0.1.0", path = "../ruda-driver-cuda", default-features = false, optional = true }
+ruda-driver-hip = { version = "0.1.0", path = "../ruda-driver-hip", default-features = false, optional = true }
+ruda-driver-wgpu = { version = "0.1.0", path = "../ruda-driver-wgpu", default-features = false, optional = true }

@@ -1,9 +1,10 @@
 [package]
-name = "ruLLM"
+name = "ruda-llm"
 version.workspace = true
 edition.workspace = true
 license = "Apache-2.0"
 description = "Model loading and autoregressive inference on the Ruda compute stack"
+repository = "https://github.com/shuqi2077/RUDA"
 
 [lib]
 name = "rullm"
@@ -14,17 +15,17 @@ nvidia = ["ruda-tensor-device/cuda", "ruda-tensor-device/autotune", "dep:ruda-dr
 nvidia-ptx = ["nvidia", "ruda-driver-cuda/direct-ptx"]
 
 [dependencies]
-ruda-model = { path = "../ruda-model", default-features = false, features = ["std"] }
-ruda-nn = { path = "../ruda-nn", default-features = false, features = ["std"] }
-ruda-tensor = { path = "../ruda-tensor", default-features = false, features = ["std", "kernel"] }
-ruda-tensor-device = { path = "../ruda-tensor-device", default-features = false, features = ["std", "fusion"] }
-ruda-store = { path = "../ruda-store", default-features = false, features = ["std", "safetensors", "memmap"] }
-ruda-kernel = { path = "../ruda-kernel", default-features = false, features = ["frontend-std", "library"] }
-ruda-core = { path = "../ruda-core", default-features = false, features = ["std", "ir", "tensor"] }
-ruda = { path = "../ruda", default-features = false, features = ["runtime", "runtime-std", "runtime-storage-bytes"] }
-ruda-driver-cuda = { path = "../ruda-driver-cuda", default-features = false, features = ["std"], optional = true }
-rublas = { path = "../ruBLAS", default-features = false, features = ["tensor-int4", "tensor-matmul", "std"] }
-rudnn = { package = "ruDNN", path = "../ruDNN", default-features = false, features = ["tensor-gated-delta", "tensor-normalization", "std"] }
+ruda-model = { version = "0.21.0", path = "../ruda-model", default-features = false, features = ["std"] }
+ruda-nn = { version = "0.21.0", path = "../ruda-nn", default-features = false, features = ["std"] }
+ruda-tensor = { version = "0.21.0", path = "../ruda-tensor", default-features = false, features = ["std", "kernel"] }
+ruda-tensor-device = { version = "0.21.0", path = "../ruda-tensor-device", default-features = false, features = ["std", "fusion"] }
+ruda-store = { version = "0.21.0", path = "../ruda-store", default-features = false, features = ["std", "safetensors", "memmap"] }
+ruda-kernel = { version = "0.1.0", path = "../ruda-kernel", default-features = false, features = ["frontend-std", "library"] }
+ruda-core = { version = "0.1.0", path = "../ruda-core", default-features = false, features = ["std", "ir", "tensor"] }
+ruda = { version = "0.1.0", path = "../ruda", default-features = false, features = ["runtime", "runtime-std", "runtime-storage-bytes"] }
+ruda-driver-cuda = { version = "0.1.0", path = "../ruda-driver-cuda", default-features = false, features = ["std"], optional = true }
+rublas = { version = "0.1.0", path = "../ruBLAS", default-features = false, features = ["tensor-int4", "tensor-matmul", "std"] }
+rudnn = { version = "0.1.0", package = "ruDNN", path = "../ruDNN", default-features = false, features = ["tensor-gated-delta", "tensor-normalization", "std"] }
 half = "=2.7.1"
 chacha20 = { version = "=0.10.2", default-features = false, features = ["rng"] }
 serde = { version = "1.0", features = ["derive"] }

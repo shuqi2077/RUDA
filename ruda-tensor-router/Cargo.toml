@@ -41,35 +41,42 @@ features = [ "mutex", "spin_mutex", "portable-atomic",]
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
+version = "0.21.0"
 default-features = false
 features = [ "graph",]
 
 [dependencies.ruda-core]
 path = "../ruda-core"
+version = "0.1.0"
 default-features = false
 features = [ "serde", "shared-bytes", "tensor-data", "id",]
 
 [dependencies.ruda-tensor-config]
 path = "../ruda-tensor-config"
+version = "0.21.0"
 default-features = false
 
 [dependencies.ruda-test-runtime]
 path = "../ruda-test-runtime"
+version = "0.1.0"
 default-features = false
 optional = true
 
 [dev-dependencies.ruda-tensor-host]
 path = "../ruda-tensor-host"
+version = "0.21.0"
 default-features = false
 features = [ "default",]
 
 [dev-dependencies.ruda-tensor]
 path = "../ruda-tensor"
+version = "0.21.0"
 default-features = false
 features = [ "api",]
 
 [dev-dependencies.ruda-tensor-wgpu]
 path = "../ruda-tensor-wgpu"
+version = "0.21.0"
 default-features = false
 features = [ "std",]
 

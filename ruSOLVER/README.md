@@ -4,7 +4,7 @@
 
 Numerical linear solvers and matrix factorizations for Ruda.
 
-- Cargo package: `rusolver`
+- Cargo package: `ruda-solver`
 - Rust crate: `rusolver`
 
 This repository is a source mirror. Build from the [RUDA workspace](https://github.com/shuqi2077/RUDA), which provides shared configuration and optional dependencies.
@@ -28,8 +28,8 @@ Build and run from the RUDA workspace:
 ```sh
 git clone https://github.com/shuqi2077/RUDA.git
 cd RUDA
-cargo build --locked -p rusolver
-cargo run --locked -p rusolver --example solver-demo
+cargo build --locked -p ruda-solver
+cargo run --locked -p ruda-solver --example solver-demo
 ```
 
 ## Documentation
@@ -88,8 +88,8 @@ Source: [LU](src/lu.rs), [QR](src/qr.rs), [SVD](src/svd.rs), and [CG](src/iterat
 The [advanced example](examples/advanced_solver.rs) covers SVD, complex LU, sparse LU, and a solve pullback. The [CSR example](examples/sparse_poisson.rs) uses the optional ruSPARSE adapter:
 
 ```sh
-cargo run --locked -p rusolver --example advanced-solver
-cargo run --locked -p rusolver --features sparse --example sparse-poisson
+cargo run --locked -p ruda-solver --example advanced-solver
+cargo run --locked -p ruda-solver --features sparse --example sparse-poisson
 ```
 
 `SparseLu::factor_csr` accepts zero-based CSR arrays, including duplicate entries that are summed. Factors stay in sparse row storage rather than a dense matrix. `max_factor_nonzeros` limits factor entries, not total process memory. Feature `sparse` enables `SparseLu::from_rusparse` and `sparse::CsrF32Operator` for existing ruSPARSE structures.
@@ -99,8 +99,8 @@ cargo run --locked -p rusolver --features sparse --example sparse-poisson
 Enable `tensor` for runtime-generic interfaces or `cuda` for NVIDIA examples:
 
 ```sh
-cargo run --locked -p rusolver --features cuda --example solver-cuda
-cargo run --locked -p rusolver --features cuda --example solver-cuda-advanced
+cargo run --locked -p ruda-solver --features cuda --example solver-cuda
+cargo run --locked -p ruda-solver --features cuda --example solver-cuda-advanced
 ```
 
 | Interface in `rusolver::tensor` | Per-system dimensions |

@@ -82,26 +82,31 @@ default-features = false
 
 [dependencies.ruda-core]
 path = "../ruda-core"
+version = "0.1.0"
 default-features = false
 features = [ "std", "serde", "shared-bytes", "tensor-data", "id", "id-tests-std",]
 
 [dependencies.ruda-tensor-config]
 path = "../ruda-tensor-config"
+version = "0.21.0"
 default-features = false
 features = [ "std",]
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
+version = "0.21.0"
 default-features = false
 features = [ "std",]
 
 [dependencies.ruda-communication]
 path = "../ruda-communication"
+version = "0.21.0"
 default-features = false
 features = [ "data-service", "websocket",]
 
 [dependencies.ruda-tensor-wgpu]
 path = "../ruda-tensor-wgpu"
+version = "0.21.0"
 features = [ "default",]
 default-features = false
 optional = true
@@ -111,17 +116,20 @@ version = "3.2.0"
 
 [dependencies.ruda-tensor-device]
 path = "../ruda-tensor-device"
+version = "0.21.0"
 default-features = false
 features = [ "cuda-default",]
 optional = true
 
 [dev-dependencies.ruda-tensor-host]
 path = "../ruda-tensor-host"
+version = "0.21.0"
 default-features = false
 features = [ "default",]
 
 [dev-dependencies.ruda-tensor]
 path = "../ruda-tensor"
+version = "0.21.0"
 default-features = false
 features = [ "api-std",]
 

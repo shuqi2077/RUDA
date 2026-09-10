@@ -44,8 +44,8 @@ One kernel per nonempty batch performs numeric validation, factorization and sol
 Inspect `info` before using results: 0 success; positive one-based nonpositive pivot; -1 nonfinite input; -2 nonsymmetric; -3 nonfinite arithmetic. Failed results are initialized zeros, not valid solutions. `check_status_sync()` explicitly synchronizes/status-reads; no host numerical substitute. Launch success is not execution success.
 
 ```bash
-cargo run --locked -p rusolver --example solver-demo
-cargo run --locked -p rusolver --features sparse --example sparse-poisson
+cargo run --locked -p ruda-solver --example solver-demo
+cargo run --locked -p ruda-solver --features sparse --example sparse-poisson
 ```
 
 The [extension](science-extended.md) adds SVD, complex LU/QR/Cholesky, sparse LU, distributed CG, host autodiff and additional device solvers. It does not provide a general-complex eigensolver, distributed direct factorization or LAPACK/cuSOLVER ABI parity. See the [Chinese guide](../../zh/libraries/rusolver.md) for algorithm sources; methods are independently implemented rather than copied from those libraries.

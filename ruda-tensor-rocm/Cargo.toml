@@ -33,40 +33,48 @@ path = "src/lib.rs"
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
+version = "0.21.0"
 default-features = false
 features = [ "std", "hip",]
 
 [dependencies.ruda-tensor-device]
 path = "../ruda-tensor-device"
+version = "0.21.0"
 default-features = false
 features = [ "default",]
 
 [dependencies.ruda-fusion]
 path = "../ruda-fusion"
+version = "0.21.0"
 default-features = false
 features = [ "std", "tracing",]
 optional = true
 
 [dependencies.ruda-driver-hip]
 path = "../ruda-driver-hip"
+version = "0.1.0"
 default-features = false
 
 [dependencies.ruda-kernel]
 path = "../ruda-kernel"
+version = "0.1.0"
 default-features = false
 features = [ "frontend", "library",]
 
 [dependencies.ruda-core]
 path = "../ruda-core"
+version = "0.1.0"
 default-features = false
 features = [ "ir", "communication", "tensor-elements-flex32", "serde", "shared-bytes", "tensor-data", "id", "id-tests-std",]
 
 [dependencies.ruda-tensor-config]
 path = "../ruda-tensor-config"
+version = "0.21.0"
 default-features = false
 
 [dependencies.ruda-test-runtime]
 path = "../ruda-test-runtime"
+version = "0.1.0"
 default-features = false
 features = [ "hip", "std", "default", "tracing",]
 

@@ -46,7 +46,7 @@ cargo run --release --locked -p ruda-driver-cuda --features direct-ptx --example
 将本地 Qwen3.5-0.8B 模型放在 `./models/qwen35`，或将以下路径替换为自己的模型目录。仓库不包含模型文件，准备方式见[模型配置](model-inference.md#准备本地模型)。
 
 ```sh
-cargo run --release --locked -p ruLLM --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "The capital of France is" 8 1
+cargo run --release --locked -p ruda-llm --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "The capital of France is" 8 1
 ```
 
 示例打印生成文本及 token ID。若要改用 CUDA C++ / NVRTC 路径，在运行任一示例前将 `RUDA_CUDA_COMPILER` 设为 `nvrtc`。

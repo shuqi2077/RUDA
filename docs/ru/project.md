@@ -52,7 +52,7 @@ cargo run --release --locked -p ruda-driver-cuda --features direct-ptx --example
 Поместите локальную модель Qwen3.5-0.8B в `./models/qwen35` или замените путь ниже каталогом своей модели. Файлы модели не входят в комплект; см. [подготовку модели](model-inference.md#подготовьте-локальную-модель).
 
 ```sh
-cargo run --release --locked -p ruLLM --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "The capital of France is" 8 1
+cargo run --release --locked -p ruda-llm --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "The capital of France is" 8 1
 ```
 
 Пример выводит сгенерированный текст и идентификаторы токенов. Чтобы вместо этого использовать путь CUDA C++ / NVRTC, перед запуском любого из примеров задайте `RUDA_CUDA_COMPILER` значение `nvrtc`.

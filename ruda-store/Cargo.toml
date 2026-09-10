@@ -64,12 +64,14 @@ path = "src/lib.rs"
 
 [dependencies.ruda-tensor-tch]
 path = "../ruda-tensor-tch"
+version = "0.21.0"
 features = [ "default",]
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-wgpu]
 path = "../ruda-tensor-wgpu"
+version = "0.21.0"
 features = [ "default",]
 optional = true
 default-features = false
@@ -136,10 +138,12 @@ optional = true
 [dependencies.ruda-model]
 default-features = false
 path = "../ruda-model"
+version = "0.21.0"
 
 [dependencies.ruda-tensor]
 default-features = false
 path = "../ruda-tensor"
+version = "0.21.0"
 features = [ "api",]
 
 [dependencies.ruda-tensor-device]
@@ -147,9 +151,11 @@ features = [ "cuda-default",]
 optional = true
 default-features = false
 path = "../ruda-tensor-device"
+version = "0.21.0"
 
 [dependencies.ruda-core]
 path = "../ruda-core"
+version = "0.1.0"
 default-features = false
 optional = true
 
@@ -160,6 +166,7 @@ optional = true
 
 [dev-dependencies.ruda-tensor-host]
 path = "../ruda-tensor-host"
+version = "0.21.0"
 features = [ "default",]
 default-features = false
 
@@ -172,6 +179,7 @@ version = "3.24.0"
 [dev-dependencies.ruda-nn]
 default-features = false
 path = "../ruda-nn"
+version = "0.21.0"
 
 [lints.clippy]
 

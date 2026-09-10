@@ -22,7 +22,7 @@ Ruda 快速傅里叶变换库。
 ```sh
 git clone https://github.com/shuqi2077/RUDA.git
 cd RUDA
-cargo build --release --locked -p ruFFT --no-default-features --features std,tensor
+cargo build --release --locked -p ruda-fft --no-default-features --features std,tensor
 ```
 
 ## 文档

@@ -192,6 +192,7 @@ default-features = false
 
 [dependencies.ruda-ir-macros]
 path = "../ruda-ir-macros"
+version = "0.1.0"
 optional = true
 
 [dependencies.enumset]

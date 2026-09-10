@@ -6,6 +6,7 @@ license = "MIT OR Apache-2.0"
 description = "ruFFT CPU real transforms, twiddle tables and SIMD butterflies."
 readme = false
 build = false
+repository = "https://github.com/shuqi2077/RUDA"
 
 [lib]
 name = "rufft_host"
@@ -41,6 +42,7 @@ optional = true
 
 [dependencies.ruda-core]
 path = "../../ruda-core"
+version = "0.1.0"
 default-features = false
 features = [ "tensor-host-storage",]
 

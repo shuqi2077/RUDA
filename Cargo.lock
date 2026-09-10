@@ -1159,14 +1159,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ruda-hip-sys"
-version = "7.14.6085000"
-dependencies = [
- "libc",
- "regex",
-]
-
-[[package]]
 name = "cudarc"
 version = "0.19.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5320,19 +5312,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ruFFT"
-version = "0.1.0"
-dependencies = [
- "num-complex",
- "realfft",
- "ruPRIM",
- "ruda-core",
- "ruda-kernel",
- "ruda-test-runtime",
- "ruda-test-utils",
-]
-
-[[package]]
 name = "ruFFT-host"
 version = "0.1.0"
 dependencies = [
@@ -5343,30 +5322,6 @@ dependencies = [
  "rayon",
  "realfft",
  "ruda-core",
-]
-
-[[package]]
-name = "ruLLM"
-version = "0.1.0"
-dependencies = [
- "chacha20",
- "half",
- "image",
- "libjpeg-turbo-rs",
- "ruDNN",
- "rublas",
- "ruda",
- "ruda-core",
- "ruda-driver-cuda",
- "ruda-kernel",
- "ruda-model",
- "ruda-nn",
- "ruda-store",
- "ruda-tensor",
- "ruda-tensor-device",
- "serde",
- "serde_json",
- "tokenizers",
 ]
 
 [[package]]
@@ -5509,10 +5464,10 @@ dependencies = [
  "parking_lot",
  "portable-atomic",
  "ruda-core",
+ "ruda-solver",
  "ruda-tensor",
  "ruda-tensor-config",
  "ruda-tensor-host",
- "rusolver",
  "spin",
  "tracing",
 ]
@@ -5707,7 +5662,6 @@ name = "ruda-driver-hip"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
- "ruda-hip-sys",
  "derive-new",
  "half",
  "log",
@@ -5716,6 +5670,7 @@ dependencies = [
  "ruda",
  "ruda-compiler",
  "ruda-core",
+ "ruda-hip-sys",
  "ruda-kernel",
  "serde",
  "test-log",
@@ -5752,6 +5707,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruda-fft"
+version = "0.1.0"
+dependencies = [
+ "num-complex",
+ "realfft",
+ "ruPRIM",
+ "ruda-core",
+ "ruda-kernel",
+ "ruda-test-runtime",
+ "ruda-test-utils",
+]
+
+[[package]]
 name = "ruda-fusion"
 version = "0.21.0"
 dependencies = [
@@ -5771,6 +5739,14 @@ dependencies = [
  "smallvec",
  "spin",
  "tracing",
+]
+
+[[package]]
+name = "ruda-hip-sys"
+version = "7.14.6085000"
+dependencies = [
+ "libc",
+ "regex",
 ]
 
 [[package]]
@@ -5839,6 +5815,30 @@ dependencies = [
  "quote",
  "ruda-core",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "ruda-llm"
+version = "0.1.0"
+dependencies = [
+ "chacha20",
+ "half",
+ "image",
+ "libjpeg-turbo-rs",
+ "ruDNN",
+ "rublas",
+ "ruda",
+ "ruda-core",
+ "ruda-driver-cuda",
+ "ruda-kernel",
+ "ruda-model",
+ "ruda-nn",
+ "ruda-store",
+ "ruda-tensor",
+ "ruda-tensor-device",
+ "serde",
+ "serde_json",
+ "tokenizers",
 ]
 
 [[package]]
@@ -5953,6 +5953,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruda-solver"
+version = "0.1.0"
+dependencies = [
+ "ruCCL",
+ "ruSPARSE",
+ "ruda-core",
+ "ruda-driver-cuda",
+ "ruda-kernel",
+ "serde_json",
+]
+
+[[package]]
 name = "ruda-store"
 version = "0.21.0"
 dependencies = [
@@ -6062,7 +6074,6 @@ dependencies = [
  "futures-lite",
  "log",
  "ruDNN",
- "ruFFT",
  "ruPRIM",
  "ruRAND",
  "ruSPARSE",
@@ -6070,6 +6081,7 @@ dependencies = [
  "ruda",
  "ruda-core",
  "ruda-driver-cuda",
+ "ruda-fft",
  "ruda-fusion",
  "ruda-kernel",
  "ruda-tensor",
@@ -6224,19 +6236,7 @@ dependencies = [
 name = "ruintegrate"
 version = "0.1.0"
 dependencies = [
- "rusolver",
-]
-
-[[package]]
-name = "rusolver"
-version = "0.1.0"
-dependencies = [
- "ruCCL",
- "ruSPARSE",
- "ruda-core",
- "ruda-driver-cuda",
- "ruda-kernel",
- "serde_json",
+ "ruda-solver",
 ]
 
 [[package]]

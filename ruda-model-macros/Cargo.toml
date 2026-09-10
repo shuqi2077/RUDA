@@ -48,3 +48,4 @@ invalid_html_tags = "deny"
 
 [dependencies.ruda-model-codegen]
 path = "../ruda-model-codegen"
+version = "0.21.0"
