@@ -1,4 +1,4 @@
-use ruda_core::ir::Visibility;
+use ruda_core::kernel::Visibility;
 
 use crate::cpp::{
     Dialect,

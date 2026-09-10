@@ -63,6 +63,16 @@ jobs:
           printf '%s\n' "$MIRROR_SSH_KEY" > "$key"
           printf '%s\n' 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$hosts"
           export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519 -o UserKnownHostsFile=$hosts"
-          split=$(git subtree split --prefix="$PREFIX" "$GITHUB_SHA")
-          test "$(git rev-parse "$split^{tree}")" = "$(git rev-parse "$GITHUB_SHA:$PREFIX")"
-          git push "git@github.com:shuqi2077/$MIRROR_REPOSITORY.git" "$split:refs/heads/main"
+          remote="git@github.com:shuqi2077/$MIRROR_REPOSITORY.git"
+          git fetch --no-tags "$remote" refs/heads/main
+          parent=$(git rev-parse FETCH_HEAD)
+          tree=$(git rev-parse "$GITHUB_SHA:$PREFIX")
+          if [ "$(git rev-parse "$parent^{tree}")" = "$tree" ]; then
+            exit 0
+          fi
+          commit=$(git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit-tree "$tree" -p "$parent" \
+            -m "$(git show -s --format=%s "$GITHUB_SHA")")
+          test "$(git rev-parse "$commit^{tree}")" = "$tree"
+          git push "$remote" "$commit:refs/heads/main"
