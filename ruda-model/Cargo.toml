@@ -1,0 +1,257 @@
+[[test]]
+name = "test_derive_config"
+path = "tests/test_derive_config.rs"
+
+[[test]]
+name = "test_derive_module"
+path = "tests/test_derive_module.rs"
+
+[[test]]
+name = "test_derive_record"
+path = "tests/test_derive_record.rs"
+
+[[test]]
+name = "test_record_resilience"
+path = "tests/test_record_resilience.rs"
+
+[package]
+edition = "2024"
+name = "ruda-model"
+version = "0.21.0"
+authors = [ "nathanielsimard <nathaniel.simard.42@gmail.com>",]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Ruda model configuration, module parameters, records and data loading."
+documentation = "https://github.com/shuqi2077/RUDA/blob/main/docs/en/README.md"
+readme = false
+keywords = [ "deep-learning", "machine-learning", "tensor", "pytorch", "ndarray",]
+categories = [ "science", "no-std", "embedded", "wasm",]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/shuqi2077/RUDA/tree/main/ruda-model"
+
+[features]
+audio = [ "ruda-dataset?/audio",]
+dataset = [ "dep:ruda-dataset",]
+ruda-dataset = [ "dep:ruda-dataset",]
+default = [ "std", "ruda-core/std", "ruda-core/id-tests-std", "ruda-tensor-config/std", "ruda-dataset?/default", "ruda-tensor/api-std",]
+distributed = [ "std", "ruda-tensor/api-distributed", "ruda-autodiff/distributed", "ruda-tensor-device?/distributed", "ruda-tensor-router/distributed",]
+doc = [ "std", "dataset", "audio", "ruda-core/std", "ruda-core/id-tests-std", "ruda-tensor-config/std", "ruda-dataset/doc", "ruda-tensor/api-std",]
+network = [ "dep:ruda-io",]
+record-item-custom-serde = [ "thiserror",]
+sqlite = [ "ruda-dataset?/sqlite",]
+sqlite-bundled = [ "ruda-dataset?/sqlite-bundled",]
+std = [ "bincode/std", "ruda-core/std", "ruda-core/id-tests-std", "ruda-tensor-config/std", "ruda-io?/std", "ruda-tensor/api-std", "flate2", "half/std", "log", "rand/std", "rmp-serde", "serde/std", "serde_json/std", "num-traits/std",]
+test-cuda = [ "cuda", "ruda-tensor-device/cuda-default", "ruda-core/id-tests-std",]
+test-memory-checks = [ "fusion", "ruda-fusion/memory-checks",]
+test-metal = [ "test-wgpu", "ruda-tensor-wgpu/metal",]
+test-rocm = [ "ruda-tensor-rocm/default",]
+test-tch = [ "ruda-tensor-tch/default",]
+test-vulkan = [ "test-wgpu", "ruda-tensor-wgpu/vulkan",]
+test-wgpu = [ "ruda-tensor-wgpu/default",]
+tracing = [ "ruda-core/tracing", "ruda-tensor-config/tracing", "ruda-tensor/api-tracing", "ruda-dataset?/tracing",]
+vision = [ "ruda-dataset?/vision",]
+cuda = [ "dep:ruda-tensor-device", "serde/default", "serde_json/default",]
+fusion = [ "dep:ruda-fusion", "ruda-kernel/frontend-tracing", "ruda-kernel/frontend-std", "ruda-core/id-tests-std",]
+
+[lib]
+name = "ruda_model"
+path = "src/lib.rs"
+
+[dependencies.ahash]
+version = "0.8.12"
+default-features = false
+
+[dependencies.bincode]
+version = "2.0.1"
+features = [ "alloc", "serde",]
+default-features = false
+
+[dependencies.ruda-dataset]
+path = "../ruda-dataset"
+optional = true
+default-features = false
+
+[dependencies.data-encoding]
+version = "2.11.0"
+features = [ "alloc",]
+default-features = false
+
+[dependencies.derive-new]
+version = "0.7.0"
+default-features = false
+
+[dependencies.flate2]
+version = "1.1.9"
+optional = true
+
+[dependencies.half]
+version = "2.7.1"
+features = [ "alloc", "num-traits", "serde",]
+default-features = false
+
+[dependencies.hashbrown]
+version = "0.16"
+features = [ "serde",]
+
+[dependencies.log]
+version = "0.4.29"
+optional = true
+default-features = false
+
+[dependencies.num-traits]
+version = "0.2.19"
+features = [ "libm",]
+default-features = false
+
+[dependencies.rand]
+version = "0.10.1"
+features = [ "std_rng",]
+default-features = false
+
+[dependencies.rmp-serde]
+version = "1.3.1"
+optional = true
+default-features = false
+
+[dependencies.serde]
+version = "1.0.228"
+features = [ "derive", "alloc", "derive",]
+default-features = false
+
+[dependencies.serde_json]
+version = "1.0.148"
+features = [ "alloc",]
+default-features = false
+
+[dependencies.spin]
+version = "0.10.0"
+features = [ "mutex", "spin_mutex", "portable-atomic",]
+
+[dependencies.thiserror]
+version = "2"
+optional = true
+default-features = false
+
+[dependencies.uuid]
+version = "1.23.0"
+default-features = false
+
+[dependencies.ruda-core]
+path = "../ruda-core"
+default-features = false
+features = [ "serde", "shared-bytes", "tensor-data", "id",]
+
+[dependencies.ruda-tensor]
+path = "../ruda-tensor"
+default-features = false
+features = [ "api",]
+
+[dependencies.ruda-model-macros]
+path = "../ruda-model-macros"
+default-features = false
+
+[dependencies.ruda-kernel]
+path = "../ruda-kernel"
+default-features = false
+optional = true
+features = ["frontend"]
+
+[dependencies.ruda-tensor-config]
+path = "../ruda-tensor-config"
+default-features = false
+
+[dependencies.ruda-io]
+path = "../ruda-io"
+default-features = false
+optional = true
+features = [ "network",]
+
+[dev-dependencies.ruda-dataset]
+path = "../ruda-dataset"
+features = [ "default", "fake",]
+default-features = false
+
+[dev-dependencies.ruda-tensor-host]
+path = "../ruda-tensor-host"
+features = [ "default",]
+default-features = false
+
+[dev-dependencies.rstest]
+version = "0.26.1"
+
+[dev-dependencies.serial_test]
+version = "3.2.0"
+
+[dev-dependencies.ruda-autodiff]
+features = [ "std", "tracing",]
+default-features = false
+path = "../ruda-autodiff"
+
+[dev-dependencies.ruda-kernel]
+path = "../ruda-kernel"
+default-features = false
+features = ["frontend-std", "frontend-tracing"]
+
+[lints.clippy]
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+invalid_html_tags = "deny"
+
+[package.metadata.docs.rs]
+features = [ "doc",]
+rustdoc-args = [ "--cfg", "docsrs",]
+
+[target."cfg(not(target_has_atomic = \"ptr\"))".dependencies.portable-atomic]
+version = "1.13.1"
+
+[target."cfg(not(target_has_atomic = \"ptr\"))".dependencies.portable-atomic-util]
+version = "0.2.6"
+features = [ "alloc",]
+
+[target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-tensor-remote]
+path = "../ruda-tensor-remote"
+optional = true
+default-features = false
+
+[target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-tensor-rocm]
+path = "../ruda-tensor-rocm"
+optional = true
+default-features = false
+
+[target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-tensor-router]
+path = "../ruda-tensor-router"
+optional = true
+default-features = false
+
+[target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-tensor-tch]
+path = "../ruda-tensor-tch"
+features = [ "default",]
+optional = true
+default-features = false
+
+[target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-tensor-wgpu]
+path = "../ruda-tensor-wgpu"
+optional = true
+default-features = false
+
+[target."cfg(target_has_atomic = \"ptr\")".dependencies.regex]
+version = "1.12.3"
+features = [ "perf", "unicode",]
+default-features = false
+
+[target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-tensor-device]
+optional = true
+default-features = false
+path = "../ruda-tensor-device"
+features = [ "cuda",]
+
+[target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-fusion]
+features = [ "std", "tracing",]
+optional = true
+default-features = false
+path = "../ruda-fusion"

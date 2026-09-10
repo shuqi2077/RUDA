@@ -1,0 +1,266 @@
+use alloc::format;
+use alloc::string::String;
+use alloc::sync::Arc;
+use core::{
+    any::{Any, TypeId},
+    fmt::Display,
+    hash::{Hash, Hasher},
+};
+use ruda_core::{
+    format::{DebugRaw, format_str},
+    hash::{StableHash, StableHasher},
+};
+use ruda_core::ir::AddressType;
+use derive_more::{Eq, PartialEq};
+
+use crate::runtime::server::{RudaDim, ExecutionMode};
+
+#[macro_export(local_inner_macros)]
+/// Create a new storage ID type.
+macro_rules! storage_id_type {
+    ($name:ident) => {
+        /// Storage ID.
+        #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug, PartialOrd, Ord)]
+        pub struct $name {
+            value: usize,
+        }
+
+        impl $name {
+            /// Create a new ID.
+            pub fn new() -> Self {
+                use core::sync::atomic::{AtomicUsize, Ordering};
+
+                static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+                let value = COUNTER.fetch_add(1, Ordering::Relaxed);
+                if value == usize::MAX {
+                    core::panic!("Memory ID overflowed");
+                }
+                Self { value }
+            }
+        }
+
+        impl Default for $name {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+    };
+}
+
+/// Kernel unique identifier.
+#[derive(Clone, PartialEq, Eq)]
+pub struct KernelId {
+    #[eq(skip)]
+    type_name: &'static str,
+    pub(crate) type_id: core::any::TypeId,
+    pub(crate) address_type: AddressType,
+    /// The [`RudaDim`] for this kernel
+    pub ruda_dim: RudaDim,
+    pub(crate) mode: ExecutionMode,
+    pub(crate) info: Option<Info>,
+}
+
+impl Hash for KernelId {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.type_id.hash(state);
+        self.address_type.hash(state);
+        self.ruda_dim.hash(state);
+        self.mode.hash(state);
+        self.info.hash(state);
+    }
+}
+
+impl core::fmt::Debug for KernelId {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        let mut debug_str = f.debug_struct("KernelId");
+        debug_str
+            .field("type", &DebugRaw(self.type_name))
+            .field("address_type", &self.address_type);
+        debug_str.field("ruda_dim", &self.ruda_dim);
+        debug_str.field("mode", &self.mode);
+        match &self.info {
+            Some(info) => debug_str.field("info", info),
+            None => debug_str.field("info", &self.info),
+        };
+        debug_str.finish()
+    }
+}
+
+impl Display for KernelId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match &self.info {
+            Some(info) => f.write_str(
+                format_str(
+                    format!("{info:?}").as_str(),
+                    &[('(', ')'), ('[', ']'), ('{', '}')],
+                    true,
+                )
+                .as_str(),
+            ),
+            None => f.write_str("No info"),
+        }
+    }
+}
+
+impl KernelId {
+    /// Create a new [kernel id](KernelId) for a type.
+    pub fn new<T: 'static>() -> Self {
+        Self {
+            type_id: core::any::TypeId::of::<T>(),
+            type_name: core::any::type_name::<T>(),
+            info: None,
+            ruda_dim: RudaDim::new_single(),
+            mode: ExecutionMode::Checked,
+            address_type: Default::default(),
+        }
+    }
+
+    /// Render the key in a standard format that can be used between runs.
+    ///
+    /// Can be used as a persistent kernel cache key.
+    pub fn stable_format(&self) -> String {
+        format!(
+            "{}-{}-{:?}-{:?}-{:?}",
+            self.type_name, self.address_type, self.ruda_dim, self.mode, self.info
+        )
+    }
+
+    /// Hash the key in a stable way that can be used between runs.
+    ///
+    /// Can be used as a persistent kernel cache key.
+    pub fn stable_hash(&self) -> StableHash {
+        let mut hasher = StableHasher::new();
+        self.type_name.hash(&mut hasher);
+        self.address_type.hash(&mut hasher);
+        self.ruda_dim.hash(&mut hasher);
+        self.mode.hash(&mut hasher);
+        self.info.hash(&mut hasher);
+
+        hasher.finalize()
+    }
+
+    /// Add information to the [kernel id](KernelId).
+    ///
+    /// The information is used to differentiate kernels of the same kind but with different
+    /// configurations, which affect the generated code.
+    pub fn info<I: 'static + PartialEq + Eq + Hash + core::fmt::Debug + Send + Sync>(
+        mut self,
+        info: I,
+    ) -> Self {
+        self.info = Some(Info::new(info));
+        self
+    }
+
+    /// Set the [execution mode](ExecutionMode).
+    pub fn mode(&mut self, mode: ExecutionMode) {
+        self.mode = mode;
+    }
+
+    /// Set the [ruda dim](RudaDim).
+    pub fn ruda_dim(mut self, ruda_dim: RudaDim) -> Self {
+        self.ruda_dim = ruda_dim;
+        self
+    }
+
+    /// Set the [`AddressType`].
+    pub fn address_type(mut self, addr_ty: AddressType) -> Self {
+        self.address_type = addr_ty;
+        self
+    }
+}
+
+impl core::fmt::Debug for Info {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.value.fmt(f)
+    }
+}
+
+impl Info {
+    fn new<T: 'static + PartialEq + Eq + Hash + core::fmt::Debug + Send + Sync>(id: T) -> Self {
+        Self {
+            value: Arc::new(id),
+        }
+    }
+}
+
+/// This trait allows various types to be used as keys within a single data structure.
+///
+/// The downside is that the hashing method is hardcoded and cannot be configured using the
+/// [`core::hash::Hash`] function. The provided [Hasher] will be modified, but only based on the
+/// result of the hash from the [`DefaultHasher`].
+trait DynKey: core::fmt::Debug + Send + Sync {
+    fn dyn_type_id(&self) -> TypeId;
+    fn dyn_eq(&self, other: &dyn DynKey) -> bool;
+    fn dyn_hash(&self, state: &mut dyn Hasher);
+    fn dyn_hash_one(&self) -> StableHash;
+    fn as_any(&self) -> &dyn Any;
+}
+
+impl PartialEq for Info {
+    fn eq(&self, other: &Self) -> bool {
+        self.value.dyn_eq(other.value.as_ref())
+    }
+}
+
+/// Extra information
+#[derive(Clone)]
+pub(crate) struct Info {
+    value: Arc<dyn DynKey>,
+}
+impl Eq for Info {}
+
+impl Hash for Info {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.value.dyn_type_id().hash(state);
+        self.value.dyn_hash(state)
+    }
+}
+
+impl<T: 'static + PartialEq + Eq + Hash + core::fmt::Debug + Send + Sync> DynKey for T {
+    fn dyn_eq(&self, other: &dyn DynKey) -> bool {
+        if let Some(other) = other.as_any().downcast_ref::<T>() {
+            self == other
+        } else {
+            false
+        }
+    }
+
+    fn dyn_type_id(&self) -> TypeId {
+        TypeId::of::<T>()
+    }
+
+    fn dyn_hash(&self, state: &mut dyn Hasher) {
+        let hash = self.dyn_hash_one();
+        state.write_u128(hash);
+    }
+
+    fn dyn_hash_one(&self) -> StableHash {
+        let mut hasher = StableHasher::new();
+        self.hash(&mut hasher);
+        hasher.finalize()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test_log::test]
+    pub fn kernel_id_hash() {
+        let value_1 = KernelId::new::<()>().info("1");
+        let value_2 = KernelId::new::<()>().info("2");
+
+        let mut set = HashSet::new();
+
+        set.insert(value_1.clone());
+
+        assert!(set.contains(&value_1));
+        assert!(!set.contains(&value_2));
+    }
+}

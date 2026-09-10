@@ -1,0 +1,52 @@
+[package]
+name = "ruda-kernel-macros"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = ["kernel-ir", "std"]
+kernel-ir = ["dep:darling", "dep:derive-new", "dep:ident_case", "dep:inflections", "dep:prettyplease", "dep:proc-macro-crate", "dep:ruda-core", "syn/extra-traits", "syn/visit-mut"]
+debug_symbols = ["kernel-ir"]
+std = ["kernel-ir"]
+tracing = ["kernel-ir", "ruda-core/tracing"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
+
+[lints]
+workspace = true
+
+[dependencies.darling]
+version = "0.23.0"
+optional = true
+
+[dependencies.derive-new]
+version = "0.7.0"
+default-features = false
+optional = true
+
+[dependencies.ident_case]
+version = "1"
+optional = true
+
+[dependencies.inflections]
+version = "1"
+optional = true
+
+[dependencies.prettyplease]
+version = "0.2"
+optional = true
+
+[dependencies.ruda-core]
+path = "../ruda-core"
+default-features = false
+optional = true
+
+[dependencies.proc-macro-crate]
+version = "3.5.0"
+optional = true

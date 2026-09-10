@@ -1,0 +1,481 @@
+use ruda_kernel::{dsl::{Runtime, RudaTuneId}, tensor::RudaTensor};
+use crate::tensor_matmul::{F32MathMode, launch_matmul_with_precision, launch_matmul_naive, utils::init_matmul_output};
+use ruda_core::tensor::DType;
+use ruda_kernel::library::tensor::MatrixBatchLayout;
+use ruda::runtime::tune::{LocalTuner, Tunable, TunableSet, TuneGroup};
+use crate::kernel_ir::{
+    components::tile::TileMatmulKind,
+    definition::MatmulKind,
+    launch::{MatmulAutotuneKey, MatmulGlobalScale, Strategy, should_tune_double_buffering},
+    routines::{
+        BlueprintStrategy, TileSizeSelection, double_buffering::DoubleBufferingArgs,
+        double_unit::DoubleUnitSelectionArgs, ordered_double_buffering::OrderedSelectionArgs,
+        simple::SimpleArgs, simple_unit::SimpleUnitSelectionArgs,
+    },
+};
+
+fn matmul_input_gen<R: Runtime>(
+    _key: &MatmulAutotuneKey,
+    (lhs, rhs, out): &(RudaTensor<R>, RudaTensor<R>, RudaTensor<R>),
+) -> (RudaTensor<R>, RudaTensor<R>, RudaTensor<R>) {
+    (lhs.clone(), rhs.clone(), out.copy())
+}
+
+/// Executes autotune on matmul operations
+pub fn matmul_autotune<R: Runtime>(
+    lhs: RudaTensor<R>,
+    rhs: RudaTensor<R>,
+    out: Option<RudaTensor<R>>,
+    out_dtype: DType,
+) -> RudaTensor<R> {
+    matmul_autotune_with_precision(lhs, rhs, out, out_dtype, F32MathMode::Strict)
+}
+
+/// Autotune with separate caches for strict F32 and explicitly permitted TF32.
+pub fn matmul_autotune_with_precision<R: Runtime>(
+    lhs: RudaTensor<R>,
+    rhs: RudaTensor<R>,
+    out: Option<RudaTensor<R>>,
+    out_dtype: DType,
+    f32_math: F32MathMode,
+) -> RudaTensor<R> {
+    let output = out.unwrap_or_else(|| init_matmul_output(&lhs, &rhs, out_dtype));
+
+    let client = lhs.client.clone();
+    let num_cpu_cores = client.properties().hardware.num_cpu_cores;
+
+    static STRICT_TUNER: LocalTuner<MatmulAutotuneKey, RudaTuneId> = LocalTuner::new("rublas::matmul::strict_f32::v1");
+    static TF32_TUNER: LocalTuner<MatmulAutotuneKey, RudaTuneId> = LocalTuner::new("rublas::matmul::allow_tf32::v1");
+    let tuner = match f32_math {
+        F32MathMode::Strict => &STRICT_TUNER,
+        F32MathMode::AllowTf32 => &TF32_TUNER,
+    };
+
+    let tunables = tuner.init(move || {
+        const PRIORITY_MAX: i8 = 3;
+        const PRIORITY_HIGH: i8 = 2;
+        const PRIORITY_MEDIUM: i8 = 1;
+        const PRIORITY_MIN: i8 = 0;
+        const PRIORITY_NEVER: i8 = -1;
+
+        let accelerated = TuneGroup::<MatmulAutotuneKey>::new("accelerated", |key| {
+            if matches!(key.analysis.kind, MatmulKind::General) {
+                match key.analysis.scale_global {
+                    MatmulGlobalScale::Large => PRIORITY_MAX,
+                    _ => PRIORITY_HIGH,
+                }
+
+            // In some case when a relayout can be fused (no call to into_contiguous) it's better
+            // to use accelerated matmul.
+            //
+            // TODO: Actually implement good gemv with fused relayout.
+            } else if matches!(key.analysis.kind, MatmulKind::MatVec | MatmulKind::VecMat) {
+                PRIORITY_HIGH
+            } else {
+                PRIORITY_MEDIUM
+            }
+        });
+
+        let unit = TuneGroup::<MatmulAutotuneKey>::new("unit", |key| {
+            if !matches!(key.analysis.kind, MatmulKind::General)
+                || matches!(key.analysis.scale_global, MatmulGlobalScale::Small)
+            {
+                PRIORITY_HIGH
+            } else {
+                PRIORITY_MEDIUM
+            }
+        });
+
+        let tma = TuneGroup::<MatmulAutotuneKey>::new("tma", |key| {
+            // For large matmul, we set the max priority to TMA kernels, higher than any other
+            // matmuls, since they are the best kernels no matter what.
+            //
+            // But only when all axis are large.
+            let max_axis = usize::max(key.definition.m, key.definition.n);
+            let max_axis = usize::max(key.definition.k, max_axis);
+
+            let min_axis = usize::min(key.definition.m, key.definition.n);
+            let min_axis = usize::min(key.definition.k, min_axis);
+
+            let skewed_factor = max_axis / min_axis;
+
+            let priority_max = if matches!(key.analysis.kind, MatmulKind::General)
+                && matches!(key.analysis.scale_global, MatmulGlobalScale::Large)
+                && skewed_factor < 4
+            {
+                PRIORITY_MAX
+            } else {
+                PRIORITY_HIGH
+            };
+
+            if key.definition.lhs_stride_factor >= 4 && key.definition.rhs_stride_factor >= 4 {
+                priority_max
+            } else {
+                PRIORITY_NEVER
+            }
+        });
+
+        let gemv = TuneGroup::<MatmulAutotuneKey>::new("gemv", move |key| {
+            if num_cpu_cores.is_some() {
+                return PRIORITY_MAX;
+            }
+
+            if matches!(key.analysis.kind, MatmulKind::MatVec) {
+                // LHS is the matrix
+                match key.definition.matrix_layout_lhs {
+                    MatrixBatchLayout::Contiguous => PRIORITY_MAX,
+                    MatrixBatchLayout::MildlyPermuted { transposed, .. } => {
+                        // We don't yet have algo which are good for col major matvec.
+                        if transposed {
+                            PRIORITY_HIGH
+                        } else {
+                            PRIORITY_MAX
+                        }
+                    }
+                    // Every algo will need to relayout, in this case, we should take the optimal
+                    // kernel with a gemv.
+                    MatrixBatchLayout::HighlyPermuted => PRIORITY_MAX,
+                }
+            } else if matches!(key.analysis.kind, MatmulKind::VecMat) {
+                // RHS is the matrix
+                match key.definition.matrix_layout_rhs {
+                    // We don't have good algos for row major vecmat.
+                    MatrixBatchLayout::Contiguous => PRIORITY_HIGH,
+                    MatrixBatchLayout::MildlyPermuted { transposed, .. } => {
+                        // Best algo is col major vec mat.
+                        if transposed {
+                            PRIORITY_MAX
+                        } else {
+                            PRIORITY_HIGH
+                        }
+                    }
+                    // TODO: Actually do the correct relayout here.
+                    //
+                    // Every algo will need to relayout, in this case, we should take the optimal
+                    // kernel with a gemv.
+                    MatrixBatchLayout::HighlyPermuted => PRIORITY_HIGH,
+                }
+            } else {
+                PRIORITY_NEVER
+            }
+        });
+
+        fn double_buffering_priority(key: &MatmulAutotuneKey, max: i8, min: i8) -> i8 {
+            if should_tune_double_buffering(false, key) {
+                max
+            } else {
+                min
+            }
+        }
+
+        let mut set = TunableSet::new(create_key::<R>, matmul_input_gen::<R>);
+
+        // First entry should always work, since it is considered the fallback.
+        set = set.with(
+            Tunable::new("matmul_naive", |(lhs, rhs, out)| {
+                launch_matmul_naive::<R>(&Strategy::Naive, lhs, rhs, out)
+                    .map_err(|err| std::format!("{err:?}"))
+            })
+            .group(&unit, |key| {
+                if matches!(key.analysis.kind, MatmulKind::InnerProduct) {
+                    PRIORITY_MAX
+                } else if matches!(key.analysis.scale_global, MatmulGlobalScale::Small) {
+                    PRIORITY_HIGH
+                } else {
+                    PRIORITY_MIN
+                }
+            }),
+        );
+
+        // Matrix Vector multiplication kernels.
+        for (strategy, double_buf) in [
+            (
+                Strategy::DoubleVecMat(BlueprintStrategy::Inferred(().into())),
+                true,
+            ),
+            (
+                Strategy::SimpleVecMat(BlueprintStrategy::Inferred(().into())),
+                false,
+            ),
+            (
+                Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(Default::default())),
+                false,
+            ),
+            (
+                Strategy::GemvUnitPerpendicular(BlueprintStrategy::Inferred(Default::default())),
+                false,
+            ),
+        ] {
+            set = set.with(
+                Tunable::new(&strategy.to_string(), move |(lhs, rhs, out)| {
+                    launch_matmul_with_precision::<R>(&strategy, lhs, rhs, out, f32_math)
+                        .map_err(|err| std::format!("{err:?}"))
+                })
+                .group(&gemv, move |key| match double_buf {
+                    false => PRIORITY_MAX,
+                    true => double_buffering_priority(key, PRIORITY_MAX, PRIORITY_HIGH),
+                }),
+            );
+        }
+
+        // Unit matmuls
+        for tile_size in [
+            TileSizeSelection::MaxTileSize,
+            TileSizeSelection::MinTileSize,
+        ] {
+            for (strategy, double_buf) in [
+                (
+                    Strategy::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
+                        tile_size,
+                    })),
+                    false,
+                ),
+                (
+                    Strategy::DoubleUnit(BlueprintStrategy::Inferred(DoubleUnitSelectionArgs {
+                        tile_size,
+                    })),
+                    true,
+                ),
+            ] {
+                set = set.with(
+                    Tunable::new(&strategy.to_string(), move |(lhs, rhs, out)| {
+                        launch_matmul_with_precision::<R>(&strategy, lhs, rhs, out, f32_math)
+                            .map_err(|err| format!("{err:?}"))
+                    })
+                    .group(&unit, move |key| match double_buf {
+                        false => PRIORITY_MAX,
+                        true => double_buffering_priority(key, PRIORITY_MAX, PRIORITY_HIGH),
+                    }),
+                )
+            }
+        }
+
+        // Accelerated matmuls
+        for (strategy, double_buf, group_extra, tile_group) in [
+            (
+                Strategy::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
+                    multi_rows: false,
+                    tile_matmul: TileMatmulKind::Cmma,
+                })),
+                false,
+                None,
+                &accelerated,
+            ),
+            (
+                Strategy::SimpleCyclicMma(BlueprintStrategy::Inferred(SimpleArgs {
+                    multi_rows: false,
+                    tile_matmul: TileMatmulKind::Mma,
+                })),
+                false,
+                None,
+                &accelerated,
+            ),
+            (
+                Strategy::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
+                    multi_rows: true,
+                    tile_matmul: TileMatmulKind::Cmma,
+                })),
+                false,
+                None,
+                &accelerated,
+            ),
+            (
+                Strategy::SimpleCyclicMma(BlueprintStrategy::Inferred(SimpleArgs {
+                    multi_rows: true,
+                    tile_matmul: TileMatmulKind::Mma,
+                })),
+                false,
+                None,
+                &accelerated,
+            ),
+            (
+                Strategy::OrderedDoubleCmma(BlueprintStrategy::Inferred(OrderedSelectionArgs {
+                    partition_k: Some(2),
+                    row_count: Some(4),
+                    rows_per_plane: Some(2),
+                    tile_matmul: TileMatmulKind::Cmma,
+                })),
+                true,
+                None,
+                &accelerated,
+            ),
+            (
+                Strategy::OrderedDoubleMma(BlueprintStrategy::Inferred(OrderedSelectionArgs {
+                    partition_k: Some(2),
+                    row_count: Some(4),
+                    rows_per_plane: Some(2),
+                    tile_matmul: TileMatmulKind::Mma,
+                })),
+                true,
+                None,
+                &accelerated,
+            ),
+            (
+                Strategy::OrderedDoubleCmma(BlueprintStrategy::Inferred(OrderedSelectionArgs {
+                    partition_k: Some(2),
+                    row_count: Some(8),
+                    rows_per_plane: Some(2),
+                    tile_matmul: TileMatmulKind::Cmma,
+                })),
+                true,
+                None,
+                &accelerated,
+            ),
+            (
+                Strategy::OrderedDoubleMma(BlueprintStrategy::Inferred(OrderedSelectionArgs {
+                    partition_k: Some(2),
+                    row_count: Some(8),
+                    rows_per_plane: Some(2),
+                    tile_matmul: TileMatmulKind::Mma,
+                })),
+                true,
+                None,
+                &accelerated,
+            ),
+            (
+                Strategy::DoubleCyclicCmma(BlueprintStrategy::Inferred(DoubleBufferingArgs {
+                    specialized: false,
+                    tile_matmul: TileMatmulKind::Cmma,
+                })),
+                true,
+                None,
+                &accelerated,
+            ),
+            (
+                Strategy::DoubleCyclicMma(BlueprintStrategy::Inferred(DoubleBufferingArgs {
+                    specialized: false,
+                    tile_matmul: TileMatmulKind::Mma,
+                })),
+                true,
+                None,
+                &accelerated,
+            ),
+            (
+                Strategy::DoubleCyclicCmma(BlueprintStrategy::Inferred(DoubleBufferingArgs {
+                    specialized: true,
+                    tile_matmul: TileMatmulKind::Cmma,
+                })),
+                true,
+                None,
+                &accelerated,
+            ),
+            (
+                Strategy::DoubleCyclicMma(BlueprintStrategy::Inferred(DoubleBufferingArgs {
+                    specialized: true,
+                    tile_matmul: TileMatmulKind::Mma,
+                })),
+                true,
+                None,
+                &accelerated,
+            ),
+            (
+                Strategy::SpecializedCyclicCmma(BlueprintStrategy::Inferred(().into())),
+                true,
+                None,
+                &accelerated,
+            ),
+            (
+                Strategy::SpecializedCyclicMma(BlueprintStrategy::Inferred(().into())),
+                true,
+                None,
+                &accelerated,
+            ),
+            (
+                Strategy::SimpleTmaCmma(BlueprintStrategy::Inferred(SimpleArgs {
+                    multi_rows: false,
+                    tile_matmul: TileMatmulKind::Cmma,
+                })),
+                false,
+                Some(&tma),
+                &accelerated,
+            ),
+            (
+                Strategy::SimpleTmaMma(BlueprintStrategy::Inferred(SimpleArgs {
+                    multi_rows: false,
+                    tile_matmul: TileMatmulKind::Mma,
+                })),
+                false,
+                Some(&tma),
+                &accelerated,
+            ),
+            (
+                Strategy::SimpleTmaCmma(BlueprintStrategy::Inferred(SimpleArgs {
+                    multi_rows: true,
+                    tile_matmul: TileMatmulKind::Cmma,
+                })),
+                false,
+                Some(&tma),
+                &accelerated,
+            ),
+            (
+                Strategy::SimpleTmaMma(BlueprintStrategy::Inferred(SimpleArgs {
+                    multi_rows: true,
+                    tile_matmul: TileMatmulKind::Mma,
+                })),
+                false,
+                Some(&tma),
+                &accelerated,
+            ),
+            (
+                Strategy::SpecializedTmaCmma(BlueprintStrategy::Inferred(().into())),
+                true,
+                Some(&tma),
+                &accelerated,
+            ),
+            (
+                Strategy::SpecializedTmaMma(BlueprintStrategy::Inferred(().into())),
+                true,
+                Some(&tma),
+                &accelerated,
+            ),
+        ] {
+            let priority_within_group = |key: &MatmulAutotuneKey, double_buf: bool| match double_buf
+            {
+                false => PRIORITY_MAX,
+                true => double_buffering_priority(key, PRIORITY_MAX, PRIORITY_HIGH),
+            };
+            let mut tunable = Tunable::new(&strategy.to_string(), move |(lhs, rhs, out)| {
+                launch_matmul_with_precision::<R>(&strategy, lhs, rhs, out, f32_math).map_err(|err| format!("{err:?}"))
+            });
+
+            // tile group
+            tunable = tunable.group(tile_group, move |key| {
+                priority_within_group(key, double_buf)
+            });
+
+            // extra group
+            if let Some(group) = group_extra {
+                tunable = tunable.group(group, move |key| priority_within_group(key, double_buf));
+            }
+            set = set.with(tunable);
+        }
+
+        set
+    });
+
+    tuner.execute(
+        &RudaTuneId::new(&lhs.client, &lhs.device),
+        &client,
+        tunables,
+        (lhs, rhs, output.clone()),
+    );
+
+    output
+}
+
+fn create_key<R: Runtime>(
+    (lhs, rhs, out): &(RudaTensor<R>, RudaTensor<R>, RudaTensor<R>),
+) -> MatmulAutotuneKey {
+    MatmulAutotuneKey::generate(
+        &lhs.client,
+        lhs.meta.shape(),
+        rhs.meta.shape(),
+        lhs.meta.strides(),
+        rhs.meta.strides(),
+        lhs.dtype.into(),
+        rhs.dtype.into(),
+        out.dtype.into(),
+        lhs.try_scheme(),
+        rhs.try_scheme(),
+    )
+}

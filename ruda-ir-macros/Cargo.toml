@@ -1,0 +1,47 @@
+[package]
+edition = "2024"
+name = "ruda-ir-macros"
+authors = [ "nathanielsimard <nathaniel.simard.42@gmail.com>", "louisfd <louisfd94@gmail.com",]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Procedural macros for Ruda intermediate-representation implementations."
+readme = false
+keywords = []
+categories = [ "science",]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/shuqi2077/RUDA/tree/main/ruda-ir-macros"
+
+[lib]
+name = "ruda_ir_macros"
+path = "src/lib.rs"
+proc-macro = true
+
+[package.version]
+workspace = true
+
+[dependencies.darling]
+version = "0.23.0"
+
+[dependencies.proc-macro2]
+version = "1"
+
+[dependencies.quote]
+version = "1"
+
+[dependencies.syn]
+version = "2"
+features = [ "full", "extra-traits", "visit-mut",]
+
+[lints.clippy]
+doc_markdown = "warn"
+
+[lints.rust]
+warnings = "warn"
+
+[lints.rustdoc]
+broken_intra_doc_links = "warn"
+invalid_html_tags = "warn"

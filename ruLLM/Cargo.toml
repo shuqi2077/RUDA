@@ -1,0 +1,45 @@
+[package]
+name = "ruLLM"
+version.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+description = "Model loading and autoregressive inference on the Ruda compute stack"
+
+[lib]
+name = "rullm"
+
+[features]
+default = []
+nvidia = ["ruda-tensor-device/cuda", "ruda-tensor-device/autotune", "dep:ruda-driver-cuda"]
+nvidia-ptx = ["nvidia", "ruda-driver-cuda/direct-ptx"]
+
+[dependencies]
+ruda-model = { path = "../ruda-model", default-features = false, features = ["std"] }
+ruda-nn = { path = "../ruda-nn", default-features = false, features = ["std"] }
+ruda-tensor = { path = "../ruda-tensor", default-features = false, features = ["std", "kernel"] }
+ruda-tensor-device = { path = "../ruda-tensor-device", default-features = false, features = ["std", "fusion"] }
+ruda-store = { path = "../ruda-store", default-features = false, features = ["std", "safetensors", "memmap"] }
+ruda-kernel = { path = "../ruda-kernel", default-features = false, features = ["frontend-std", "library"] }
+ruda-core = { path = "../ruda-core", default-features = false, features = ["std", "ir", "tensor"] }
+ruda = { path = "../ruda", default-features = false, features = ["runtime", "runtime-std", "runtime-storage-bytes"] }
+ruda-driver-cuda = { path = "../ruda-driver-cuda", default-features = false, features = ["std"], optional = true }
+rublas = { path = "../ruBLAS", default-features = false, features = ["tensor-int4", "tensor-matmul", "std"] }
+rudnn = { package = "ruDNN", path = "../ruDNN", default-features = false, features = ["tensor-gated-delta", "tensor-normalization", "std"] }
+half = "=2.7.1"
+chacha20 = { version = "=0.10.2", default-features = false, features = ["rng"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png"] }
+libjpeg-turbo-rs = "=0.8.0"
+tokenizers = { version = "0.22.2", default-features = false, features = ["onig"] }
+
+[lints]
+workspace = true
+
+[[example]]
+name = "qwen2_generate"
+required-features = ["nvidia"]
+
+[[example]]
+name = "qwen35_generate"
+required-features = ["nvidia"]

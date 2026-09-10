@@ -1,0 +1,115 @@
+[package]
+edition = "2024"
+name = "ruda-communication"
+version = "0.21.0"
+authors = [ "Guilhem Ané (@Cielbird)", "Nathaniel Simard (@nathanielsimard)",]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Ruda communication protocols, WebSocket transport and tensor data service."
+readme = false
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/shuqi2077/RUDA/tree/main/ruda-communication"
+resolver = "2"
+
+[features]
+data-service = [ "ruda-tensor",]
+tracing = [ "ruda-core/tracing", "ruda-tensor-config/tracing", "ruda-tensor?/api-tracing",]
+websocket = [ "axum", "tokio-tungstenite", "futures",]
+
+[lib]
+name = "ruda_communication"
+path = "src/lib.rs"
+
+[dependencies.axum]
+version = "0.8.8"
+features = [ "ws",]
+optional = true
+
+[dependencies.bytes]
+version = "1.11.1"
+default-features = false
+
+[dependencies.derive-new]
+version = "0.7.0"
+default-features = false
+
+[dependencies.futures]
+version = "0.3"
+optional = true
+
+[dependencies.futures-util]
+version = "0.3"
+
+[dependencies.log]
+version = "0.4.29"
+default-features = false
+
+[dependencies.rmp-serde]
+version = "1.3.1"
+default-features = false
+
+[dependencies.serde]
+version = "1.0.228"
+features = [ "derive", "alloc", "derive",]
+default-features = false
+
+[dependencies.serde_bytes]
+version = "0.11.18"
+features = [ "alloc",]
+default-features = false
+
+[dependencies.tokio]
+version = "1.51.1"
+features = [ "rt", "macros", "rt-multi-thread", "sync", "signal", "tracing",]
+
+[dependencies.tokio-tungstenite]
+version = "0.29"
+optional = true
+
+[dependencies.tokio-util]
+version = "0.7"
+
+[dependencies.tracing]
+version = "0.1.44"
+features = [ "default",]
+default-features = false
+
+[dependencies.tracing-core]
+version = "0.1.36"
+features = [ "default",]
+default-features = false
+
+[dependencies.tracing-subscriber]
+version = "0.3.23"
+features = [ "default", "fmt", "env-filter",]
+
+[dependencies.ruda-core]
+path = "../ruda-core"
+default-features = false
+features = [ "std", "serde", "shared-bytes", "tensor-data", "id", "id-tests-std",]
+
+[dependencies.ruda-tensor-config]
+path = "../ruda-tensor-config"
+default-features = false
+features = [ "std",]
+
+[dependencies.ruda-tensor]
+path = "../ruda-tensor"
+default-features = false
+features = [ "api-std",]
+optional = true
+
+[dependencies.half]
+version = "2.7.1"
+features = ["alloc", "num-traits", "serde", "bytemuck"]
+default-features = false
+
+[lints.clippy]
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+invalid_html_tags = "deny"

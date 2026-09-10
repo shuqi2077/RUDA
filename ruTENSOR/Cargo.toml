@@ -1,0 +1,19 @@
+[package]
+name = "ruTENSOR"
+version.workspace = true
+edition.workspace = true
+description = "Ruda tensor contractions, reductions, permutations and elementwise operations"
+
+[lib]
+name = "rutensor"
+
+[features]
+default = ["std"]
+std = ["ruda-core/std", "ruda-kernel/frontend-std"]
+
+[dependencies]
+ruda-core = { path = "../ruda-core", default-features = false, features = ["tensor"] }
+ruda-kernel = { path = "../ruda-kernel", default-features = false, features = ["kernel-ir", "device-tensor"] }
+
+[lints.rust]
+unsafe_code = "deny"

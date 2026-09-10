@@ -1,0 +1,107 @@
+use super::{ConvOptions, UnfoldOptions};
+use crate::tensor::FloatTensor;
+use crate::{Backend, TensorData, TensorMetadata, element::ElementConversion};
+use alloc::vec;
+use alloc::vec::Vec;
+use ruda_core::tensor::{DType, Shape};
+
+/// Constructs a special weight tensor used for unfolding.
+///
+/// # Notes
+///
+/// The idea behind using convolution for unfolding is to leverage the sliding window mechanism of
+/// convolution. By creating a weight tensor with ones in a particular pattern, we are able to borrow
+/// the convolution operation's mechanism as it moves across the input tensor, picking up the desired
+/// values in the pattern of the unfolding operation.
+pub(crate) fn create_unfolding_weight<B: Backend>(
+    in_channels: usize,
+    kernel_size: [usize; 2],
+    device: &B::Device,
+    dtype: DType,
+) -> FloatTensor<B> {
+    let shape = Shape::new([
+        in_channels * kernel_size[0] * kernel_size[1],
+        in_channels,
+        kernel_size[0],
+        kernel_size[1],
+    ]);
+
+    let mut strides = [0; 4];
+    let mut current = 1;
+    shape.iter().enumerate().rev().for_each(|(index, val)| {
+        strides[index] = current;
+        current *= val;
+    });
+
+    let num_elements = shape.num_elements();
+
+    let mut weight: Vec<B::FloatElem> = vec![0.0.elem(); num_elements];
+
+    for k in 0..in_channels {
+        for i in 0..kernel_size[0] {
+            for j in 0..kernel_size[1] {
+                let output_channel = k * kernel_size[0] * kernel_size[1] + i * kernel_size[1] + j;
+                let index =
+                    output_channel * strides[0] + k * strides[1] + i * strides[2] + j * strides[3];
+
+                weight[index] = 1.elem();
+            }
+        }
+    }
+
+    B::float_from_data(TensorData::new(weight, shape).convert_dtype(dtype), device)
+}
+
+/// Compute the unfold4d operation using the conv2d operations.
+pub(crate) fn unfold4d_using_conv2d<B: Backend>(
+    x: FloatTensor<B>,
+    kernel_size: [usize; 2],
+    options: UnfoldOptions,
+) -> FloatTensor<B> {
+    let [_batch_size, in_channels, _in_height, _in_width] = x.shape().dims();
+    let weight =
+        create_unfolding_weight::<B>(in_channels, kernel_size, &B::float_device(&x), x.dtype());
+    let unfolded = B::conv2d(
+        x,
+        weight,
+        None,
+        ConvOptions::new(options.stride, options.padding, options.dilation, 1),
+    );
+
+    let [batch_size, channels_out, out_height, out_width] = unfolded.shape().dims();
+
+    B::float_reshape(
+        unfolded,
+        Shape::new([batch_size, channels_out, out_height * out_width]),
+    )
+}
+
+pub use ruda_core::tensor::spatial::{calculate_unfold_windows, calculate_unfold_shape};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_calculate_unfold_windows() {
+        assert_eq!(calculate_unfold_windows(2, 5, 1), 0);
+
+        assert_eq!(calculate_unfold_windows(2, 3, 1), 0);
+        assert_eq!(calculate_unfold_windows(3, 3, 1), 1);
+        assert_eq!(calculate_unfold_windows(4, 3, 1), 2);
+        assert_eq!(calculate_unfold_windows(5, 3, 1), 3);
+
+        assert_eq!(calculate_unfold_windows(2, 3, 2), 0);
+        assert_eq!(calculate_unfold_windows(3, 3, 2), 1);
+        assert_eq!(calculate_unfold_windows(4, 3, 2), 1);
+        assert_eq!(calculate_unfold_windows(5, 3, 2), 2);
+    }
+
+    #[test]
+    fn test_calculate_unfold_shape() {
+        assert_eq!(
+            calculate_unfold_shape([2, 6, 6], 1, 3, 2),
+            Shape::new([2, 2, 6, 3])
+        );
+    }
+}

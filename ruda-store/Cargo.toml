@@ -1,0 +1,185 @@
+[[example]]
+name = "rudapack_inspect"
+path = "examples/rudapack_inspect.rs"
+
+[[example]]
+name = "half_precision"
+path = "examples/half_precision.rs"
+
+[[bench]]
+name = "resnet18_loading"
+path = "benches/resnet18_loading.rs"
+harness = false
+
+[[bench]]
+name = "unified_loading"
+path = "benches/unified_loading.rs"
+harness = false
+
+[[bench]]
+name = "unified_saving"
+path = "benches/unified_saving.rs"
+harness = false
+
+[[bench]]
+name = "zero_copy_loading"
+path = "benches/zero_copy_loading.rs"
+harness = false
+
+[package]
+edition = "2024"
+name = "ruda-store"
+version = "0.21.0"
+authors = [ "Dilshod Tadjibaev (@antimora)",]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Ruda model storage, tensor snapshots and serialization formats."
+documentation = "https://github.com/shuqi2077/RUDA/blob/main/docs/en/README.md"
+readme = false
+keywords = [ "deep-learning", "machine-learning", "tensor", "storage", "serialization",]
+categories = [ "science", "no-std", "embedded", "wasm",]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/shuqi2077/RUDA/tree/main/ruda-store"
+
+[features]
+rudapack = [ "serde", "ciborium",]
+cuda = [ "dep:ruda-tensor-device", "ruda-core/id-tests-std", "serde/default", "serde_json/default",]
+default = [ "std", "pytorch", "safetensors", "rudapack", "memmap",]
+memmap = [ "std", "dep:memmap2",]
+metal = [ "wgpu", "ruda-tensor-wgpu/metal",]
+pytorch = [ "ruda-model/record-item-custom-serde", "zip", "serde", "tar",]
+safetensors = [ "dep:safetensors",]
+std = [ "dep:memmap2", "safetensors/std", "ruda-model/std", "ruda-tensor/api-std", "dep:regex", "byteorder/std",]
+tch = [ "ruda-tensor-tch",]
+tracing = [ "ruda-model/tracing", "ruda-tensor-device?/tracing", "ruda-nn/tracing", "ruda-tensor-tch?/tracing", "ruda-tensor/api-tracing", "ruda-tensor-wgpu?/tracing",]
+wgpu = [ "ruda-tensor-wgpu",]
+
+[lib]
+name = "ruda_store"
+path = "src/lib.rs"
+
+[dependencies.ruda-tensor-tch]
+path = "../ruda-tensor-tch"
+features = [ "default",]
+optional = true
+default-features = false
+
+[dependencies.ruda-tensor-wgpu]
+path = "../ruda-tensor-wgpu"
+features = [ "default",]
+optional = true
+default-features = false
+
+[dependencies.byteorder]
+version = "1.5.0"
+default-features = false
+
+[dependencies.bytes]
+version = "1.11.1"
+default-features = false
+
+[dependencies.ciborium]
+version = "0.2"
+optional = true
+default-features = false
+
+[dependencies.half]
+version = "2.7.1"
+features = [ "alloc", "num-traits", "serde",]
+default-features = false
+
+[dependencies.hashbrown]
+version = "0.16"
+features = [ "serde",]
+
+[dependencies.lzma-rust2]
+version = "0.16.2"
+optional = true
+
+[dependencies.memmap2]
+version = "0.9"
+optional = true
+
+[dependencies.regex]
+version = "1.12.3"
+features = [ "perf", "unicode",]
+optional = true
+default-features = false
+
+[dependencies.safetensors]
+version = "0.7.0"
+optional = true
+default-features = false
+
+[dependencies.serde]
+version = "1.0.228"
+features = [ "derive", "alloc",]
+optional = true
+default-features = false
+
+[dependencies.tar]
+version = "0.4.45"
+optional = true
+
+[dependencies.textdistance]
+version = "1.1.1"
+default-features = false
+
+[dependencies.zip]
+version = "8.6.0"
+optional = true
+
+[dependencies.ruda-model]
+default-features = false
+path = "../ruda-model"
+
+[dependencies.ruda-tensor]
+default-features = false
+path = "../ruda-tensor"
+features = [ "api",]
+
+[dependencies.ruda-tensor-device]
+features = [ "cuda-default",]
+optional = true
+default-features = false
+path = "../ruda-tensor-device"
+
+[dependencies.ruda-core]
+path = "../ruda-core"
+default-features = false
+optional = true
+
+[dependencies.serde_json]
+version = "1.0.148"
+default-features = false
+optional = true
+
+[dev-dependencies.ruda-tensor-host]
+path = "../ruda-tensor-host"
+features = [ "default",]
+default-features = false
+
+[dev-dependencies.divan]
+version = "0.1"
+
+[dev-dependencies.tempfile]
+version = "3.24.0"
+
+[dev-dependencies.ruda-nn]
+default-features = false
+path = "../ruda-nn"
+
+[lints.clippy]
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+invalid_html_tags = "deny"
+
+[target."cfg(not(target_has_atomic = \"ptr\"))".dependencies.bytes]
+version = "1.11.1"
+features = [ "extra-platforms",]
+default-features = false

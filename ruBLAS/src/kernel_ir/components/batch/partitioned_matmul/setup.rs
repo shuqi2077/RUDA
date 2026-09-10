@@ -1,0 +1,117 @@
+use ruda_kernel::dsl as kernel_dsl;
+use std::marker::PhantomData;
+
+use crate::kernel_ir::components::{
+    batch::partitioned_matmul::config::PartitionedBatchConfig, stage::NumStages,
+};
+use crate::kernel_ir::{
+    components::batch::partitioned_matmul::matmul::PartitionedBatchMatmul,
+    components::batch::partitioned_matmul::matmul::matmul_entry,
+    components::batch::partitioned_matmul::partition::GlobalPartitionMatmul,
+    components::global::GlobalMatmulFamily,
+};
+use crate::kernel_ir::{
+    definition::RudaMappingLaunch,
+    definition::MatmulProblem,
+    definition::MatmulVectorSizes,
+    definition::TilingBlueprint,
+    definition::{MatmulElems, MatmulSetupError, MatmulTypes},
+    launch::*,
+    {components::RudaDimResource, launch::RuntimeConfig},
+    {components::batch::BatchMatmulFamily, launch::ConfigRuntimeArg},
+};
+use ruda_kernel::dsl::ir::DeviceProperties;
+use ruda_kernel::dsl::prelude::*;
+
+/// Simple partitioned batch matmul family for any precision
+pub struct PartitionedBatchMatmulFamily<
+    RC: RuntimeConfig,
+    GMM: GlobalMatmulFamily<RC>,
+    S: GlobalPartitionMatmul,
+> {
+    _rc: PhantomData<RC>,
+    _gmm: PhantomData<GMM>,
+    _s: PhantomData<S>,
+}
+
+impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> BatchMatmulFamily<RC>
+    for PartitionedBatchMatmulFamily<RC, GMM, S>
+{
+    type Matmul<MP: MatmulTypes> = PartitionedBatchMatmul<RC, MP, GMM::Matmul<MP>, S>;
+    type Config = PartitionedBatchConfig<GMM::Config>;
+    type Blueprint = TilingBlueprint;
+
+    fn expand_config(
+        device_props: &DeviceProperties,
+        blueprint: &Self::Blueprint,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<Self::Config, MatmulSetupError> {
+        let global_config = GMM::expand_config(device_props, blueprint, dtypes, vector_sizes)?;
+
+        Ok(PartitionedBatchConfig::new(
+            global_config,
+            blueprint.tiling_scheme.global_partition_size,
+        ))
+    }
+
+    fn num_stages() -> NumStages {
+        GMM::num_stages()
+    }
+
+    unsafe fn launch_unchecked<MA: MatmulArgs<Config = RC>, R: Runtime>(
+        client: &ComputeClient<R>,
+        ruda_dim: RudaDim,
+        ruda_count: RudaCount,
+        address_type: AddressType,
+        input: InputRuntimeArg<MA, R>,
+        output: OutputRuntimeArg<MA, R>,
+        config: ConfigRuntimeArg<MA, R>,
+        ruda_count_input: RudaMappingLaunch<R>,
+        blueprint: Self::Blueprint,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), LaunchError> {
+        unsafe {
+            matmul_entry::launch_unchecked::<MA, Lhs, LhsSize, Rhs, RhsSize, Acc, AccSize, GMM, S, R>(
+                client,
+                ruda_count,
+                ruda_dim,
+                address_type,
+                input,
+                output,
+                config,
+                ruda_count_input,
+                blueprint,
+                dtypes.clone(),
+                concat!(
+                    include_str!("../../global/memory/iterator.rs"),
+                    include_str!("../../global/read/reader/full_reader.rs"),
+                    include_str!("../../global/single_stage/simple/matmul.rs"),
+                ).to_owned(),
+                [dtypes.lhs_global, dtypes.rhs_global, dtypes.acc_global],
+                [vector_sizes.lhs, vector_sizes.rhs, vector_sizes.out],
+            )
+        };
+
+        Ok(())
+    }
+
+    fn rudadim_resource(
+        blueprint: &Self::Blueprint,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<RudaDimResource, MatmulSetupError> {
+        GMM::rudadim_resource(blueprint, dtypes, vector_sizes)
+    }
+
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &Self::Blueprint,
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        GMM::validate_blueprint(client, blueprint, problem, dtypes, vector_sizes)
+    }
+}

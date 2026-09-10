@@ -1,0 +1,137 @@
+[package]
+edition = "2024"
+name = "ruda-tensor-remote"
+version = "0.21.0"
+authors = [ "nathanielsimard <nathaniel.simard.42@gmail.com>",]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Ruda remote tensor execution over the communication layer."
+readme = false
+keywords = [ "deep-learning", "machine-learning", "data",]
+categories = [ "science",]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/shuqi2077/RUDA/tree/main/ruda-tensor-remote"
+resolver = "2"
+
+[features]
+client = [ "tokio-tungstenite", "async-channel", "tokio/sync",]
+default = [ "client", "server",]
+doc = []
+server = [ "tokio-tungstenite", "async-channel", "tokio/sync", "axum", "tracing-core/default", "tracing-subscriber/default",]
+tracing = [ "ruda-tensor/tracing", "ruda-core/tracing", "ruda-tensor-config/tracing", "ruda-test-runtime/tracing", "ruda-tensor-router/tracing", "ruda-communication/tracing", "ruda-test-runtime/std",]
+
+[lib]
+name = "ruda_tensor_remote"
+path = "src/lib.rs"
+
+[dependencies.async-channel]
+version = "2.5"
+optional = true
+
+[dependencies.axum]
+version = "0.8.8"
+features = [ "ws",]
+optional = true
+
+[dependencies.bytes]
+version = "1.11.1"
+default-features = false
+
+[dependencies.derive-new]
+version = "0.7.0"
+default-features = false
+
+[dependencies.futures-util]
+version = "0.3"
+
+[dependencies.log]
+version = "0.4.29"
+default-features = false
+
+[dependencies.rmp-serde]
+version = "1.3.1"
+default-features = false
+
+[dependencies.serde]
+version = "1.0.228"
+features = [ "derive", "alloc", "derive",]
+default-features = false
+
+[dependencies.serde_bytes]
+version = "0.11.18"
+features = [ "alloc",]
+default-features = false
+
+[dependencies.tokio]
+version = "1.51.1"
+features = [ "rt", "macros", "rt-multi-thread",]
+
+[dependencies.tokio-tungstenite]
+version = "0.29"
+optional = true
+
+[dependencies.tokio-util]
+version = "0.7"
+
+[dependencies.tracing-core]
+version = "0.1.36"
+optional = true
+default-features = false
+
+[dependencies.tracing-subscriber]
+version = "0.3.23"
+optional = true
+
+[dependencies.ruda-tensor]
+path = "../ruda-tensor"
+default-features = false
+features = [ "graph", "std", "serde",]
+
+[dependencies.ruda-core]
+path = "../ruda-core"
+default-features = false
+features = [ "serde", "shared-bytes", "tensor-data", "id", "std", "id-tests-std",]
+
+[dependencies.ruda-tensor-config]
+path = "../ruda-tensor-config"
+default-features = false
+features = [ "std",]
+
+[dependencies.ruda-test-runtime]
+path = "../ruda-test-runtime"
+default-features = false
+optional = true
+
+[dependencies.ruda-tensor-router]
+path = "../ruda-tensor-router"
+default-features = false
+features = [ "default",]
+
+[dependencies.ruda-communication]
+path = "../ruda-communication"
+default-features = false
+features = [ "data-service", "websocket",]
+
+[dev-dependencies.ruda-tensor-host]
+path = "../ruda-tensor-host"
+default-features = false
+features = [ "default",]
+
+[dev-dependencies.ruda-tensor]
+path = "../ruda-tensor"
+default-features = false
+features = [ "api-std",]
+
+[lints.clippy]
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+invalid_html_tags = "deny"
+
+[package.metadata.docs.rs]
+features = [ "doc",]
+rustdoc-args = [ "--cfg", "docsrs",]

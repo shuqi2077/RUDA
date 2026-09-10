@@ -1,0 +1,88 @@
+[package]
+edition = "2024"
+name = "ruda-tensor-rocm"
+version = "0.21.0"
+authors = [ "nathanielsimard <nathaniel.simard.42@gmail.com>",]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Ruda ROCm HIP tensor device adapter."
+readme = false
+keywords = [ "deep-learning", "machine-learning", "gpu", "rocm", "hip",]
+categories = [ "science",]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/shuqi2077/RUDA/tree/main/ruda-tensor-rocm"
+resolver = "2"
+
+[features]
+autotune = [ "ruda-tensor-device/autotune",]
+autotune-checks = [ "ruda-tensor-device/autotune-checks",]
+default = [ "fusion", "ruda-tensor-device/default", "ruda-core/id-tests-std", "ruda-test-runtime/default",]
+doc = [ "ruda-tensor-device/doc", "ruda-core/id-tests-std",]
+fusion = [ "ruda-fusion", "ruda-tensor-device/fusion", "ruda-core/id-tests-std", "ruda-test-runtime/tracing",]
+ruda-fusion = ["dep:ruda-fusion", "ruda-core/id-tests-std", "ruda-test-runtime/std", "ruda-test-runtime/tracing"]
+std = [ "ruda-tensor-device/std", "ruda-core/id-tests-std", "ruda-test-runtime/std",]
+tracing = [ "ruda-test-runtime/tracing", "ruda-tensor-device/tracing", "ruda-tensor/tracing", "ruda-core/tracing", "ruda-tensor-config/tracing", "ruda-test-runtime/tracing", "ruda-fusion?/tracing",]
+
+[lib]
+name = "ruda_tensor_rocm"
+path = "src/lib.rs"
+
+[dependencies.ruda-tensor]
+path = "../ruda-tensor"
+default-features = false
+features = [ "std", "hip",]
+
+[dependencies.ruda-tensor-device]
+path = "../ruda-tensor-device"
+default-features = false
+features = [ "default",]
+
+[dependencies.ruda-fusion]
+path = "../ruda-fusion"
+default-features = false
+features = [ "std", "tracing",]
+optional = true
+
+[dependencies.ruda-driver-hip]
+path = "../ruda-driver-hip"
+default-features = false
+
+[dependencies.ruda-kernel]
+path = "../ruda-kernel"
+default-features = false
+features = [ "frontend", "library",]
+
+[dependencies.ruda-core]
+path = "../ruda-core"
+default-features = false
+features = [ "ir", "communication", "tensor-elements-flex32", "serde", "shared-bytes", "tensor-data", "id", "id-tests-std",]
+
+[dependencies.ruda-tensor-config]
+path = "../ruda-tensor-config"
+default-features = false
+
+[dependencies.ruda-test-runtime]
+path = "../ruda-test-runtime"
+default-features = false
+features = [ "hip", "std", "default", "tracing",]
+
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]
+
+[dependencies.serde_json]
+version = "1.0"
+
+[lints.clippy]
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+invalid_html_tags = "deny"
+
+[package.metadata.docs.rs]
+features = [ "doc",]
+rustdoc-args = [ "--cfg", "docsrs",]

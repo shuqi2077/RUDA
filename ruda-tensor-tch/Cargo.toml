@@ -1,0 +1,85 @@
+[[bin]]
+name = "cpu"
+path = "src/bin/cpu.rs"
+
+[[bin]]
+name = "cuda"
+path = "src/bin/cuda.rs"
+
+[[bin]]
+name = "mps"
+path = "src/bin/mps.rs"
+
+[package]
+edition = "2024"
+name = "ruda-tensor-tch"
+version = "0.21.0"
+authors = [ "nathanielsimard <nathaniel.simard.42@gmail.com>",]
+build = "build.rs"
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Ruda LibTorch tensor backend using the tch bindings."
+readme = false
+keywords = [ "deep-learning", "machine-learning", "data",]
+categories = [ "science",]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/shuqi2077/RUDA/tree/main/ruda-tensor-tch"
+resolver = "2"
+
+[features]
+default = [ "std",]
+doc = [ "tch/doc-only",]
+std = [ "ruda-tensor/std", "ruda-core/id-tests-std", "ruda-core/std", "ruda-tensor-config/std", "ruda-test-runtime?/std",]
+tracing = [ "ruda-tensor/tracing", "ruda-core/tracing", "ruda-tensor-config/tracing", "ruda-test-runtime/tracing",]
+
+[lib]
+name = "ruda_tensor_tch"
+path = "src/lib.rs"
+
+[dependencies.libc]
+version = "0.2.186"
+
+[dependencies.log]
+version = "0.4.29"
+default-features = false
+
+[dependencies.tch]
+version = "0.22.0"
+features = [ "download-libtorch",]
+
+[dependencies.torch-sys]
+version = "0.22.0"
+
+[dependencies.ruda-tensor]
+path = "../ruda-tensor"
+default-features = false
+
+[dependencies.ruda-core]
+path = "../ruda-core"
+default-features = false
+features = [ "serde", "shared-bytes", "tensor-data", "id",]
+
+[dependencies.ruda-tensor-config]
+path = "../ruda-tensor-config"
+default-features = false
+
+[dependencies.ruda-test-runtime]
+path = "../ruda-test-runtime"
+default-features = false
+optional = true
+
+[build-dependencies.cc]
+version = "1.2.61"
+
+[lints.clippy]
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+invalid_html_tags = "deny"
+
+[package.metadata.docs.rs]
+features = [ "doc",]
+rustdoc-args = [ "--cfg", "docsrs",]

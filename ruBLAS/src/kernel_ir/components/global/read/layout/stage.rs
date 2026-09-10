@@ -1,0 +1,52 @@
+use ruda_kernel::dsl as kernel_dsl;
+use ruda_kernel::dsl::prelude::*;
+use ruda_kernel::library::tensor::layout::Coords2d;
+use ruda_kernel::library::tensor::layout::Layout;
+use ruda_kernel::library::tensor::layout::LayoutExpand;
+use ruda_kernel::tiling::{MatrixLayout, stage::StageMemoryConfig};
+
+/// Full stage mapping on a 2D layout. Stage offset is translated to a 2D offset within the stage.
+#[derive(RudaType)]
+pub struct FullStageLayout {
+    #[ruda(comptime)]
+    config: StageMemoryConfig,
+}
+
+#[ruda]
+impl FullStageLayout {
+    pub fn new(#[comptime] config: StageMemoryConfig) -> Self {
+        FullStageLayout { config }
+    }
+}
+
+#[ruda]
+impl Layout for FullStageLayout {
+    type Coordinates = u32;
+    type SourceCoordinates = Coords2d;
+
+    fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
+        let stage_shape_row = self.config.comptime().elements_per_stage_along_row();
+        let stage_shape_col = self.config.comptime().elements_per_stage_along_col();
+
+        match self.config.matrix_layout.comptime() {
+            MatrixLayout::RowMajor => (pos / stage_shape_col, pos % stage_shape_col),
+            MatrixLayout::ColMajor => (pos % stage_shape_row, pos / stage_shape_row),
+        }
+    }
+
+    fn shape(&self) -> Self::Coordinates {
+        let stage_shape_row = self.config.comptime().elements_per_stage_along_row();
+        let stage_shape_y = self.config.comptime().elements_per_stage_along_col();
+
+        (stage_shape_row * stage_shape_y).runtime()
+    }
+
+    fn is_in_bounds(&self, _pos: Self::Coordinates) -> bool {
+        // Bounds checking should be handled by underlying layout
+        true.runtime()
+    }
+
+    fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
+        (self.to_source_pos(pos), self.is_in_bounds(pos))
+    }
+}

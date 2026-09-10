@@ -1,0 +1,158 @@
+[[test]]
+name = "runtime"
+path = "tests/runtime/integration_test.rs"
+required-features = [ "runtime",]
+
+[[bench]]
+name = "runtime_memory"
+path = "benches/runtime/dynamic.rs"
+harness = false
+required-features = [ "runtime", "runtime-storage-bytes",]
+
+[package]
+name = "ruda"
+
+[features]
+default = ["runtime-default"]
+runtime = [ "dep:async-channel", "dep:bytemuck", "dep:cfg-if", "dep:derive-new", "dep:derive_more", "dep:enumset", "dep:hashbrown", "dep:log", "dep:md5", "dep:serde", "dep:thiserror", "dep:web-time", "dep:ruda-core", "dep:serde_json", "dep:spin", "dep:wasm-bindgen-futures",]
+runtime-autotune-checks = [ "runtime",]
+runtime-channel-cell = [ "runtime",]
+runtime-channel-mpsc = [ "runtime",]
+runtime-channel-mutex = [ "runtime",]
+runtime-default = [ "runtime", "runtime-std", "runtime-channel-mutex", "runtime-channel-mpsc", "runtime-channel-cell", "runtime-storage-bytes", "ruda-core/std",]
+runtime-exclusive-memory-only = [ "runtime",]
+runtime-profile-tracy = [ "runtime", "dep:tracy-client",]
+runtime-std = [ "runtime", "ruda-core/std", "ruda-core/compiler-std", "toml", "dirs", "thiserror/std",]
+runtime-storage-bytes = [ "runtime",]
+runtime-tracing = [ "runtime", "dep:tracing", "ruda-core/tracing", "ruda-core/tracing",]
+
+[package.version]
+workspace = true
+
+[package.edition]
+workspace = true
+
+[dependencies.ruda-core]
+path = "../ruda-core"
+default-features = false
+features = [ "ir", "ir-serde", "tensor", "compiler", "communication",]
+optional = true
+
+[dependencies.async-channel]
+version = "2.3"
+optional = true
+
+[dependencies.bytemuck]
+version = "1.16.1"
+optional = true
+
+[dependencies.cfg-if]
+version = "1.0.0"
+optional = true
+
+[dependencies.derive-new]
+version = "0.7.0"
+default-features = false
+optional = true
+
+[dependencies.derive_more]
+version = "2"
+features = [ "eq",]
+default-features = false
+optional = true
+
+[dependencies.dirs]
+version = "6.0.0"
+optional = true
+
+[dependencies.enumset]
+version = "1.1.12"
+default-features = false
+optional = true
+
+[dependencies.hashbrown]
+version = "0.16"
+optional = true
+
+[dependencies.log]
+version = "^0.4.22"
+default-features = false
+optional = true
+
+[dependencies.md5]
+version = "0.8.0"
+optional = true
+
+[dependencies.serde]
+version = "1.0.204"
+features = [ "derive", "alloc",]
+default-features = false
+optional = true
+
+[dependencies.thiserror]
+version = "2"
+default-features = false
+optional = true
+
+[dependencies.toml]
+version = "1"
+optional = true
+
+[dependencies.tracing]
+version = "^0.1.43"
+features = [ "attributes",]
+optional = true
+default-features = false
+
+[dependencies.web-time]
+version = "1.1.0"
+optional = true
+
+[dev-dependencies.rand]
+version = "0.10.0"
+features = [ "std_rng", "thread_rng",]
+default-features = false
+
+[dev-dependencies.serial_test]
+version = "3.1.1"
+
+[dev-dependencies.test-log]
+version = "^0.2"
+features = [ "trace",]
+default-features = false
+
+[lints.rust]
+unsafe_code = "deny"
+
+[build-dependencies.cfg_aliases]
+version = "0.2.1"
+
+[target."cfg(any(target_os = \"windows\", target_os = \"linux\", target_os = \"macos\", target_os = \"android\"))".dependencies.serde_json]
+version = "1.0.119"
+features = [ "std",]
+default-features = false
+optional = true
+
+[target."cfg(any(target_os = \"windows\", target_os = \"linux\", target_os = \"macos\", target_os = \"android\"))".dependencies.tracy-client]
+version = "0.18.0"
+optional = true
+
+[target."cfg(any(target_os = \"windows\", target_os = \"linux\", target_os = \"macos\", target_os = \"android\"))".dependencies.ruda-core]
+path = "../ruda-core"
+default-features = false
+features = [ "cache", "serde", "hash",]
+optional = true
+
+[target."cfg(not(target_has_atomic = \"ptr\"))".dependencies.spin]
+version = "0.10.0"
+features = [ "mutex", "spin_mutex", "mutex", "spin_mutex", "portable_atomic",]
+optional = true
+
+[target."cfg(target_family = \"wasm\")".dependencies.wasm-bindgen-futures]
+version = "0.4.45"
+optional = true
+
+[target."cfg(target_has_atomic = \"ptr\")".dependencies.spin]
+version = "0.10.0"
+features = [ "mutex", "spin_mutex", "mutex", "spin_mutex",]
+optional = true

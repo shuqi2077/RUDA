@@ -1,0 +1,84 @@
+[package]
+edition = "2024"
+name = "ruda-tensor-router"
+version = "0.21.0"
+authors = [ "laggui <lagrange.guillaume.1@gmail.com>", "nathanielsimard <nathaniel.simard.42@gmail.com>",]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Ruda multi-backend tensor routing."
+readme = false
+keywords = [ "deep-learning", "machine-learning", "data",]
+categories = [ "science",]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/shuqi2077/RUDA/tree/main/ruda-tensor-router"
+resolver = "2"
+
+[features]
+default = [ "std",]
+distributed = [ "ruda-tensor/graph-distributed", "ruda-core/std", "ruda-core/id-tests-std", "ruda-tensor-config/std", "ruda-test-runtime?/std",]
+doc = [ "default",]
+std = [ "ruda-tensor/std", "ruda-core/std", "ruda-core/id-tests-std", "ruda-tensor-config/std", "ruda-test-runtime?/std",]
+tracing = [ "ruda-tensor/tracing", "ruda-core/tracing", "ruda-tensor-config/tracing", "ruda-test-runtime/tracing",]
+
+[lib]
+name = "ruda_tensor_router"
+path = "src/lib.rs"
+
+[dependencies.hashbrown]
+version = "0.16"
+
+[dependencies.log]
+version = "0.4.29"
+default-features = false
+
+[dependencies.spin]
+version = "0.10.0"
+features = [ "mutex", "spin_mutex", "portable-atomic",]
+
+[dependencies.ruda-tensor]
+path = "../ruda-tensor"
+default-features = false
+features = [ "graph",]
+
+[dependencies.ruda-core]
+path = "../ruda-core"
+default-features = false
+features = [ "serde", "shared-bytes", "tensor-data", "id",]
+
+[dependencies.ruda-tensor-config]
+path = "../ruda-tensor-config"
+default-features = false
+
+[dependencies.ruda-test-runtime]
+path = "../ruda-test-runtime"
+default-features = false
+optional = true
+
+[dev-dependencies.ruda-tensor-host]
+path = "../ruda-tensor-host"
+default-features = false
+features = [ "default",]
+
+[dev-dependencies.ruda-tensor]
+path = "../ruda-tensor"
+default-features = false
+features = [ "api",]
+
+[dev-dependencies.ruda-tensor-wgpu]
+path = "../ruda-tensor-wgpu"
+default-features = false
+features = [ "std",]
+
+[lints.clippy]
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+invalid_html_tags = "deny"
+
+[package.metadata.docs.rs]
+features = [ "doc",]
+rustdoc-args = [ "--cfg", "docsrs",]

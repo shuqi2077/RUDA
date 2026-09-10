@@ -1,0 +1,183 @@
+[package]
+edition = "2024"
+name = "ruda-optim"
+version = "0.21.0"
+authors = [ "nathanielsimard <nathaniel.simard.42@gmail.com>",]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Ruda optimizer updates, gradient state, clipping and learning-rate schedules."
+documentation = "https://github.com/shuqi2077/RUDA/blob/main/docs/en/README.md"
+readme = false
+keywords = [ "deep-learning", "machine-learning", "tensor", "pytorch", "ndarray",]
+categories = [ "science", "no-std", "embedded", "wasm",]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/shuqi2077/RUDA/tree/main/ruda-optim"
+
+[features]
+# Experimental: explicitly opted in; existing model optimizer dispatch is unchanged.
+fused-adamw = ["std"]
+fused-adamw-device = ["fused-adamw", "dep:ruda-core", "dep:ruda-kernel", "ruda-kernel/frontend-std", "ruda-kernel/device-tensor"]
+fused-adamw-cuda = ["fused-adamw-device", "dep:serde_json", "dep:ruda-driver-cuda", "ruda-driver-cuda/direct-ptx"]
+collective = [ "ruccl",]
+default = [ "std", "ruda-model/default",]
+distributed = [ "std", "ruda-model/distributed",]
+doc = [ "std", "ruda-model/doc",]
+std = [ "ruda-model/std", "num-traits/std", "serde/std", "log",]
+test-cuda = [ "cuda", "ruda-tensor-device/cuda-default", "ruda-core/id-tests-std",]
+test-memory-checks = [ "fusion", "ruda-fusion/memory-checks",]
+test-metal = [ "test-wgpu", "ruda-tensor-wgpu/metal",]
+test-rocm = [ "ruda-tensor-rocm/default",]
+test-tch = [ "ruda-tensor-tch/default",]
+test-vulkan = [ "test-wgpu", "ruda-tensor-wgpu/vulkan",]
+test-wgpu = [ "ruda-tensor-wgpu/default",]
+tracing = [ "ruccl?/tracing", "ruda-model/tracing", "ruda-tensor-device?/tracing", "ruda-fusion?/tracing", "ruda-tensor-remote?/tracing", "ruda-tensor-rocm?/tracing", "ruda-tensor-router?/tracing", "ruda-tensor-tch?/tracing", "ruda-tensor-wgpu?/tracing",]
+cuda = [ "dep:ruda-tensor-device", "serde/default", "serde_json/default",]
+fusion = [ "dep:ruda-fusion", "ruda-kernel/frontend-std", "ruda-kernel/frontend-tracing", "ruda-core/id-tests-std",]
+
+[lib]
+name = "ruda_optim"
+path = "src/lib.rs"
+
+[[example]]
+name = "collective_training"
+path = "examples/collective_training.rs"
+required-features = ["std", "collective"]
+
+[dependencies.ruccl]
+package = "ruCCL"
+path = "../ruCCL"
+optional = true
+default-features = false
+
+[dependencies.ruda-tensor-remote]
+path = "../ruda-tensor-remote"
+optional = true
+default-features = false
+
+[dependencies.ruda-tensor-rocm]
+path = "../ruda-tensor-rocm"
+optional = true
+default-features = false
+
+[dependencies.ruda-tensor-router]
+path = "../ruda-tensor-router"
+optional = true
+default-features = false
+
+[dependencies.ruda-tensor-tch]
+path = "../ruda-tensor-tch"
+features = [ "default",]
+optional = true
+default-features = false
+
+[dependencies.ruda-tensor-wgpu]
+path = "../ruda-tensor-wgpu"
+optional = true
+default-features = false
+
+[dependencies.derive-new]
+version = "0.7.0"
+default-features = false
+
+[dependencies.hashbrown]
+version = "0.16"
+features = [ "serde",]
+
+[dependencies.log]
+version = "0.4.29"
+optional = true
+default-features = false
+
+[dependencies.num-traits]
+version = "0.2.19"
+features = [ "libm",]
+default-features = false
+
+[dependencies.serde]
+version = "1.0.228"
+features = [ "derive", "alloc", "derive",]
+default-features = false
+
+[dependencies.ruda-model]
+default-features = false
+path = "../ruda-model"
+
+[dependencies.ruda-tensor-device]
+optional = true
+default-features = false
+path = "../ruda-tensor-device"
+features = [ "cuda",]
+
+[dependencies.ruda-fusion]
+features = [ "std", "tracing",]
+optional = true
+default-features = false
+path = "../ruda-fusion"
+
+[dependencies.ruda-kernel]
+path = "../ruda-kernel"
+default-features = false
+optional = true
+features = [ "frontend",]
+
+[dependencies.ruda-core]
+path = "../ruda-core"
+default-features = false
+optional = true
+
+[dependencies.serde_json]
+version = "1.0.148"
+default-features = false
+optional = true
+
+[dev-dependencies.ruda-tensor-host]
+path = "../ruda-tensor-host"
+features = [ "default",]
+default-features = false
+
+[dev-dependencies.rstest]
+version = "0.26.1"
+
+[dev-dependencies.ruda-autodiff]
+features = [ "std", "tracing",]
+default-features = false
+path = "../ruda-autodiff"
+
+[dev-dependencies.ruda-nn]
+features = [ "default",]
+default-features = false
+path = "../ruda-nn"
+
+[dev-dependencies.ruda-kernel]
+path = "../ruda-kernel"
+default-features = false
+features = [ "frontend-std", "frontend-tracing",]
+
+[lints.clippy]
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+invalid_html_tags = "deny"
+
+[package.metadata.docs.rs]
+features = [ "doc",]
+rustdoc-args = [ "--cfg", "docsrs",]
+
+[dependencies.ruda-driver-cuda]
+path = "../ruda-driver-cuda"
+optional = true
+# The CUDA example intentionally needs runtime defaults and dynamic CUDA loading.
+
+[[example]]
+name = "fused-adamw-bench"
+path = "examples/fused_adamw_bench.rs"
+required-features = ["fused-adamw-cuda"]
+
+[[test]]
+name = "fused-adamw-cuda"
+path = "tests/fused_adamw_cuda.rs"
+required-features = ["fused-adamw-cuda"]

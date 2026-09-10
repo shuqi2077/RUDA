@@ -1,0 +1,115 @@
+[package]
+name = "ruda-compiler"
+version.workspace = true
+edition.workspace = true
+
+[features]
+ptx = ["optimizer-std", "ruda-core/argument-layout", "ruda-core/ir", "ruda-core/compiler-std", "dep:half"]
+spirv = ["optimizer-default", "ruda-core/argument-layout", "ruda-core/ir-default", "dep:half", "dep:serde", "dep:hashbrown", "dep:bitflags", "dep:rspirv"]
+mlir = ["optimizer-std", "ruda-core/argument-layout", "dep:tracel-llvm", "dep:tracel-llvm-bundler"]
+mlir-dump = ["mlir"]
+wgsl = ["dep:ruda-core", "ruda-core/argument-layout", "dep:half"]
+default = ["ptx", "cpp-default"]
+optimizer = [ "dep:ruda-core", "ruda-core/compiler", "dep:float-ord", "dep:log", "dep:num", "dep:petgraph", "dep:smallvec", "dep:stable-vec", "dep:type-map",]
+optimizer-std = [ "optimizer", "ruda-core/std",]
+optimizer-default = [ "optimizer-std", "ruda-core/ir-default",]
+optimizer-tracing = [ "optimizer", "ruda-core/tracing", "ruda-kernel/frontend-tracing",]
+cpp = [ "optimizer", "ruda-core/argument-layout", "dep:bytemuck", "dep:derive-new", "dep:half", "dep:itertools", "dep:log",]
+cpp-metal = [ "cpp",]
+cpp-default = [ "cpp-metal", "ruda-core/std", "ruda-core/ir-default",]
+cpp-std = [ "cpp", "ruda-core/std",]
+cpp-tracing = [ "cpp", "ruda-core/tracing", "optimizer-tracing",]
+
+[dependencies]
+half = { version = "=2.7.1", optional = true }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[dependencies.ruda-core]
+path = "../ruda-core"
+default-features = false
+optional = true
+
+[dependencies.float-ord]
+version = "0.3"
+optional = true
+
+[dependencies.log]
+version = "0.4"
+optional = true
+
+[dependencies.num]
+version = "0.4"
+optional = true
+
+[dependencies.petgraph]
+version = "0.8"
+optional = true
+
+[dependencies.smallvec]
+version = "1"
+features = ["union", "const_generics", "const_new"]
+optional = true
+
+[dependencies.stable-vec]
+version = "0.4"
+optional = true
+
+[dependencies.type-map]
+version = "0.5"
+optional = true
+
+[dev-dependencies.test-log]
+version = "^0.2"
+features = ["trace"]
+default-features = false
+
+[dev-dependencies.ruda-kernel]
+path = "../ruda-kernel"
+default-features = false
+features = [ "frontend",]
+
+[dependencies.bytemuck]
+version = "1.16.1"
+optional = true
+
+[dependencies.derive-new]
+version = "0.7.0"
+default-features = false
+optional = true
+
+[dependencies.itertools]
+version = "0.14.0"
+default-features = false
+optional = true
+
+[dependencies.tracel-llvm]
+version = "20.1.4-6"
+features = [ "mlir-helpers",]
+optional = true
+
+[build-dependencies.tracel-llvm-bundler]
+version = "20.1.4-6"
+optional = true
+
+[dependencies.rspirv]
+version = "0.12.1"
+package = "tracel-rspirv"
+features = ["serialize", "deserialize"]
+optional = true
+
+[dependencies.hashbrown]
+version = "0.16"
+optional = true
+
+[dependencies.bitflags]
+version = "2.9.1"
+features = ["serde"]
+optional = true
+
+[dependencies.serde]
+version = "1.0.204"
+features = ["derive", "alloc"]
+default-features = false
+optional = true

@@ -1,0 +1,411 @@
+use crate::{Autodiff, checkpoint::strategy::CheckpointStrategy, tensor::AutodiffTensor};
+use alloc::vec::Vec;
+
+use ruda_tensor::{
+    Backend, Distribution, ExecutionError, Scalar, TensorData,
+    ops::IntTensorOps,
+    tensor::{BoolTensor, Device, FloatTensor, IntTensor},
+};
+use ruda_core::tensor::{BoolDType, FloatDType, IntDType, Shape};
+
+impl<B: Backend, C: CheckpointStrategy> IntTensorOps<Self> for Autodiff<B, C> {
+    fn int_from_data(data: TensorData, device: &Device<Self>) -> IntTensor<B> {
+        B::int_from_data(data, device)
+    }
+
+    async fn int_into_data(tensor: IntTensor<B>) -> Result<TensorData, ExecutionError> {
+        B::int_into_data(tensor).await
+    }
+
+    fn int_to_device(tensor: IntTensor<B>, device: &Device<Self>) -> IntTensor<B> {
+        B::int_to_device(tensor, device)
+    }
+
+    fn int_device(tensor: &IntTensor<B>) -> Device<Self> {
+        B::int_device(tensor)
+    }
+
+    fn int_reshape(tensor: IntTensor<B>, shape: Shape) -> IntTensor<B> {
+        B::int_reshape(tensor, shape)
+    }
+
+    fn int_slice(tensor: IntTensor<B>, slices: &[ruda_core::tensor::Slice]) -> IntTensor<B> {
+        B::int_slice(tensor, slices)
+    }
+
+    fn int_empty(shape: Shape, device: &Device<Self>, dtype: IntDType) -> IntTensor<B> {
+        B::int_empty(shape, device, dtype)
+    }
+
+    fn int_slice_assign(
+        tensor: IntTensor<B>,
+        slices: &[ruda_core::tensor::Slice],
+        value: IntTensor<B>,
+    ) -> IntTensor<B> {
+        B::int_slice_assign(tensor, slices, value)
+    }
+
+    fn int_cat(tensors: Vec<IntTensor<B>>, dim: usize) -> IntTensor<B> {
+        B::int_cat(tensors, dim)
+    }
+
+    fn int_equal(lhs: IntTensor<B>, rhs: IntTensor<B>, out_dtype: BoolDType) -> BoolTensor<B> {
+        B::int_equal(lhs, rhs, out_dtype)
+    }
+
+    fn int_equal_elem(lhs: IntTensor<B>, rhs: Scalar, out_dtype: BoolDType) -> BoolTensor<B> {
+        B::int_equal_elem(lhs, rhs, out_dtype)
+    }
+
+    fn int_add(lhs: IntTensor<B>, rhs: IntTensor<B>) -> IntTensor<B> {
+        B::int_add(lhs, rhs)
+    }
+
+    fn int_add_scalar(lhs: IntTensor<B>, rhs: Scalar) -> IntTensor<B> {
+        B::int_add_scalar(lhs, rhs)
+    }
+
+    fn int_clamp_min(tensor: IntTensor<B>, min: Scalar) -> IntTensor<B> {
+        B::int_clamp_min(tensor, min)
+    }
+
+    fn int_clamp_max(tensor: IntTensor<B>, max: Scalar) -> IntTensor<B> {
+        B::int_clamp_max(tensor, max)
+    }
+
+    fn int_clamp(tensor: IntTensor<B>, min: Scalar, max: Scalar) -> IntTensor<B> {
+        B::int_clamp(tensor, min, max)
+    }
+
+    fn int_sub(lhs: IntTensor<B>, rhs: IntTensor<B>) -> IntTensor<B> {
+        B::int_sub(lhs, rhs)
+    }
+
+    fn int_sub_scalar(lhs: IntTensor<B>, rhs: Scalar) -> IntTensor<B> {
+        B::int_sub_scalar(lhs, rhs)
+    }
+
+    fn int_mul(lhs: IntTensor<B>, rhs: IntTensor<B>) -> IntTensor<B> {
+        B::int_mul(lhs, rhs)
+    }
+
+    fn int_mul_scalar(lhs: IntTensor<B>, rhs: Scalar) -> IntTensor<B> {
+        B::int_mul_scalar(lhs, rhs)
+    }
+
+    fn int_div(lhs: IntTensor<B>, rhs: IntTensor<B>) -> IntTensor<B> {
+        B::int_div(lhs, rhs)
+    }
+
+    fn int_div_scalar(lhs: IntTensor<B>, rhs: Scalar) -> IntTensor<B> {
+        B::int_div_scalar(lhs, rhs)
+    }
+
+    fn int_remainder(lhs: IntTensor<B>, rhs: IntTensor<B>) -> IntTensor<B> {
+        B::int_remainder(lhs, rhs)
+    }
+
+    fn int_remainder_scalar(lhs: IntTensor<B>, rhs: Scalar) -> IntTensor<B> {
+        B::int_remainder_scalar(lhs, rhs)
+    }
+
+    fn int_matmul(lhs: IntTensor<B>, rhs: IntTensor<B>) -> IntTensor<B> {
+        B::int_matmul(lhs, rhs)
+    }
+
+    fn int_neg(tensor: IntTensor<B>) -> IntTensor<B> {
+        B::int_neg(tensor)
+    }
+
+    fn int_zeros(shape: Shape, device: &Device<Self>, dtype: IntDType) -> IntTensor<B> {
+        B::int_zeros(shape, device, dtype)
+    }
+
+    fn int_ones(shape: Shape, device: &Device<Self>, dtype: IntDType) -> IntTensor<B> {
+        B::int_ones(shape, device, dtype)
+    }
+
+    fn int_full(
+        shape: Shape,
+        fill_value: Scalar,
+        device: &Device<Self>,
+        dtype: IntDType,
+    ) -> IntTensor<B> {
+        B::int_full(shape, fill_value, device, dtype)
+    }
+
+    fn int_sum(tensor: IntTensor<B>) -> IntTensor<B> {
+        B::int_sum(tensor)
+    }
+
+    fn int_sum_dim(tensor: IntTensor<B>, dim: usize) -> IntTensor<B> {
+        B::int_sum_dim(tensor, dim)
+    }
+
+    fn int_mean(tensor: IntTensor<B>) -> IntTensor<B> {
+        B::int_mean(tensor)
+    }
+
+    fn int_mean_dim(tensor: IntTensor<B>, dim: usize) -> IntTensor<B> {
+        B::int_mean_dim(tensor, dim)
+    }
+
+    fn int_cumsum(tensor: IntTensor<B>, dim: usize) -> IntTensor<B> {
+        B::int_cumsum(tensor, dim)
+    }
+
+    fn int_cumprod(tensor: IntTensor<B>, dim: usize) -> IntTensor<B> {
+        B::int_cumprod(tensor, dim)
+    }
+
+    fn int_cummin(tensor: IntTensor<B>, dim: usize) -> IntTensor<B> {
+        B::int_cummin(tensor, dim)
+    }
+
+    fn int_cummax(tensor: IntTensor<B>, dim: usize) -> IntTensor<B> {
+        B::int_cummax(tensor, dim)
+    }
+
+    fn int_repeat_dim(tensor: IntTensor<B>, dim: usize, times: usize) -> IntTensor<B> {
+        B::int_repeat_dim(tensor, dim, times)
+    }
+
+    fn int_greater(lhs: IntTensor<B>, rhs: IntTensor<B>, out_dtype: BoolDType) -> BoolTensor<B> {
+        B::int_greater(lhs, rhs, out_dtype)
+    }
+
+    fn int_greater_elem(lhs: IntTensor<B>, rhs: Scalar, out_dtype: BoolDType) -> BoolTensor<B> {
+        B::int_greater_elem(lhs, rhs, out_dtype)
+    }
+
+    fn int_greater_equal(
+        lhs: IntTensor<B>,
+        rhs: IntTensor<B>,
+        out_dtype: BoolDType,
+    ) -> BoolTensor<B> {
+        B::int_greater_equal(lhs, rhs, out_dtype)
+    }
+
+    fn int_greater_equal_elem(
+        lhs: IntTensor<B>,
+        rhs: Scalar,
+        out_dtype: BoolDType,
+    ) -> BoolTensor<B> {
+        B::int_greater_equal_elem(lhs, rhs, out_dtype)
+    }
+
+    fn int_lower(lhs: IntTensor<B>, rhs: IntTensor<B>, out_dtype: BoolDType) -> BoolTensor<B> {
+        B::int_lower(lhs, rhs, out_dtype)
+    }
+
+    fn int_lower_elem(lhs: IntTensor<B>, rhs: Scalar, out_dtype: BoolDType) -> BoolTensor<B> {
+        B::int_lower_elem(lhs, rhs, out_dtype)
+    }
+
+    fn int_lower_equal(
+        lhs: IntTensor<B>,
+        rhs: IntTensor<B>,
+        out_dtype: BoolDType,
+    ) -> BoolTensor<B> {
+        B::int_lower_equal(lhs, rhs, out_dtype)
+    }
+
+    fn int_lower_equal_elem(lhs: IntTensor<B>, rhs: Scalar, out_dtype: BoolDType) -> BoolTensor<B> {
+        B::int_lower_equal_elem(lhs, rhs, out_dtype)
+    }
+
+    fn int_gather(dim: usize, tensor: IntTensor<B>, indices: IntTensor<B>) -> IntTensor<B> {
+        B::int_gather(dim, tensor, indices)
+    }
+
+    fn int_scatter_add(
+        dim: usize,
+        tensor: IntTensor<B>,
+        indices: IntTensor<B>,
+        value: IntTensor<B>,
+    ) -> IntTensor<B> {
+        B::int_scatter_add(dim, tensor, indices, value)
+    }
+
+    fn int_select(tensor: IntTensor<B>, dim: usize, indices: IntTensor<B>) -> IntTensor<B> {
+        B::int_select(tensor, dim, indices)
+    }
+
+    fn int_select_add(
+        tensor: IntTensor<B>,
+        dim: usize,
+        indices: IntTensor<B>,
+        value: IntTensor<B>,
+    ) -> IntTensor<B> {
+        B::int_select_add(tensor, dim, indices, value)
+    }
+
+    fn int_mask_where(
+        tensor: IntTensor<B>,
+        mask: BoolTensor<B>,
+        value: IntTensor<B>,
+    ) -> IntTensor<B> {
+        B::int_mask_where(tensor, mask, value)
+    }
+
+    fn int_mask_fill(tensor: IntTensor<B>, mask: BoolTensor<B>, value: Scalar) -> IntTensor<B> {
+        B::int_mask_fill(tensor, mask, value)
+    }
+
+    fn int_argmax(tensor: IntTensor<B>, dim: usize) -> IntTensor<B> {
+        B::int_argmax(tensor, dim)
+    }
+
+    fn int_argtopk(tensor: IntTensor<B>, dim: usize, k: usize) -> IntTensor<B> {
+        B::int_argtopk(tensor, dim, k)
+    }
+
+    fn int_argmin(tensor: IntTensor<B>, dim: usize) -> IntTensor<B> {
+        B::int_argmin(tensor, dim)
+    }
+    fn int_max(tensor: IntTensor<B>) -> IntTensor<B> {
+        B::int_max(tensor)
+    }
+    fn int_max_dim(tensor: IntTensor<B>, dim: usize) -> IntTensor<B> {
+        B::int_max_dim(tensor, dim)
+    }
+    fn int_topk(tensor: IntTensor<B>, dim: usize, k: usize) -> IntTensor<B> {
+        B::int_topk(tensor, dim, k)
+    }
+    fn int_max_dim_with_indices(tensor: IntTensor<B>, dim: usize) -> (IntTensor<B>, IntTensor<B>) {
+        B::int_max_dim_with_indices(tensor, dim)
+    }
+    fn int_min(tensor: IntTensor<B>) -> IntTensor<B> {
+        B::int_min(tensor)
+    }
+    fn int_min_dim(tensor: IntTensor<B>, dim: usize) -> IntTensor<B> {
+        B::int_min_dim(tensor, dim)
+    }
+    fn int_min_dim_with_indices(tensor: IntTensor<B>, dim: usize) -> (IntTensor<B>, IntTensor<B>) {
+        B::int_min_dim_with_indices(tensor, dim)
+    }
+    fn int_abs(tensor: IntTensor<B>) -> IntTensor<B> {
+        B::int_abs(tensor)
+    }
+    fn int_into_float(tensor: IntTensor<B>, out_dtype: FloatDType) -> FloatTensor<Self> {
+        AutodiffTensor::new(B::int_into_float(tensor, out_dtype))
+    }
+
+    fn int_swap_dims(tensor: IntTensor<B>, dim1: usize, dim2: usize) -> IntTensor<B> {
+        B::int_swap_dims(tensor, dim1, dim2)
+    }
+
+    fn int_random(
+        shape: Shape,
+        distribution: Distribution,
+        device: &Device<Self>,
+        dtype: IntDType,
+    ) -> IntTensor<Self> {
+        B::int_random(shape, distribution, device, dtype)
+    }
+
+    fn int_arange(
+        range: core::ops::Range<i64>,
+        device: &Device<Self>,
+        dtype: IntDType,
+    ) -> IntTensor<Self> {
+        B::int_arange(range, device, dtype)
+    }
+
+    fn int_permute(tensor: IntTensor<Self>, axes: &[usize]) -> IntTensor<Self> {
+        B::int_permute(tensor, axes)
+    }
+
+    fn int_flip(tensor: IntTensor<Self>, axes: &[usize]) -> IntTensor<Self> {
+        B::int_flip(tensor, axes)
+    }
+
+    fn int_sign(tensor: IntTensor<Self>) -> IntTensor<Self> {
+        B::int_sign(tensor)
+    }
+
+    fn int_prod(tensor: IntTensor<Self>) -> IntTensor<Self> {
+        B::int_prod(tensor)
+    }
+
+    fn int_prod_dim(tensor: IntTensor<Self>, dim: usize) -> IntTensor<Self> {
+        B::int_prod_dim(tensor, dim)
+    }
+
+    fn int_expand(tensor: IntTensor<B>, shape: Shape) -> IntTensor<B> {
+        B::int_expand(tensor, shape)
+    }
+
+    fn int_sort(tensor: IntTensor<Self>, dim: usize, descending: bool) -> IntTensor<Self> {
+        B::int_sort(tensor, dim, descending)
+    }
+
+    fn int_sort_with_indices(
+        tensor: IntTensor<Self>,
+        dim: usize,
+        descending: bool,
+    ) -> (IntTensor<Self>, IntTensor<Self>) {
+        B::int_sort_with_indices(tensor, dim, descending)
+    }
+
+    fn int_argsort(tensor: IntTensor<Self>, dim: usize, descending: bool) -> IntTensor<Self> {
+        B::int_argsort(tensor, dim, descending)
+    }
+
+    fn bitwise_and(lhs: IntTensor<Self>, rhs: IntTensor<Self>) -> IntTensor<Self> {
+        B::bitwise_and(lhs, rhs)
+    }
+
+    fn bitwise_and_scalar(lhs: IntTensor<Self>, rhs: Scalar) -> IntTensor<Self> {
+        B::bitwise_and_scalar(lhs, rhs)
+    }
+
+    fn bitwise_or(lhs: IntTensor<Self>, rhs: IntTensor<Self>) -> IntTensor<Self> {
+        B::bitwise_or(lhs, rhs)
+    }
+
+    fn bitwise_or_scalar(lhs: IntTensor<Self>, rhs: Scalar) -> IntTensor<Self> {
+        B::bitwise_or_scalar(lhs, rhs)
+    }
+
+    fn bitwise_xor(lhs: IntTensor<Self>, rhs: IntTensor<Self>) -> IntTensor<Self> {
+        B::bitwise_xor(lhs, rhs)
+    }
+
+    fn bitwise_xor_scalar(lhs: IntTensor<Self>, rhs: Scalar) -> IntTensor<Self> {
+        B::bitwise_xor_scalar(lhs, rhs)
+    }
+
+    fn bitwise_not(tensor: IntTensor<Self>) -> IntTensor<Self> {
+        B::bitwise_not(tensor)
+    }
+
+    fn bitwise_left_shift(lhs: IntTensor<Self>, rhs: IntTensor<Self>) -> IntTensor<Self> {
+        B::bitwise_left_shift(lhs, rhs)
+    }
+
+    fn bitwise_left_shift_scalar(lhs: IntTensor<Self>, rhs: Scalar) -> IntTensor<Self> {
+        B::bitwise_left_shift_scalar(lhs, rhs)
+    }
+
+    fn bitwise_right_shift(lhs: IntTensor<Self>, rhs: IntTensor<Self>) -> IntTensor<Self> {
+        B::bitwise_right_shift(lhs, rhs)
+    }
+
+    fn bitwise_right_shift_scalar(lhs: IntTensor<Self>, rhs: Scalar) -> IntTensor<Self> {
+        B::bitwise_right_shift_scalar(lhs, rhs)
+    }
+
+    fn int_cast(tensor: IntTensor<Self>, dtype: IntDType) -> IntTensor<Self> {
+        B::int_cast(tensor, dtype)
+    }
+
+    fn int_unfold(
+        tensor: IntTensor<Self>,
+        dim: usize,
+        size: usize,
+        step: usize,
+    ) -> IntTensor<Self> {
+        B::int_unfold(tensor, dim, size, step)
+    }
+}

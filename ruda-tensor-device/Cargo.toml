@@ -1,0 +1,142 @@
+[package]
+edition = "2024"
+name = "ruda-tensor-device"
+version = "0.21.0"
+authors = ["nathanielsimard <nathaniel.simard.42@gmail.com>"]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Ruda device tensor backend and domain-library dispatch."
+readme = false
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/shuqi2077/RUDA/tree/main/ruda-tensor-device"
+
+[package.metadata.docs.rs]
+features = ["doc"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lib]
+name = "ruda_tensor_device"
+path = "src/lib.rs"
+
+[features]
+cuda = ["dep:ruda-driver-cuda", "ruda-tensor/cuda"]
+cuda-fusion = ["cuda", "fusion", "ruda-fusion/std", "ruda-fusion/tracing"]
+cuda-default = ["cuda-fusion", "default", "ruda-driver-cuda/default"]
+cuda-doc = ["cuda", "doc", "ruda-driver-cuda/default"]
+autotune = ["ruda-fusion?/device-autotune", "ruprim/tensor-reduce-autotune", "rublas/tensor-matmul-autotune", "rudnn/tensor-convolution-autotune", "rudnn/tensor-attention-autotune"]
+autotune-checks = ["autotune", "ruda/runtime-autotune-checks", "ruda-kernel/device-tensor-autotune-checks", "ruda-fusion?/device-autotune-checks"]
+default = ["autotune", "std", "fusion", "ruda-kernel/frontend-default", "ruda-fusion?/device-default"]
+distributed = ["std", "ruda-tensor/distributed", "ruda-fusion?/distributed"]
+doc = ["default"]
+fusion = ["dep:ruda-fusion", "ruda-tensor/std", "ruda-tensor-config/std"]
+fusion-experimental = ["fusion"]
+memory-checks = ["ruda-fusion?/memory-checks"]
+sparse = ["std", "dep:rusparse"]
+std = ["ruda-kernel/frontend-std", "ruda-tensor/std", "ruda-tensor-config/std", "ruda-fusion?/device-std"]
+tracing = ["dep:tracing", "ruda-kernel/frontend-tracing", "ruda-kernel/device-tensor-tracing", "ruda-core/tracing", "ruda-tensor/tracing", "ruda-tensor-config/tracing", "ruda-fusion?/device-tracing"]
+
+[dependencies.ruda-tensor]
+path = "../ruda-tensor"
+features = ["kernel", "graph"]
+default-features = false
+
+[dependencies.ruda-core]
+path = "../ruda-core"
+features = ["ir", "tensor-host-data"]
+default-features = false
+
+[dependencies.ruda-tensor-config]
+path = "../ruda-tensor-config"
+default-features = false
+
+[dependencies.ruda]
+path = "../ruda"
+features = ["runtime"]
+default-features = false
+
+[dependencies.derive-new]
+version = "0.7.0"
+default-features = false
+
+[dependencies.futures-lite]
+version = "2.6.1"
+features = ["std"]
+default-features = false
+
+[dependencies.log]
+version = "0.4.29"
+default-features = false
+
+[dependencies.tracing]
+version = "0.1.44"
+features = ["attributes"]
+optional = true
+default-features = false
+
+[lints.clippy]
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+invalid_html_tags = "deny"
+
+[dependencies.rufft]
+package = "ruFFT"
+path = "../ruFFT"
+default-features = false
+features = ["std", "tensor"]
+
+[dependencies.rusparse]
+package = "ruSPARSE"
+path = "../ruSPARSE"
+default-features = false
+features = ["tensor", "serde"]
+optional = true
+
+
+[dependencies.rurand]
+package = "ruRAND"
+path = "../ruRAND"
+default-features = false
+features = ["std", "tensor"]
+
+
+[dependencies.rublas]
+path = "../ruBLAS"
+default-features = false
+features = ["kernel-ir", "std", "tensor-vector", "tensor-matmul"]
+
+
+[dependencies.rudnn]
+package = "ruDNN"
+path = "../ruDNN"
+default-features = false
+features = ["kernel-ir", "std", "pooling", "interpolation", "grid-sample", "ctc", "tensor-convolution", "tensor-attention"]
+
+
+[dependencies.ruprim]
+package = "ruPRIM"
+path = "../ruPRIM"
+default-features = false
+features = ["kernel-ir", "std", "elementwise", "indexing", "tensor-scan", "tensor-reduce"]
+
+
+[dependencies.ruda-kernel]
+path = "../ruda-kernel"
+default-features = false
+features = ["kernel-ir", "quantization-kernels", "device-tensor", "device-tensor-dequantize", "device-tensor-quantize"]
+
+
+[dependencies.ruda-fusion]
+path = "../ruda-fusion"
+default-features = false
+features = ["device-tensor"]
+optional = true
+
+[dependencies.ruda-driver-cuda]
+path = "../ruda-driver-cuda"
+default-features = false
+optional = true

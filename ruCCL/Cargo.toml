@@ -1,0 +1,136 @@
+[package]
+edition = "2024"
+name = "ruCCL"
+version = "0.21.0"
+authors = [ "nathanielsimard <nathaniel.simard.42@gmail.com>",]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Ruda collective communication algorithms and orchestration."
+readme = "README.md"
+keywords = [ "deep-learning", "machine-learning", "collective",]
+categories = [ "science",]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/shuqi2077/RUDA/tree/main/ruCCL"
+resolver = "2"
+
+[features]
+ruda = []
+default = []
+doc = []
+orchestrator = [ "ruda-communication/websocket",]
+cuda = ["dep:ruda-tensor-device"]
+test-cuda = ["cuda"]
+test-metal = ["dep:ruda-tensor-wgpu"]
+test-vulkan = ["dep:ruda-tensor-wgpu"]
+test-wgpu = ["dep:ruda-tensor-wgpu"]
+tracing = [ "dep:tracing", "ruda-core/tracing", "ruda-tensor-config/tracing", "ruda-tensor/tracing", "ruda-communication/tracing",]
+
+[lib]
+name = "ruccl"
+path = "src/lib.rs"
+
+[[example]]
+name = "all_reduce"
+path = "examples/all_reduce.rs"
+required-features = ["cuda"]
+
+[[example]]
+name = "tensor_collectives"
+path = "examples/tensor_collectives.rs"
+
+[dependencies.bytes]
+version = "1.11.1"
+default-features = false
+
+[dependencies.crc32fast]
+version = "=1.5.1"
+
+[dependencies.serde_json]
+version = "1.0"
+
+[dependencies.futures]
+version = "0.3"
+
+[dependencies.log]
+version = "0.4.29"
+default-features = false
+
+[dependencies.rmp-serde]
+version = "1.3.1"
+default-features = false
+
+[dependencies.serde]
+version = "1.0.228"
+features = [ "derive", "alloc", "derive", "std",]
+default-features = false
+
+[dependencies.tokio]
+version = "1.51.1"
+features = [ "rt", "macros", "rt-multi-thread", "sync", "signal", "time", "tracing",]
+
+[dependencies.tokio-util]
+version = "0.7"
+
+[dependencies.tracing]
+version = "0.1.44"
+optional = true
+default-features = false
+
+[dependencies.ruda-core]
+path = "../ruda-core"
+default-features = false
+features = [ "std", "serde", "shared-bytes", "tensor-data", "id", "id-tests-std",]
+
+[dependencies.ruda-tensor-config]
+path = "../ruda-tensor-config"
+default-features = false
+features = [ "std",]
+
+[dependencies.ruda-tensor]
+path = "../ruda-tensor"
+default-features = false
+features = [ "std",]
+
+[dependencies.ruda-communication]
+path = "../ruda-communication"
+default-features = false
+features = [ "data-service", "websocket",]
+
+[dependencies.ruda-tensor-wgpu]
+path = "../ruda-tensor-wgpu"
+features = [ "default",]
+default-features = false
+optional = true
+
+[dev-dependencies.serial_test]
+version = "3.2.0"
+
+[dependencies.ruda-tensor-device]
+path = "../ruda-tensor-device"
+default-features = false
+features = [ "cuda-default",]
+optional = true
+
+[dev-dependencies.ruda-tensor-host]
+path = "../ruda-tensor-host"
+default-features = false
+features = [ "default",]
+
+[dev-dependencies.ruda-tensor]
+path = "../ruda-tensor"
+default-features = false
+features = [ "api-std",]
+
+[lints.clippy]
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+invalid_html_tags = "deny"
+
+[package.metadata.docs.rs]
+features = [ "doc",]
+rustdoc-args = [ "--cfg", "docsrs",]

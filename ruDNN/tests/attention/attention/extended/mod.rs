@@ -1,0 +1,131 @@
+use ruda_kernel::dsl as kernel_dsl;
+mod utils;
+
+mod unit {
+    use ruda_kernel::dsl::Runtime;
+    use ruda_kernel::dsl::client::ComputeClient;
+    use rudnn::attention::kernel_ir::{
+        definition::{
+            AttentionBlueprint, AttentionGlobalTypes, AttentionTileSize, AttentionVectorSizes,
+        },
+        launch::{BlueprintStrategy, Strategy},
+    };
+    fn forced_strategy(blueprint: AttentionBlueprint) -> Strategy {
+        Strategy::Unit(BlueprintStrategy::Forced(blueprint))
+    }
+    fn inferred_strategy() -> Strategy {
+        Strategy::Unit(BlueprintStrategy::Inferred(()))
+    }
+
+    fn minimal_seq_q_stage() -> u32 {
+        32
+    }
+
+    fn tile_size<R: Runtime>(
+        client: &ComputeClient<R>,
+        global_types: AttentionGlobalTypes,
+    ) -> AttentionTileSize {
+        AttentionTileSize::from_max_vector_sizes(&AttentionVectorSizes::new_max(
+            client,
+            &global_types,
+        ))
+    }
+
+    mod f16_ty {
+        use super::*;
+        use ruda_kernel::dsl::frontend::RudaPrimitive;
+        use rudnn::attention::kernel_ir::definition::AttentionGlobalTypes;
+
+        fn global_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
+            AttentionGlobalTypes::from_single_float_dtype(
+                half::f16::as_type_native_unchecked(),
+                AttentionGlobalTypes::mask_dtype(client),
+            )
+        }
+
+        include!("blueprint_tests.rs");
+        include!("selector_tests.rs");
+    }
+
+    mod f32_ty {
+        use super::*;
+        use ruda_kernel::dsl::frontend::RudaPrimitive;
+        use rudnn::attention::kernel_ir::definition::AttentionGlobalTypes;
+
+        fn global_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
+            AttentionGlobalTypes::from_single_float_dtype(
+                f32::as_type_native_unchecked(),
+                AttentionGlobalTypes::mask_dtype(client),
+            )
+        }
+
+        include!("blueprint_tests.rs");
+        include!("selector_tests.rs");
+    }
+}
+
+mod blackbox_accelerated {
+    use ruda_kernel::dsl::Runtime;
+    use ruda_kernel::dsl::client::ComputeClient;
+    use rudnn::attention::kernel_ir::{
+        definition::{AttentionBlueprint, AttentionGlobalTypes, AttentionTileSize},
+        launch::{BlueprintStrategy, Strategy},
+        routines::blackbox_accelerated::BlackboxAcceleratedStrategy,
+    };
+
+    fn forced_strategy(blueprint: AttentionBlueprint) -> Strategy {
+        Strategy::BlackboxAccelerated(BlueprintStrategy::Forced(blueprint))
+    }
+    fn inferred_strategy() -> Strategy {
+        Strategy::BlackboxAccelerated(BlueprintStrategy::Inferred(BlackboxAcceleratedStrategy {
+            num_planes: 1,
+            seq_q: 1,
+            seq_kv: 1,
+        }))
+    }
+
+    fn tile_size<R: Runtime>(
+        _client: &ComputeClient<R>,
+        _global_types: AttentionGlobalTypes,
+    ) -> AttentionTileSize {
+        #[cfg(target_os = "macos")]
+        {
+            use rudnn::attention::kernel_ir::definition::AttentionTileSize;
+
+            AttentionTileSize {
+                seq_q: 8,
+                seq_kv: 8,
+                head_dim: 8,
+                val_dim: 8,
+            }
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        AttentionTileSize {
+            seq_q: 16,
+            seq_kv: 16,
+            head_dim: 16,
+            val_dim: 16,
+        }
+    }
+
+    fn minimal_seq_q_stage() -> u32 {
+        1
+    }
+
+    mod f16_ty {
+        use super::*;
+        use ruda_kernel::dsl::frontend::RudaPrimitive;
+        use rudnn::attention::kernel_ir::definition::AttentionGlobalTypes;
+
+        fn global_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
+            AttentionGlobalTypes::from_single_float_dtype(
+                half::f16::as_type_native_unchecked(),
+                AttentionGlobalTypes::mask_dtype(client),
+            )
+        }
+
+        include!("blueprint_tests.rs");
+        include!("selector_tests.rs");
+    }
+}

@@ -1,0 +1,205 @@
+[package]
+edition = "2024"
+name = "ruda-tensor"
+version = "0.21.0"
+authors = ["nathanielsimard <nathaniel.simard.42@gmail.com>"]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Ruda tensor operations, backend contracts, and framework-facing primitives."
+documentation = "https://github.com/shuqi2077/RUDA/blob/main/docs/en/README.md"
+readme = false
+keywords = [
+    "deep-learning",
+    "machine-learning",
+    "tensor",
+    "pytorch",
+    "ndarray",
+]
+categories = [
+    "science",
+    "no-std",
+    "embedded",
+    "wasm",
+]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/shuqi2077/RUDA/tree/main/ruda-tensor"
+
+[package.metadata.docs.rs]
+features = ["doc", "api-std"]
+rustdoc-args = ["--cfg", "docsrs", "--html-in-header", "katex-header.html"]
+
+[features]
+api = ["dep:ruda-tensor-config"]
+api-kernel = ["api", "kernel", "dep:ruda-kernel"]
+api-colored = ["api", "dep:colored"]
+api-std = ["api", "std", "api-colored", "ruda-tensor-config/std"]
+api-distributed = ["api-std", "distributed"]
+api-tracing = ["api", "tracing", "ruda-tensor-config/tracing", "ruda-kernel/frontend-tracing"]
+graph = []
+graph-distributed = ["graph", "distributed"]
+kernel = ["ruda-core/ir", "ruda-core/communication", "ruda-core/tensor-elements-flex32"]
+cpu = ["kernel", "dep:ruda-driver-cpu"]
+cuda = ["kernel", "dep:ruda-driver-cuda"]
+hip = ["kernel", "dep:ruda-driver-hip"]
+wgpu = ["kernel", "dep:ruda-driver-wgpu"]
+default = ["std"]
+distributed = ["std", "oneshot"]
+doc = ["default"]
+serde = ["enumset/serde"]
+std = [
+    "ruda-tensor-config?/std",
+    "ruda-kernel?/frontend-std",
+    "ruda-core/tensor-device-settings-std",
+    "rand/std",
+    "num-traits/std",
+    "ruda-core/std",
+    "ruda-core/tensor-elements-std",
+    "ruda-driver-cuda?/std",
+    "ruda-driver-wgpu?/std",
+]
+tracing = [
+    "ruda-tensor-config?/tracing",
+    "ruda-kernel?/frontend-tracing",
+    "ruda-core/tracing",
+    "ruda-driver-cpu?/tracing",
+    "ruda-driver-cuda?/tracing",
+    "ruda-driver-hip?/tracing",
+    "ruda-driver-wgpu?/tracing",
+]
+
+[lib]
+name = "ruda_tensor"
+path = "src/lib.rs"
+
+[dependencies.bytemuck]
+version = "1.25.0"
+features = ["extern_crate_alloc"]
+
+[dependencies.derive-new]
+version = "0.7.0"
+default-features = false
+
+[dependencies.enumset]
+version = "1.1.10"
+default-features = false
+
+[dependencies.hashbrown]
+version = "0.16"
+
+[dependencies.num-traits]
+version = "0.2.19"
+features = ["libm"]
+default-features = false
+
+[dependencies.oneshot]
+version = "0.2.1"
+optional = true
+
+[dependencies.rand]
+version = "0.10.1"
+features = ["std_rng"]
+default-features = false
+
+[dependencies.serde]
+version = "1.0.228"
+features = [
+    "derive",
+    "alloc",
+]
+default-features = false
+
+[dependencies.spin]
+version = "0.10.0"
+features = [
+    "mutex",
+    "spin_mutex",
+    "portable-atomic",
+]
+
+[dependencies.thiserror]
+version = "2"
+default-features = false
+
+[dev-dependencies.paste]
+version = "1"
+
+[dev-dependencies.rand]
+version = "0.10.1"
+features = [
+    "std_rng",
+    "thread_rng",
+]
+default-features = false
+
+[dev-dependencies.serde_json]
+version = "1.0.148"
+features = ["alloc"]
+default-features = false
+
+[dev-dependencies.serial_test]
+version = "3.2.0"
+
+[target.'cfg(not(target_has_atomic = "ptr"))'.dependencies.portable-atomic-util]
+version = "0.2.6"
+features = ["alloc"]
+
+[lints.clippy]
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+invalid_html_tags = "deny"
+
+[dependencies.ruda-core]
+path = "../ruda-core"
+default-features = false
+features = ["tensor-host-data", "tensor-device-settings", "serde", "shared-bytes", "tensor-data"]
+
+[dependencies.ruda-driver-cpu]
+path = "../ruda-driver-cpu"
+default-features = false
+optional = true
+
+[dependencies.ruda-driver-cuda]
+path = "../ruda-driver-cuda"
+default-features = false
+optional = true
+
+[dependencies.ruda-driver-hip]
+path = "../ruda-driver-hip"
+default-features = false
+optional = true
+
+[dependencies.ruda-driver-wgpu]
+path = "../ruda-driver-wgpu"
+default-features = false
+optional = true
+
+[dependencies.rudnn]
+package = "ruDNN"
+path = "../ruDNN"
+default-features = false
+features = ["attention-fallback"]
+
+[dependencies.half]
+version = "2.7.1"
+features = ["alloc", "num-traits", "serde", "bytemuck"]
+default-features = false
+
+[dependencies.colored]
+version = "3.0.0"
+optional = true
+
+[dependencies.ruda-tensor-config]
+path = "../ruda-tensor-config"
+default-features = false
+optional = true
+
+[dependencies.ruda-kernel]
+path = "../ruda-kernel"
+default-features = false
+features = ["frontend"]
+optional = true

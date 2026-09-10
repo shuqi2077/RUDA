@@ -1,0 +1,284 @@
+use crate::{
+    collections::{HashMap, HashSet},
+    graph::{ComputingProperty, NodeId},
+    tensor::AutodiffTensor,
+};
+use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
+use ruda_tensor::Backend;
+use core::any::Any;
+
+use super::{
+    base::{Checkpointer, NodeTree},
+    retro_forward::{RetroForward, RetroForwards},
+    state::{BackwardStates, State},
+};
+
+#[derive(Debug)]
+/// Determines if a node should checkpoint its computed output or its retro_forward for recomputation
+/// The action is normally created by the child of the node, once the node is determined to be needed
+pub enum CheckpointingAction {
+    /// The node's already computed output should be saved
+    Computed {
+        /// The node
+        node_id: NodeId,
+        /// The node's output
+        state_content: Box<dyn Any + Send>,
+    },
+    /// The node should recompute itself when asked
+    Recompute {
+        /// The node
+        node_id: NodeId,
+        /// How the node should recompute itself
+        retro_forward: Arc<dyn RetroForward>,
+    },
+}
+
+// TODO: Remove that when proper client server.
+unsafe impl Send for CheckpointingAction {}
+
+impl CheckpointingAction {
+    /// Utility function to access the id of the node of the checkpointing action
+    pub fn id(&self) -> NodeId {
+        match self {
+            CheckpointingAction::Computed {
+                node_id: node_ref,
+                state_content: _,
+            } => *node_ref,
+            CheckpointingAction::Recompute {
+                node_id: node_ref,
+                retro_forward: _,
+            } => *node_ref,
+        }
+    }
+}
+
+#[derive(new, Debug, Default)]
+/// Accumulates checkpoints as checkpointing actions during the forward pass,
+/// and builds a checkpointer right before the backward pass
+pub struct CheckpointerBuilder {
+    explicit_actions: Vec<CheckpointingAction>,
+    backup_actions: Vec<CheckpointingAction>,
+}
+
+/// Determines if a checkpoint should impact the n_required values (Main)
+/// or if it should just keep the state in case it's required (Backup)
+///
+pub(crate) enum ActionType {
+    /// Explicit actions have been explicitly requested by some operation to retrieve their state
+    Explicit,
+    /// Backup actions are not always needed. They exist to save the output of an operation
+    /// whose child is memory bound, in case the state is indirectly needed when computing
+    /// the child's retro_forward. If no explicit action ever asks for the child's output, then
+    /// the backup output will go out of scope when the checkpointer is built.
+    Backup,
+}
+
+impl CheckpointerBuilder {
+    pub(crate) fn checkpoint<B: Backend>(
+        &mut self,
+        tensor: &AutodiffTensor<B>,
+        action_type: ActionType,
+    ) {
+        let action_list = match action_type {
+            ActionType::Explicit => &mut self.explicit_actions,
+            ActionType::Backup => &mut self.backup_actions,
+        };
+        match &tensor.node.properties {
+            ComputingProperty::ComputeBound | ComputingProperty::Ambiguous => {
+                action_list.push(CheckpointingAction::Computed {
+                    node_id: tensor.node.id,
+                    state_content: Box::new(tensor.primitive.clone()),
+                })
+            }
+            ComputingProperty::MemoryBound { retro_forward } => {
+                action_list.push(CheckpointingAction::Recompute {
+                    node_id: tensor.node.id,
+                    retro_forward: retro_forward.clone(),
+                })
+            }
+        }
+    }
+
+    pub(crate) fn extend(&mut self, other: CheckpointerBuilder) {
+        for other_action in other.explicit_actions {
+            self.explicit_actions.push(other_action)
+        }
+        for other_unsure in other.backup_actions {
+            self.backup_actions.push(other_unsure)
+        }
+    }
+
+    pub(crate) fn build(self, node_tree: NodeTree) -> Checkpointer {
+        let mut backward_states_map = HashMap::new();
+        let mut retro_forwards_map = HashMap::new();
+
+        // Find recursion stopping points
+        let stop_nodes = self.find_stop_nodes();
+
+        // We start by identifying how many times each node will be required.
+        let n_required_map = self.build_n_required_map(&node_tree, stop_nodes);
+
+        // Then we checkpoint the nodes with the corresponding n_required value
+        self.insert_checkpoints(
+            &mut backward_states_map,
+            &mut retro_forwards_map,
+            n_required_map,
+        );
+
+        Checkpointer::new(
+            BackwardStates::new(backward_states_map),
+            RetroForwards::new(retro_forwards_map),
+            node_tree,
+        )
+    }
+
+    fn find_stop_nodes(&self) -> HashSet<NodeId> {
+        let mut stop_nodes = HashSet::new();
+        for action in self
+            .explicit_actions
+            .iter()
+            .chain(self.backup_actions.iter())
+        {
+            match action {
+                CheckpointingAction::Computed {
+                    node_id: node_ref,
+                    state_content: _,
+                } => {
+                    stop_nodes.insert(*node_ref);
+                }
+                CheckpointingAction::Recompute {
+                    node_id: _,
+                    retro_forward: _,
+                } => {}
+            }
+        }
+        stop_nodes
+    }
+
+    fn build_n_required_map(
+        &self,
+        node_tree: &NodeTree,
+        stop_nodes: HashSet<NodeId>,
+    ) -> HashMap<NodeId, usize> {
+        let mut n_required_map = HashMap::<NodeId, usize>::default();
+
+        for action in self.explicit_actions.iter() {
+            match action {
+                CheckpointingAction::Computed {
+                    node_id: node_ref,
+                    state_content: _,
+                } => {
+                    let id = *node_ref;
+                    match n_required_map.remove(&id) {
+                        Some(n) => {
+                            n_required_map.insert(id, n + 1);
+                        }
+                        None => {
+                            n_required_map.insert(id, 1);
+                        }
+                    };
+                }
+                CheckpointingAction::Recompute {
+                    node_id: node_ref,
+                    retro_forward: _,
+                } => {
+                    let id = *node_ref;
+                    Self::update_n_required_of_parents(
+                        id,
+                        &mut n_required_map,
+                        node_tree,
+                        &stop_nodes,
+                    );
+                }
+            }
+        }
+
+        n_required_map
+    }
+
+    fn insert_checkpoints(
+        mut self,
+        backward_states_map: &mut HashMap<NodeId, State>,
+        retro_forward_map: &mut HashMap<NodeId, Arc<dyn RetroForward>>,
+        n_required_map: HashMap<NodeId, usize>,
+    ) {
+        let mut actions = HashMap::new();
+        for action in self.explicit_actions.drain(..).chain(self.backup_actions.drain(..)) {
+            actions.entry(action.id()).or_insert(action);
+        }
+
+        for (node_id, n_required) in n_required_map {
+            let action = actions.remove(&node_id).unwrap_or_else(|| {
+                panic!("Node {:?} is needed but never checkpointed", &node_id)
+            });
+
+            match action {
+                CheckpointingAction::Computed {
+                    node_id: _,
+                    state_content,
+                } => {
+                    self.checkpoint_compute(backward_states_map, node_id, state_content, n_required)
+                }
+                CheckpointingAction::Recompute {
+                    node_id: _,
+                    retro_forward,
+                } => self.checkpoint_lazy(
+                    backward_states_map,
+                    retro_forward_map,
+                    node_id,
+                    retro_forward,
+                    n_required,
+                ),
+            };
+        }
+    }
+
+    fn update_n_required_of_parents(
+        id: NodeId,
+        n_required_map: &mut HashMap<NodeId, usize>,
+        node_tree: &NodeTree,
+        stop_nodes: &HashSet<NodeId>,
+    ) {
+        let mut pending = vec![id];
+        while let Some(id) = pending.pop() {
+            if let Some(n) = n_required_map.get_mut(&id) {
+                *n += 1;
+                continue;
+            }
+            n_required_map.insert(id, 1);
+            if !stop_nodes.contains(&id)
+                && let Some(parents) = node_tree.parents(&id)
+            {
+                pending.extend(parents.into_iter().rev());
+            }
+        }
+    }
+
+    fn checkpoint_compute(
+        &self,
+        backward_states_map: &mut HashMap<NodeId, State>,
+        node_id: NodeId,
+        state_content: Box<dyn Any + Send>,
+        n_required: usize,
+    ) {
+        backward_states_map.insert(
+            node_id,
+            State::Computed {
+                state_content,
+                n_required,
+            },
+        );
+    }
+
+    fn checkpoint_lazy(
+        &self,
+        backward_states_map: &mut HashMap<NodeId, State>,
+        retro_forward_map: &mut HashMap<NodeId, Arc<dyn RetroForward>>,
+        node_id: NodeId,
+        retro_forward: Arc<dyn RetroForward>,
+        n_required: usize,
+    ) {
+        retro_forward_map.insert(node_id, retro_forward);
+        backward_states_map.insert(node_id, State::Recompute { n_required });
+    }
+}

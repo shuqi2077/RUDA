@@ -1,0 +1,145 @@
+[package]
+edition = "2024"
+name = "ruda-tensor-host"
+version = "0.21.0"
+authors = [ "Dilshod Tadjibaev (@antimora)",]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Ruda host tensor backend and domain-library dispatch."
+readme = false
+keywords = [ "deep-learning", "machine-learning", "tensor", "simd",]
+categories = [ "science", "mathematics", "no-std",]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/shuqi2077/RUDA/tree/main/ruda-tensor-host"
+resolver = "2"
+
+[features]
+apple-amx = [ "rudnn-host/apple-amx", "rublas-host/apple-amx", "std", "gemm/experimental-apple-amx",]
+critical-section = [ "dep:once_cell", "once_cell/critical-section", "dep:portable-atomic", "portable-atomic/critical-section", "dep:portable-atomic-util",]
+default = [ "std", "simd", "rayon",]
+doc = [ "default",]
+rayon = [ "ruprim-host/rayon", "rudnn-host/rayon", "ruda-core/tensor-host-parallel", "rublas-host/rayon", "rufft-host/rayon", "dep:rayon", "gemm/rayon",]
+simd = [ "ruprim-host/simd", "rudnn-host/simd", "rublas-host/simd", "rufft-host/simd", "dep:macerator", "dep:aligned-vec", "gemm/wasm-simd128-enable",]
+sparse = [ "std", "dep:rusparse",]
+std = [ "rurand-host/std", "ruprim-host/std", "rudnn-host/std", "rublas-host/std", "rufft-host/std", "gemm/std", "half/std", "num-traits/std", "ruda-tensor/std", "ruda-core/id-tests-std", "ruda-tensor-config/std", "ruda-test-runtime?/std",]
+tracing = [ "ruda-tensor/tracing", "ruda-core/tracing", "ruda-tensor-config/tracing", "ruda-test-runtime/tracing",]
+x86-v4 = [ "rudnn-host/x86-v4", "gemm/x86-v4", "rublas-host/x86-v4",]
+
+[lib]
+name = "ruda_tensor_host"
+path = "src/lib.rs"
+
+[dependencies.aligned-vec]
+version = "0.6"
+optional = true
+default-features = false
+
+[dependencies.bytemuck]
+version = "1.25.0"
+
+[dependencies.gemm]
+version = "0.19"
+features = [ "f16",]
+default-features = false
+
+[dependencies.half]
+version = "2.7.1"
+features = [ "alloc", "num-traits", "serde",]
+default-features = false
+
+[dependencies.libm]
+version = "0.2.15"
+
+[dependencies.macerator]
+version = "0.3.0"
+optional = true
+
+[dependencies.num-traits]
+version = "0.2.19"
+features = [ "libm",]
+default-features = false
+
+[dependencies.once_cell]
+version = "1"
+optional = true
+default-features = false
+
+[dependencies.portable-atomic]
+version = "1.13.1"
+optional = true
+
+[dependencies.portable-atomic-util]
+version = "0.2.6"
+features = [ "alloc",]
+optional = true
+
+[dependencies.rayon]
+version = "1.10.0"
+optional = true
+
+[dependencies.ruda-core]
+path = "../ruda-core"
+default-features = false
+features = [ "tensor-host-storage", "serde", "shared-bytes", "tensor-data", "id",]
+
+[dependencies.rufft-host]
+package = "ruFFT-host"
+path = "../ruFFT/host"
+default-features = false
+
+[dependencies.rublas-host]
+path = "../ruBLAS/host"
+default-features = false
+
+[dependencies.rudnn-host]
+package = "ruDNN-host"
+path = "../ruDNN/host"
+default-features = false
+
+[dependencies.ruprim-host]
+package = "ruPRIM-host"
+path = "../ruPRIM/host"
+default-features = false
+
+[dependencies.rurand-host]
+package = "ruRAND-host"
+path = "../ruRAND/host"
+default-features = false
+
+[dependencies.rusparse]
+package = "ruSPARSE"
+path = "../ruSPARSE"
+default-features = false
+features = [ "serde",]
+optional = true
+
+[dependencies.ruda-tensor]
+path = "../ruda-tensor"
+default-features = false
+features = [ "graph",]
+
+[dependencies.ruda-tensor-config]
+path = "../ruda-tensor-config"
+default-features = false
+
+[dependencies.ruda-test-runtime]
+path = "../ruda-test-runtime"
+default-features = false
+optional = true
+
+[dev-dependencies.realfft]
+version = "3"
+
+[lints.clippy]
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+invalid_html_tags = "deny"
+
+[package.metadata.docs.rs]
+features = [ "default",]
+rustdoc-args = [ "--cfg", "docsrs",]

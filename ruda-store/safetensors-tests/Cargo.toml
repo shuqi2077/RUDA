@@ -1,0 +1,54 @@
+[package]
+name = "ruda-store-safetensors-tests"
+version = "0.21.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dev-dependencies.ruda-model]
+default-features = false
+features = [ "default",]
+path = "../../ruda-model"
+
+[dev-dependencies.ruda-nn]
+default-features = false
+features = [ "default",]
+path = "../../ruda-nn"
+
+[dev-dependencies.ruda-optim]
+default-features = false
+features = [ "default",]
+path = "../../ruda-optim"
+
+[dev-dependencies.ruda-tensor-host]
+path = "../../ruda-tensor-host"
+default-features = false
+features = [ "default",]
+
+[dev-dependencies.ruda-autodiff]
+default-features = false
+features = [ "std", "tracing",]
+path = "../../ruda-autodiff"
+
+[dev-dependencies.ruda-kernel]
+path = "../../ruda-kernel"
+default-features = false
+features = [ "frontend-std", "frontend-tracing",]
+
+[dev-dependencies.ruda-store]
+default-features = false
+features = [ "default", "std", "safetensors",]
+path = ".."
+
+[dev-dependencies.serde]
+version = "1.0.228"
+default-features = false
+features = [ "derive", "alloc",]
+
+[dev-dependencies.float-cmp]
+version = "0.10.0"
+features = []
+
+[dev-dependencies.ruda-tensor]
+path = "../../ruda-tensor"
+default-features = false
+features = [ "api",]

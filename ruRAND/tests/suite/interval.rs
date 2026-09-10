@@ -1,0 +1,90 @@
+use ruda_kernel::dsl as kernel_dsl;
+use ruda_kernel::dsl::RudaDim;
+use ruda_test_runtime::TestRuntime;
+use ruda_kernel::dsl::prelude::*;
+use rurand::*;
+
+#[test]
+fn values_open_interval() {
+    let client = TestRuntime::client(&Default::default());
+
+    let input = client.create_from_slice(u32::as_bytes(&[0, u32::MAX]));
+    let output = client.empty(input.size() as usize);
+
+    kernel_to_unit_interval_oo::launch::<TestRuntime>(
+        &client,
+        RudaCount::Static(1, 1, 1),
+        RudaDim::new_1d(2),
+        unsafe { ArrayArg::from_raw_parts(input, 2) },
+        unsafe { ArrayArg::from_raw_parts(output.clone(), 2) },
+    );
+
+    let actual = client.read_one(output).unwrap();
+    let actual = f32::from_bytes(&actual);
+
+    assert!(
+        actual[0] > 0.0,
+        "Expected 0 to map to a value strictly greater than 0.0, but got {}",
+        actual[0]
+    );
+
+    assert!(
+        actual[1] < 1.0,
+        "Expected u32::MAX to map to a value strictly less than 1.0, but got {}",
+        actual[1]
+    );
+
+    assert!(
+        actual[1] >= 0.9999999,
+        "Expected u32::MAX to map close to 1.0, but got {}",
+        actual[1]
+    );
+}
+
+#[ruda(launch)]
+pub(crate) fn kernel_to_unit_interval_co(input: &Array<u32>, output: &mut Array<f32>) {
+    output[ABSOLUTE_POS] = to_unit_interval_closed_open(input[ABSOLUTE_POS]);
+}
+
+#[ruda(launch)]
+pub(crate) fn kernel_to_unit_interval_oo(input: &Array<u32>, output: &mut Array<f32>) {
+    output[ABSOLUTE_POS] = to_unit_interval_open(input[ABSOLUTE_POS]);
+}
+
+#[test]
+fn values_closed_open_interval() {
+    let client = TestRuntime::client(&Default::default());
+
+    let input = client.create_from_slice(u32::as_bytes(&[0, u32::MAX]));
+    let output = client.empty(input.size() as usize);
+
+    kernel_to_unit_interval_co::launch::<TestRuntime>(
+        &client,
+        RudaCount::Static(1, 1, 1),
+        RudaDim::new_1d(2),
+        unsafe { ArrayArg::from_raw_parts(input, 2) },
+        unsafe { ArrayArg::from_raw_parts(output.clone(), 2) },
+    );
+
+    let actual = client.read_one(output).unwrap();
+    let actual = f32::from_bytes(&actual);
+
+    // Previous implementation would map to `[0, 1]` but the interval should be half open `[0, 1)`
+    assert_eq!(
+        actual[0], 0.0,
+        "Expected 0 to map to 0.0, but got {}",
+        actual[0]
+    );
+
+    assert!(
+        actual[1] < 1.0,
+        "Expected u32::MAX to map to a value strictly less than 1.0, but got {}",
+        actual[1]
+    );
+
+    assert!(
+        actual[1] >= 0.9999999,
+        "Expected u32::MAX to map close to 1.0, but got {}",
+        actual[1]
+    );
+}

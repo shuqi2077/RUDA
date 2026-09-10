@@ -1,0 +1,56 @@
+[package]
+name = "ruda-tensor-config"
+version = "0.21.0"
+edition = "2024"
+authors = ["Dilshod Tadjibaev (@antimora)"]
+description = "Shared tensor-stack autodiff and fusion configuration for Ruda."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/shuqi2077/RUDA/tree/main/ruda-tensor-config"
+readme = false
+build = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+
+[lib]
+name = "ruda_tensor_config"
+path = "src/lib.rs"
+
+[features]
+default = ["std"]
+std = ["ruda-core/std"]
+tracing = ["ruda-core/tracing"]
+
+[dependencies.ruda-core]
+path = "../ruda-core"
+default-features = false
+
+[dependencies.serde]
+version = "1.0.228"
+features = [
+    "derive",
+    "alloc",
+]
+default-features = false
+
+[dependencies.spin]
+version = "0.10.0"
+features = [
+    "mutex",
+    "spin_mutex",
+    "portable-atomic",
+]
+
+[dev-dependencies.tempfile]
+version = "3.24.0"
+
+[[test]]
+name = "config"
+path = "tests/config.rs"
+
+[lints.clippy]
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+invalid_html_tags = "deny"

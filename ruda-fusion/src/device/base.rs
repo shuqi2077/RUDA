@@ -1,0 +1,124 @@
+use crate::stream::Context;
+use ruda_core::tensor::{DType, Shape, Strides, quantization::QParamTensor, strides};
+use ruda_kernel::dsl::quant::scheme::{QuantParam, QuantScheme};
+use ruda_kernel::dsl::{
+    Runtime,
+    client::ComputeClient,
+    ir::AddressType,
+    prelude::{TensorArg, TensorBinding},
+};
+use std::marker::PhantomData;
+
+/// Defines a fallback operation when fusion isn't possible.
+pub trait FallbackOperation<R: Runtime>: Send + Sync {
+    /// Executes the fallback procedure.
+    fn run(&self, context: &mut Context<RudaFusionHandle<R>>);
+}
+
+/// Runtime parameters for quantization. Can be used to construct a scales handle from the base
+/// tensor handle.
+pub type QParams = ruda_core::tensor::quantization::QParams<QParamTensor>;
+
+/// Handle to be used when fusing operations.
+pub struct RudaFusionHandle<R: Runtime> {
+    /// Compute client for jit.
+    pub client: ComputeClient<R>,
+    /// The buffer where the data are stored.
+    pub handle: ruda_kernel::dsl::server::Handle,
+    /// The device of the current tensor.
+    pub device: R::Device,
+    /// The element type of the tensor.
+    pub dtype: DType,
+    /// The strides of the tensor.
+    pub strides: Strides,
+    /// Quantization runtime parameters, if applicable
+    pub qparams: Option<QParams>,
+}
+
+impl<R: Runtime> core::fmt::Debug for RudaFusionHandle<R> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(
+            "RudaFusionHandle {{ device: {:?}, runtime: {}}}",
+            self.device,
+            R::name(&self.client),
+        ))
+    }
+}
+
+impl<R: Runtime> Clone for RudaFusionHandle<R> {
+    fn clone(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            handle: self.handle.clone(),
+            device: self.device.clone(),
+            strides: self.strides.clone(),
+            dtype: self.dtype,
+            qparams: self.qparams.clone(),
+        }
+    }
+}
+
+unsafe impl<R: Runtime> Send for RudaFusionHandle<R> {}
+unsafe impl<R: Runtime> Sync for RudaFusionHandle<R> {}
+
+impl<R: Runtime> RudaFusionHandle<R> {
+    /// Return the reference to a tensor handle.
+    pub fn binding(self, shape: Shape) -> TensorBinding<R> {
+        TensorBinding {
+            handle: self.handle.binding(),
+            strides: self.strides.clone(),
+            shape,
+            runtime: PhantomData,
+        }
+    }
+
+    pub fn required_address_type(&self) -> AddressType {
+        match self.dtype {
+            DType::QFloat(scheme) => {
+                let len = self.handle.size() as usize * 8 / scheme.size_bits_value();
+                AddressType::from_len(len)
+            }
+            _ => AddressType::from_len(self.handle.size() as usize / self.dtype.size()),
+        }
+    }
+
+    /// Return the reference to a tensor argument.
+    pub fn into_tensor_arg(self, shape: Shape) -> TensorArg<R> {
+        let handle = self.binding(shape);
+        handle.into_tensor_arg()
+    }
+
+    /// Construct a separate tensor for the quantization scales, if present
+    pub fn params(&self, scheme: QuantScheme) -> Option<Self> {
+        let qparams = self.qparams.as_ref()?;
+        let mut handle = self.handle.clone();
+        handle.offset_start = Some(qparams.scales.offset_start as u64);
+        handle.offset_end = Some(qparams.scales.offset_end as u64);
+
+        Some(Self {
+            client: self.client.clone(),
+            handle,
+            device: self.device.clone(),
+            dtype: match scheme.param {
+                QuantParam::F32 => DType::F32,
+                QuantParam::F16 => DType::F16,
+                QuantParam::BF16 => DType::BF16,
+                QuantParam::UE8M0 | QuantParam::UE4M3 => DType::U8,
+            },
+            strides: qparams.scales.metadata.strides().clone(),
+            qparams: None,
+        })
+    }
+}
+
+pub(crate) fn strides_dyn_rank(shape: &[usize]) -> Strides {
+    let mut strides = strides![0; shape.len()];
+
+    let mut current = 1;
+    shape.iter().enumerate().rev().for_each(|(index, val)| {
+        strides[index] = current;
+        current *= val;
+    });
+
+    strides
+}

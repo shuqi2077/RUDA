@@ -1,0 +1,54 @@
+[package]
+name = "rublas-host"
+edition = "2024"
+authors = [ "Dilshod Tadjibaev (@antimora)",]
+license = "MIT OR Apache-2.0"
+description = "rublas CPU strided/batched floating-point and integer matrix multiplication."
+readme = false
+build = false
+
+[lib]
+name = "rublas_host"
+path = "src/lib.rs"
+
+[features]
+default = [ "std", "simd", "rayon",]
+std = [ "ruprim-host/std", "ruda-core/std", "gemm/std", "half/std",]
+simd = [ "ruprim-host/simd", "dep:macerator", "gemm/wasm-simd128-enable",]
+rayon = [ "ruprim-host/rayon", "dep:rayon", "gemm/rayon",]
+apple-amx = [ "std", "gemm/experimental-apple-amx",]
+x86-v4 = [ "gemm/x86-v4",]
+
+[package.version]
+workspace = true
+
+[dependencies.bytemuck]
+version = "1.25.0"
+
+[dependencies.half]
+version = "2.7.1"
+features = [ "alloc", "num-traits", "serde",]
+default-features = false
+
+[dependencies.gemm]
+version = "0.19"
+features = [ "f16",]
+default-features = false
+
+[dependencies.macerator]
+version = "0.3.0"
+optional = true
+
+[dependencies.rayon]
+version = "1.10.0"
+optional = true
+
+[dependencies.ruda-core]
+path = "../../ruda-core"
+default-features = false
+features = [ "tensor-host-storage",]
+
+[dependencies.ruprim-host]
+package = "ruPRIM-host"
+path = "../../ruPRIM/host"
+default-features = false

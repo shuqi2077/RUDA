@@ -1,0 +1,68 @@
+name: Mirror libraries
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ruBLAS/**'
+      - 'ruFFT/**'
+      - 'ruDNN/**'
+      - 'ruPRIM/**'
+      - 'ruRAND/**'
+      - 'ruSPARSE/**'
+      - 'ruTENSOR/**'
+      - 'ruCCL/**'
+      - 'ruLLM/**'
+      - '.github/workflows/mirror-libraries.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: library-mirrors
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    if: github.repository == 'shuqi2077/RUDA' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - {prefix: ruBLAS, repository: ruBLAS, secret: MIRROR_RUBLAS_KEY}
+          - {prefix: ruFFT, repository: ruFFT, secret: MIRROR_RUFFT_KEY}
+          - {prefix: ruDNN, repository: ruDNN, secret: MIRROR_RUDNN_KEY}
+          - {prefix: ruPRIM, repository: ruPRIM, secret: MIRROR_RUPRIM_KEY}
+          - {prefix: ruRAND, repository: ruRAND, secret: MIRROR_RURAND_KEY}
+          - {prefix: ruSPARSE, repository: ruSPARSE, secret: MIRROR_RUSPARSE_KEY}
+          - {prefix: ruTENSOR, repository: ruTENSOR, secret: MIRROR_RUTENSOR_KEY}
+          - {prefix: ruCCL, repository: ruCCL, secret: MIRROR_RUCCL_KEY}
+          - {prefix: ruLLM, repository: ruLLM, secret: MIRROR_RULLM_KEY}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Publish source subtree
+        env:
+          PREFIX: ${{ matrix.prefix }}
+          MIRROR_REPOSITORY: ${{ matrix.repository }}
+          MIRROR_SSH_KEY: ${{ secrets[matrix.secret] }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$MIRROR_SSH_KEY"
+          key="$RUNNER_TEMP/ruda-mirror-key"
+          hosts="$RUNNER_TEMP/ruda-mirror-known-hosts"
+          trap 'rm -f "$key" "$hosts"' EXIT
+          umask 077
+          printf '%s\n' "$MIRROR_SSH_KEY" > "$key"
+          printf '%s\n' 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$hosts"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519 -o UserKnownHostsFile=$hosts"
+          split=$(git subtree split --prefix="$PREFIX" "$GITHUB_SHA")
+          test "$(git rev-parse "$split^{tree}")" = "$(git rev-parse "$GITHUB_SHA:$PREFIX")"
+          git push "git@github.com:shuqi2077/$MIRROR_REPOSITORY.git" "$split:refs/heads/main"

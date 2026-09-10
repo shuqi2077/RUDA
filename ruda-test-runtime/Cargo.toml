@@ -1,0 +1,23 @@
+[package]
+name = "ruda-test-runtime"
+version.workspace = true
+edition.workspace = true
+build = "build.rs"
+license = "MIT OR Apache-2.0"
+
+[features]
+default = ["std", "ruda-kernel/frontend-default", "ruda-kernel/library", "ruda-driver-cpu?/default", "ruda-driver-cuda?/default", "ruda-driver-hip?/default", "ruda-driver-wgpu?/default"]
+test-runtime = ["dep:ruda-driver-wgpu"]
+cpu = ["dep:ruda-driver-cpu"]
+cuda = ["dep:ruda-driver-cuda"]
+hip = ["dep:ruda-driver-hip"]
+wgpu = ["dep:ruda-driver-wgpu"]
+std = ["ruda-kernel/frontend-std", "ruda-driver-wgpu?/std", "ruda-driver-cuda?/std"]
+tracing = ["ruda-kernel/frontend-tracing", "ruda-driver-cpu?/tracing", "ruda-driver-cuda?/tracing", "ruda-driver-hip?/tracing", "ruda-driver-wgpu?/tracing"]
+
+[dependencies]
+ruda-kernel = { path = "../ruda-kernel", default-features = false, features = ["frontend"] }
+ruda-driver-cpu = { path = "../ruda-driver-cpu", default-features = false, optional = true }
+ruda-driver-cuda = { path = "../ruda-driver-cuda", default-features = false, optional = true }
+ruda-driver-hip = { path = "../ruda-driver-hip", default-features = false, optional = true }
+ruda-driver-wgpu = { path = "../ruda-driver-wgpu", default-features = false, optional = true }

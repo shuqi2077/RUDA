@@ -1,0 +1,19 @@
+[package]
+name = "ruda-kernel-path-native"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[lib]
+path = "lib.rs"
+
+[dependencies.serde]
+version = "1"
+default-features = false
+features = ["derive"]
+
+[dependencies.ruda-kernel]
+path = "../../../../ruda-kernel"
+default-features = false
+features = ["frontend-std"]

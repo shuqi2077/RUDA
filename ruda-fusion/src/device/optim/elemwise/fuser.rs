@@ -1,0 +1,85 @@
+use super::optimization::ElemwiseOptimization;
+use crate::device::{
+    engine::{
+        fuser::TraceOperationFuser,
+        settings::{FuseSettings, RefLayoutSetting, VectorizationSetting},
+    },
+    optim::RudaOptimization,
+};
+use crate::OperationFuser;
+use ruda_core::tensor::Shape;
+use ruda_kernel::dsl::Runtime;
+
+/// Fuses element wise operations.
+pub struct ElementWiseFuser<R: Runtime> {
+    fuser: TraceOperationFuser,
+    device: R::Device,
+}
+
+impl<R: Runtime> Clone for ElementWiseFuser<R> {
+    fn clone(&self) -> Self {
+        Self {
+            fuser: self.fuser.clone(),
+            device: self.device.clone(),
+        }
+    }
+}
+
+impl<R: Runtime> ElementWiseFuser<R> {
+    pub fn shape_id(&self) -> Shape {
+        self.fuser.current_output_shape.clone()
+    }
+    pub fn new(device: R::Device) -> Self {
+        let client = R::client(&device);
+        let props = client.properties();
+        let max_bindings = props.hardware.max_bindings;
+
+        Self {
+            fuser: TraceOperationFuser::new(
+                max_bindings,
+                FuseSettings {
+                    broadcast: true,
+                    output_shape_updates: true,
+                    inplace: true,
+                    vectorization: VectorizationSetting::Activated,
+                    ref_layout: RefLayoutSetting::Any,
+                },
+            ),
+            device,
+        }
+    }
+}
+
+impl<R: Runtime> OperationFuser<RudaOptimization<R>> for ElementWiseFuser<R> {
+    fn fuse(&mut self, operation: &ruda_tensor::graph::OperationIr) {
+        self.fuser.fuse(operation);
+    }
+
+    fn finish(&mut self) -> RudaOptimization<R> {
+        let client = R::client(&self.device);
+        let trace = self.fuser.finish();
+        let elementwise = ElemwiseOptimization::new(trace, client, self.device.clone(), self.len());
+
+        RudaOptimization::ElementWise(elementwise)
+    }
+
+    fn reset(&mut self) {
+        self.fuser.reset()
+    }
+
+    fn status(&self) -> crate::FuserStatus {
+        self.fuser.status()
+    }
+
+    fn properties(&self) -> crate::FuserProperties {
+        self.fuser.properties()
+    }
+
+    fn len(&self) -> usize {
+        self.fuser.len()
+    }
+
+    fn clone_dyn(&self) -> Box<dyn OperationFuser<RudaOptimization<R>>> {
+        Box::new(self.clone())
+    }
+}

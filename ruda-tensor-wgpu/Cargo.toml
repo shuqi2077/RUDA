@@ -1,0 +1,95 @@
+[package]
+edition = "2024"
+name = "ruda-tensor-wgpu"
+version = "0.21.0"
+authors = [ "nathanielsimard <nathaniel.simard.42@gmail.com>",]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Ruda WGPU tensor device adapter."
+readme = false
+keywords = [ "deep-learning", "machine-learning", "gpu", "wgpu", "webgpu",]
+categories = [ "science",]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/shuqi2077/RUDA/tree/main/ruda-tensor-wgpu"
+resolver = "2"
+
+[features]
+autotune = [ "ruda-tensor-device/autotune",]
+autotune-checks = [ "ruda-tensor-device/autotune-checks",]
+msl = [ "ruda-driver-wgpu/msl",]
+spirv = [ "ruda-driver-wgpu/spirv",]
+wgsl = []
+default = [ "std", "autotune", "fusion", "ruda-tensor-device/default", "ruda-core/id-tests-std", "ruda-test-runtime/default",]
+doc = [ "ruda-tensor-device/doc", "ruda-core/id-tests-std", "ruda-test-runtime/default", "ruda-test-runtime/tracing",]
+exclusive-memory-only = [ "ruda-driver-wgpu/exclusive-memory-only",]
+fusion = [ "ruda-fusion", "ruda-tensor-device/fusion", "ruda-core/id-tests-std", "ruda-test-runtime/tracing",]
+ruda-fusion = ["dep:ruda-fusion", "ruda-core/id-tests-std", "ruda-test-runtime/std", "ruda-test-runtime/tracing"]
+metal = [ "msl",]
+std = [ "ruda-tensor-device/std", "ruda-core/id-tests-std", "ruda-test-runtime/std",]
+template = [ "ruda-kernel/source-template", "ruda-kernel/frontend-template",]
+tracing = [ "ruda-test-runtime/tracing", "ruda-tensor/tracing", "ruda-core/tracing", "ruda-tensor-config/tracing", "ruda-test-runtime/tracing", "ruda-fusion?/tracing", "ruda-tensor-device/tracing",]
+vulkan = [ "spirv",]
+webgpu = [ "wgsl",]
+
+[lib]
+name = "ruda_tensor_wgpu"
+path = "src/lib.rs"
+
+[dependencies.ruda-tensor]
+path = "../ruda-tensor"
+default-features = false
+features = [ "wgpu",]
+
+[dependencies.ruda-tensor-device]
+path = "../ruda-tensor-device"
+default-features = false
+
+[dependencies.ruda-fusion]
+path = "../ruda-fusion"
+default-features = false
+features = [ "std", "tracing",]
+optional = true
+
+[dependencies.ruda-driver-wgpu]
+path = "../ruda-driver-wgpu"
+default-features = false
+
+[dependencies.ruda-kernel]
+path = "../ruda-kernel"
+default-features = false
+features = [ "frontend", "library",]
+
+[dependencies.ruda-core]
+path = "../ruda-core"
+default-features = false
+features = [ "ir", "communication", "tensor-elements-flex32", "serde", "shared-bytes", "tensor-data", "id",]
+
+[dependencies.ruda-tensor-config]
+path = "../ruda-tensor-config"
+default-features = false
+
+[dependencies.ruda-test-runtime]
+path = "../ruda-test-runtime"
+default-features = false
+features = [ "wgpu",]
+
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]
+
+[dependencies.serde_json]
+version = "1.0"
+
+[lints.clippy]
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+invalid_html_tags = "deny"
+
+[package.metadata.docs.rs]
+features = [ "default",]
+rustdoc-args = [ "--cfg", "docsrs",]

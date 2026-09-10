@@ -1,0 +1,536 @@
+use alloc::vec;
+use core::marker::PhantomData;
+
+use crate::dsl::{prelude::*, unexpanded};
+use ruda_core::ir::{Type, VectorSize};
+use ruda::runtime::server::TensorMapMeta;
+use ruda_core::tensor::{Strides, metadata::Metadata, strides};
+use paste::paste;
+
+pub use ruda::runtime::tma::*;
+
+pub trait TensorMapKind: RudaType + Clone + Copy + Send + Sync + 'static {
+    type Args: Clone;
+
+    fn as_format(args: Self::Args) -> TensorMapFormat;
+}
+
+/// Regular tiled tensor map
+#[derive(RudaType, RudaLaunch, Clone, Copy)]
+pub struct Tiled {}
+/// Im2col indexing. Loads a "column" (not the same column as im2col) of pixels into shared
+/// memory, with a certain offset (kernel position). The corners are the bounds to load pixels
+/// from *at offset 0*, so the top left corner of the kernel. The offset is added to the
+/// corner offsets, so a `(-1, -1)` corner will stop the bounding box at `(1, 1)` for kernel
+/// offset `(2, 2)`.
+#[derive(RudaType, RudaLaunch, Clone, Copy)]
+pub struct Im2col;
+/// 1D im2col, not properly supported yet
+#[derive(RudaType, RudaLaunch, Clone, Copy)]
+pub struct Im2colWide;
+
+impl TensorMapKind for Tiled {
+    type Args = TiledArgs;
+
+    fn as_format(args: Self::Args) -> TensorMapFormat {
+        TensorMapFormat::Tiled(args)
+    }
+}
+
+impl TensorMapKind for Im2col {
+    type Args = Im2colArgs;
+
+    fn as_format(args: Self::Args) -> TensorMapFormat {
+        TensorMapFormat::Im2col(args)
+    }
+}
+
+impl TensorMapKind for Im2colWide {
+    type Args = Im2colWideArgs;
+
+    fn as_format(args: Self::Args) -> TensorMapFormat {
+        TensorMapFormat::Im2colWide(args)
+    }
+}
+
+/// Grid constant tensor map, currently only maps to CUDA tensormap. May be interleaved or swizzled,
+/// but last dimension must be contiguous (since strides don't include the last dimension).
+///
+/// The tensormap is treated as an opaque type at runtime.
+///
+pub struct TensorMapArg<R: Runtime, K: TensorMapKind> {
+    pub tensor: TensorArg<R>,
+    pub metadata: TensorMapMeta,
+    pub _kind: PhantomData<K>,
+}
+
+impl<R: Runtime, K: TensorMapKind> TensorMapArg<R, K> {
+    pub fn new(args: K::Args, tensor: TensorArg<R>, ty: impl Into<Type>) -> Self {
+        let ty = ty.into();
+        let TensorArg::Handle { handle, .. } = &tensor else {
+            panic!("Can't use alias for TensorMap")
+        };
+        let rank = handle.shape.len();
+        Self {
+            metadata: TensorMapMeta {
+                format: K::as_format(args),
+                metadata: Metadata::new(handle.shape.clone(), handle.strides.clone()),
+                elem_stride: strides![1; rank],
+                interleave: TensorMapInterleave::None,
+                swizzle: TensorMapSwizzle::None,
+                prefetch: TensorMapPrefetch::None,
+                oob_fill: OobFill::Zero,
+                storage_ty: ty.storage_type(),
+            },
+            tensor,
+            _kind: PhantomData,
+        }
+    }
+
+    pub fn with_elem_stride(mut self, elem_stride: Strides) -> Self {
+        self.metadata.elem_stride = elem_stride;
+        self
+    }
+
+    pub fn with_interleave(mut self, interleave: TensorMapInterleave) -> Self {
+        self.metadata.interleave = interleave;
+        self
+    }
+
+    pub fn with_swizzle(mut self, swizzle: TensorMapSwizzle) -> Self {
+        self.metadata.swizzle = swizzle;
+        self
+    }
+
+    pub fn with_prefetch(mut self, prefetch: TensorMapPrefetch) -> Self {
+        self.metadata.prefetch = prefetch;
+        self
+    }
+
+    pub fn with_nan_fill(mut self) -> Self {
+        self.metadata.oob_fill = OobFill::NaN;
+        self
+    }
+}
+
+/// A CUDA `CUtensorMap` object. Represents a tensor encoded with a lot of metadata, and is an
+/// opaque packed object at runtime. Does not support retrieving any shapes or strides, nor does
+/// it give access to the pointer. So these need to be passed separately in an aliased `Tensor` if needed.
+///
+/// Also see [`ruda::runtime::tma`].
+#[derive(Clone)]
+pub struct TensorMap<E: RudaPrimitive, K: TensorMapKind> {
+    _ty: PhantomData<E>,
+    _kind: PhantomData<K>,
+}
+
+impl<E: RudaPrimitive, K: TensorMapKind> Copy for TensorMap<E, K> {}
+
+impl<E: RudaPrimitive, K: TensorMapKind> TensorMap<E, K> {}
+
+impl<E: RudaPrimitive, K: TensorMapKind> IntoMut for NativeExpand<TensorMap<E, K>> {
+    fn into_mut(self, _scope: &mut Scope) -> Self {
+        self
+    }
+}
+
+impl<E: RudaPrimitive, K: TensorMapKind> RudaType for TensorMap<E, K> {
+    type ExpandType = NativeExpand<TensorMap<E, K>>;
+}
+
+impl<E: RudaPrimitive, K: TensorMapKind> RudaType for *const TensorMap<E, K> {
+    type ExpandType = NativeExpand<TensorMap<E, K>>;
+}
+
+impl<E: RudaPrimitive, K: TensorMapKind> RudaType for *mut TensorMap<E, K> {
+    type ExpandType = NativeExpand<TensorMap<E, K>>;
+}
+
+impl<E: RudaPrimitive, K: TensorMapKind> Vectorized for TensorMap<E, K> {}
+impl<E: RudaPrimitive, K: TensorMapKind> VectorizedExpand for NativeExpand<TensorMap<E, K>> {
+    fn vector_size(&self) -> VectorSize {
+        1
+    }
+}
+
+impl<E: RudaPrimitive, K: TensorMapKind> LaunchArg for TensorMap<E, K> {
+    type RuntimeArg<R: Runtime> = TensorMapArg<R, K>;
+    type CompilationArg = ();
+
+    fn register<R: Runtime>(
+        arg: Self::RuntimeArg<R>,
+        launcher: &mut KernelLauncher<R>,
+    ) -> Self::CompilationArg {
+        let ty = launcher.with_scope(|scope| E::as_type(scope));
+        launcher.register_tensor_map(arg, ty);
+    }
+
+    fn expand(
+        _arg: &Self::CompilationArg,
+        builder: &mut KernelBuilder,
+    ) -> NativeExpand<TensorMap<E, K>> {
+        let tensor = builder.input_tensor_map(E::as_type(&builder.scope));
+        tensor.into()
+    }
+    fn expand_output(
+        _arg: &Self::CompilationArg,
+        builder: &mut KernelBuilder,
+    ) -> NativeExpand<TensorMap<E, K>> {
+        let tensor = builder.output_tensor_map(E::as_type(&builder.scope));
+        tensor.into()
+    }
+}
+
+/// Commit an async tensor operation. Not sure how this works, poor docs. But you need to call it
+/// after a write, but not after reads.
+pub fn tma_group_commit() {
+    unexpanded!()
+}
+
+pub mod tma_group_commit {
+    use ruda_core::ir::TmaOps;
+
+    use super::*;
+
+    pub fn expand(scope: &mut Scope) {
+        scope.register(TmaOps::CommitGroup)
+    }
+}
+
+/// Wait until at most `max_pending` TMA copy operations are in flight.
+pub fn tma_group_wait(_max_pending: u32) {
+    unexpanded!()
+}
+
+pub mod tma_group_wait {
+    use ruda_core::ir::TmaOps;
+
+    use super::*;
+
+    pub fn expand(scope: &mut Scope, max_pending: u32) {
+        scope.register(TmaOps::WaitGroup { max_pending })
+    }
+}
+
+/// Wait TMA copy operations have finished reading from shared memory, with at most `max_pending`
+/// operations being unfinished.
+///
+/// # Example
+///
+/// I believe you may use `max_pending` like this.
+///
+/// ```ignore
+/// copy_data(smem1);
+/// copy_data(smem2);
+/// copy_data(smem3);
+/// copy_data(smem4);
+/// tma_wait_read(2);
+/// // reuse smem1 & smem2 while 3 and 4 are still pending
+/// ```
+pub fn tma_group_wait_read(_max_pending: u32) {
+    unexpanded!()
+}
+
+pub mod tma_group_wait_read {
+    use ruda_core::ir::TmaOps;
+
+    use super::*;
+
+    pub fn expand(scope: &mut Scope, max_pending: u32) {
+        scope.register(TmaOps::WaitGroupRead { max_pending })
+    }
+}
+
+macro_rules! tma_store {
+    ($dim: literal, $($arg: expr),*) => {
+        paste! {
+            /// Copy a tile from a shared memory `src` to a global memory `dst`, with the provided
+            /// offsets. Should be combined with ``memcpy_async_tensor_commit`` and
+            /// ``memcpy_async_tensor_wait_read``.
+            #[allow(unused)]
+            pub fn [<tma_store_ $dim d>]<T: RudaPrimitive, T2: RudaPrimitive<Scalar = T::Scalar>>(
+                src: &Slice<T2>,
+                dst: &mut TensorMap<T, Tiled>,
+                $($arg: i32),*
+            ) {
+                unexpanded!()
+            }
+
+            pub mod [<tma_store_ $dim d>] {
+                use ruda_core::ir::{Instruction, TmaOps};
+
+                use super::*;
+
+                #[allow(clippy::too_many_arguments)]
+                pub fn expand<T: RudaPrimitive, T2: RudaPrimitive<Scalar = T::Scalar>>(
+                    scope: &mut Scope,
+                    src: SliceExpand<T2, ReadOnly>,
+                    dst: NativeExpand<TensorMap<T, Tiled>>,
+                    $($arg: NativeExpand<i32>),*
+                ) {
+                    let (source, source_offset) = src.__to_raw_parts();
+                    let dst = *dst.expand;
+                    let coordinates = vec![$(*$arg.expand),*];
+                    scope.register(Instruction::new(
+                        TmaOps::TmaStore {
+                            source,
+                            coordinates,
+                            offset_source: source_offset,
+                        },
+                        dst,
+                    ))
+                }
+            }
+        }
+    };
+}
+
+tma_store!(1, x);
+tma_store!(2, y, x);
+tma_store!(3, z, y, x);
+tma_store!(4, w, z, y, x);
+tma_store!(5, v, w, z, y, x);
+
+/// Module that contains the implementation details of the metadata functions.
+mod metadata {
+    use ruda_core::ir::{ManagedVariable, Metadata, VariableKind};
+
+    use super::*;
+    use crate::dsl::{
+        ir::{Arithmetic, BinaryOperator, Instruction},
+        prelude::Array,
+    };
+
+    impl<T: Scalar, K: TensorMapKind> TensorMap<T, K> {
+        /// Get a reference to the underlying buffer for the tensor map.
+        pub fn buffer<N: Size>(&self) -> Tensor<Vector<T, N>> {
+            unexpanded!()
+        }
+
+        /// Obtain the stride of input at dimension dim
+        pub fn stride(&self, _dim: usize) -> usize {
+            unexpanded!()
+        }
+
+        /// Obtain the shape of input at dimension dim
+        pub fn shape(&self, _dim: usize) -> usize {
+            unexpanded!()
+        }
+
+        /// Obtain the coordinate corresponding to the given `index` of the tensor at dimension `dim`.
+        ///
+        /// A coordinate is a list of indices corresponding to the multi-dimensional position of an element in the tensor.
+        /// The `dim` element in a coordinate is the position along the `dim` dimension of the tensor.
+        pub fn coordinate(&self, _index: usize, _dim: usize) -> usize {
+            unexpanded!()
+        }
+
+        /// The number of vectorized elements in the tensor.
+        ///
+        /// # Warning
+        ///
+        /// The length will be affected by the vectorization factor. To obtain the number of elements,
+        /// you should multiply the length by the vectorization factor.
+        #[allow(clippy::len_without_is_empty)]
+        pub fn len(&self) -> usize {
+            unexpanded!()
+        }
+
+        /// The length of the buffer representing the tensor in terms of vectorized elements.
+        ///
+        /// # Warning
+        ///
+        /// The buffer length will be affected by the vectorization factor. To obtain the number of
+        /// elements, you should multiply the length by the vectorization factor.
+        #[allow(clippy::len_without_is_empty)]
+        pub fn buffer_len(&self) -> usize {
+            unexpanded!()
+        }
+
+        /// Returns the rank of the tensor.
+        pub fn rank(&self) -> usize {
+            unexpanded!()
+        }
+
+        /// Downcast the tensormap to the given type and panic if the type isn't the same.
+        ///
+        /// This function should only be used to satisfy the Rust type system, when two generic
+        /// types are supposed to be the same.
+        pub fn downcast<E: RudaPrimitive>(&self) -> TensorMap<E, K> {
+            unexpanded!()
+        }
+
+        // Expand function of [buffer](TensorMap::buffer).
+        pub fn __expand_buffer(
+            scope: &mut Scope,
+            expand: NativeExpand<TensorMap<T, K>>,
+        ) -> NativeExpand<Tensor<T>> {
+            expand.__expand_buffer_method(scope)
+        }
+
+        // Expand function of [stride](TensorMap::stride).
+        pub fn __expand_stride(
+            scope: &mut Scope,
+            expand: NativeExpand<TensorMap<T, K>>,
+            dim: NativeExpand<usize>,
+        ) -> NativeExpand<usize> {
+            expand.__expand_stride_method(scope, dim)
+        }
+
+        // Expand function of [shape](TensorMap::shape).
+        pub fn __expand_shape(
+            scope: &mut Scope,
+            expand: NativeExpand<TensorMap<T, K>>,
+            dim: NativeExpand<usize>,
+        ) -> NativeExpand<usize> {
+            expand.__expand_shape_method(scope, dim)
+        }
+
+        // Expand function of [coordinate](TensorMap::coordinate).
+        pub fn __expand_coordinate(
+            scope: &mut Scope,
+            expand: NativeExpand<TensorMap<T, K>>,
+            index: NativeExpand<usize>,
+            dim: NativeExpand<usize>,
+        ) -> NativeExpand<usize> {
+            expand.__expand_coordinate_method(scope, index, dim)
+        }
+
+        // Expand function of [len](TensorMap::len).
+        pub fn __expand_len(
+            scope: &mut Scope,
+            expand: NativeExpand<TensorMap<T, K>>,
+        ) -> NativeExpand<usize> {
+            expand.__expand_len_method(scope)
+        }
+
+        // Expand function of [buffer_len](TensorMap::buffer_len).
+        pub fn __expand_buffer_len(
+            scope: &mut Scope,
+            expand: NativeExpand<TensorMap<T, K>>,
+        ) -> NativeExpand<usize> {
+            expand.__expand_buffer_len_method(scope)
+        }
+
+        // Expand function of [rank](TensorMap::rank).
+        pub fn __expand_rank(
+            scope: &mut Scope,
+            expand: NativeExpand<TensorMap<T, K>>,
+        ) -> NativeExpand<usize> {
+            expand.__expand_rank_method(scope)
+        }
+    }
+
+    impl<T: RudaPrimitive, K: TensorMapKind> NativeExpand<TensorMap<T, K>> {
+        // Expand method of [buffer](TensorMap::buffer).
+        pub fn __expand_buffer_method(self, scope: &mut Scope) -> NativeExpand<Tensor<T>> {
+            let tensor = match self.expand.kind {
+                VariableKind::TensorMapInput(id) => scope.input(id, self.expand.ty),
+                VariableKind::TensorMapOutput(id) => scope.output(id, self.expand.ty),
+                _ => unreachable!(),
+            };
+            tensor.into()
+        }
+
+        // Expand method of [stride](Tensor::stride).
+        pub fn __expand_stride_method(
+            self,
+            scope: &mut Scope,
+            dim: NativeExpand<usize>,
+        ) -> NativeExpand<usize> {
+            let dim: ManagedVariable = dim.into();
+            let out = scope.create_local(usize::as_type(scope));
+            scope.register(Instruction::new(
+                Metadata::Stride {
+                    dim: *dim,
+                    var: self.expand.into(),
+                },
+                out.clone().into(),
+            ));
+            out.into()
+        }
+
+        // Expand method of [shape](Tensor::shape).
+        pub fn __expand_shape_method(
+            self,
+            scope: &mut Scope,
+            dim: NativeExpand<usize>,
+        ) -> NativeExpand<usize> {
+            let dim: ManagedVariable = dim.into();
+            let out = scope.create_local(usize::as_type(scope));
+            scope.register(Instruction::new(
+                Metadata::Shape {
+                    dim: *dim,
+                    var: self.expand.into(),
+                },
+                out.clone().into(),
+            ));
+            out.into()
+        }
+
+        // Expand method of [coordinate](Tensor::coordinate).
+        pub fn __expand_coordinate_method(
+            self,
+            scope: &mut Scope,
+            index: NativeExpand<usize>,
+            dim: NativeExpand<usize>,
+        ) -> NativeExpand<usize> {
+            let index: ManagedVariable = index.into();
+            let stride = self.clone().__expand_stride_method(scope, dim.clone());
+            let shape = self.clone().__expand_shape_method(scope, dim.clone());
+
+            // Compute `num_strides = index / stride`.
+            let num_strides = scope.create_local(usize::as_type(scope));
+            scope.register(Instruction::new(
+                Arithmetic::Div(BinaryOperator {
+                    lhs: *index,
+                    rhs: stride.expand.into(),
+                }),
+                num_strides.clone().into(),
+            ));
+
+            // Compute `coordinate = num_strides % shape `.
+            let coordinate = scope.create_local(usize::as_type(scope));
+            scope.register(Instruction::new(
+                Arithmetic::Modulo(BinaryOperator {
+                    lhs: *num_strides,
+                    rhs: shape.expand.into(),
+                }),
+                coordinate.clone().into(),
+            ));
+
+            coordinate.into()
+        }
+
+        // Expand method of [len](Tensor::len).
+        pub fn __expand_len_method(self, scope: &mut Scope) -> NativeExpand<usize> {
+            let elem: NativeExpand<Array<u32>> = self.expand.into();
+            elem.__expand_len_method(scope)
+        }
+
+        // Expand method of [buffer_len](Tensor::buffer_len).
+        pub fn __expand_buffer_len_method(self, scope: &mut Scope) -> NativeExpand<usize> {
+            let elem: NativeExpand<Array<u32>> = self.expand.into();
+            elem.__expand_buffer_len_method(scope)
+        }
+
+        // Expand method of [rank](Tensor::rank).
+        pub fn __expand_rank_method(self, scope: &mut Scope) -> NativeExpand<usize> {
+            let out = scope.create_local(usize::as_type(scope));
+            scope.register(Instruction::new(Metadata::Rank { var: *self.expand }, *out));
+            out.into()
+        }
+
+        /// Expand method of [`TensorMap::downcast`].
+        pub fn __expand_downcast_method<E: RudaPrimitive>(
+            self,
+            scope: &mut Scope,
+        ) -> NativeExpand<TensorMap<E, K>> {
+            if T::as_type(scope) != E::as_type(scope) && !is_tf32::<E, T>(scope) {
+                panic!("Downcast should only be used to satisfy the Rust type system.")
+            }
+
+            self.expand.into()
+        }
+    }
+}

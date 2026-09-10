@@ -1,0 +1,212 @@
+use ruda_kernel::dsl as kernel_dsl;
+use crate::kernel_ir::{components::RudaDimResource, launch::RuntimeConfig};
+use crate::kernel_ir::{
+    components::stage::NumStages,
+    definition::{
+        MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes, MatmulVectorSizes, StageIdent,
+    },
+};
+use crate::kernel_ir::{
+    components::{
+        global::{
+            GlobalReaderConfig, GlobalWriterConfig, GlobalWriterFamily, InputLoadFlow,
+            SharedGlobalMatmulConfig, WriteTiling,
+            memory::{GlobalMemoryConfig, ViewDirection},
+            multi_stage::EventLoadingMode,
+            read::FullLoadingStrategy,
+            single_stage::simple::matmul::SimpleMatmul,
+        },
+        stage::StageConfig,
+    },
+    definition::TilingBlueprint,
+};
+use ruda_kernel::dsl::ir::DeviceProperties;
+use ruda_kernel::dsl::prelude::*;
+use ruda_kernel::tiling::{MatrixLayout, tile::Strided};
+use std::marker::PhantomData;
+
+use crate::kernel_ir::components::{global::GlobalMatmulFamily, stage};
+
+/// Simple matmul family for any precision
+pub struct SimpleMatmulFamily<
+    SMM: stage::StageMatmulFamily,
+    RC: RuntimeConfig,
+    LL: FullLoadingStrategy<RC>,
+    RL: FullLoadingStrategy<RC>,
+    AL: FullLoadingStrategy<RC>,
+    GW: GlobalWriterFamily,
+    const FIRST_K_TILE: u32 = 0,
+> {
+    _stage_matmul: PhantomData<SMM>,
+    _rc: PhantomData<RC>,
+    _lhs_loading: PhantomData<LL>,
+    _rhs_loading: PhantomData<RL>,
+    _acc_loading: PhantomData<AL>,
+    _writer: PhantomData<GW>,
+}
+
+impl<SMM, RC, LL, RL, AL, GW, const FIRST_K_TILE: u32> GlobalMatmulFamily<RC> for SimpleMatmulFamily<SMM, RC, LL, RL, AL, GW, FIRST_K_TILE>
+where
+    SMM: stage::StageMatmulFamily<
+            LhsStage = LL::Stage,
+            RhsStage = RL::Stage,
+            AccStage = Option<AL::Stage>,
+            OutStage = GW::Stage,
+        >,
+    RC: RuntimeConfig,
+    LL: FullLoadingStrategy<RC, TileKind = Strided>,
+    RL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
+    AL: FullLoadingStrategy<RC, TileKind = Strided>,
+    GW: GlobalWriterFamily,
+{
+    type Matmul<MP: MatmulTypes> = SimpleMatmul<
+        MP,
+        SMM::Matmul<MP, LL::TilingLayout, RL::TilingLayout, AL::TilingLayout, WriteTiling>,
+        RC,
+        LL,
+        RL,
+        AL,
+        GW::Writer<MP::Acc>,
+        FIRST_K_TILE,
+    >;
+    type Config = SharedGlobalMatmulConfig<SMM::Config>;
+
+    fn expand_config(
+        device_props: &DeviceProperties,
+        blueprint: &TilingBlueprint,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<Self::Config, MatmulSetupError> {
+        let plane_dim = blueprint.plane_dim;
+        let plane_flow_config =
+            Self::rudadim_resource(blueprint, dtypes, vector_sizes)?.as_specialized(plane_dim)?;
+
+        let stage_config = SMM::expand_config(
+            device_props,
+            blueprint,
+            plane_flow_config,
+            Self::num_stages(),
+            dtypes,
+            vector_sizes,
+        )?;
+
+        let precompute_job = blueprint.loading_precompute_strategy.into();
+        let reader_mode = blueprint.reader_mode;
+        let input_load_flow = InputLoadFlow::MainOnly;
+
+        // Not used in simple
+        let event_loading_mode = EventLoadingMode::Relaxed;
+
+        let lhs_gmem_config = GlobalMemoryConfig {
+            vector_size: vector_sizes.lhs,
+            check_row_bounds: blueprint.check_m_bounds,
+            check_col_bounds: blueprint.check_k_bounds,
+            matrix_layout: blueprint.lhs_layout,
+            view_direction: ViewDirection::Col,
+            dtype: dtypes.lhs_global,
+        };
+
+        let rhs_gmem_config = GlobalMemoryConfig {
+            vector_size: vector_sizes.rhs,
+            check_row_bounds: blueprint.check_k_bounds,
+            check_col_bounds: blueprint.check_n_bounds,
+            matrix_layout: blueprint.rhs_layout,
+            view_direction: ViewDirection::Row,
+            dtype: dtypes.rhs_global,
+        };
+
+        let out_gmem_config = GlobalMemoryConfig {
+            vector_size: vector_sizes.out,
+            matrix_layout: MatrixLayout::RowMajor,
+            check_row_bounds: blueprint.check_m_bounds,
+            check_col_bounds: blueprint.check_n_bounds,
+            view_direction: ViewDirection::None,
+            dtype: dtypes.acc_global,
+        };
+
+        let lhs_reader_config = GlobalReaderConfig {
+            gmem_config: lhs_gmem_config,
+            smem_config: stage_config.lhs_smem_config(),
+            precompute_job,
+            plane_dim,
+            plane_flow_config,
+            reader_mode,
+            stage_ident: StageIdent::Lhs,
+            event_loading_mode,
+            input_load_flow,
+        };
+
+        let rhs_reader_config = GlobalReaderConfig {
+            gmem_config: rhs_gmem_config,
+            smem_config: stage_config.rhs_smem_config(),
+            precompute_job,
+            plane_dim,
+            plane_flow_config,
+            reader_mode,
+            stage_ident: StageIdent::Rhs,
+            event_loading_mode,
+            input_load_flow,
+        };
+
+        let acc_reader_config = GlobalReaderConfig {
+            gmem_config: out_gmem_config,
+            smem_config: stage_config.acc_smem_config(),
+            precompute_job,
+            plane_dim,
+            plane_flow_config,
+            reader_mode,
+            stage_ident: StageIdent::Acc,
+            event_loading_mode,
+            input_load_flow,
+        };
+
+        let writer_config = GlobalWriterConfig {
+            gmem_config: out_gmem_config,
+            smem_config: stage_config.out_smem_config(),
+            plane_flow_partition_rule: plane_flow_config.partition_rule,
+            plane_dim,
+        };
+
+        Ok(SharedGlobalMatmulConfig {
+            stage_config,
+            num_planes: plane_flow_config.counts.total_count(),
+            lhs_reader_config,
+            rhs_reader_config,
+            acc_reader_config,
+            writer_config,
+            must_sync_plane_after_execution: false,
+        })
+    }
+
+    fn num_stages() -> NumStages {
+        (1, 1).into()
+    }
+
+    fn rudadim_resource(
+        blueprint: &TilingBlueprint,
+        _dtypes: &MatmulElems,
+        _vector_sizes: &MatmulVectorSizes,
+    ) -> Result<RudaDimResource, MatmulSetupError> {
+        let resources = if !blueprint.load_flows.has_specialization() {
+            SMM::rudadim_resource(blueprint)
+        } else {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(
+                "Specialization is unavailable for simple matmul.",
+            )));
+        }?;
+
+        Ok(resources)
+    }
+
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &TilingBlueprint,
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        LL::validate_with_problem(problem, dtypes, StageIdent::Lhs)?;
+        RL::validate_with_problem(problem, dtypes, StageIdent::Rhs)?;
+        SMM::validate_blueprint(client, blueprint, dtypes, vector_sizes)
+    }
+}

@@ -1,0 +1,116 @@
+use ruda_kernel::dsl as kernel_dsl;
+use super::{ReduceFamily, ReduceInstruction};
+use crate::reduce::components::{
+    instructions::{Accumulator, AccumulatorFormat, Item, ReduceRequirements, ReduceStep, Value},
+    precision::ReducePrecision,
+};
+use ruda_kernel::dsl::prelude::*;
+
+// TODO Add to test framework.
+/// Return the item with the maximum value.
+#[derive(Debug, RudaType, Clone)]
+pub struct Max;
+
+impl ReduceFamily for Max {
+    type Instruction<P: ReducePrecision> = Self;
+    type Config = ();
+}
+
+#[ruda]
+impl<P: ReducePrecision> ReduceInstruction<P> for Max {
+    type SharedAccumulator = SharedMemory<Vector<P::EA, P::SI>>;
+    type Config = ();
+
+    fn requirements(_this: &Self) -> ReduceRequirements {
+        ReduceRequirements { coordinates: false }
+    }
+
+    fn accumulator_format(_this: &Self) -> comptime_type!(AccumulatorFormat) {
+        AccumulatorFormat::Single
+    }
+
+    fn from_config(_config: Self::Config) -> Self {
+        Max {}
+    }
+
+    fn null_input(_this: &Self) -> Vector<P::EI, P::SI> {
+        Vector::empty().fill(P::EI::min_value())
+    }
+
+    fn null_accumulator(_this: &Self) -> Accumulator<P> {
+        Accumulator::<P> {
+            elements: Value::new_single(Vector::empty().fill(P::EA::min_value())),
+            args: Value::new_None(),
+        }
+    }
+
+    fn reduce(
+        _this: &Self,
+        accumulator: &mut Accumulator<P>,
+        item: Item<P>,
+        #[comptime] reduce_step: ReduceStep,
+    ) {
+        let accumulator_item = accumulator.elements.item();
+        let elements = match reduce_step {
+            ReduceStep::Plane => {
+                let candidate_item = Vector::cast_from(plane_max(item.elements));
+                select_many(
+                    accumulator_item.greater_than(candidate_item),
+                    accumulator_item,
+                    candidate_item,
+                )
+            }
+            ReduceStep::Identity => {
+                let item = Vector::cast_from(item.elements);
+                select_many(accumulator_item.greater_than(item), accumulator_item, item)
+            }
+        };
+
+        accumulator.elements.assign(&Value::new_single(elements));
+    }
+
+    fn plane_reduce_inplace(_this: &Self, accumulator: &mut Accumulator<P>) {
+        let acc_item = accumulator.elements.item();
+        let candidate_item = Vector::cast_from(plane_max(acc_item));
+        let max = select_many(
+            acc_item.greater_than(candidate_item),
+            acc_item,
+            candidate_item,
+        );
+        accumulator.elements.assign(&Value::new_single(max));
+    }
+
+    fn fuse_accumulators(_this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>) {
+        let accumulator_item = accumulator.elements.item();
+        let other_item = other.elements.item();
+
+        accumulator.elements.assign(&Value::new_single(select_many(
+            accumulator_item.greater_than(other_item),
+            accumulator_item,
+            other_item,
+        )));
+    }
+
+    fn to_output_parallel<Out: Numeric>(
+        _this: &Self,
+        accumulator: Accumulator<P>,
+        _shape_axis_reduce: usize,
+    ) -> Value<Out> {
+        let mut max = P::EA::min_value();
+        let accumulator = accumulator.elements.item();
+        #[unroll]
+        for k in 0..accumulator.size() {
+            let candidate = accumulator[k];
+            max = select(candidate > max, candidate, max);
+        }
+        Value::new_single(Out::cast_from(max))
+    }
+
+    fn to_output_perpendicular<Out: Numeric>(
+        _this: &Self,
+        accumulator: Accumulator<P>,
+        _shape_axis_reduce: usize,
+    ) -> Value<Vector<Out, P::SI>> {
+        Value::new_single(Vector::cast_from(accumulator.elements.item()))
+    }
+}

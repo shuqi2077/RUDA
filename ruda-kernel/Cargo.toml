@@ -1,0 +1,188 @@
+[package]
+name = "ruda-kernel"
+version.workspace = true
+edition.workspace = true
+
+[features]
+source-template = ["frontend", "dep:text_placeholder"]
+device-tensor-quantize = ["device-tensor", "quantization-kernels"]
+device-tensor-dequantize = ["device-tensor", "quantization-kernels"]
+device-tensor = ["library", "ruda-core/tensor-host-data", "ruda-core/tensor-elements-flex32"]
+device-tensor-autotune-checks = ["device-tensor", "ruda/runtime-autotune-checks"]
+device-tensor-tracing = ["device-tensor", "dep:tracing"]
+lowering-spirv = ["frontend-default", "dep:ruda-compiler", "ruda-compiler/spirv"]
+lowering-mlir = ["frontend", "dep:ruda-compiler", "ruda-compiler/optimizer-std"]
+lowering-wgsl = ["frontend", "dep:ruda-compiler", "ruda-compiler/wgsl"]
+std = [ "ruda?/runtime-std", "ruda-core?/ir-std", "ruda-test-runtime/std",]
+kernel-ir = [ "frontend", "library", "dep:ruda-core", "dep:half",]
+quantization = [ "dep:ruda-core", "ruda-core/fp8", "dep:half", "dep:serde",]
+quantization-kernels = [ "quantization", "frontend", "library",]
+heavy = []
+extended = [ "heavy",]
+full = [ "extended",]
+default = ["frontend-default"]
+frontend = [ "ruda-kernel-macros/kernel-ir", "dep:ruda-core", "ruda-core/ir", "ruda-core/ir-serde", "ruda-core/tensor", "dep:ruda", "ruda/runtime", "dep:bitflags", "dep:bytemuck", "dep:derive-new", "dep:derive_more", "dep:enumset", "dep:float-ord", "dep:half", "dep:hashbrown", "dep:log", "dep:num-traits", "dep:paste", "dep:serde", "dep:serde_json", "dep:variadics_please", "ruda-core/argument-layout",]
+frontend-default = [ "frontend", "ruda/runtime-default", "ruda-core/ir-default",]
+frontend-std = [ "frontend", "ruda/runtime-std", "ruda-core/ir-std",]
+frontend-tests = [ "frontend-std", "dep:tempfile", "test-log/trace", "test-log/log",]
+frontend-template = [ "frontend",]
+frontend-tracing = [ "frontend", "dep:tracing", "ruda/runtime-tracing", "ruda-core/tracing",]
+library = [ "frontend", "dep:spin", "ruda-core/hash",]
+library-tests = [ "library", "test-log/trace",]
+library-tracing = [ "library", "frontend-tracing",]
+lowering-cpp = [ "frontend", "dep:ruda-compiler", "ruda-compiler/cpp",]
+lowering-metal = [ "lowering-cpp", "ruda-compiler/cpp-metal",]
+
+[dependencies]
+ruda-kernel-macros = { path = "../ruda-kernel-macros", default-features = false }
+
+[dev-dependencies]
+ruda = { path = "../ruda" }
+half = "=2.7.1"
+
+[lints.rust]
+unsafe_code = "deny"
+
+[dependencies.half]
+version = "=2.7.1"
+features = ["alloc", "num-traits", "serde", "bytemuck"]
+default-features = false
+optional = true
+
+[dev-dependencies.ruda-test-utils]
+path = "../ruda-test-utils"
+default-features = false
+
+[dependencies.serde]
+version = "1.0.204"
+features = ["derive", "alloc"]
+default-features = false
+optional = true
+
+[dev-dependencies.ruda-test-runtime]
+path = "../ruda-test-runtime"
+features = ["test-runtime"]
+default-features = false
+
+[[test]]
+name = "tiling"
+path = "tests/tiling/lib.rs"
+required-features = ["kernel-ir"]
+
+[[test]]
+name = "quantization"
+path = "tests/quantization/lib.rs"
+required-features = ["quantization-kernels"]
+
+[[test]]
+name = "frontend"
+path = "tests/frontend/mod.rs"
+required-features = ["frontend"]
+
+[dependencies.ruda-core]
+path = "../ruda-core"
+default-features = false
+optional = true
+
+[dependencies.bitflags]
+version = "2.9.1"
+features = [ "serde",]
+optional = true
+
+[dependencies.bytemuck]
+version = "1.16.1"
+optional = true
+
+[dependencies.derive-new]
+version = "0.7.0"
+default-features = false
+optional = true
+
+[dependencies.derive_more]
+version = "2"
+features = [ "not", "add", "mul", "add_assign", "mul_assign", "display", "debug",]
+default-features = false
+optional = true
+
+[dependencies.enumset]
+version = "1.1.12"
+default-features = false
+optional = true
+
+[dependencies.float-ord]
+version = "0.3"
+optional = true
+
+[dependencies.hashbrown]
+version = "0.16"
+optional = true
+
+[dependencies.log]
+version = "^0.4.22"
+default-features = false
+optional = true
+
+[dependencies.num-traits]
+version = "0.2.19"
+features = [ "libm",]
+default-features = false
+optional = true
+
+[dependencies.paste]
+version = "1"
+optional = true
+
+[dependencies.serde_json]
+version = "1.0.119"
+default-features = false
+optional = true
+
+[dependencies.tempfile]
+version = "3.20"
+optional = true
+
+[dependencies.test-log]
+version = "^0.2"
+optional = true
+default-features = false
+
+[dependencies.tracing]
+version = "^0.1.43"
+features = [ "attributes",]
+optional = true
+default-features = false
+
+[dependencies.variadics_please]
+version = "1"
+optional = true
+
+[dependencies.spin]
+version = "0.10.0"
+features = [ "mutex", "spin_mutex",]
+optional = true
+
+[dependencies.ruda]
+path = "../ruda"
+default-features = false
+optional = true
+
+[dev-dependencies.pretty_assertions]
+version = "1.4"
+
+[dev-dependencies.test-log]
+version = "^0.2"
+features = [ "trace",]
+default-features = false
+
+[dev-dependencies.trybuild]
+version = "1"
+
+[dependencies.ruda-compiler]
+path = "../ruda-compiler"
+default-features = false
+optional = true
+
+[dependencies.text_placeholder]
+version = "0.5.1"
+features = ["struct_context"]
+optional = true

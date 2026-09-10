@@ -1,0 +1,39 @@
+[package]
+name = "ruSPARSE"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "rusparse"
+
+[features]
+default = []
+serde = ["dep:serde"]
+tensor = ["dep:ruda-core", "dep:ruda-kernel"]
+cuda = ["tensor", "dep:ruda-driver-cuda"]
+cuda-tests = ["cuda"]
+
+[dependencies]
+serde = { version = "1.0.228", default-features = false, features = ["std"], optional = true }
+ruda-core = { path = "../ruda-core", default-features = false, features = ["std", "tensor-host-data"], optional = true }
+ruda-kernel = { path = "../ruda-kernel", default-features = false, features = ["frontend-std", "library", "device-tensor"], optional = true }
+ruda-driver-cuda = { path = "../ruda-driver-cuda", default-features = false, features = ["std"], optional = true }
+
+[[test]]
+name = "tensor"
+required-features = ["cuda-tests"]
+
+[[test]]
+name = "tensor_level1"
+required-features = ["cuda-tests"]
+
+[[test]]
+name = "tensor_binary"
+required-features = ["cuda-tests"]
+
+[lints]
+workspace = true
+
+[[example]]
+name = "csrmv"
+required-features = ["cuda"]

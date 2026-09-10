@@ -1,0 +1,75 @@
+[package]
+name = "ruDNN"
+version.workspace = true
+edition.workspace = true
+authors = ["Genna Wingert", "louisfd <louisfd94@gmail.com>"]
+license = "MIT OR Apache-2.0"
+autotests = false
+
+[lib]
+name = "rudnn"
+
+[features]
+tensor-normalization = ["kernel-ir", "ruda-kernel/device-tensor"]
+tensor-gated-delta = ["kernel-ir", "ruda-kernel/device-tensor", "rublas/tensor-matmul"]
+tensor-moe = ["kernel-ir", "ruda-kernel/device-tensor", "rublas/tensor-grouped"]
+attention-fallback = ["dep:ruda-core", "ruda-core/tensor-elements", "ruda-core/tensor-device-settings", "dep:num-traits"]
+tensor-attention = ["attention-fallback", "kernel-ir", "ruda-kernel/device-tensor", "rublas/tensor-matmul", "dep:ruprim", "ruprim/elementwise", "ruprim/tensor-reduce"]
+tensor-attention-autotune = ["tensor-attention", "rublas/tensor-matmul-autotune", "ruprim/tensor-reduce-autotune"]
+tensor-convolution = ["kernel-ir", "ruda-kernel/device-tensor", "rublas/tensor-matmul", "dep:ruprim", "ruprim/indexing", "ruprim/tensor-reduce"]
+tensor-convolution-autotune = ["tensor-convolution", "rublas/tensor-matmul-autotune", "ruprim/tensor-reduce-autotune"]
+ctc = ["kernel-ir", "ruda-kernel/device-tensor", "ruda-core/tensor"]
+grid-sample = ["kernel-ir", "ruda-kernel/device-tensor", "ruda-core/tensor"]
+pooling = ["kernel-ir", "ruda-kernel/device-tensor", "ruda-core/tensor"]
+interpolation = ["kernel-ir", "ruda-kernel/device-tensor", "ruda-core/tensor"]
+default = ["kernel-ir", "std"]
+kernel-ir = ["dep:ruda-core", "dep:ruda-kernel", "dep:rublas", "rublas/kernel-ir", "dep:bytemuck", "dep:derive-new", "dep:enumset", "dep:half", "dep:serde"]
+std = ["kernel-ir", "ruda-kernel/frontend-std", "ruda-test-runtime/std", "rublas/std"]
+cpu-reference = ["kernel-ir", "dep:ruda-test-utils", "rublas/cpu-reference"]
+heavy = []
+extended = ["heavy"]
+full = ["extended"]
+
+[dependencies]
+rublas = { path = "../ruBLAS", default-features = false, optional = true }
+ruda-kernel = { path = "../ruda-kernel", default-features = false, features = ["kernel-ir"], optional = true }
+bytemuck = { version = "1.16.1", optional = true }
+derive-new = { version = "0.7.0", default-features = false, optional = true }
+enumset = { version = "1.1.10", default-features = false, optional = true }
+half = { version = "=2.7.1", default-features = false, features = ["alloc", "num-traits", "serde", "bytemuck"], optional = true }
+serde = { version = "1.0.204", default-features = false, features = ["derive", "alloc"], optional = true }
+ruda-test-utils = { path = "../ruda-test-utils", default-features = false, optional = true }
+
+[dev-dependencies]
+ruda-test-runtime = { path = "../ruda-test-runtime", default-features = false, features = ["test-runtime"] }
+ruda-test-utils = { path = "../ruda-test-utils", default-features = false }
+pretty_assertions = "1.4"
+trybuild = "1"
+
+[[test]]
+name = "attention"
+path = "tests/attention/lib.rs"
+required-features = ["kernel-ir", "cpu-reference"]
+
+[[test]]
+name = "convolution"
+path = "tests/convolution/lib.rs"
+required-features = ["kernel-ir", "cpu-reference"]
+
+[dependencies.ruda-core]
+path = "../ruda-core"
+default-features = false
+optional = true
+
+[dependencies.ruprim]
+package = "ruPRIM"
+path = "../ruPRIM"
+default-features = false
+optional = true
+
+[dependencies.num-traits]
+version = "0.2.19"
+default-features = false
+features = ["libm"]
+optional = true
+

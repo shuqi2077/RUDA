@@ -1,0 +1,361 @@
+use crate::device::engine::codegen::{DynElem, DynSize, io::set_polyfill_typed};
+
+use super::{
+    io::{
+        Transform, global_buffer_len, global_vector_size, input_as_slice, read_input,
+        read_input_window, ref_buffer_len, ref_len,
+    },
+    ir::{FuseArg, FuseBlockConfig, GlobalArgs, LayoutInfo, LocalArgs},
+    kernel::fuse_on_write,
+};
+use ruda_kernel::dsl::{
+    RudaType,
+    io::read_masked,
+    ir::StorageType,
+    prelude::{barrier::BarrierExpand, *},
+};
+use ruda_kernel::library::tensor::{
+    ViewOperations, ViewOperationsExpand, ViewOperationsMut, ViewOperationsMutExpand,
+    layout::Coords1d,
+};
+
+#[allow(dead_code, reason = "only used in expand")]
+#[derive(RudaType)]
+pub struct GlobalInput {
+    inputs: GlobalArgs,
+    locals: LocalArgs,
+    #[ruda(comptime)]
+    pos: usize,
+    #[ruda(comptime)]
+    ty: StorageType,
+    #[ruda(comptime)]
+    layout: LayoutInfo,
+    #[ruda(comptime)]
+    config: FuseBlockConfig,
+    #[ruda(comptime)]
+    transform: Option<Transform>,
+}
+
+#[ruda]
+impl GlobalInput {
+    pub fn new(
+        inputs: &GlobalArgs,
+        locals: &LocalArgs,
+        #[comptime] arg: FuseArg,
+        #[comptime] config: FuseBlockConfig,
+        #[comptime] transform: Option<Transform>,
+    ) -> GlobalInput {
+        let (pos, ty, layout) = comptime![match arg {
+            FuseArg::Input(pos, prec, layout) => (pos, prec.into_storage_type(), layout),
+            _ => unreachable!("Must be concrete input"),
+        }];
+
+        GlobalInput {
+            inputs: inputs.clone(),
+            locals: locals.clone(),
+            pos,
+            ty,
+            layout,
+            config,
+            transform,
+        }
+    }
+}
+
+impl<E: RudaPrimitive> ViewOperations<E, Coords1d> for GlobalInput {}
+impl<E: RudaPrimitive> ViewOperationsExpand<E, Coords1d> for GlobalInputExpand {
+    #[allow(clippy::too_many_arguments)]
+    fn __expand_read_method(
+        &self,
+        scope: &mut Scope,
+        pos: NativeExpand<usize>,
+    ) -> <E as RudaType>::ExpandType {
+        ViewOperationsExpand::<E, Coords1d>::__expand_read_unchecked_method(self, scope, pos)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn __expand_read_checked_method(
+        &self,
+        scope: &mut Scope,
+        pos: NativeExpand<usize>,
+    ) -> <E as RudaType>::ExpandType {
+        let zero = E::__expand_cast_from(scope, 0.into());
+        ViewOperationsExpand::<E, Coords1d>::__expand_read_masked_method(self, scope, pos, zero)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn __expand_read_masked_method(
+        &self,
+        scope: &mut Scope,
+        pos: NativeExpand<usize>,
+        value: <E as RudaType>::ExpandType,
+    ) -> <E as RudaType>::ExpandType {
+        let in_bounds = ViewOperationsExpand::<E, Coords1d>::__expand_is_in_bounds_method(
+            self,
+            scope,
+            pos.clone(),
+        );
+        set_polyfill_typed::expand::<E, DynElem, DynSize>(scope);
+        let slice = input_as_slice::expand(scope, self.inputs.clone(), self.pos);
+        read_masked::expand::<E>(scope, in_bounds, slice, pos, value)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn __expand_read_unchecked_method(
+        &self,
+        scope: &mut Scope,
+        pos: NativeExpand<usize>,
+    ) -> <E as RudaType>::ExpandType {
+        set_polyfill_typed::expand::<E, DynElem, DynSize>(scope);
+        let value = read_input::expand::<E::Scalar, E::Size>(
+            scope,
+            self.inputs.clone(),
+            self.locals.clone(),
+            self.pos,
+            pos,
+            self.layout,
+            self.config.clone(),
+            self.transform.clone(),
+        );
+        E::__expand_cast_from(scope, value)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn __expand_to_linear_slice_method(
+        &self,
+        scope: &mut Scope,
+        pos: NativeExpand<usize>,
+        end: NativeExpand<usize>,
+    ) -> SliceExpand<E, ReadOnly> {
+        set_polyfill_typed::expand::<E, DynElem, DynSize>(scope);
+        let end = add::expand(scope, end.clone(), 1.into());
+        read_input_window::expand(scope, self.inputs.clone(), self.pos, pos, end)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn __expand_tensor_map_load_method(
+        &self,
+        _scope: &mut Scope,
+        _barrier: BarrierExpand,
+        _shared_memory: SliceExpand<E, ReadWrite>,
+        _pos: NativeExpand<usize>,
+    ) {
+        panic!("Not a tensor map")
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn __expand_shape_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
+        global_buffer_len::expand(scope, self.inputs.clone(), self.pos)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn __expand_is_in_bounds_method(
+        &self,
+        scope: &mut Scope,
+        pos: NativeExpand<usize>,
+    ) -> NativeExpand<bool> {
+        let buffer_len = global_buffer_len::expand(scope, self.inputs.clone(), self.pos);
+        lt::expand(scope, pos, buffer_len)
+    }
+}
+
+impl Vectorized for GlobalInput {}
+impl VectorizedExpand for GlobalInputExpand {
+    fn vector_size(&self) -> VectorSize {
+        let mut temp_scope = Scope::root(false);
+        global_vector_size::expand(&mut temp_scope, self.inputs.clone(), self.pos)
+    }
+}
+
+#[allow(dead_code, reason = "only used in expand")]
+#[derive(RudaType)]
+pub struct FusedOutput {
+    inputs: GlobalArgs,
+    outputs: GlobalArgs,
+    locals: LocalArgs,
+    arg: FuseArg,
+    #[ruda(comptime)]
+    config: FuseBlockConfig,
+}
+
+#[ruda]
+impl FusedOutput {
+    pub fn new(
+        inputs: &GlobalArgs,
+        outputs: &mut GlobalArgs,
+        locals: &mut LocalArgs,
+        arg: FuseArg,
+        #[comptime] config: FuseBlockConfig,
+    ) -> Self {
+        FusedOutput {
+            inputs: inputs.clone(),
+            outputs: outputs.clone(),
+            locals: locals.clone(),
+            arg,
+            config,
+        }
+    }
+}
+
+impl<E: RudaPrimitive> ViewOperations<E, Coords1d> for FusedOutput {}
+impl<E: RudaPrimitive> ViewOperationsExpand<E, Coords1d> for FusedOutputExpand {
+    #[allow(clippy::too_many_arguments)]
+    fn __expand_read_method(
+        &self,
+        _scope: &mut Scope,
+        _pos: NativeExpand<usize>,
+    ) -> <E as RudaType>::ExpandType {
+        todo!()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn __expand_read_checked_method(
+        &self,
+        _scope: &mut Scope,
+        _pos: NativeExpand<usize>,
+    ) -> <E as RudaType>::ExpandType {
+        todo!()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn __expand_read_masked_method(
+        &self,
+        _scope: &mut Scope,
+        _pos: NativeExpand<usize>,
+        _value: <E as RudaType>::ExpandType,
+    ) -> <E as RudaType>::ExpandType {
+        todo!()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn __expand_read_unchecked_method(
+        &self,
+        _scope: &mut Scope,
+        _pos: NativeExpand<usize>,
+    ) -> <E as RudaType>::ExpandType {
+        todo!()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn __expand_to_linear_slice_method(
+        &self,
+        _scope: &mut Scope,
+        _pos: NativeExpand<usize>,
+        _size: NativeExpand<usize>,
+    ) -> SliceExpand<E, ReadOnly> {
+        todo!()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn __expand_tensor_map_load_method(
+        &self,
+        _scope: &mut Scope,
+        _barrier: BarrierExpand,
+        _shared_memory: SliceExpand<E, ReadWrite>,
+        _pos: NativeExpand<usize>,
+    ) {
+        panic!("Not a tensor map")
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn __expand_shape_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
+        ref_len::expand(
+            scope,
+            self.inputs.clone(),
+            self.outputs.clone(),
+            self.locals.clone(),
+            self.config.clone(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn __expand_is_in_bounds_method(
+        &self,
+        scope: &mut Scope,
+        pos: NativeExpand<usize>,
+    ) -> NativeExpand<bool> {
+        let buffer_len = ref_buffer_len::expand(
+            scope,
+            self.inputs.clone(),
+            self.outputs.clone(),
+            self.locals.clone(),
+            self.config.clone(),
+        );
+        lt::expand(scope, pos, buffer_len)
+    }
+}
+
+impl<E: RudaPrimitive> ViewOperationsMut<E, Coords1d> for FusedOutput {}
+impl<E: RudaPrimitive> ViewOperationsMutExpand<E, Coords1d> for FusedOutputExpand {
+    #[allow(clippy::too_many_arguments)]
+    fn __expand_write_method(
+        &self,
+        scope: &mut Scope,
+        pos: NativeExpand<usize>,
+        value: <E as RudaType>::ExpandType,
+    ) {
+        let values = Registry::<FuseArg, Vector<E::Scalar, E::Size>>::__expand_new(scope);
+        let mut args = comptime![Vec::<FuseArg>::new()];
+
+        let value = Vector::__expand_cast_from(scope, value);
+        values
+            .clone()
+            .__expand_insert_method(scope, comptime![self.arg.clone()], value);
+        comptime![args.push(self.arg.clone())];
+
+        fuse_on_write::expand(
+            scope,
+            self.inputs.clone(),
+            self.outputs.clone(),
+            self.locals.clone(),
+            pos,
+            values,
+            args,
+            self.config.clone(),
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn __expand_write_checked_method(
+        &self,
+        scope: &mut Scope,
+        pos: NativeExpand<usize>,
+        value: <E as RudaType>::ExpandType,
+    ) {
+        let in_bounds = ViewOperationsExpand::<E, Coords1d>::__expand_is_in_bounds_method(
+            self,
+            scope,
+            pos.clone(),
+        );
+        if_expand(scope, in_bounds, |scope| {
+            ViewOperationsMutExpand::<E, Coords1d>::__expand_write_method(self, scope, pos, value);
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn __expand_to_linear_slice_mut_method(
+        &self,
+        _scope: &mut Scope,
+        _pos: NativeExpand<usize>,
+        _size: NativeExpand<usize>,
+    ) -> SliceExpand<E, ReadWrite> {
+        todo!("Not yet supported")
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn __expand_tensor_map_store_method(
+        &self,
+        _scope: &mut Scope,
+        _shared_memory: SliceExpand<E, ReadOnly>,
+        _pos: NativeExpand<usize>,
+    ) {
+        panic!("Not a tensor map")
+    }
+}
+
+impl Vectorized for FusedOutput {}
+impl VectorizedExpand for FusedOutputExpand {
+    fn vector_size(&self) -> VectorSize {
+        self.locals.ref_vector_size
+    }
+}

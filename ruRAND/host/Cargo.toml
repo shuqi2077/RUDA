@@ -1,0 +1,27 @@
+[package]
+name = "ruRAND-host"
+version.workspace = true
+edition = "2024"
+authors = ["Dilshod Tadjibaev (@antimora)"]
+license = "MIT OR Apache-2.0"
+readme = false
+build = false
+
+[lib]
+name = "rurand_host"
+path = "src/lib.rs"
+
+[features]
+default = ["std"]
+std = ["ruda-core/std", "half/std"]
+
+[dependencies.half]
+version = "2.7.1"
+features = [ "alloc", "num-traits", "serde",]
+default-features = false
+
+
+[dependencies.ruda-core]
+path = "../../ruda-core"
+default-features = false
+features = ["tensor-host-storage"]

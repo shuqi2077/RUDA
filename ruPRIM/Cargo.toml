@@ -1,0 +1,84 @@
+[package]
+name = "ruPRIM"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "ruprim"
+
+[features]
+default = ["kernel-ir", "std"]
+tensor-reduce = ["kernel-ir", "ruda-kernel/device-tensor", "dep:ruda-core"]
+tensor-reduce-autotune = ["tensor-reduce"]
+tensor-scan = ["kernel-ir", "ruda-kernel/device-tensor", "dep:ruda-core"]
+indexing = ["elementwise"]
+elementwise = ["kernel-ir", "ruda-kernel/device-tensor", "dep:ruda-core"]
+kernel-ir = ["dep:ruda-kernel", "ruda/runtime", "dep:num-traits", "dep:serde", "dep:thiserror"]
+std = ["kernel-ir", "ruda-kernel/frontend-std", "ruda-test-runtime/std", "thiserror/std"]
+cpu-reference = ["kernel-ir", "dep:ruda-test-utils"]
+heavy = []
+extended = ["heavy"]
+full = ["extended"]
+
+[dependencies]
+ruda = { path = "../ruda", default-features = false }
+half = { version = "=2.7.1", features = ["alloc", "num-traits", "serde"] }
+
+[dev-dependencies]
+ruda-kernel = { path = "../ruda-kernel" }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[dependencies.ruda-kernel]
+path = "../ruda-kernel"
+default-features = false
+features = ["kernel-ir"]
+optional = true
+
+[dependencies.num-traits]
+version = "0.2.19"
+optional = true
+
+[dependencies.pretty_assertions]
+version = "1.4"
+optional = true
+
+[dependencies.serde]
+version = "1.0.204"
+features = ["derive", "alloc"]
+default-features = false
+optional = true
+
+[dependencies.thiserror]
+version = "2"
+default-features = false
+optional = true
+
+[dependencies.ruda-test-utils]
+path = "../ruda-test-utils"
+default-features = false
+optional = true
+
+[dev-dependencies.ruda-test-runtime]
+path = "../ruda-test-runtime"
+features = ["test-runtime"]
+default-features = false
+
+[dev-dependencies.ruda-test-utils]
+path = "../ruda-test-utils"
+
+[dev-dependencies.ruda-core]
+path = "../ruda-core"
+default-features = false
+
+[[test]]
+name = "reduce"
+path = "tests/reduce/lib.rs"
+required-features = ["kernel-ir", "cpu-reference"]
+
+[dependencies.ruda-core]
+path = "../ruda-core"
+default-features = false
+features = ["tensor"]
+optional = true

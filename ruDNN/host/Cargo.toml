@@ -1,0 +1,60 @@
+[package]
+name = "ruDNN-host"
+edition = "2024"
+authors = [ "Dilshod Tadjibaev (@antimora)",]
+license = "MIT OR Apache-2.0"
+description = "ruDNN CPU attention, activations, convolution, pooling, interpolation and grid sampling."
+readme = false
+build = false
+
+[lib]
+name = "rudnn_host"
+path = "src/lib.rs"
+
+[features]
+simd = ["dep:macerator", "ruprim-host/simd", "gemm/wasm-simd128-enable"]
+apple-amx = ["std", "gemm/experimental-apple-amx"]
+x86-v4 = ["gemm/x86-v4"]
+default = [ "std", "simd", "rayon",]
+std = ["ruprim-host/std",  "gemm/std", "ruda-core/std", "half/std", "num-traits/std",]
+rayon = ["ruprim-host/rayon",  "gemm/rayon", "dep:rayon", "ruda-core/tensor-host-parallel",]
+
+[package.version]
+workspace = true
+
+[dependencies.bytemuck]
+version = "1.25.0"
+
+[dependencies.half]
+version = "2.7.1"
+features = [ "alloc", "num-traits", "serde",]
+default-features = false
+
+[dependencies.num-traits]
+version = "0.2.19"
+features = [ "libm",]
+default-features = false
+
+[dependencies.rayon]
+version = "1.10.0"
+optional = true
+
+[dependencies.ruda-core]
+path = "../../ruda-core"
+default-features = false
+features = [ "tensor-host-storage",]
+
+[dependencies.gemm]
+version = "0.19"
+features = ["f16"]
+default-features = false
+
+[dependencies.macerator]
+version = "0.3.0"
+optional = true
+
+
+[dependencies.ruprim-host]
+package = "ruPRIM-host"
+path = "../../ruPRIM/host"
+default-features = false

@@ -1,0 +1,20 @@
+[package]
+name = "ruda-kernel-path-renamed"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[lib]
+path = "lib.rs"
+
+[dependencies.serde]
+version = "1"
+default-features = false
+features = ["derive"]
+
+[dependencies.renamed_kernel]
+package = "ruda-kernel"
+path = "../../../../ruda-kernel"
+default-features = false
+features = ["frontend-std"]

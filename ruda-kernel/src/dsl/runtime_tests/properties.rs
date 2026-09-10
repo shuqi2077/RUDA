@@ -1,0 +1,45 @@
+use crate::dsl::{as_type};
+
+use crate::dsl::prelude::*;
+
+#[ruda(launch)]
+pub fn kernel_properties(output: &mut Array<u32>) {
+    if UNIT_POS == 0 {
+        let properties = comptime::device_properties().comptime();
+        output[0] = properties.hardware.plane_size_min;
+        output[1] = properties.hardware.plane_size_max;
+    }
+}
+
+pub fn test_kernel_properties<R: Runtime>(client: ComputeClient<R>) {
+    let handle = client.create_from_slice(u32::as_bytes(as_type![u32: 0, 0]));
+
+    kernel_properties::launch::<R>(
+        &client,
+        RudaCount::Static(1, 1, 1),
+        RudaDim::new_1d(1),
+        unsafe { ArrayArg::from_raw_parts(handle.clone(), 2) },
+    );
+
+    let actual = client.read_one_unchecked(handle);
+    let actual = u32::from_bytes(&actual);
+    let plane_size_min = client.properties().hardware.plane_size_min;
+    let plane_size_max = client.properties().hardware.plane_size_max;
+
+    assert_eq!(actual[0], plane_size_min);
+    assert_eq!(actual[1], plane_size_max);
+}
+
+#[allow(missing_docs)]
+#[macro_export]
+macro_rules! testgen_properties {
+    () => {
+        use super::*;
+
+        #[$crate::dsl::runtime_tests::test_log::test]
+        fn test_device_properties() {
+            let client = TestRuntime::client(&Default::default());
+            ruda_kernel::dsl::runtime_tests::properties::test_kernel_properties::<TestRuntime>(client);
+        }
+    };
+}

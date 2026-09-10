@@ -1,0 +1,71 @@
+use crate::dsl::prelude::*;
+use ruda_kernel::dsl::{intrinsic};
+
+use crate::library::tensor::layout::{Coordinates, Layout, LayoutExpand};
+
+/// A layout containing a sub-slice of the inner layout.
+#[allow(unused)]
+#[derive(RudaType)]
+pub struct SliceLayout<C: Coordinates> {
+    offset: C,
+    size: C,
+    #[ruda(comptime)]
+    checked: bool,
+}
+
+#[ruda]
+impl<C: Coordinates> SliceLayout<C> {
+    /// Create a new slice layout.
+    /// `checked` determines whether bounds should be checked, or simply treated as always in bounds.
+    pub fn new(start: C, size: C, #[comptime] checked: bool) -> Self {
+        SliceLayout::<C> {
+            offset: start,
+            size,
+            checked,
+        }
+    }
+
+    fn offset(&self) -> C {
+        intrinsic! {|_| self.offset.clone() }
+    }
+
+    fn size(&self) -> C {
+        intrinsic! {|_| self.size.clone() }
+    }
+}
+
+#[ruda]
+impl<C: Coordinates> Layout for SliceLayout<C> {
+    type Coordinates = C;
+    type SourceCoordinates = C;
+
+    fn shape(&self) -> Self::Coordinates {
+        self.size()
+    }
+
+    fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
+        C::add(self.offset(), pos)
+    }
+
+    fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
+        comment!("is_in_bounds");
+        let x = if comptime![self.checked] {
+            C::is_in_bounds(&pos, &self.size)
+        } else {
+            true.runtime()
+        };
+        comment!("is_in_bounds_end");
+        x
+    }
+
+    #[allow(unused)]
+    fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
+        intrinsic!(|scope| {
+            let in_bounds = self
+                .clone()
+                .__expand_is_in_bounds_method(scope, pos.clone());
+            let pos = self.__expand_to_source_pos_method(scope, pos);
+            (pos, in_bounds)
+        })
+    }
+}

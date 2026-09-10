@@ -1,0 +1,228 @@
+use crate::{
+    checkpoint::strategy::{CheckpointStrategy, NoCheckpointing},
+    grads::Gradients,
+    tensor::AutodiffTensor,
+};
+use alloc::{format, string::String};
+use core::marker::PhantomData;
+
+use ruda_tensor::{
+    backend::{AutodiffBackend, Backend, BackendTypes, ExecutionError},
+    tensor::{BoolTensor, IntTensor, QuantizedTensor},
+};
+
+#[cfg(feature = "distributed")]
+use ruda_tensor::distributed::{DistributedBackend, DistributedParamId, DistributedParams};
+
+/// Enable auto-differentiation on a backend.
+///
+/// This works as a backend decorator, extending the functionality of any backend with
+/// backpropagation.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Autodiff<B, C = NoCheckpointing> {
+    _b: PhantomData<B>,
+    _checkpoint_strategy: PhantomData<C>,
+}
+
+impl<B: Backend, C: CheckpointStrategy> BackendTypes for Autodiff<B, C> {
+    type Device = B::Device;
+
+    type FloatTensorPrimitive = AutodiffTensor<B>;
+    type FloatElem = B::FloatElem;
+
+    type IntTensorPrimitive = B::IntTensorPrimitive;
+    type IntElem = B::IntElem;
+
+    type BoolTensorPrimitive = B::BoolTensorPrimitive;
+    type BoolElem = B::BoolElem;
+
+    type QuantizedTensorPrimitive = B::QuantizedTensorPrimitive;
+}
+
+impl<B: Backend, C: CheckpointStrategy> Backend for Autodiff<B, C> {
+    fn ad_enabled(_device: &Self::Device) -> bool {
+        true
+    }
+
+    fn name(device: &Self::Device) -> String {
+        format!("autodiff<{}>", B::name(device))
+    }
+
+    fn seed(device: &B::Device, seed: u64) {
+        B::seed(device, seed)
+    }
+
+    fn sync(device: &B::Device) -> Result<(), ExecutionError> {
+        B::sync(device)
+    }
+
+    fn memory_persistent_allocations<
+        Output: Send,
+        Input: Send,
+        Func: Fn(Input) -> Output + Send,
+    >(
+        device: &Self::Device,
+        input: Input,
+        func: Func,
+    ) -> Output {
+        B::memory_persistent_allocations(device, input, func)
+    }
+
+    fn memory_cleanup(device: &Self::Device) {
+        B::memory_cleanup(device)
+    }
+
+    fn staging<'a, Iter>(data: Iter, device: &Self::Device)
+    where
+        Iter: Iterator<Item = &'a mut ruda_tensor::TensorData>,
+    {
+        B::staging(data, device);
+    }
+
+    fn supports_dtype(device: &Self::Device, dtype: ruda_core::tensor::DType) -> bool {
+        B::supports_dtype(device, dtype)
+    }
+
+    fn dtype_usage(device: &Self::Device, dtype: ruda_core::tensor::DType) -> ruda_tensor::DTypeUsageSet {
+        B::dtype_usage(device, dtype)
+    }
+
+    fn device_count(type_id: u16) -> usize {
+        B::device_count(type_id)
+    }
+}
+
+#[cfg(not(feature = "distributed"))]
+impl<B: Backend, C: CheckpointStrategy> AutodiffBackend for Autodiff<B, C> {
+    type InnerBackend = B;
+    type Gradients = Gradients;
+
+    fn backward(tensor: AutodiffTensor<B>) -> Gradients {
+        tensor.backward()
+    }
+
+    fn grad(tensor: &AutodiffTensor<B>, grads: &Gradients) -> Option<B::FloatTensorPrimitive> {
+        tensor.grad(grads)
+    }
+
+    fn grad_remove(
+        tensor: &AutodiffTensor<B>,
+        grads: &mut Gradients,
+    ) -> Option<B::FloatTensorPrimitive> {
+        tensor.grad_remove(grads)
+    }
+    fn inner(tensor: AutodiffTensor<B>) -> B::FloatTensorPrimitive {
+        tensor.primitive
+    }
+
+    fn from_inner(tensor: B::FloatTensorPrimitive) -> AutodiffTensor<B> {
+        AutodiffTensor::new(tensor)
+    }
+
+    fn grad_replace(
+        tensor: &AutodiffTensor<B>,
+        grads: &mut Self::Gradients,
+        grad: B::FloatTensorPrimitive,
+    ) {
+        tensor.grad_replace(grads, grad);
+    }
+
+    fn int_inner(tensor: IntTensor<Self>) -> IntTensor<Self::InnerBackend> {
+        tensor
+    }
+
+    fn bool_inner(tensor: BoolTensor<Self>) -> BoolTensor<Self::InnerBackend> {
+        tensor
+    }
+
+    fn int_from_inner(tensor: IntTensor<Self::InnerBackend>) -> IntTensor<Self> {
+        tensor
+    }
+
+    fn bool_from_inner(tensor: BoolTensor<Self::InnerBackend>) -> BoolTensor<Self> {
+        tensor
+    }
+
+    fn q_inner(tensor: QuantizedTensor<Self>) -> QuantizedTensor<Self::InnerBackend> {
+        tensor
+    }
+
+    fn q_from_inner(tensor: QuantizedTensor<Self::InnerBackend>) -> QuantizedTensor<Self> {
+        tensor
+    }
+}
+
+#[cfg(feature = "distributed")]
+impl<B: DistributedBackend, C: CheckpointStrategy> AutodiffBackend for Autodiff<B, C> {
+    type InnerBackend = B;
+    type Gradients = Gradients;
+
+    fn backward(tensor: AutodiffTensor<B>) -> Gradients {
+        tensor.backward()
+    }
+
+    fn grad(tensor: &AutodiffTensor<B>, grads: &Gradients) -> Option<B::FloatTensorPrimitive> {
+        tensor.grad(grads)
+    }
+
+    fn grad_remove(
+        tensor: &AutodiffTensor<B>,
+        grads: &mut Gradients,
+    ) -> Option<B::FloatTensorPrimitive> {
+        tensor.grad_remove(grads)
+    }
+    fn inner(tensor: AutodiffTensor<B>) -> B::FloatTensorPrimitive {
+        tensor.primitive
+    }
+
+    fn from_inner(tensor: B::FloatTensorPrimitive) -> AutodiffTensor<B> {
+        AutodiffTensor::new(tensor)
+    }
+
+    fn grad_replace(
+        tensor: &AutodiffTensor<B>,
+        grads: &mut Self::Gradients,
+        grad: B::FloatTensorPrimitive,
+    ) {
+        tensor.grad_replace(grads, grad);
+    }
+
+    fn int_inner(tensor: IntTensor<Self>) -> IntTensor<Self::InnerBackend> {
+        tensor
+    }
+
+    fn bool_inner(tensor: BoolTensor<Self>) -> BoolTensor<Self::InnerBackend> {
+        tensor
+    }
+
+    fn int_from_inner(tensor: IntTensor<Self::InnerBackend>) -> IntTensor<Self> {
+        tensor
+    }
+
+    fn bool_from_inner(tensor: BoolTensor<Self::InnerBackend>) -> BoolTensor<Self> {
+        tensor
+    }
+
+    fn q_inner(tensor: QuantizedTensor<Self>) -> QuantizedTensor<Self::InnerBackend> {
+        tensor
+    }
+
+    fn q_from_inner(tensor: QuantizedTensor<Self::InnerBackend>) -> QuantizedTensor<Self> {
+        tensor
+    }
+
+    fn set_distributed_params(
+        tensor: AutodiffTensor<B>,
+        param_id: DistributedParamId,
+    ) -> AutodiffTensor<B> {
+        tensor.grad_distributed(param_id)
+    }
+
+    fn distributed_params(tensor: &AutodiffTensor<B>) -> Option<DistributedParams> {
+        tensor.node.distributed_params.clone()
+    }
+
+    fn is_distributed(tensor: &AutodiffTensor<B>) -> bool {
+        tensor.node.distributed_params.is_some()
+    }
+}

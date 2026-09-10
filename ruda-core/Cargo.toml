@@ -1,0 +1,325 @@
+[[bench]]
+name = "device_handle"
+path = "benches/device_handle.rs"
+harness = false
+
+[package]
+edition = "2024"
+name = "ruda-core"
+authors = [ "Dilshod Tadjibaev (@antimora)", "Nathaniel Simard (@nathanielsimard)",]
+build = "build.rs"
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Shared types, device contracts and utilities for Ruda."
+readme = false
+keywords = [ "gpu", "cuda", "wgpu",]
+categories = [ "science", "mathematics", "algorithms",]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/shuqi2077/RUDA/tree/main/ruda-core"
+
+[features]
+tensor-host-parallel = ["tensor-host-storage"]
+tensor-host-storage = ["tensor-host-data"]
+id = []
+id-tests-std = ["id", "std"]
+tensor-device-settings = ["tensor", "dep:thiserror"]
+tensor-device-settings-std = ["tensor-device-settings", "std"]
+communication = ["dep:ahash"]
+argument-layout = ["compiler", "tensor"]
+cache = [ "std", "serde_json", "dirs", "sanitize-filename",]
+compilation-cache = [ "cache", "dep:ciborium",]
+default = [ "std",]
+fp4 = [ "float4",]
+fp8 = [ "float8",]
+hash = [ "xxhash-rust",]
+serde = [ "serde_bytes",]
+shared-bytes = [ "dep:bytes",]
+std = [ "rand/std", "futures-lite", "rand/thread_rng", "serde_json?/std", "parking_lot", "backtrace", "oneshot/std", "dep:toml",]
+tracing = [ "dep:tracing",]
+ir = [ "fp4", "fp8", "derive_more/from", "dep:ruda-ir-macros", "dep:enumset", "dep:float-ord", "dep:fnv", "dep:foldhash", "dep:portable-atomic", "dep:variadics_please",]
+ir-std = [ "ir",]
+ir-serde = [ "ir", "serde/rc", "hashbrown/serde", "enumset/serde",]
+ir-default = [ "ir-std", "ir-serde",]
+tensor = [ "dep:smallvec",]
+tensor-data = ["tensor", "serde", "bytemuck/extern_crate_alloc"]
+tensor-elements = ["tensor", "dep:rand_distr", "half/bytemuck"]
+tensor-elements-flex32 = ["tensor-elements"]
+tensor-elements-std = ["tensor-elements", "std", "num-traits/std"]
+tensor-host-data = ["tensor-data", "tensor-elements", "dep:thiserror"]
+tensor-std = [ "tensor",]
+compiler = ["ir-serde", "dep:thiserror"]
+compiler-std = ["compiler", "std", "thiserror/std"]
+
+[lib]
+name = "ruda_core"
+path = "src/lib.rs"
+
+[dependencies.thiserror]
+version = "2"
+default-features = false
+optional = true
+
+[package.version]
+workspace = true
+
+[dependencies.backtrace]
+version = "0.3"
+features = [ "std",]
+optional = true
+
+[dependencies.bytemuck]
+version = "1.16.1"
+features = [ "derive",]
+
+[dependencies.cfg-if]
+version = "1.0.0"
+
+[dependencies.ciborium]
+version = "0.2.2"
+features = [ "std",]
+optional = true
+default-features = false
+
+[dependencies.derive-new]
+version = "0.7.0"
+default-features = false
+
+[dependencies.derive_more]
+version = "2"
+features = [ "not", "add", "mul", "add_assign", "mul_assign", "display", "deref", "deref_mut",]
+default-features = false
+
+[dependencies.dirs]
+version = "6.0.0"
+optional = true
+
+[dependencies.embassy-futures]
+version = "0.1.1"
+
+[dependencies.float4]
+version = "0.2"
+optional = true
+
+[dependencies.float8]
+version = "0.7"
+optional = true
+default-features = false
+
+[dependencies.futures-lite]
+version = "2.3.0"
+features = [ "std",]
+optional = true
+default-features = false
+
+[dependencies.half]
+version = "2.5"
+features = [ "alloc", "num-traits", "serde",]
+default-features = false
+
+[dependencies.hashbrown]
+version = "0.16"
+
+[dependencies.log]
+version = "^0.4.22"
+default-features = false
+
+[dependencies.num-traits]
+version = "0.2.19"
+features = [ "libm",]
+default-features = false
+
+[dependencies.oneshot]
+version = "0.2.1"
+optional = true
+default-features = false
+
+[dependencies.parking_lot]
+version = "0.12.5"
+optional = true
+default-features = false
+
+[dependencies.rand]
+version = "0.10.0"
+features = [ "std_rng",]
+default-features = false
+
+[dependencies.sanitize-filename]
+version = "0.6"
+optional = true
+
+[dependencies.serde]
+version = "1.0.204"
+features = [ "derive", "alloc",]
+default-features = false
+
+[dependencies.serde_bytes]
+version = "0.11.17"
+features = [ "alloc", "alloc",]
+optional = true
+default-features = false
+
+[dependencies.serde_json]
+version = "1.0.119"
+features = [ "alloc",]
+optional = true
+default-features = false
+
+[dependencies.spin]
+version = "0.10.0"
+features = [ "mutex", "spin_mutex",]
+
+[dependencies.toml]
+version = "1"
+optional = true
+
+[dependencies.tracing]
+version = "^0.1.43"
+features = [ "attributes",]
+optional = true
+default-features = false
+
+[dependencies.tynm]
+version = "0.2"
+
+[dependencies.xxhash-rust]
+version = "0.8"
+features = [ "xxh3", "const_xxh3",]
+optional = true
+default-features = false
+
+[dependencies.ruda-ir-macros]
+path = "../ruda-ir-macros"
+optional = true
+
+[dependencies.enumset]
+version = "1.1.12"
+default-features = false
+optional = true
+
+[dependencies.float-ord]
+version = "0.3"
+optional = true
+
+[dependencies.fnv]
+version = "1"
+optional = true
+
+[dependencies.foldhash]
+version = "0.2"
+default-features = false
+optional = true
+
+[dependencies.portable-atomic]
+version = "1.11"
+features = [ "serde",]
+default-features = false
+optional = true
+
+[dependencies.variadics_please]
+version = "1"
+optional = true
+
+[dependencies.smallvec]
+version = "1"
+features = [ "union", "const_generics", "const_new", "serde",]
+optional = true
+
+[dev-dependencies.ciborium]
+version = "0.2.2"
+features = [ "std",]
+default-features = false
+
+[dev-dependencies.criterion]
+version = "0.8"
+features = [ "html_reports",]
+
+[dev-dependencies.dashmap]
+version = "6.1.0"
+
+[dev-dependencies.tempfile]
+version = "3.20"
+
+[dev-dependencies.test-log]
+version = "^0.2"
+features = [ "trace",]
+default-features = false
+
+[build-dependencies.cfg_aliases]
+version = "0.2.1"
+
+[lints.clippy]
+doc_markdown = "warn"
+
+[lints.rust]
+warnings = "warn"
+
+[lints.rustdoc]
+broken_intra_doc_links = "warn"
+invalid_html_tags = "warn"
+
+[target."cfg(not(target_has_atomic = \"ptr\"))".dependencies.bytes]
+version = "1.10"
+features = [ "extra-platforms",]
+optional = true
+default-features = false
+
+[target."cfg(not(target_has_atomic = \"ptr\"))".dependencies.portable-atomic]
+version = "1.11"
+features = [ "serde",]
+default-features = false
+
+[target."cfg(not(target_has_atomic = \"ptr\"))".dependencies.portable-atomic-util]
+version = "0.2.4"
+features = [ "alloc",]
+
+[target."cfg(not(target_has_atomic = \"ptr\"))".dependencies.spin]
+version = "0.10.0"
+features = [ "mutex", "spin_mutex", "mutex", "spin_mutex", "portable_atomic",]
+
+[target."cfg(not(target_os = \"none\"))".dependencies.web-time]
+version = "1.1.0"
+
+[target."cfg(target_family = \"wasm\")".dependencies.wasm-bindgen-futures]
+version = "0.4.45"
+
+[target."cfg(target_has_atomic = \"ptr\")".dependencies.bytes]
+version = "1.10"
+optional = true
+default-features = false
+
+[target."cfg(target_has_atomic = \"ptr\")".dependencies.spin]
+version = "0.10.0"
+features = [ "mutex", "spin_mutex", "mutex", "spin_mutex",]
+
+[target."cfg(target_os = \"none\")".dependencies.embassy-time]
+version = "0.5"
+default-features = false
+
+[dependencies.ahash]
+version = "0.8.12"
+default-features = false
+optional = true
+
+[dependencies.rand_distr]
+version = "0.6.0"
+default-features = false
+optional = true
+
+[dev-dependencies.paste]
+version = "1"
+
+[dev-dependencies.serde_json]
+version = "1.0.148"
+features = ["alloc"]
+default-features = false
+
+[dev-dependencies.rand]
+version = "0.10.1"
+features = ["std_rng", "thread_rng"]
+default-features = false
+
+[dev-dependencies.serial_test]
+version = "3.2.0"

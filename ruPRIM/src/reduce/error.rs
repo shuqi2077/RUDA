@@ -1,0 +1,48 @@
+use ruda_kernel::dsl as kernel_dsl;
+use ruda_kernel::dsl::ir::StorageType;
+use ruda_kernel::dsl::server::LaunchError;
+use thiserror::Error;
+
+#[derive(Error, Debug, Clone)]
+/// This error should be caught and properly handled.
+pub enum ReduceError {
+    /// Indicate that the hardware / API doesn't support SIMT plane instructions.
+    #[error(
+        "Trying to launch a kernel using plane instructions, but there are not supported by the hardware."
+    )]
+    PlanesUnavailable,
+    /// When the ruda count is bigger than the max supported.
+    #[error("The ruda count is larger than the max supported.")]
+    RudaCountTooLarge,
+
+    /// A generic validation error
+    #[error("A generic validation error: {details}")]
+    Validation { details: &'static str },
+
+    /// Indicate that min_plane_dim != max_plane_dim, thus the exact plane_dim is not fixed.
+    #[error(
+        "Trying to launch a kernel using plane instructions, but the min and max plane dimensions are different."
+    )]
+    ImprecisePlaneDim,
+    /// Indicate the axis is too large.
+    #[error("The provided axis ({axis}) must be smaller than the input tensor rank ({rank}).")]
+    InvalidAxis { axis: usize, rank: usize },
+    /// Indicate that the shape of the input tensor is too small for the given input and axis.
+    #[error(
+        "The input reduce axis length (currently {axis_length:?}) should be at least k ({k:?})."
+    )]
+    ReduceAxisTooSmall { axis_length: usize, k: usize },
+    /// Indicate that the shape of the output tensor is invalid for the given input and axis.
+    #[error("The output shape (currently {output_shape:?}) should be {expected_shape:?}.")]
+    MismatchOutputShape {
+        expected_shape: Vec<usize>,
+        output_shape: Vec<usize>,
+    },
+    /// Indicate that we can't launch a shared sum because the atomic addition is not supported.
+    #[error("Atomic add not supported by the client for {0}")]
+    MissingAtomicAdd(StorageType),
+
+    /// An error happened during launch.
+    #[error("An error happened during launch\nCaused by:\n  {0}")]
+    Launch(LaunchError),
+}
