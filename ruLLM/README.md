@@ -9,6 +9,13 @@ ruLLM combines tokenization, model loading, cached autoregressive generation, an
 - Cargo package: `ruda-llm`
 - Rust crate: `rullm`
 
+## Multi-backend and execution reliability candidate
+
+The second-round candidate adds HIP feature wiring, capability-gated packed
+kernels, checked memory/shape planning, bounded replica workers, completion-fence
+contracts, recovery decisions and explicit performance fallback. It does not
+implement model sharding or custom accelerator kernels.
+
 ## Generation and scheduler extensions
 
 This source revision adds token callbacks, token-sequence stopping, cooperative

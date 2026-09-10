@@ -7,6 +7,8 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 
 mod sampling;
+mod fenced;
+pub use fenced::{BatchFence, BatchLaunchFailure, FencedBatchScheduler};
 mod lifecycle;
 pub use lifecycle::{CancelledGeneration, ContinuousBatchOptions, KvAdmissionPolicy};
 pub(crate) use sampling::BatchTokenSelection;
@@ -100,7 +102,12 @@ impl ScheduledBatch {
                 "scheduled sequence has no physical KV page".into(),
             ));
         }
-        let mut table = vec![0_u32; self.batch_size().saturating_mul(stride)];
+        let length = self.batch_size().checked_mul(stride)
+            .ok_or_else(|| ContinuousBatchError("block table size overflow".into()))?;
+        let mut table = Vec::new();
+        table.try_reserve_exact(length)
+            .map_err(|error| ContinuousBatchError(format!("cannot allocate block table: {error}")))?;
+        table.resize(length, 0_u32);
         for (row, sequence) in self.sequences.iter().enumerate() {
             for (column, page) in sequence.block_table.iter().enumerate() {
                 table[row * stride + column] = page.0;

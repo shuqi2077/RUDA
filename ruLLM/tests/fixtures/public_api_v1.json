@@ -1,0 +1,97 @@
+[
+  {
+    "file": "ruLLM/src/generation.rs",
+    "name": "GreedyGenerationConfig",
+    "body": "pub max_new_tokens: usize, pub eos_token_ids: Vec<i32>,"
+  },
+  {
+    "file": "ruLLM/src/generation.rs",
+    "name": "TokenGenerationOutput",
+    "body": "pub token_ids: Vec<i32>, pub generated_token_ids: Vec<i32>, pub stopped_on_eos: bool,"
+  },
+  {
+    "file": "ruLLM/src/generation.rs",
+    "name": "CausalModelLimits",
+    "body": "pub vocab_size: usize, pub max_sequence_length: usize,"
+  },
+  {
+    "file": "ruLLM/src/generation/sampling.rs",
+    "name": "SamplingConfig",
+    "body": "pub temperature: f64, pub top_k: usize, pub top_p: f64, pub seed: Option<u64>,"
+  },
+  {
+    "file": "ruLLM/src/generation/sampling.rs",
+    "name": "SamplingGenerationConfig",
+    "body": "pub max_new_tokens: usize, pub eos_token_ids: Vec<i32>, pub sampling: SamplingConfig,"
+  },
+  {
+    "file": "ruLLM/src/generation/control.rs",
+    "name": "GenerationControl",
+    "body": "pub stop_token_sequences: Vec<Vec<i32>>, pub cancellation: Option<GenerationCancellation>,"
+  },
+  {
+    "file": "ruLLM/src/generation/control.rs",
+    "name": "ControlledGenerationOutput",
+    "body": "pub output: TokenGenerationOutput, pub finish_reason: GenerationFinishReason,"
+  },
+  {
+    "file": "ruLLM/src/continuous_batch.rs",
+    "name": "ContinuousBatchConfig",
+    "body": "pub max_active_sequences: usize, pub max_batch_tokens: usize,"
+  },
+  {
+    "file": "ruLLM/src/continuous_batch.rs",
+    "name": "FinishedGeneration",
+    "body": "pub request_id: RequestId, pub prompt_token_ids: Vec<i32>, pub generated_token_ids: Vec<i32>, pub stopped_on_eos: bool,"
+  },
+  {
+    "file": "ruLLM/src/continuous_batch.rs",
+    "name": "ContinuousBatchSnapshot",
+    "body": "pub pending_requests: usize, pub active_requests: usize, pub has_in_flight_batch: bool, pub finished_requests: usize, pub free_kv_pages: usize, pub total_kv_pages: usize,"
+  },
+  {
+    "file": "ruLLM/src/continuous_batch.rs",
+    "name": "ScheduledBatch",
+    "body": "pub id: u64, pub kind: ScheduledBatchKind, pub sequences: Vec<ScheduledSequence>,"
+  },
+  {
+    "file": "ruLLM/src/continuous_batch.rs",
+    "name": "ScheduledSequence",
+    "body": "pub request_id: RequestId, pub token_ids: Vec<i32>, pub start_position: usize, pub context_length: usize, pub block_table: Vec<KvPageId>, pub reservation_id: KvReservationId,"
+  },
+  {
+    "file": "ruLLM/src/continuous_batch/lifecycle.rs",
+    "name": "ContinuousBatchOptions",
+    "body": "pub max_pending_requests: Option<usize>, pub kv_admission: KvAdmissionPolicy,"
+  },
+  {
+    "file": "ruLLM/src/continuous_batch/lifecycle.rs",
+    "name": "CancelledGeneration",
+    "body": "pub request_id: RequestId, pub prompt_token_ids: Vec<i32>, pub generated_token_ids: Vec<i32>,"
+  },
+  {
+    "file": "ruLLM/src/paged_kv.rs",
+    "name": "PagedKvCacheConfig",
+    "body": "pub block_size: usize, pub num_pages: usize, pub max_sequence_length: usize,"
+  },
+  {
+    "file": "ruLLM/src/paged_kv.rs",
+    "name": "PagedKvAppendReservation",
+    "body": "pub id: KvReservationId, pub request_id: RequestId, pub start_position: usize, pub token_count: usize, pub context_length: usize, pub newly_allocated_pages: Vec<KvPageId>, pub block_table: Vec<KvPageId>,"
+  },
+  {
+    "file": "ruLLM/src/paged_kv.rs",
+    "name": "PagedKvSequenceSnapshot",
+    "body": "pub request_id: RequestId, pub committed_tokens: usize, pub block_table: Vec<KvPageId>, pub pending_reservation: Option<KvReservationId>,"
+  },
+  {
+    "file": "ruLLM/src/paged_kv.rs",
+    "name": "PagedKvCacheSnapshot",
+    "body": "pub block_size: usize, pub total_pages: usize, pub free_pages: usize, pub sequences: Vec<PagedKvSequenceSnapshot>,"
+  },
+  {
+    "file": "ruLLM/src/llama.rs",
+    "name": "LlamaConfig",
+    "body": "pub vocab_size: usize, pub d_model: usize, pub d_ff: usize, pub num_hidden_layers: usize, pub num_query_heads: usize, pub num_kv_heads: usize, pub max_sequence_length: usize, pub rms_norm_epsilon: f64, pub rope_theta: f32,"
+  }
+]

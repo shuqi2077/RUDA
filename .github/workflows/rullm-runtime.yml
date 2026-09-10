@@ -1,0 +1,36 @@
+name: ruLLM runtime contracts
+
+on:
+  pull_request:
+    paths:
+      - 'ruLLM/**'
+      - 'Cargo.lock'
+      - '.github/workflows/rullm-runtime.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'ruLLM/**'
+      - 'Cargo.lock'
+      - '.github/workflows/rullm-runtime.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  standalone-runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install standalone test toolchain
+        run: |
+          rustup toolchain install 1.90.0 --profile minimal
+          rustup override set 1.90.0
+      - name: Independent references and real std-only Rust tests
+        run: python3 ruLLM/tools/run_runtime_validation.py --suite reference --suite core --timeout 180
+      - name: Report
+        if: always()
+        run: cat ruLLM/validation/runtime-v2/validation.json

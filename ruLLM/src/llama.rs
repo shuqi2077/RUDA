@@ -1073,7 +1073,7 @@ where
             self.qkv_bias.as_ref().map(Param::val),
         );
         let (query, key, value, key_sequence) = match self.rotary_layout {
-            RotaryLayout::HalfSplit => {
+            RotaryLayout::HalfSplit if ruda_inference::can_use_elementwise::<R>(&projected.device(), projected.dtype()) => {
                 let device = projected.device();
                 let dtype = projected.dtype();
                 let (key_storage, value_storage, cache_start, cache_end) = cache.reserve_growable(
@@ -1098,7 +1098,7 @@ where
                 let (key, value, key_sequence) = cache.commit_growable(key, value, cache_end);
                 (query, key, value, key_sequence)
             }
-            RotaryLayout::Interleaved => {
+            _ => {
                 let query = projected
                     .clone()
                     .slice([0..batch, 0..sequence, 0..query_width])
@@ -1123,7 +1123,7 @@ where
                 (query, key, value, key_sequence)
             }
         };
-        let context = if sequence == 1 && self.head_dimension == 64 {
+        let context = if ruda_inference::can_decode_specialized::<R>(&query.device(), query.dtype(), query.dims()) {
             ruda_inference::gqa_decode_attention(query, key, value, key_sequence)
         } else {
             let key = key.slice([

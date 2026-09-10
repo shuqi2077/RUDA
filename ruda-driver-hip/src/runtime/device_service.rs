@@ -64,14 +64,14 @@ impl DeviceService for HipServer {
         }
 
         // SAFETY: Calling HIP FFI to query device memory info. The pointers to `free` and
-        // `total` are valid stack variables cast to mutable pointers; HIP writes the values
+        // `total` are valid, uniquely borrowed mutable stack variables; HIP writes the values
         // through them on success (asserted below).
         let max_memory = unsafe {
-            let free: usize = 0;
-            let total: usize = 0;
+            let mut free: usize = 0;
+            let mut total: usize = 0;
             let status = ruda_hip_sys::hipMemGetInfo(
-                &free as *const _ as *mut usize,
-                &total as *const _ as *mut usize,
+                &mut free,
+                &mut total,
             );
             assert_eq!(
                 status, HIP_SUCCESS,

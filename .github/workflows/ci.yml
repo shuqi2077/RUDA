@@ -47,8 +47,8 @@ jobs:
           - name: ruLLM host regression tests
             key: rullm-host
             command: |
-              cargo test --locked -p ruda-llm --lib --test generation_control
-              cargo check --locked -p ruda-llm --example sampling_bench
+              cargo test --locked -p ruda-llm --lib --test generation_control --test api_compatibility
+              cargo check --locked -p ruda-llm --example sampling_bench --example runtime_replicas
           - name: Device libraries compile
             key: device-libraries
             command: cargo check --locked --lib -p rublas -p ruPRIM -p ruDNN -p ruRAND -p ruda-fft -p ruSPARSE -p ruTENSOR -p ruCCL -p ruda-llm -p ruda-optim --features ruda-optim/gradient-guard-device

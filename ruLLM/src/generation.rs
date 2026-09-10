@@ -479,3 +479,54 @@ fn greedy_token<B: Backend>(logits: Tensor<B, 3>) -> Result<i32, GenerationError
     i32::try_from(index)
         .map_err(|_| GenerationError("vocabulary index does not fit an i32 token id".into()))
 }
+
+/// Select the existing portable packed path or capability-gated Ruda kernels.
+/// `Portable` stays on the selected device; it does NOT migrate to the CPU.
+/// A PerformanceGuard decision can be applied here between complete requests.
+pub fn generate_greedy_packed_with_mode<R, F, I, BT>(
+    model: &PackedLlamaForCausalLm<DeviceBackend<R, F, I, BT>>,
+    model_config: &LlamaConfig,
+    prompt_token_ids: &[i32],
+    generation: &GreedyGenerationConfig,
+    device: &R::Device,
+    mode: crate::runtime::KernelMode,
+) -> Result<TokenGenerationOutput, GenerationError>
+where
+    R: DeviceRuntime,
+    R::Server: ComputeServer,
+    R::Device: DeviceOps,
+    F: FloatElement,
+    I: IntElement,
+    BT: BoolElement,
+{
+    match mode {
+        crate::runtime::KernelMode::Automatic =>
+            generate_greedy_packed_ruda(model, model_config, prompt_token_ids, generation, device),
+        crate::runtime::KernelMode::Portable =>
+            generate_greedy_packed(model, model_config, prompt_token_ids, generation, device),
+    }
+}
+
+pub fn generate_sampled_packed_with_mode<R, F, I, BT>(
+    model: &PackedLlamaForCausalLm<DeviceBackend<R, F, I, BT>>,
+    model_config: &LlamaConfig,
+    prompt_token_ids: &[i32],
+    generation: &SamplingGenerationConfig,
+    device: &R::Device,
+    mode: crate::runtime::KernelMode,
+) -> Result<TokenGenerationOutput, GenerationError>
+where
+    R: DeviceRuntime,
+    R::Server: ComputeServer,
+    R::Device: DeviceOps,
+    F: FloatElement,
+    I: IntElement,
+    BT: BoolElement,
+{
+    match mode {
+        crate::runtime::KernelMode::Automatic =>
+            generate_sampled_packed_ruda(model, model_config, prompt_token_ids, generation, device),
+        crate::runtime::KernelMode::Portable =>
+            generate_sampled_packed(model, model_config, prompt_token_ids, generation, device),
+    }
+}

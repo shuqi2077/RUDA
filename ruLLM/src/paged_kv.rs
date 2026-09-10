@@ -422,3 +422,21 @@ impl PagedKvCacheManager {
 
 #[cfg(test)]
 mod tests;
+
+impl PagedKvCacheConfig {
+    /// Size a dense cache AFTER accounting for loaded weights. Does not query
+    /// VRAM or allocate device buffers; physical allocation can still fail.
+    pub fn from_memory_budget(
+        geometry: crate::runtime::KvMemoryGeometry,
+        available_bytes: u64,
+        workspace_bytes: u64,
+        headroom_bytes: u64,
+        max_sequence_length: usize,
+    ) -> Result<Self, PagedKvError> {
+        let num_pages = geometry.page_capacity(available_bytes, workspace_bytes, headroom_bytes)
+            .map_err(|e| PagedKvError(e.to_string()))?;
+        let config = Self { block_size: geometry.tokens_per_page, num_pages, max_sequence_length };
+        config.validate()?;
+        Ok(config)
+    }
+}

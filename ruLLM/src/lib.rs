@@ -24,5 +24,10 @@ pub use continuous_batch::{
     ContinuousBatchConfig, ContinuousBatchError, ContinuousBatchScheduler, ContinuousBatchSnapshot,
     FinishedGeneration, ScheduledBatch, ScheduledBatchKind, ScheduledSequence,
     CancelledGeneration, ContinuousBatchOptions, KvAdmissionPolicy,
+    BatchFence, BatchLaunchFailure, FencedBatchScheduler,
 };
 pub use paged_kv::*;
+
+/// Optional backend adapters and host-side execution controls.
+pub mod runtime;
+pub mod backends;

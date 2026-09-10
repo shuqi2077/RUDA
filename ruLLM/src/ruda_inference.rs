@@ -1,7 +1,8 @@
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
 use ruda_kernel::dsl as kernel_dsl;
-use ruda_tensor::api::Tensor;
+use ruda_tensor::api::{DType, Tensor};
+use ruda_core::ir::features::{Plane, TypeUsage};
 use ruda_tensor::{DeviceOps, Shape, TensorPrimitive};
 use ruda_kernel::tensor::contiguous::into_contiguous;
 use ruda_kernel::tensor::allocation::empty_device_contiguous_dtype;
@@ -10,6 +11,90 @@ use ruda_kernel::dsl::calculate_ruda_count_elemwise;
 use ruda_kernel::dsl::prelude::*;
 use ruda::runtime::server::ComputeServer;
 
+
+// Capability checks use the selected device, never a global vendor-name guess.
+fn specialized_dtype<R>(device: &R::Device, dtype: DType) -> bool
+where R: DeviceRuntime, R::Server: ComputeServer, R::Device: DeviceOps,
+{
+    if !matches!(dtype, DType::F16 | DType::BF16 | DType::F32) { return false; }
+    let client = R::client(device);
+    let properties = client.properties();
+    let storage: StorageType = dtype.into();
+    let usage = properties.type_usage(storage);
+    let f32_storage: StorageType = DType::F32.into();
+    usage.contains(TypeUsage::Arithmetic) && usage.contains(TypeUsage::Buffer)
+        && properties.type_usage(f32_storage).contains(TypeUsage::Arithmetic)
+}
+
+fn reduction_width<R>(device: &R::Device, dtype: DType, rows: usize) -> Option<u32>
+where R: DeviceRuntime, R::Server: ComputeServer, R::Device: DeviceOps,
+{
+    if !specialized_dtype::<R>(device, dtype) { return None; }
+    let client = R::client(device);
+    let properties = client.properties();
+    let hardware = &properties.hardware;
+    if rows == 0 || rows > hardware.max_ruda_count.0 as usize { return None; }
+    crate::runtime::fixed_reduction_width(
+        hardware.plane_size_min, hardware.plane_size_max,
+        properties.features.plane.contains(Plane::Ops),
+        properties.features.plane.contains(Plane::Packed),
+        hardware.max_ruda_dim.0, hardware.max_units_per_ruda,
+    )
+}
+
+pub(crate) fn can_decode_specialized<R>(device: &R::Device, dtype: DType, shape: [usize; 4]) -> bool
+where R: DeviceRuntime, R::Server: ComputeServer, R::Device: DeviceOps,
+{
+    let [batch, heads, sequence, dimension] = shape;
+    let Some(rows) = batch.checked_mul(heads) else { return false; };
+    crate::runtime::supports_two_lane_decode(reduction_width::<R>(device, dtype, rows), dimension, sequence)
+}
+
+pub(crate) fn can_use_elementwise<R>(device: &R::Device, dtype: DType) -> bool
+where R: DeviceRuntime, R::Server: ComputeServer, R::Device: DeviceOps,
+{
+    specialized_dtype::<R>(device, dtype)
+}
+
+fn checked_u32(value: usize, name: &str) -> u32 {
+    u32::try_from(value).unwrap_or_else(|_| panic!("{name} exceeds the specialized kernel u32 interface"))
+}
+
+// Dedicated kernels use 32-bit metadata/index parameters. Check the reachable
+// span, not just the logical element count (views can contain large holes).
+fn check_kernel_span(shape: &[usize], strides: &[usize], name: &str) {
+    assert_eq!(shape.len(), strides.len(), "{name}: shape/stride rank mismatch");
+    for &value in shape.iter().chain(strides) { checked_u32(value, name); }
+    if shape.contains(&0) { return; }
+    let last = shape.iter().zip(strides).try_fold(0usize, |n, (&d, &stride)| {
+        (d - 1).checked_mul(stride).and_then(|span| n.checked_add(span))
+    }).expect("specialized tensor storage span overflow");
+    checked_u32(last.checked_add(1).expect("specialized storage size overflow"), name);
+}
+
+fn checked_elements(shape: &[usize]) -> usize {
+    if shape.contains(&0) { return 0; }
+    shape.iter().try_fold(1usize, |n, &d| n.checked_mul(d))
+        .expect("specialized tensor element count overflow")
+}
+
+fn portable_rms_norm<R, F, I, BT, const D: usize>(
+    input: Tensor<DeviceBackend<R, F, I, BT>, D>,
+    gamma: Tensor<DeviceBackend<R, F, I, BT>, 1>, epsilon: f64,
+) -> Tensor<DeviceBackend<R, F, I, BT>, D>
+where R: DeviceRuntime, R::Server: ComputeServer, R::Device: DeviceOps,
+    F: FloatElement, I: IntElement, BT: BoolElement,
+{
+    let dtype = input.dtype();
+    let accumulation = if dtype == DType::F64 { DType::F64 } else { DType::F32 };
+    let input = input.cast(accumulation);
+    // Scale before squaring, so finite large inputs do not overflow the sum.
+    let scale = input.clone().abs().max_dim(D - 1).clamp_min(epsilon.sqrt());
+    let scaled = input / scale.clone();
+    let rms = (scaled.clone().square().mean_dim(D - 1)
+        + scale.clone().recip().mul_scalar(epsilon) / scale).sqrt();
+    (scaled / rms).cast(dtype) * gamma.unsqueeze()
+}
 
 #[ruda(launch)]
 fn rms_norm_kernel<F: Float>(
@@ -33,13 +118,38 @@ fn rms_norm_kernel<F: Float>(
     }
 
     sum = plane_sum(sum);
-    let inverse_rms = 1.0f32 / (sum / width as f32 + epsilon).sqrt();
-
-    let mut column = UNIT_POS_X as usize;
-    while column < width {
-        let normalized = F::cast_from(f32::cast_from(input[row_offset + column]) * inverse_rms);
-        output[row_offset + column] = normalized * gamma[column];
-        column += RUDA_DIM_X as usize;
+    if sum > 3.4028235e38f32 {
+        let mut maximum = 0.0f32;
+        let mut column = UNIT_POS_X as usize;
+        while column < width {
+            let magnitude = f32::cast_from(input[row_offset + column]).abs();
+            if magnitude > maximum { maximum = magnitude; }
+            column += RUDA_DIM_X as usize;
+        }
+        maximum = plane_max(maximum);
+        let mut scaled_sum = 0.0f32;
+        let mut column = UNIT_POS_X as usize;
+        while column < width {
+            let scaled = f32::cast_from(input[row_offset + column]) / maximum;
+            scaled_sum += scaled * scaled;
+            column += RUDA_DIM_X as usize;
+        }
+        scaled_sum = plane_sum(scaled_sum);
+        let denominator = (scaled_sum / width as f32 + (epsilon / maximum) / maximum).sqrt();
+        let mut column = UNIT_POS_X as usize;
+        while column < width {
+            let normalized = F::cast_from((f32::cast_from(input[row_offset + column]) / maximum) / denominator);
+            output[row_offset + column] = normalized * gamma[column];
+            column += RUDA_DIM_X as usize;
+        }
+    } else {
+        let inverse_rms = 1.0f32 / (sum / width as f32 + epsilon).sqrt();
+        let mut column = UNIT_POS_X as usize;
+        while column < width {
+            let normalized = F::cast_from(f32::cast_from(input[row_offset + column]) * inverse_rms);
+            output[row_offset + column] = normalized * gamma[column];
+            column += RUDA_DIM_X as usize;
+        }
     }
 }
 
@@ -77,15 +187,40 @@ fn residual_rms_norm_kernel<F: Float>(
     }
 
     sum = plane_sum(sum);
-    let inverse_rms = 1.0f32 / (sum / width as f32 + epsilon).sqrt();
-
-    let mut column = UNIT_POS_X as usize;
-    while column < width {
-        let position = row_offset + column;
-        let value = hidden[position];
-        let unit = F::cast_from(f32::cast_from(value) * inverse_rms);
-        normalized[position] = unit * gamma[column];
-        column += RUDA_DIM_X as usize;
+    if sum > 3.4028235e38f32 {
+        let mut maximum = 0.0f32;
+        let mut column = UNIT_POS_X as usize;
+        while column < width {
+            let magnitude = f32::cast_from(hidden[row_offset + column]).abs();
+            if magnitude > maximum { maximum = magnitude; }
+            column += RUDA_DIM_X as usize;
+        }
+        maximum = plane_max(maximum);
+        let mut scaled_sum = 0.0f32;
+        let mut column = UNIT_POS_X as usize;
+        while column < width {
+            let scaled = f32::cast_from(hidden[row_offset + column]) / maximum;
+            scaled_sum += scaled * scaled;
+            column += RUDA_DIM_X as usize;
+        }
+        scaled_sum = plane_sum(scaled_sum);
+        let denominator = (scaled_sum / width as f32 + (epsilon / maximum) / maximum).sqrt();
+        let mut column = UNIT_POS_X as usize;
+        while column < width {
+            let unit = F::cast_from((f32::cast_from(hidden[row_offset + column]) / maximum) / denominator);
+            normalized[row_offset + column] = unit * gamma[column];
+            column += RUDA_DIM_X as usize;
+        }
+    } else {
+        let inverse_rms = 1.0f32 / (sum / width as f32 + epsilon).sqrt();
+        let mut column = UNIT_POS_X as usize;
+        while column < width {
+            let position = row_offset + column;
+            let value = hidden[position];
+            let unit = F::cast_from(f32::cast_from(value) * inverse_rms);
+            normalized[position] = unit * gamma[column];
+            column += RUDA_DIM_X as usize;
+        }
     }
 }
 
@@ -308,6 +443,22 @@ where
     I: IntElement,
     BT: BoolElement,
 {
+    assert!(D > 0, "RMSNorm requires a positive tensor rank");
+    let shape = input.dims();
+    let width = shape[D - 1];
+    assert!(width > 0 && epsilon.is_finite() && epsilon > 0.0,
+        "RMSNorm requires positive width and finite positive epsilon");
+    assert!(input.dtype() == DType::F64 || ((epsilon as f32).is_finite() && epsilon as f32 > 0.0),
+        "RMSNorm epsilon is not representable in the accumulation dtype");
+    assert_eq!(gamma.dims(), [width]);
+    assert_eq!(input.dtype(), gamma.dtype());
+    assert_eq!(input.device(), gamma.device(), "RMSNorm tensors must share a device");
+    let rows = checked_elements(&shape) / width;
+    if rows == 0 { return input; }
+    let subgroup = reduction_width::<R>(&input.device(), input.dtype(), rows);
+    let Some(subgroup) = subgroup.filter(|_| width <= u32::MAX as usize && checked_elements(&shape) <= u32::MAX as usize) else {
+        return portable_rms_norm(input, gamma, epsilon);
+    };
     let input = into_contiguous(input.into_primitive().tensor());
     let gamma = into_contiguous(gamma.into_primitive().tensor());
     let width = input.meta.shape()[D - 1];
@@ -331,12 +482,12 @@ where
     let client = input.client.clone();
     rms_norm_kernel::launch::<R>(
         &client,
-        RudaCount::Static(rows as u32, 1, 1),
-        RudaDim::new_1d(32),
+        RudaCount::Static(checked_u32(rows, "RMSNorm rows"), 1, 1),
+        RudaDim::new_1d(subgroup),
         input.into_array_arg(),
         gamma.into_array_arg(),
         output.clone().into_array_arg(),
-        width as u32,
+        checked_u32(width, "RMSNorm width"),
         epsilon as f32,
         output.dtype.into(),
     );
@@ -365,6 +516,26 @@ where
         D, 3,
         "internal residual RMSNorm expects rank-three Llama activations"
     );
+    let shape = residual.dims();
+    let width = shape[D - 1];
+    assert!(width > 0 && epsilon.is_finite() && epsilon > 0.0,
+        "residual RMSNorm requires positive width and finite positive epsilon");
+    assert_eq!(update.dims(), shape);
+    assert_eq!(gamma.dims(), [width]);
+    assert_eq!(update.dtype(), residual.dtype());
+    assert_eq!(gamma.dtype(), residual.dtype());
+    assert_eq!(update.device(), residual.device());
+    assert_eq!(gamma.device(), residual.device());
+    assert!(residual.dtype() == DType::F64 || ((epsilon as f32).is_finite() && epsilon as f32 > 0.0),
+        "residual RMSNorm epsilon is not representable in the accumulation dtype");
+    let rows = checked_elements(&shape) / width;
+    if rows == 0 { return (residual.clone(), residual); }
+    let subgroup = reduction_width::<R>(&residual.device(), residual.dtype(), rows);
+    let Some(subgroup) = subgroup.filter(|_| width <= u32::MAX as usize && checked_elements(&shape) <= u32::MAX as usize) else {
+        let hidden = residual + update;
+        let normalized = portable_rms_norm(hidden.clone(), gamma, epsilon);
+        return (hidden, normalized);
+    };
     let residual = residual.into_primitive().tensor();
     let update = update.into_primitive().tensor();
     let gamma = into_contiguous(gamma.into_primitive().tensor());
@@ -373,6 +544,8 @@ where
     assert_eq!(gamma.meta.num_elements(), width);
     assert_eq!(update.dtype, residual.dtype);
     assert_eq!(gamma.dtype, residual.dtype);
+    check_kernel_span(residual.meta.shape(), residual.meta.strides(), "residual storage");
+    check_kernel_span(update.meta.shape(), update.meta.strides(), "update storage");
     let rows = residual.meta.num_elements() / width;
     let make_output = || {
         empty_device_contiguous_dtype::<R>(
@@ -388,14 +561,14 @@ where
 
     residual_rms_norm_kernel::launch::<R>(
         &client,
-        RudaCount::Static(rows as u32, 1, 1),
-        RudaDim::new_1d(32),
+        RudaCount::Static(checked_u32(rows, "residual RMSNorm rows"), 1, 1),
+        RudaDim::new_1d(subgroup),
         residual.into_tensor_arg(),
         update.into_tensor_arg(),
         gamma.into_array_arg(),
         hidden.clone().into_array_arg(),
         normalized.clone().into_array_arg(),
-        width as u32,
+        checked_u32(width, "residual RMSNorm width"),
         epsilon as f32,
         hidden.dtype.into(),
     );
@@ -418,6 +591,20 @@ where
     I: IntElement,
     BT: BoolElement,
 {
+    assert!(D > 0 && width > 0, "SwiGLU requires a positive rank and width");
+    let twice_width = width.checked_mul(2).expect("SwiGLU packed width overflow");
+    let shape = gate_up.dims();
+    assert_eq!(shape[D - 1], twice_width);
+    let elements = checked_elements(&shape);
+    if !specialized_dtype::<R>(&gate_up.device(), gate_up.dtype()) || width > u32::MAX as usize || elements > u32::MAX as usize || elements == 0 {
+        let mut gate_range: [std::ops::Range<usize>; D] = std::array::from_fn(|i| 0..shape[i]);
+        let mut up_range: [std::ops::Range<usize>; D] = std::array::from_fn(|i| 0..shape[i]);
+        gate_range[D - 1] = 0..width;
+        up_range[D - 1] = width..twice_width;
+        let gate = gate_up.clone().slice(gate_range);
+        let up = gate_up.slice(up_range);
+        return ruda_tensor::api::activation::silu(gate) * up;
+    }
     let gate_up = into_contiguous(gate_up.into_primitive().tensor());
     let mut output_shape = gate_up.meta.shape().clone();
     assert_eq!(
@@ -473,15 +660,22 @@ where
     I: IntElement,
     BT: BoolElement,
 {
+    assert!(query_heads > 0 && kv_heads > 0 && query_heads % kv_heads == 0);
+    assert!(head_dimension > 0 && head_dimension % 2 == 0, "RoPE head dimension must be positive and even");
+    assert_eq!(frequencies.dtype(), projected.dtype());
+    assert_eq!(frequencies.device(), projected.device());
+    assert_eq!(key.device(), projected.device());
+    assert_eq!(value.device(), projected.device());
     let projected = projected.into_primitive().tensor();
     let frequencies = frequencies.into_primitive().tensor();
     let key = into_contiguous(key.into_primitive().tensor());
     let value = into_contiguous(value.into_primitive().tensor());
     let [batch, sequence, projected_width] = projected.meta.shape().dims::<3>();
-    let query_width = query_heads * head_dimension;
-    let kv_width = kv_heads * head_dimension;
-    assert_eq!(projected_width, query_width + 2 * kv_width);
-    assert!(start_position + sequence <= frequencies.meta.shape()[0]);
+    let query_width = query_heads.checked_mul(head_dimension).expect("query width overflow");
+    let kv_width = kv_heads.checked_mul(head_dimension).expect("KV width overflow");
+    assert_eq!(projected_width, kv_width.checked_mul(2).and_then(|n| n.checked_add(query_width)).expect("packed QKV width overflow"));
+    assert!(batch > 0 && sequence > 0);
+    assert!(start_position.checked_add(sequence).is_some_and(|n| n <= frequencies.meta.shape()[0]));
     assert_eq!(frequencies.meta.shape()[1], head_dimension);
     assert_eq!(frequencies.meta.shape()[2], 2);
     let [key_batch, key_heads, key_capacity, key_dimension] = key.meta.shape().dims::<4>();
@@ -490,10 +684,24 @@ where
         [batch, kv_heads, head_dimension]
     );
     assert_eq!(value.meta.shape(), key.meta.shape());
-    assert!(cache_start + sequence <= key_capacity);
+    assert!(cache_start.checked_add(sequence).is_some_and(|n| n <= key_capacity));
     assert_eq!(key.dtype, projected.dtype);
     assert_eq!(value.dtype, projected.dtype);
 
+    for (dimension, name) in [
+        (sequence, "sequence"), (query_heads, "query_heads"), (kv_heads, "kv_heads"),
+        (head_dimension, "head_dimension"), (start_position, "start_position"),
+        (cache_start, "cache_start"), (key_capacity, "key_capacity"),
+    ] { checked_u32(dimension, name); }
+
+    check_kernel_span(projected.meta.shape(), projected.meta.strides(), "projected storage");
+    check_kernel_span(frequencies.meta.shape(), frequencies.meta.strides(), "RoPE storage");
+    check_kernel_span(key.meta.shape(), key.meta.strides(), "key storage");
+    check_kernel_span(value.meta.shape(), value.meta.strides(), "value storage");
+    let query_elements = checked_elements(&[batch, query_heads, sequence, head_dimension]);
+    let kv_elements = checked_elements(&[batch, kv_heads, sequence, head_dimension]);
+    let elements = kv_elements.checked_mul(2).and_then(|n| n.checked_add(query_elements)).expect("QKV launch size overflow");
+    checked_u32(elements, "QKV launch elements");
     let make_output = |shape| {
         empty_device_contiguous_dtype::<R>(
             projected.client.clone(),
@@ -503,8 +711,6 @@ where
         )
     };
     let query = make_output(Shape::new([batch, query_heads, sequence, head_dimension]));
-    let kv_elements = batch * kv_heads * sequence * head_dimension;
-    let elements = query.meta.num_elements() + 2 * kv_elements;
     let ruda_dim = RudaDim::new(projected.client.properties(), elements);
     let ruda_count = calculate_ruda_count_elemwise(&projected.client, elements, ruda_dim);
     let client = projected.client.clone();
@@ -518,13 +724,13 @@ where
         query.clone().into_array_arg(),
         key.clone().into_array_arg(),
         value.clone().into_array_arg(),
-        sequence as u32,
-        query_heads as u32,
-        kv_heads as u32,
-        head_dimension as u32,
-        start_position as u32,
-        cache_start as u32,
-        key_capacity as u32,
+        checked_u32(sequence, "sequence"),
+        checked_u32(query_heads, "query_heads"),
+        checked_u32(kv_heads, "kv_heads"),
+        checked_u32(head_dimension, "head_dimension"),
+        checked_u32(start_position, "start_position"),
+        checked_u32(cache_start, "cache_start"),
+        checked_u32(key_capacity, "key_capacity"),
         query.dtype.into(),
     );
 
@@ -549,6 +755,14 @@ where
     I: IntElement,
     BT: BoolElement,
 {
+    assert_eq!(query.dtype(), key.dtype());
+    assert_eq!(query.dtype(), value.dtype());
+    assert_eq!(query.device(), key.device());
+    assert_eq!(query.device(), value.device());
+    let [batch, heads, _, _] = query.dims();
+    let rows = batch.checked_mul(heads).expect("decode row count overflow");
+    let subgroup = reduction_width::<R>(&query.device(), query.dtype(), rows)
+        .expect("specialized decode requires a fixed supported subgroup; use portable attention");
     let query = into_contiguous(query.into_primitive().tensor());
     let key = into_contiguous(key.into_primitive().tensor());
     let value = into_contiguous(value.into_primitive().tensor());
@@ -558,12 +772,19 @@ where
     assert_eq!([key_batch, key_dimension], [batch, head_dimension]);
     assert_eq!(value.meta.shape(), key.meta.shape());
     assert!(key_sequence > 0 && key_sequence <= key_capacity);
-    assert!(query_heads.is_multiple_of(kv_heads));
+    assert!(kv_heads > 0 && query_heads > 0 && query_heads.is_multiple_of(kv_heads));
     assert_eq!(
-        head_dimension, 64,
-        "decode kernel currently supports a head dimension of 64"
+        head_dimension, subgroup as usize * 2,
+        "decode kernel requires exactly two values per subgroup lane"
     );
 
+    check_kernel_span(query.meta.shape(), query.meta.strides(), "query storage");
+    check_kernel_span(key.meta.shape(), key.meta.strides(), "key storage");
+    check_kernel_span(value.meta.shape(), value.meta.strides(), "value storage");
+    for (dimension, name) in [(query_heads, "query_heads"), (kv_heads, "kv_heads"),
+        (key_sequence, "key_sequence"), (key_capacity, "key_capacity"), (head_dimension, "head_dimension")] {
+        checked_u32(dimension, name);
+    }
     let output = empty_device_contiguous_dtype::<R>(
         query.client.clone(),
         query.device.clone(),
@@ -573,17 +794,17 @@ where
     let client = query.client.clone();
     gqa_decode_attention_kernel::launch::<R>(
         &client,
-        RudaCount::Static((batch * query_heads) as u32, 1, 1),
-        RudaDim::new_1d(32),
+        RudaCount::Static(checked_u32(rows, "decode rows"), 1, 1),
+        RudaDim::new_1d(subgroup),
         query.into_array_arg(),
         key.into_array_arg(),
         value.into_array_arg(),
         output.clone().into_array_arg(),
-        query_heads as u32,
-        kv_heads as u32,
-        key_sequence as u32,
-        key_capacity as u32,
-        head_dimension as u32,
+        checked_u32(query_heads, "query_heads"),
+        checked_u32(kv_heads, "kv_heads"),
+        checked_u32(key_sequence, "key_sequence"),
+        checked_u32(key_capacity, "key_capacity"),
+        checked_u32(head_dimension, "head_dimension"),
         1.0f32 / (head_dimension as f32).sqrt(),
         output.dtype.into(),
     );
@@ -625,3 +846,6 @@ mod numerical_boundary_tests {
         }
     }
 }
+
+#[cfg(all(test, any(feature = "nvidia", feature = "amd")))]
+mod backend_tests;

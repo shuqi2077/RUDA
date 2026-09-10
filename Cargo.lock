@@ -5830,6 +5830,7 @@ dependencies = [
  "ruda",
  "ruda-core",
  "ruda-driver-cuda",
+ "ruda-driver-hip",
  "ruda-kernel",
  "ruda-model",
  "ruda-nn",

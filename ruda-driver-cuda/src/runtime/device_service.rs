@@ -49,11 +49,13 @@ impl DeviceService for CudaServer {
         };
 
         // SAFETY: `device_ptr` is valid. `cuDeviceTotalMem_v2` writes the total device memory
-        // into the `MaybeUninit`, making `assume_init()` valid on success.
+        // into a valid stack variable. Check status before using its value.
         let max_memory = unsafe {
-            let mut bytes = MaybeUninit::uninit();
-            cuDeviceTotalMem_v2(bytes.as_mut_ptr(), device_ptr);
-            bytes.assume_init() as u64
+            let mut bytes = 0usize;
+            let status = cuDeviceTotalMem_v2(&mut bytes, device_ptr);
+            assert_eq!(status, cudarc::driver::sys::CUresult::CUDA_SUCCESS,
+                "cuDeviceTotalMem_v2 failed; total memory is unknown");
+            bytes as u64
         };
         let mem_properties = MemoryDeviceProperties {
             max_page_size: max_memory / 4,

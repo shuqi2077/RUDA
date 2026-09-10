@@ -79,3 +79,6 @@ mod tests {
     ruda_kernel::library::testgen_tensor_identity!([f16, bf16, f32, u32]);
     ruda_kernel::library::testgen_quantized_view!(f16);
 }
+
+mod diagnostics;
+pub use diagnostics::{CudaDriverProbeError, query_driver_api_version};
