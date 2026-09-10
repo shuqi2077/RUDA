@@ -11,6 +11,7 @@ import subprocess
 import time
 import tomllib
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -119,6 +120,9 @@ def retry_time(output):
         return None
     match = re.search(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|\+00:00| UTC)", output)
     if not match:
+        http_date = re.search(r"[A-Za-z]{3}, \d{1,2} [A-Za-z]{3} \d{4} \d{2}:\d{2}:\d{2} GMT", output)
+        if http_date:
+            return parsedate_to_datetime(http_date[0]).timestamp()
         raise RuntimeError("Registry rate limit did not include a retry time; rerun later")
     return datetime.fromisoformat(match[0].replace(" UTC", "+00:00").replace("Z", "+00:00")).timestamp()
 

@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import publish
 
@@ -42,6 +42,37 @@ class PublisherTests(unittest.TestCase):
     def test_batch_count(self):
         self.assertEqual(publish.matrix(0), {"batch": [0]})
         self.assertEqual(len(publish.matrix(51)["batch"]), 11)
+
+    def test_rate_limit_http_date(self):
+        text = (
+            "the remote server responded with an error (status 429 Too Many Requests): "
+            "You have published too many new crates in a short period of time. "
+            "Please try again after Thu, 10 Sep 2026 15:20:53 GMT "
+            "and see https://crates.io/docs/rate-limits for more details."
+        )
+        self.assertEqual(publish.retry_time(text), 1789053653)
+
+    def test_publish_retries_http_date_rate_limit(self):
+        limited = Mock()
+        limited.stdout = ["429 Too Many Requests: Please try again after Thu, 10 Sep 2026 15:20:53 GMT"]
+        limited.wait.return_value = 1
+        successful = Mock()
+        successful.stdout = ["Published a v1.0.0"]
+        successful.wait.return_value = 0
+        entry = {"cksum": "archive-checksum"}
+        with (
+            patch.object(publish, "registry", side_effect=[{}] * 15 + [{"1.0.0": entry}]),
+            patch.object(publish.subprocess, "Popen", side_effect=[limited, successful]) as cargo,
+            patch.object(publish.time, "sleep") as sleep,
+            patch.object(publish.time, "time", return_value=1789053643),
+            patch.object(publish, "confirm") as confirm,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            publish.publish_one("a", "1.0.0")
+        self.assertEqual(cargo.call_count, 2)
+        self.assertEqual(cargo.call_args_list[0], cargo.call_args_list[1])
+        sleep.assert_called_with(12)
+        confirm.assert_called_once_with("a", "1.0.0", entry)
 
     def test_resume_does_not_republish_completed_versions(self):
         packages = {name: {"version": "1.0.0"} for name in ["a", "b", "c"]}
