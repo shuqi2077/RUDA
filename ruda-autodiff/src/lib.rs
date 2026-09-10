@@ -44,3 +44,7 @@ mod collections {
     #[cfg(feature = "std")]
     pub use std::collections::{HashMap, HashSet};
 }
+
+/// Explicit host FP64 differentiable numerical solvers.
+#[cfg(feature = "solver-host")]
+pub mod solver_host;

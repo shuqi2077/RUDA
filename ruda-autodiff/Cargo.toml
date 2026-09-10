@@ -40,6 +40,7 @@ rustdoc-args = [
 ]
 
 [features]
+solver-host = ["std", "dep:rusolver", "dep:ruda-tensor-host", "ruda-core/std", "ruda-tensor/api-std"]
 default = [
     "std",
     "tracing",
@@ -118,3 +119,14 @@ default-features = false
 [lints.rustdoc]
 broken_intra_doc_links = "deny"
 invalid_html_tags = "deny"
+
+[dependencies.rusolver]
+path = "../ruSOLVER"
+optional = true
+default-features = false
+
+[dependencies.ruda-tensor-host]
+path = "../ruda-tensor-host"
+optional = true
+default-features = false
+features = ["std"]

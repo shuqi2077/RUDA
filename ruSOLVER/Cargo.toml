@@ -1,0 +1,61 @@
+[package]
+name = "rusolver"
+version.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+description = "Explicit scientific solvers: real/complex/sparse host algebra and opt-in small batched device kernels"
+
+[features]
+default = []
+sparse = ["dep:rusparse"]
+tensor = ["dep:ruda-core", "dep:ruda-kernel"]
+collective = ["dep:ruccl"]
+cuda = ["tensor", "dep:ruda-driver-cuda"]
+
+[dependencies]
+ruccl = { package = "ruCCL", path = "../ruCCL", default-features = false, optional = true }
+rusparse = { package = "ruSPARSE", path = "../ruSPARSE", default-features = false, optional = true }
+ruda-core = { path = "../ruda-core", default-features = false, features = ["std", "tensor-host-data"], optional = true }
+ruda-kernel = { path = "../ruda-kernel", default-features = false, features = ["frontend-std", "library", "device-tensor"], optional = true }
+ruda-driver-cuda = { path = "../ruda-driver-cuda", features = ["direct-ptx"], optional = true }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[[test]]
+name = "device_cholesky"
+path = "tests/device_cholesky.rs"
+required-features = ["cuda"]
+
+[[example]]
+name = "solver-demo"
+path = "examples/solver_demo.rs"
+
+[[example]]
+name = "solver-cuda"
+path = "examples/solver_cuda.rs"
+required-features = ["cuda"]
+
+[[example]]
+name = "sparse-poisson"
+path = "examples/sparse_poisson.rs"
+required-features = ["sparse"]
+
+[[test]]
+name = "device_advanced"
+path = "tests/device_advanced.rs"
+required-features = ["cuda"]
+
+[[example]]
+name = "distributed-cg"
+path = "examples/distributed_cg.rs"
+required-features = ["collective"]
+
+[[example]]
+name = "advanced-solver"
+path = "examples/advanced_solver.rs"
+
+[[example]]
+name = "solver-cuda-advanced"
+path = "examples/solver_cuda_advanced.rs"
+required-features = ["cuda"]

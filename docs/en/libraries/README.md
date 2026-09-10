@@ -16,6 +16,8 @@ Compute libraries implement operations, the runtime executes them on devices, an
 | [ruRAND](rurand.md) | `ruRAND` | `rurand` | Uniform, normal, and Bernoulli distributions |
 | [ruSPARSE](rusparse.md) | `ruSPARSE` | `rusparse` | Sparse matrix formats and operations |
 | [ruCCL](ruccl.md) | `ruCCL` | `ruccl` | Collective communication and orchestration |
+| [ruSOLVER](rusolver.md) | `rusolver` | `rusolver` | Experimental FP64 solvers/CG; opt-in small FP32 device solve |
+| [ruINTEGRATE](ruintegrate.md) | `ruintegrate` | `ruintegrate` | Experimental host quadrature and non-stiff ODEs |
 
 ## Interface layers
 

@@ -67,9 +67,16 @@ One repository, multiple crates with clearly defined responsibilities. From doma
 | Compilation and kernels | `ruda-compiler`, `ruda-kernel`, macro components |
 | Runtime and driver backends | `ruda`, `ruda-driver-cuda/cpu/wgpu/hip` |
 | Domain libraries | ruBLAS, ruDNN, ruPRIM, ruFFT, ruRAND, ruSPARSE |
+| Experimental numerical science | [ruSOLVER](docs/en/libraries/rusolver.md), [ruINTEGRATE](docs/en/libraries/ruintegrate.md) |
 | Collective communication | ruCCL, `ruda-communication` |
 | Tensors and frameworks | `ruda-tensor*`, `ruda-autodiff`, `ruda-fusion` |
 | Models and data | `ruda-model`, `ruda-nn`, `ruda-optim`, `ruda-store`, `ruda-dataset` |
+
+## Experimental Numerical Science
+
+`rusolver` adds host real/complex factorizations, SVD, sparse LU, row-partitioned CG and analytic pullbacks; opt-in FP32 batched LU/Cholesky/QR/eigen/CG device paths are separate. `ruintegrate` adds host quadrature, infinite-domain transforms, RK45, stiff BDF1 and event location. First-order host solver graph integration is opt-in via `ruda-autodiff/solver-host`. [Extended scope](docs/en/libraries/science-extended.md).
+
+See the guides for convergence and backend restrictions. The packages are workspace members but not default members.
 
 ## Paths to Hardware
 

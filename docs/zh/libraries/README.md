@@ -16,6 +16,8 @@
 | [ruRAND](rurand.md) | `ruRAND` | `rurand` | 均匀、正态、伯努利分布 |
 | [ruSPARSE](rusparse.md) | `ruSPARSE` | `rusparse` | 稀疏矩阵格式与运算 |
 | [ruCCL](ruccl.md) | `ruCCL` | `ruccl` | 集合通信与编排 |
+| [ruSOLVER](rusolver.md) | `rusolver` | `rusolver` | 实验性 FP64 方程求解/分解、CG；可选 FP32 小矩阵设备求解 |
+| [ruINTEGRATE](ruintegrate.md) | `ruintegrate` | `ruintegrate` | 实验性 CPU 数值积分与非刚性 ODE |
 
 ## 接口层级
 

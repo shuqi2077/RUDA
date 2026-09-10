@@ -517,3 +517,30 @@ Muon is Scalable for LLM Training (https://arxiv.org/abs/2502.16982).
 The numerical oracle additionally calls the locally installed, unmodified
 torch.optim.Muon. Its source hash/version are recorded in the validation results;
 the installed PyTorch source is not redistributed with this patch.
+
+
+## ruSOLVER / ruINTEGRATE numerical science addition (2026-09-10)
+
+The new solver/integrator sources are independently written Rust implementations of published numerical methods, not copies of LAPACK, cuSOLVER, SciPy or GSL source. Mathematical coefficients and method references are documented in `docs/en/libraries/rusolver.md` and `ruintegrate.md`. `tools/science/oracle.py` calls NumPy/SciPy only to generate/check independent test expectations; these are not runtime dependencies of the Rust libraries. The optional `rusolver/sparse` feature borrows the existing ruSPARSE types and does not change their license. Existing tensor-level LU remains unchanged.
+
+## Extended numerical science implementation (2026-09-10)
+
+New `ruSOLVER` SVD, complex, sparse direct, distributed-CG, pullback and device
+kernels, plus `ruINTEGRATE` stiff/events/improper-integral sources are independent
+Rust implementations of standard mathematical methods. They are not copies of
+LAPACK, SuperLU, SciPy, GSL or PyTorch implementation source. Existing RUDA graph,
+Host backend, compiler and ruCCL integration retain their original provenance.
+New sources use Apache-2.0 SPDX identifiers; existing notices are not removed.
+
+Method/behavior references:
+- LAPACK one-sided Jacobi SVD, DGESVJ: https://www.netlib.org/lapack/explore-html/d9/deb/group__gesvj.html
+- LAPACK complex Householder QR, ZGEQRF: https://www.netlib.org/lapack/explore-html/d0/da1/group__geqrf.html
+- SciPy initial-value ODE methods/events: https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.solve_ivp.html
+- SciPy infinite-domain quadrature: https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.quad.html
+- PyTorch linear-algebra autodiff: https://pytorch.org/blog/torch-linalg-autograd/
+- PyTorch SVD differentiation restrictions: https://docs.pytorch.org/docs/stable/generated/torch.linalg.svd.html
+
+`tools/science_extended/oracle.py` calls installed NumPy/SciPy/PyTorch as external
+numerical oracles and generates small independent fixtures. These packages are
+not host solver runtime dependencies and their source is not distributed here.
+The FP32 recurrence model is Python arithmetic, not execution of a RUDA kernel.

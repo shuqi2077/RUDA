@@ -5511,6 +5511,8 @@ dependencies = [
  "ruda-core",
  "ruda-tensor",
  "ruda-tensor-config",
+ "ruda-tensor-host",
+ "rusolver",
  "spin",
  "tracing",
 ]
@@ -6216,6 +6218,24 @@ dependencies = [
  "ruda-test-runtime",
  "serde",
  "trybuild",
+]
+
+[[package]]
+name = "ruintegrate"
+version = "0.1.0"
+dependencies = [
+ "rusolver",
+]
+
+[[package]]
+name = "rusolver"
+version = "0.1.0"
+dependencies = [
+ "ruCCL",
+ "ruSPARSE",
+ "ruda-core",
+ "ruda-driver-cuda",
+ "ruda-kernel",
 ]
 
 [[package]]

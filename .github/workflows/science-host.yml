@@ -1,0 +1,44 @@
+name: Experimental numerical host tests
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'ruSOLVER/**'
+      - 'ruINTEGRATE/**'
+      - 'ruSPARSE/**'
+      - 'tools/science/**'
+      - 'tools/science_extended/**'
+      - 'tools/run_science_extended_regressions.py'
+      - 'tools/run_science_regressions.py'
+      - 'tools/run_safety_regressions.py'
+      - '.github/workflows/science-host.yml'
+  push:
+    paths:
+      - 'ruSOLVER/**'
+      - 'ruINTEGRATE/**'
+      - 'ruSPARSE/**'
+      - 'tools/science/**'
+      - 'tools/science_extended/**'
+      - 'tools/run_science_extended_regressions.py'
+      - 'tools/run_science_regressions.py'
+      - '.github/workflows/science-host.yml'
+permissions:
+  contents: read
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RUSTUP_TOOLCHAIN: '1.90.0'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install pinned Rust standard-library toolchain
+        run: rustup toolchain install 1.90.0 --profile minimal
+      - name: Validate runner failure/timeout handling
+        run: |
+          python3 -m unittest discover -s tools/science -p test_runner.py -v
+          python3 -m unittest discover -s tools/science_extended -p test_runner.py -v
+      - name: Compile real host numerical sources and run tests/examples
+        run: python3 tools/run_science_extended_regressions.py --suite rust-host
+      - name: Compile existing CSR adapter and run tests/example
+        run: python3 tools/run_science_extended_regressions.py --suite sparse-host
