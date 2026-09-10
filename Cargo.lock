@@ -5324,6 +5324,7 @@ name = "ruFFT"
 version = "0.1.0"
 dependencies = [
  "num-complex",
+ "realfft",
  "ruPRIM",
  "ruda-core",
  "ruda-kernel",
@@ -5337,6 +5338,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "half",
+ "libm",
  "macerator",
  "rayon",
  "realfft",

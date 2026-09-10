@@ -78,6 +78,9 @@ default-features = false
 [dev-dependencies.num-complex]
 version = "0.4.6"
 
+[dev-dependencies.realfft]
+version = "3"
+
 [dev-dependencies.ruda-core]
 path = "../ruda-core"
 default-features = false

@@ -402,6 +402,53 @@ fn make_tensors_typed<E: ruda_core::tensor::element::Element + bytemuck::Pod>(
 // Top-level rfft: real FFT via complex packing
 // ============================================================================
 
+fn for_each_contiguous_pair<T: Send, S>(
+    re: &mut [T],
+    im: &mut [T],
+    len: usize,
+    parallel: bool,
+    init: impl Fn() -> S + Send + Sync,
+    run: impl Fn(&mut S, usize, &mut [T], &mut [T]) + Send + Sync,
+) {
+    #[cfg(feature = "rayon")]
+    if parallel {
+        use rayon::prelude::*;
+        re.par_chunks_mut(len)
+            .zip(im.par_chunks_mut(len))
+            .enumerate()
+            .for_each_init(init, |scratch, (i, (re, im))| run(scratch, i, re, im));
+        return;
+    }
+    let _ = parallel;
+    let mut scratch = init();
+    for (i, (re, im)) in re.chunks_mut(len).zip(im.chunks_mut(len)).enumerate() {
+        run(&mut scratch, i, re, im);
+    }
+}
+
+fn for_each_contiguous<T: Send, S>(
+    output: &mut [T],
+    len: usize,
+    parallel: bool,
+    init: impl Fn() -> S + Send + Sync,
+    run: impl Fn(&mut S, usize, &mut [T]) + Send + Sync,
+) {
+    #[cfg(feature = "rayon")]
+    if parallel {
+        use rayon::prelude::*;
+        output
+            .par_chunks_mut(len)
+            .enumerate()
+            .for_each_init(init, |scratch, (i, output)| run(scratch, i, output));
+        return;
+    }
+    let _ = parallel;
+    let mut scratch = init();
+    for (i, output) in output.chunks_mut(len).enumerate() {
+        run(&mut scratch, i, output);
+    }
+}
+
 /// Process a single fiber: pack real signal as complex, FFT, unpack.
 #[allow(clippy::too_many_arguments)]
 #[inline]
@@ -525,6 +572,32 @@ pub fn rfft_f32(tensor: HostTensor, dim: usize, n: Option<usize>) -> (HostTensor
     let in_stride = in_strides[dim];
     let out_stride = out_strides[dim];
 
+    if out_stride == 1 {
+        for_each_contiguous_pair(
+            &mut re_out,
+            &mut im_out,
+            out_len,
+            num_fibers >= 4 && n >= 64,
+            || (vec![0.0; half], vec![0.0; half]),
+            |(z_re, z_im), fiber_idx, re, im| {
+                rfft_fiber(
+                    &data[fiber_idx * shape[dim]..],
+                    1,
+                    n,
+                    sig_len,
+                    re,
+                    im,
+                    &tw_half,
+                    unpack_tw_re,
+                    unpack_tw_im,
+                    z_re,
+                    z_im,
+                );
+            },
+        );
+        return make_tensors_typed(re_out, im_out, out_shape);
+    }
+
     #[cfg(feature = "rayon")]
     if num_fibers >= 4 && n >= 64 {
         use rayon::prelude::*;
@@ -601,7 +674,7 @@ pub fn rfft_f32(tensor: HostTensor, dim: usize, n: Option<usize>) -> (HostTensor
 }
 
 mod double;
-pub use double::rfft_f64;
+pub use double::{irfft_f64, rfft_f64};
 
 pub fn rfft_f16(tensor: HostTensor, dim: usize, n: Option<usize>) -> (HostTensor, HostTensor) {
     use half::f16;
@@ -847,6 +920,51 @@ pub fn irfft_f32(
     let in_stride = in_strides[dim];
     let out_stride = out_strides[dim];
 
+    if out_stride == 1 {
+        for_each_contiguous(
+            &mut signal_out,
+            n,
+            num_fibers >= 4 && n >= 64,
+            || {
+                (
+                    vec![0.0; half],
+                    vec![0.0; half],
+                    vec![0.0; half + 1],
+                    vec![0.0; half + 1],
+                )
+            },
+            |(z_re, z_im, spec_re, spec_im), fiber_idx, output| {
+                let base = fiber_idx * spec_bins;
+                irfft_fiber(
+                    &re_data[base..],
+                    &im_data[base..],
+                    1,
+                    half,
+                    spec_bins,
+                    output,
+                    1,
+                    &tw_half,
+                    unpack_tw_re,
+                    unpack_tw_im,
+                    z_re,
+                    z_im,
+                    spec_re,
+                    spec_im,
+                );
+            },
+        );
+        let result = HostTensor::new(
+            Bytes::from_elems(signal_out),
+            Layout::contiguous(out_shape),
+            ruda_core::tensor::DType::F32,
+        );
+        return if fft_size > requested_n {
+            result.narrow(dim, 0, requested_n)
+        } else {
+            result
+        };
+    }
+
     #[cfg(feature = "rayon")]
     if num_fibers >= 4 && n >= 64 {
         use rayon::prelude::*;
@@ -941,24 +1059,6 @@ pub fn irfft_f32(
         result.narrow(dim, 0, requested_n)
     } else {
         result
-    }
-}
-
-pub fn irfft_f64(
-    spectrum_re: HostTensor,
-    spectrum_im: HostTensor,
-    dim: usize,
-    n: Option<usize>,
-) -> HostTensor {
-    use ruda_core::tensor::DType;
-    match spectrum_re.dtype() {
-        DType::F64 => {
-            let re_f32 = ruda_core::tensor::host::cast::cast_to_f32::<f64>(spectrum_re, |v| v as f32);
-            let im_f32 = ruda_core::tensor::host::cast::cast_to_f32::<f64>(spectrum_im, |v| v as f32);
-            let result = irfft_f32(re_f32, im_f32, dim, n);
-            ruda_core::tensor::host::cast::cast_from_f32::<f64>(result, |v| v as f64)
-        }
-        _ => irfft_f32(spectrum_re, spectrum_im, dim, n),
     }
 }
 

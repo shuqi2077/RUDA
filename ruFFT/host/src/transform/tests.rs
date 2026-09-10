@@ -471,12 +471,11 @@
 
     #[test]
     fn irfft_f64_roundtrip() {
-        // irfft_f64 truncates to f32 internally, so tolerance is f32-level
         let data: Vec<f64> = (0..8).map(|i| (i as f64 * 0.3).sin()).collect();
         let signal = make_f64(data.clone(), vec![8]);
         let (re, im) = rfft_f64(signal, 0, None);
         let reconstructed = irfft_f64(re, im, 0, None);
-        assert_approx_f64(reconstructed, &data, 1e-5);
+        assert_approx_f64(reconstructed, &data, 1e-13);
     }
 
     // Coverage for the n=Some(pow2) path on flex.

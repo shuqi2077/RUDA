@@ -28,6 +28,9 @@ version = "2.7.1"
 features = [ "alloc", "num-traits", "serde",]
 default-features = false
 
+[dependencies.libm]
+version = "0.2"
+
 [dependencies.macerator]
 version = "0.3.0"
 optional = true
