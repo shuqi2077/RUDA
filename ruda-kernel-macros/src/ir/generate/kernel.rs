@@ -164,7 +164,7 @@ impl Launch {
         let type_params: Vec<_> = declared_type_params.difference(&used_type_params).collect();
 
         (!lifetimes.is_empty() || !type_params.is_empty())
-            .then(|| quote![__ty: ::core::marker::PhantomData<(#(#lifetimes,)* #(#type_params),*)>])
+            .then(|| quote![__ty: ::core::marker::PhantomData<fn() -> (#(#lifetimes,)* #(#type_params),*)>])
     }
 
     pub fn compilation_args_def(&self) -> (Vec<TokenStream>, Vec<Ident>) {

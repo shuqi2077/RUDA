@@ -34,7 +34,7 @@ impl<E: RudaPrimitive> SliceOperatorExpand<E> for NativeExpand<SharedMemory<E>> 
         Slice::__expand_new(
             scope,
             SliceOriginExpand::SharedMemory(self.clone()),
-            0usize.into(),
+            NativeExpand::from_lit(scope, 0usize),
             ManagedVariable::Plain(len).into(),
         )
     }
@@ -62,7 +62,7 @@ impl<E: RudaPrimitive> SliceMutOperatorExpand<E> for NativeExpand<SharedMemory<E
         Slice::__expand_new(
             scope,
             SliceOriginExpand::SharedMemory(self.clone()),
-            0usize.into(),
+            NativeExpand::from_lit(scope, 0usize),
             ManagedVariable::Plain(len).into(),
         )
     }
@@ -84,7 +84,7 @@ impl<E: RudaPrimitive> SliceOperatorExpand<E> for NativeExpand<Tensor<E>> {
         Slice::__expand_new(
             scope,
             SliceOriginExpand::Tensor(self.clone()),
-            0usize.into(),
+            NativeExpand::from_lit(scope, 0usize),
             len,
         )
     }
@@ -106,7 +106,7 @@ impl<E: RudaPrimitive> SliceMutOperatorExpand<E> for NativeExpand<Tensor<E>> {
         Slice::__expand_new(
             scope,
             SliceOriginExpand::Tensor(self.clone()),
-            0usize.into(),
+            NativeExpand::from_lit(scope, 0usize),
             len,
         )
     }
@@ -128,7 +128,7 @@ impl<E: RudaPrimitive> SliceOperatorExpand<E> for NativeExpand<Array<E>> {
         Slice::__expand_new(
             scope,
             SliceOriginExpand::Array(self.clone()),
-            0usize.into(),
+            NativeExpand::from_lit(scope, 0usize),
             len,
         )
     }
@@ -150,7 +150,7 @@ impl<E: RudaPrimitive> SliceMutOperatorExpand<E> for NativeExpand<Array<E>> {
         Slice::__expand_new(
             scope,
             SliceOriginExpand::Array(self.clone()),
-            0usize.into(),
+            NativeExpand::from_lit(scope, 0usize),
             len,
         )
     }

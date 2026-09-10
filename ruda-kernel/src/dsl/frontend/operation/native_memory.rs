@@ -11,6 +11,11 @@ pub mod native_address {
     use super::*;
     pub fn expand<T: RudaPrimitive>(scope: &mut Scope, input: SliceExpand<T, ReadOnly>, index: NativeExpand<usize>) -> NativeExpand<u64> {
         let (array, offset) = input.__to_raw_parts();
+        let index = if index.expand.ty != usize::as_type(scope) {
+            let converted = scope.create_local(usize::as_type(scope));
+            cast::expand::<usize, usize>(scope, index, converted.clone().into());
+            converted.into()
+        } else { index };
         let index = add::expand(scope, index, NativeExpand::new(ManagedVariable::Plain(offset)));
         let ty = u64::as_type(scope);
         let output = scope.create_local(ty);

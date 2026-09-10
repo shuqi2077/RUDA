@@ -14,6 +14,7 @@ pub mod histogram;
 pub mod run_length;
 pub mod rank;
 pub mod topk;
+pub mod raking;
 pub mod record;
 
 #[ruda]

@@ -46,10 +46,11 @@ macro_rules! ruda_decomposer {
         #[ruda_kernel::dsl::ruda]
         impl $crate::collective::decompose::RudaDecomposer<$key> for $name {
             fn bit(&self, key: $key, index: usize) -> bool {
-                let mut lower = ruda_kernel::dsl::comptime![0 $(+ core::mem::size_of::<$ty>() * 8)+];
+                let index = usize::cast_from(index);
+                let lower = ruda_kernel::dsl::comptime![0 $(+ core::mem::size_of::<$ty>() * 8)+];
                 let mut result = false;
                 $(
-                    lower -= ruda_kernel::dsl::comptime![core::mem::size_of::<$ty>() * 8];
+                    let lower = ruda_kernel::dsl::comptime![lower - core::mem::size_of::<$ty>() * 8];
                     if index >= lower && index < lower + ruda_kernel::dsl::comptime![core::mem::size_of::<$ty>() * 8] {
                         result = ((<$ty as $crate::collective::radix::RudaRadixKey>::ordered_bits(key.$field)
                             >> (index - lower) as u64) & 1u64) != 0;

@@ -8,6 +8,7 @@ mod metadata;
 mod shared;
 mod half_precision;
 mod bitwise;
+mod native_memory;
 
 fn options() -> PtxCompilationOptions {
     PtxCompilationOptions {

@@ -57,7 +57,8 @@ macro_rules! impl_operations_1d {
                 end: NativeExpand<usize>,
             ) -> SliceExpand<T, ReadOnly> {
                 // Convert to exclusive end
-                let end = add::expand(scope, end, 1usize.into());
+                let one = NativeExpand::from_lit(scope, 1usize);
+                let end = add::expand(scope, end, one);
                 // Handling for shapes that are 0 in at least one dim, ensures the slice is not
                 // negative length.
                 let start = clamp_max::expand(scope, pos, end.clone());
@@ -119,7 +120,8 @@ macro_rules! impl_operations_1d {
                 end: NativeExpand<usize>,
             ) -> SliceExpand<T, ReadWrite> {
                 // Convert to exclusive end
-                let end = add::expand(scope, end, 1usize.into());
+                let one = NativeExpand::from_lit(scope, 1usize);
+                let end = add::expand(scope, end, one);
                 // Handling for shapes that are 0 in at least one dim, ensures the slice is not
                 // negative length.
                 let start = clamp_max::expand(scope, pos, end.clone());

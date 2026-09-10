@@ -7,7 +7,7 @@ type ArrayExpand<T> = NativeExpand<Array<T>>;
 /// A device value with an explicit byte layout. Composite implementations
 /// lower field operations to scalar IR, retaining the record's native layout.
 #[ruda]
-pub trait RudaRecord: Copy + RudaType<ExpandType: Assign> {
+pub trait RudaRecord: Copy + 'static + RudaType<ExpandType: Assign> {
     const SIZE: usize;
     const ALIGN: usize;
     fn load(address: u64) -> Self;
@@ -121,7 +121,9 @@ impl<T: RudaRecord> RudaRecordShared<T> {
         RudaRecordShared::<T> { bytes, marker: PhantomData }
     }
     pub fn address(&self, index: usize) -> u64 {
-        native_address(&self.bytes.to_slice(), index * comptime![T::SIZE])
+        let stride = comptime![T::SIZE];
+        let index = usize::cast_from(index);
+        native_address(&self.bytes.to_slice(), index * stride)
     }
 }
 #[ruda]

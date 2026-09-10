@@ -14,6 +14,8 @@ default = ["kernel-ir", "std"]
 tensor-reduce = ["kernel-ir", "ruda-kernel/device-tensor", "dep:ruda-core"]
 tensor-reduce-autotune = ["tensor-reduce"]
 tensor-scan = ["kernel-ir", "ruda-kernel/device-tensor", "dep:ruda-core"]
+device-primitives = ["kernel-ir", "ruda-kernel/device-tensor", "dep:ruda-core"]
+cuda-tests = ["device-primitives", "ruda-test-runtime/cuda"]
 indexing = ["elementwise"]
 elementwise = ["kernel-ir", "ruda-kernel/device-tensor", "dep:ruda-core"]
 kernel-ir = ["dep:ruda-kernel", "ruda/runtime", "dep:num-traits", "dep:serde", "dep:thiserror"]
@@ -21,7 +23,7 @@ std = ["kernel-ir", "ruda-kernel/frontend-std", "ruda-test-runtime/std", "thiser
 cpu-reference = ["kernel-ir", "dep:ruda-test-utils"]
 heavy = []
 extended = ["heavy"]
-full = ["extended"]
+full = ["extended", "device-primitives"]
 
 [dependencies]
 ruda = { version = "0.1.0", path = "../ruda", default-features = false }

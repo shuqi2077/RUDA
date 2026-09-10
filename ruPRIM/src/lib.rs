@@ -15,6 +15,10 @@ pub mod warp;
 #[cfg(feature = "kernel-ir")]
 pub mod block;
 
+#[cfg(feature = "device-primitives")]
+#[allow(unsafe_code)]
+pub mod device;
+
 
 
 #[cfg(feature = "kernel-ir")]

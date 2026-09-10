@@ -19,6 +19,20 @@ fn scalar_bit(value: u64, index: usize) -> bool {
     <RudaScalarDecomposer as RudaDecomposer<u64>>::bit(&decomposer, value, index)
 }
 
+#[ruda]
+fn field_bit(value: u32, index: usize) -> bool {
+    let decomposer = FieldsBits {};
+    decomposer.bit(Fields { low: value, high: 0u64 }, index)
+}
+
+#[test]
+fn multi_field_decomposer_expands_without_mutating_constants() {
+    let mut scope = Scope::root(false);
+    scope.register_type::<usize>(u64::as_type(&scope).storage_type());
+    field_bit::expand(&mut scope, 3u32.into(), 0usize.into());
+    assert!(!scope.instructions.is_empty());
+}
+
 #[test]
 fn composite_iterators_remain_launch_arguments() {
     fn launch<T: LaunchArg>() {}
@@ -62,4 +76,25 @@ fn scalar_decomposition_uses_matching_shift_types() {
     }).collect();
     assert_eq!(shifts.len(), 1);
     assert_eq!(shifts[0].lhs.ty, shifts[0].rhs.ty);
+}
+
+#[test]
+fn record_addresses_use_consistent_arithmetic_types() {
+    for wide in [false, true] {
+        let mut scope = Scope::root(false);
+        let ty = if wide { u64::as_type(&scope) } else { u32::as_type(&scope) };
+        scope.register_type::<usize>(ty.storage_type());
+        let array = RudaRecordArray::<Nested>::__expand_new(&mut scope, 3);
+        let index = NativeExpand::from_lit(&scope, 1usize);
+        let address = array.__expand_address_method(&mut scope, index);
+        Nested::__expand_load(&mut scope, address);
+        let shared = RudaRecordShared::<Nested>::__expand_new(&mut scope, 3);
+        shared.__expand_address_method(&mut scope, 0usize.into());
+        for instruction in &scope.instructions {
+            use ruda_kernel::dsl::ir::Arithmetic;
+            if let Operation::Arithmetic(Arithmetic::Add(op) | Arithmetic::Sub(op) | Arithmetic::Mul(op) | Arithmetic::Div(op)) = &instruction.operation {
+                assert_eq!(op.lhs.ty, op.rhs.ty, "{instruction:?}");
+            }
+        }
+    }
 }

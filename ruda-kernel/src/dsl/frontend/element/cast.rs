@@ -18,7 +18,7 @@ pub trait Cast: RudaPrimitive {
         scope: &mut Scope,
         value: NativeExpand<From>,
     ) -> <Self as RudaType>::ExpandType {
-        if Self::as_type(scope) == From::as_type(scope) {
+        if Self::as_type(scope) == value.expand.ty {
             return value.expand.into();
         }
         let vec_in = value.expand.vector_size();

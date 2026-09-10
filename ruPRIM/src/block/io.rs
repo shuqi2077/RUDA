@@ -1,5 +1,22 @@
 use ruda_kernel::dsl as kernel_dsl;
 use ruda_kernel::dsl::prelude::*;
+use ruda_kernel::dsl::prelude::barrier::{Barrier, BarrierToken};
+
+/// Enqueue a collective asynchronous global-to-shared copy. All block threads
+/// use the same initialized block barrier and slices. Source length must not
+/// exceed the destination; destination is not readable until wait completes.
+#[ruda]
+pub fn copy_async<T: RudaPrimitive>(barrier: &Barrier, input: &Slice<T>, output: &mut SliceMut<T>) {
+    barrier.memcpy_async_cooperative(input, output);
+}
+
+/// Commit one phase after one or more copy_async calls. Every participating
+/// thread commits once; the returned token identifies that phase for wait.
+#[ruda]
+pub fn commit(barrier: &Barrier) -> BarrierToken { barrier.arrive() }
+
+#[ruda]
+pub fn wait(barrier: &Barrier, token: BarrierToken) { barrier.wait(token); }
 
 /// Load a tile in blocked or striped order, assigning `padding` to the tail.
 #[ruda]

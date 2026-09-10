@@ -7,6 +7,7 @@ pub(crate) mod merge;
 pub mod radix;
 pub mod record;
 pub mod decompose;
+pub mod tile;
 
 #[ruda]
 pub trait RudaUnaryOp<T: RudaType, U: RudaType>: RudaType {

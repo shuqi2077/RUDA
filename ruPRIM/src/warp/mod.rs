@@ -12,6 +12,7 @@ pub mod exchange;
 pub mod io;
 pub mod sort;
 pub mod batched;
+pub mod record;
 
 #[ruda]
 pub fn logical_lane_id(#[comptime] width: u32) -> u32 { UNIT_POS_PLANE % width }
@@ -81,6 +82,16 @@ pub fn exclusive_scan<T: RudaPrimitive, O: RudaBinaryOp<T>>(
         result = op.combine(initial, previous);
     }
     result
+}
+
+/// Unseeded exclusive scan; the first logical lane's output is unspecified.
+#[ruda]
+pub fn exclusive_unseeded<T: RudaPrimitive, O: RudaBinaryOp<T>>(
+    value: T, op: &O, valid_lanes: u32, #[comptime] width: u32,
+) -> T {
+    let inclusive = inclusive_scan::<T, O>(value, op, valid_lanes, width);
+    let lane = UNIT_POS_PLANE % width;
+    plane_shuffle(inclusive, UNIT_POS_PLANE - select(lane > 0, 1u32, 0u32))
 }
 
 /// Ordered reduction, broadcast to all lanes of the logical warp.

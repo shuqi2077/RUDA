@@ -192,7 +192,7 @@ impl Emitter {
         ty: Scalar,
     ) -> Result<()> {
         if out.ty != op.lhs.ty || out.ty != op.rhs.ty || Scalar::of(out.ty)? != ty {
-            return Err(invalid(format!("{opcode} operand types differ")));
+            return Err(invalid(format!("{opcode} operand types differ: output {:?}, lhs {:?}, rhs {:?}", out.ty, op.lhs, op.rhs)));
         }
         let lhs = self.value(op.lhs)?;
         let rhs = self.value(op.rhs)?;
@@ -256,7 +256,7 @@ impl Emitter {
             Arithmetic::MulHi(op) if ty.integer() => self.binary(out, op, "mul.hi", ty),
             Arithmetic::SaturatingAdd(op) if ty.integer() => self.saturating(out, op, false),
             Arithmetic::SaturatingSub(op) if ty.integer() => self.saturating(out, op, true),
-            Arithmetic::Modulo(op) if ty.integer() && !ty.signed() => {
+            Arithmetic::Modulo(op) if ty.integer() => {
                 self.binary(out, op, "rem", ty)
             }
             Arithmetic::Fma(op) if ty.float() => {
@@ -362,8 +362,24 @@ impl Emitter {
         if to.half() && from.integer() {
             return self.integer_to_half(out, input, to, from);
         }
+        if to.integer() && from.float() {
+            let source = self.value(input)?;
+            let (source, from) = if from.half() {
+                (self.half_to_f32(from, &source)?, Scalar::F32)
+            } else { (source, from) };
+            let dst = self.destination(out)?;
+            let nan = self.reg(Scalar::Pred);
+            self.line(format!("setp.nan.{} {nan}, {source}, {source};", from.suffix()));
+            let suffix = match to {
+                Scalar::I8 => "s8", Scalar::U8 => "u8",
+                Scalar::I16 => "s16", Scalar::U16 => "u16",
+                _ => to.suffix(),
+            };
+            self.line(format!("cvt.rzi.{suffix}.{} {dst}, {source};", from.suffix()));
+            self.line(format!("@{nan} mov.{} {dst}, 0;", to.suffix()));
+            return Ok(());
+        }
         if to.half() || from.half() { return self.half_cast(out, input, to, from); }
-        // Float-to-integer casts require explicit overflow/rounding semantics.
         if !to.integer() || !from.integer() {
             return Err(unsupported("non-integer cast"));
         }

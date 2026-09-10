@@ -188,6 +188,38 @@ impl TestCase {
         };
         let input_binding = input_handle.binding();
         let output_binding = output_handle.clone().binding();
+        if let ReduceOperationConfig::ArgTopK(k) | ReduceOperationConfig::TopK(k) = &config {
+            if self.shape[axis] < *k {
+                let expected_k = *k;
+                let result = reduce::<TestRuntime>(
+                    &client, input_binding, output_binding, axis, strategy, config, dtypes,
+                );
+                assert!(matches!(
+                    result,
+                    Err(ruprim::reduce::ReduceError::ReduceAxisTooSmall { axis_length, k })
+                        if axis_length == self.shape[axis] && k == expected_k
+                ));
+                client.flush().unwrap();
+                return;
+            }
+        }
+        if let ruprim::reduce::launch::RoutineStrategy::Plane(
+            ruprim::reduce::routines::BlueprintStrategy::Forced(_, dim),
+        ) = &strategy.routine {
+            if dim.x != client.properties().hardware.plane_size_max {
+                let result = reduce::<TestRuntime>(
+                    &client, input_binding, output_binding, axis, strategy, config, dtypes,
+                );
+                assert!(matches!(
+                    result,
+                    Err(ruprim::reduce::ReduceError::Validation {
+                        details: "`ruda_dim.x` must match `plane_size_max`",
+                    })
+                ));
+                client.flush().unwrap();
+                return;
+            }
+        }
         let outcome = launch_and_capture_outcome(&client, |c| {
             reduce::<TestRuntime>(
                 c,

@@ -232,6 +232,8 @@ pub mod min {
         lhs: NativeExpand<C>,
         rhs: NativeExpand<C>,
     ) -> NativeExpand<C> {
+        let lhs = lhs.constant().map(|value| NativeExpand::from_lit(scope, value)).unwrap_or(lhs);
+        let rhs = rhs.constant().map(|value| NativeExpand::from_lit(scope, value)).unwrap_or(rhs);
         binary_expand(scope, lhs.into(), rhs.into(), Arithmetic::Min).into()
     }
 }

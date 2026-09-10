@@ -17,6 +17,10 @@ pub trait RequiredAddrType {
     fn required_address_type(&self) -> AddressType;
 }
 
+impl<T: RequiredAddrType + ?Sized> RequiredAddrType for &T {
+    fn required_address_type(&self) -> AddressType { T::required_address_type(*self) }
+}
+
 impl<R: Runtime> RequiredAddrType for RudaTensor<R> {
     fn required_address_type(&self) -> AddressType {
         self.required_address_type()

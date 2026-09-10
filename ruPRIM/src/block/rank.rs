@@ -1,8 +1,9 @@
 use ruda_kernel::dsl as kernel_dsl;
 use ruda_kernel::dsl::prelude::*;
+use crate::collective::record::{RudaRead, RudaReadExpand};
 
 #[ruda]
-pub trait RudaDigitExtractor<K: RudaPrimitive>: RudaType {
+pub trait RudaDigitExtractor<K: RudaType>: RudaType {
     fn digit(&self, key: K) -> u32;
 }
 
@@ -18,13 +19,25 @@ pub fn rank_keys<K: RudaPrimitive, E: RudaDigitExtractor<K>>(
     valid_items: usize, #[comptime] threads: usize, #[comptime] items_per_thread: usize,
     #[comptime] digit_bits: u32, #[comptime] descending: bool,
 ) {
+    rank_access::<K, Array<K>, E>(keys, ranks, extractor, digit_scratch, index_scratch, scan_scratch,
+        digit_offsets, valid_items, threads, items_per_thread, digit_bits, descending);
+}
+
+#[ruda]
+pub fn rank_access<K: RudaType, I: RudaRead<K>, E: RudaDigitExtractor<K>>(
+    keys: &I, ranks: &mut Array<u32>, extractor: &E,
+    digit_scratch: &mut SharedMemory<u32>, index_scratch: &mut SharedMemory<u32>,
+    scan_scratch: &mut SharedMemory<u32>, digit_offsets: &mut SharedMemory<u32>,
+    valid_items: usize, #[comptime] threads: usize, #[comptime] items_per_thread: usize,
+    #[comptime] digit_bits: u32, #[comptime] descending: bool,
+) {
     let start = UNIT_POS as usize * items_per_thread;
     let mut digits = Array::<u32>::new(items_per_thread);
     let mut indices = Array::<u32>::new(items_per_thread);
     #[unroll]
     for item in 0..items_per_thread {
         if start + item < valid_items {
-            digits[item] = extractor.digit(keys[item]);
+            digits[item] = extractor.digit(keys.read(item));
             indices[item] = (start + item) as u32;
         }
     }

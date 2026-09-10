@@ -30,7 +30,7 @@ pub fn merge_sort_pairs<K: RudaPrimitive, V: RudaPrimitive, C: RudaCompare<K>>(
     }
     sync_plane();
     let mut run = 1usize;
-    while run < valid_items {
+    while run < width as usize * items_per_lane {
         #[unroll]
         for item in 0..items_per_lane {
             let index = start + item;
@@ -84,7 +84,7 @@ pub fn merge_sort_keys<K: RudaPrimitive, C: RudaCompare<K>>(
     }
     sync_plane();
     let mut run = 1usize;
-    while run < valid_items {
+    while run < width as usize * items_per_lane {
         #[unroll]
         for item in 0..items_per_lane {
             let index = start + item;
