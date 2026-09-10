@@ -1,6 +1,6 @@
 # ruSPARSE
 
-**English** | [简体中文](docs/zh/README.md) | [日本語](docs/ja/README.md) | [Deutsch](docs/de/README.md) | [Русский](docs/ru/README.md)
+**English** | [简体中文](https://github.com/shuqi2077/RUDA/blob/main/ruSPARSE/docs/zh/README.md) | [日本語](https://github.com/shuqi2077/RUDA/blob/main/ruSPARSE/docs/ja/README.md) | [Deutsch](https://github.com/shuqi2077/RUDA/blob/main/ruSPARSE/docs/de/README.md) | [Русский](https://github.com/shuqi2077/RUDA/blob/main/ruSPARSE/docs/ru/README.md)
 
 This repository is a source mirror. Run the commands below from the [RUDA monorepo](https://github.com/shuqi2077/RUDA) root.
 
@@ -31,7 +31,7 @@ The example computes `alpha * A * x + beta * y`, reads the result back synchrono
 
 ## ruSPARSE User Guide
 
-[Compute libraries](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/README.md) · [中文](docs/zh/README.md)
+[Compute libraries](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/README.md) · [中文](https://github.com/shuqi2077/RUDA/blob/main/ruSPARSE/docs/zh/README.md)
 
 ### 1. Overview
 
@@ -123,4 +123,4 @@ For sparse/dense matrix multiplication, use `csrmm(&matrix, operation_b, alpha, 
 
 These computation methods return `Result`. Value tensors used in framework sparse operations must be unquantized.
 
-API reference: [Device CSR](src/tensor/mod.rs), [Framework CSR](https://github.com/shuqi2077/RUDA/blob/main/ruda-tensor/src/api/sparse.rs).
+API reference: [Device CSR](https://github.com/shuqi2077/RUDA/blob/main/ruSPARSE/src/tensor/mod.rs), [Framework CSR](https://github.com/shuqi2077/RUDA/blob/main/ruda-tensor/src/api/sparse.rs).

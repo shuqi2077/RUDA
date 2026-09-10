@@ -6,7 +6,7 @@
 ![Issues](https://img.shields.io/github/issues/shuqi2077/RUDA)
 ![Last commit](https://img.shields.io/github/last-commit/shuqi2077/RUDA?display_timestamp=committer)
 
-**English** | [简体中文](docs/zh/project.md) | [日本語](docs/ja/project.md) | [Deutsch](docs/de/project.md) | [Русский](docs/ru/project.md)
+**English** | [简体中文](https://github.com/shuqi2077/RUDA/blob/main/docs/zh/project.md) | [日本語](https://github.com/shuqi2077/RUDA/blob/main/docs/ja/project.md) | [Deutsch](https://github.com/shuqi2077/RUDA/blob/main/docs/de/project.md) | [Русский](https://github.com/shuqi2077/RUDA/blob/main/docs/ru/project.md)
 
 Ruda is a Rust high-performance computing library, building a complete software stack from GPU kernels, compilers, and runtimes to mathematical computing, tensors, and models.
 
@@ -14,7 +14,7 @@ Ruda is building Rust compilation and execution paths targeting PTX, HIP, and cu
 
 ## Quick Start
 
-Requires Git, Rust/Cargo, a linker toolchain, an NVIDIA GPU and driver, and the CUDA Toolkit. See [environment setup](docs/en/getting-started.md) for installation details.
+Requires Git, Rust/Cargo, a linker toolchain, an NVIDIA GPU and driver, and the CUDA Toolkit. See [environment setup](https://github.com/shuqi2077/RUDA/blob/main/docs/en/getting-started.md) for installation details.
 
 ### Clone
 
@@ -45,11 +45,11 @@ Then build and run the example:
 cargo run --release --locked -p ruda-driver-cuda --features direct-ptx --example ptx-runtime
 ```
 
-The example runs FP32 addition on the GPU and prints `PASS` lines and compilation-cache counters. Select a [PTX version](docs/en/ptx.md) supported by your GPU and driver.
+The example runs FP32 addition on the GPU and prints `PASS` lines and compilation-cache counters. Select a [PTX version](https://github.com/shuqi2077/RUDA/blob/main/docs/en/ptx.md) supported by your GPU and driver.
 
 ### Generate text with ruLLM
 
-Place a local Qwen3.5-0.8B model in `./models/qwen35`, or replace the path below with your model directory. Model files are not included; see [model setup](docs/en/model-inference.md#prepare-a-local-model).
+Place a local Qwen3.5-0.8B model in `./models/qwen35`, or replace the path below with your model directory. Model files are not included; see [model setup](https://github.com/shuqi2077/RUDA/blob/main/docs/en/model-inference.md#prepare-a-local-model).
 
 ```sh
 cargo run --release --locked -p ruda-llm --features nvidia-ptx --example qwen35_generate -- ./models/qwen35 "The capital of France is" 8 1
@@ -67,32 +67,32 @@ One repository, multiple crates with clearly defined responsibilities. From doma
 | Compilation and kernels | `ruda-compiler`, `ruda-kernel`, macro components |
 | Runtime and driver backends | `ruda`, `ruda-driver-cuda/cpu/wgpu/hip` |
 | Domain libraries | ruBLAS, ruDNN, ruPRIM, ruFFT, ruRAND, ruSPARSE |
-| Experimental numerical science | [ruSOLVER](docs/en/libraries/rusolver.md), [ruINTEGRATE](docs/en/libraries/ruintegrate.md) |
+| Experimental numerical science | [ruSOLVER](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/rusolver.md), [ruINTEGRATE](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/ruintegrate.md) |
 | Collective communication | ruCCL, `ruda-communication` |
 | Tensors and frameworks | `ruda-tensor*`, `ruda-autodiff`, `ruda-fusion` |
 | Models and data | `ruda-model`, `ruda-nn`, `ruda-optim`, `ruda-store`, `ruda-dataset` |
 
 ## Experimental Numerical Science
 
-`rusolver` adds host real/complex factorizations, SVD, sparse LU, row-partitioned CG and analytic pullbacks; opt-in FP32 batched LU/Cholesky/QR/eigen/CG device paths are separate. `ruintegrate` adds host quadrature, infinite-domain transforms, RK45, stiff BDF1 and event location. First-order host solver graph integration is opt-in via `ruda-autodiff/solver-host`. [Extended scope](docs/en/libraries/science-extended.md).
+`rusolver` adds host real/complex factorizations, SVD, sparse LU, row-partitioned CG and analytic pullbacks; opt-in FP32 batched LU/Cholesky/QR/eigen/CG device paths are separate. `ruintegrate` adds host quadrature, infinite-domain transforms, RK45, stiff BDF1 and event location. First-order host solver graph integration is opt-in via `ruda-autodiff/solver-host`. [Extended scope](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/science-extended.md).
 
 See the guides for convergence and backend restrictions. The packages are workspace members but not default members.
 
 ## Paths to Hardware
 
 - **NVIDIA GPUs:** CUDA C++ → NVRTC → PTX is the default compilation path. Direct IR → PTX generation is also available as an explicit choice. Both execute through the NVIDIA driver.
-- **Additional execution backends:** Backend source is available for CPU, WGPU, and HIP. See [Compatibility](docs/en/compatibility.md) for the scope of support.
+- **Additional execution backends:** Backend source is available for CPU, WGPU, and HIP. See [Compatibility](https://github.com/shuqi2077/RUDA/blob/main/docs/en/compatibility.md) for the scope of support.
 
 ## Explore and Contribute
 
-- [Ruda documentation](docs/en/README.md): Quickstart, programming guides, compilers, API references, and compute library manuals.
-- [NVIDIA demo](docs/en/getting-started.md): Explore the example and its requirements.
-- [Contributing guide](docs/en/CONTRIBUTING.md): Contribute to operators, compilers, runtimes, and frameworks.
+- [Ruda documentation](https://github.com/shuqi2077/RUDA/blob/main/docs/en/README.md): Quickstart, programming guides, compilers, API references, and compute library manuals.
+- [NVIDIA demo](https://github.com/shuqi2077/RUDA/blob/main/docs/en/getting-started.md): Explore the example and its requirements.
+- [Contributing guide](https://github.com/shuqi2077/RUDA/blob/main/docs/en/CONTRIBUTING.md): Contribute to operators, compilers, runtimes, and frameworks.
 
 If you care about Rust, GPU kernels, compilers, or high-performance computing, join us in taking this stack further and making it faster.
 
 ## Origins and Licensing
 
-[Third-party notices](THIRD_PARTY_NOTICES.md)
+[Third-party notices](https://github.com/shuqi2077/RUDA/blob/main/THIRD_PARTY_NOTICES.md)
 
-Original Ruda software code that the project has the right to license is available under the [Apache License 2.0](LICENSE). Third-party files remain under their original licenses; the root license does not override the `MIT OR Apache-2.0` declarations in migrated components.
+Original Ruda software code that the project has the right to license is available under the [Apache License 2.0](https://github.com/shuqi2077/RUDA/blob/main/LICENSE). Third-party files remain under their original licenses; the root license does not override the `MIT OR Apache-2.0` declarations in migrated components.

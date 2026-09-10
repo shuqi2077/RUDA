@@ -1,6 +1,6 @@
 # ruCCL
 
-**English** | [简体中文](docs/zh/README.md) | [日本語](docs/ja/README.md) | [Deutsch](docs/de/README.md) | [Русский](docs/ru/README.md)
+**English** | [简体中文](https://github.com/shuqi2077/RUDA/blob/main/ruCCL/docs/zh/README.md) | [日本語](https://github.com/shuqi2077/RUDA/blob/main/ruCCL/docs/ja/README.md) | [Deutsch](https://github.com/shuqi2077/RUDA/blob/main/ruCCL/docs/de/README.md) | [Русский](https://github.com/shuqi2077/RUDA/blob/main/ruCCL/docs/ru/README.md)
 
 This repository is a source mirror. Run the commands below from the [RUDA monorepo](https://github.com/shuqi2077/RUDA) root.
 
@@ -28,7 +28,7 @@ The public tensor API includes `register`, `all_reduce`, `reduce`, `broadcast`, 
 
 ## ruCCL User Guide
 
-[Compute libraries](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/README.md) · [Tensors and frameworks](https://github.com/shuqi2077/RUDA/blob/main/docs/en/tensor-framework.md) · [中文](docs/zh/README.md)
+[Compute libraries](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/README.md) · [Tensors and frameworks](https://github.com/shuqi2077/RUDA/blob/main/docs/en/tensor-framework.md) · [中文](https://github.com/shuqi2077/RUDA/blob/main/ruCCL/docs/zh/README.md)
 
 ### 1. Layers and entry points
 
@@ -67,9 +67,9 @@ Use `finish_collective` for normal completion. `reset_collective` forgets in-pro
 
 The `cuda` feature enables the CUDA tensor backend. Run `cargo run --locked -p ruCCL --features cuda --example all_reduce` to execute Ring AllReduce with four logical ranks on GPU 0. It checks Sum/Mean over 257 FP32 elements, input preservation, and session exit.
 
-Device adapters are in [tensor_device](src/tensor_device). For the optimizer interface, see [explicit-rank gradient reduction](https://github.com/shuqi2077/RUDA/blob/main/ruda-optim/src/optim/grads/collective.rs). Transfers include a host-staged path, not zero-copy P2P.
+Device adapters are in [tensor_device](https://github.com/shuqi2077/RUDA/tree/main/ruCCL/src/tensor_device). For the optimizer interface, see [explicit-rank gradient reduction](https://github.com/shuqi2077/RUDA/blob/main/ruda-optim/src/optim/grads/collective.rs). Transfers include a host-staged path, not zero-copy P2P.
 
-Source: [collective API](src/api.rs), [configuration](src/config.rs), [rank](src/rank/mod.rs), and [in-process implementation](src/in_process/mod.rs).
+Source: [collective API](https://github.com/shuqi2077/RUDA/blob/main/ruCCL/src/api.rs), [configuration](https://github.com/shuqi2077/RUDA/blob/main/ruCCL/src/config.rs), [rank](https://github.com/shuqi2077/RUDA/blob/main/ruCCL/src/rank/mod.rs), and [in-process implementation](https://github.com/shuqi2077/RUDA/blob/main/ruCCL/src/in_process/mod.rs).
 
 ### 6. Collective training
 

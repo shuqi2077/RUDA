@@ -1,6 +1,6 @@
 # ruTENSOR
 
-**English** | [简体中文](docs/zh/README.md) | [日本語](docs/ja/README.md) | [Deutsch](docs/de/README.md) | [Русский](docs/ru/README.md)
+**English** | [简体中文](https://github.com/shuqi2077/RUDA/blob/main/ruTENSOR/docs/zh/README.md) | [日本語](https://github.com/shuqi2077/RUDA/blob/main/ruTENSOR/docs/ja/README.md) | [Deutsch](https://github.com/shuqi2077/RUDA/blob/main/ruTENSOR/docs/de/README.md) | [Русский](https://github.com/shuqi2077/RUDA/blob/main/ruTENSOR/docs/ru/README.md)
 
 Tensor linear algebra for Ruda device tensors: contractions and einsum, reductions, physical permutations, and elementwise operations.
 
@@ -11,7 +11,7 @@ Tensor linear algebra for Ruda device tensors: contractions and einsum, reductio
 
 ## ruTENSOR User Guide
 
-[Compute libraries](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/README.md) · [Tensor framework](https://github.com/shuqi2077/RUDA/blob/main/docs/en/tensor-framework.md) · [中文](docs/zh/README.md)
+[Compute libraries](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/README.md) · [Tensor framework](https://github.com/shuqi2077/RUDA/blob/main/docs/en/tensor-framework.md) · [中文](https://github.com/shuqi2077/RUDA/blob/main/ruTENSOR/docs/zh/README.md)
 
 ruTENSOR provides named-axis tensor contractions, reductions, physical permutations, and elementwise operations. Inputs use `RudaTensor<R>`; the application selects a device Runtime. This library is distinct from the higher-level `ruda-tensor` framework.
 

@@ -1,6 +1,6 @@
 # ruda-test-utils
 
-**English** | [日本語](docs/ja/README.md) | [Deutsch](docs/de/README.md) | [Русский](docs/ru/README.md)
+**English** | [日本語](https://github.com/shuqi2077/RUDA/blob/main/ruda-test-utils/docs/ja/README.md) | [Deutsch](https://github.com/shuqi2077/RUDA/blob/main/ruda-test-utils/docs/de/README.md) | [Русский](https://github.com/shuqi2077/RUDA/blob/main/ruda-test-utils/docs/ru/README.md)
 
 Shared building blocks for kernel tests in Ruda: test-tensor builders,
 host-side reference comparisons, and a unified renderer that pretty-prints

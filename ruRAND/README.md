@@ -1,6 +1,6 @@
 # ruRAND
 
-**English** | [简体中文](docs/zh/README.md) | [日本語](docs/ja/README.md) | [Deutsch](docs/de/README.md) | [Русский](docs/ru/README.md)
+**English** | [简体中文](https://github.com/shuqi2077/RUDA/blob/main/ruRAND/docs/zh/README.md) | [日本語](https://github.com/shuqi2077/RUDA/blob/main/ruRAND/docs/ja/README.md) | [Deutsch](https://github.com/shuqi2077/RUDA/blob/main/ruRAND/docs/de/README.md) | [Русский](https://github.com/shuqi2077/RUDA/blob/main/ruRAND/docs/ru/README.md)
 
 Random number generation for Ruda.
 
@@ -29,11 +29,11 @@ cargo build --release --locked -p ruRAND --no-default-features --features std,te
 
 - [User guide](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/rurand.md)
 - [Environment setup](https://github.com/shuqi2077/RUDA/blob/main/docs/en/getting-started.md)
-- [Cargo features](Cargo.toml) · [Module exports](src/lib.rs)
+- [Cargo features](https://github.com/shuqi2077/RUDA/blob/main/ruRAND/Cargo.toml) · [Module exports](https://github.com/shuqi2077/RUDA/blob/main/ruRAND/src/lib.rs)
 
 ## ruRAND User Guide
 
-[Compute libraries](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/README.md) · [Runtime API](https://github.com/shuqi2077/RUDA/blob/main/docs/en/runtime-api.md) · [中文](docs/zh/README.md)
+[Compute libraries](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/README.md) · [Runtime API](https://github.com/shuqi2077/RUDA/blob/main/docs/en/runtime-api.md) · [中文](https://github.com/shuqi2077/RUDA/blob/main/ruRAND/docs/zh/README.md)
 
 ruRAND generates device tensors with uniform, normal, and Bernoulli distributions. Use `rurand::tensor` to allocate new tensors, or the same-named functions at the crate root to fill existing device storage.
 
@@ -149,4 +149,4 @@ The function does not invoke a tensor allocator. Other handles sharing that stor
 
 Tensor-level functions panic if launching returns an error; the underlying entry point above returns `Result<(), LaunchError>`. Successful submission does not mean GPU execution has finished. Read the tensor back or await client synchronization. `into_data_sync` panics on readback failure; use asynchronous `into_data(tensor).await` to propagate readback errors.
 
-API reference: [Tensor interfaces](src/tensor/mod.rs), [Seed state](src/state.rs), [Distributions](src/distributions/mod.rs).
+API reference: [Tensor interfaces](https://github.com/shuqi2077/RUDA/blob/main/ruRAND/src/tensor/mod.rs), [Seed state](https://github.com/shuqi2077/RUDA/blob/main/ruRAND/src/state.rs), [Distributions](https://github.com/shuqi2077/RUDA/blob/main/ruRAND/src/distributions/mod.rs).

@@ -1,6 +1,6 @@
 [package]
 name = "ruda-io"
-version = "0.21.1"
+version = "0.21.2"
 edition = "2024"
 authors = ["Dilshod Tadjibaev (@antimora)"]
 description = "Ruda host-side input/output utilities."

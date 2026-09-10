@@ -1,6 +1,6 @@
 # ruLLM
 
-**English** | [简体中文](docs/zh/README.md) | [日本語](docs/ja/README.md) | [Deutsch](docs/de/README.md) | [Русский](docs/ru/README.md)
+**English** | [简体中文](https://github.com/shuqi2077/RUDA/blob/main/ruLLM/docs/zh/README.md) | [日本語](https://github.com/shuqi2077/RUDA/blob/main/ruLLM/docs/ja/README.md) | [Deutsch](https://github.com/shuqi2077/RUDA/blob/main/ruLLM/docs/de/README.md) | [Русский](https://github.com/shuqi2077/RUDA/blob/main/ruLLM/docs/ru/README.md)
 
 LLM inference, model loading, and text generation on Ruda.
 
@@ -24,11 +24,11 @@ Replace `./models/qwen35` with your model directory. The final arguments select 
 ## Documentation
 
 - [Model loading and inference](https://github.com/shuqi2077/RUDA/blob/main/docs/en/model-inference.md)
-- [Cargo features](Cargo.toml) · [Module exports](src/lib.rs)
+- [Cargo features](https://github.com/shuqi2077/RUDA/blob/main/ruLLM/Cargo.toml) · [Module exports](https://github.com/shuqi2077/RUDA/blob/main/ruLLM/src/lib.rs)
 
 ## Model Loading and Inference
 
-[Documentation](https://github.com/shuqi2077/RUDA/blob/main/docs/en/README.md) · [Training](https://github.com/shuqi2077/RUDA/blob/main/docs/en/training.md) · [中文](docs/zh/README.md)
+[Documentation](https://github.com/shuqi2077/RUDA/blob/main/docs/en/README.md) · [Training](https://github.com/shuqi2077/RUDA/blob/main/docs/en/training.md) · [中文](https://github.com/shuqi2077/RUDA/blob/main/ruLLM/docs/zh/README.md)
 
 ruLLM provides model loading, tokenization, cached autoregressive generation, and request scheduling. Its Cargo package is `ruLLM`; its Rust import name is `rullm`.
 
@@ -254,4 +254,4 @@ To integrate your own batch executor, use `ContinuousBatchScheduler`:
 
 The scheduler manages requests and page-allocation metadata. The caller's executor owns device KV storage and model execution. Use `token_matrix()`, `context_lengths()`, and `flattened_block_table()` to construct batch inputs. Complete or cancel an outstanding batch before calling `schedule()` again.
 
-API reference: [ruLLM exports](src/lib.rs), [Generation options](src/generation.rs), [Scheduler](src/continuous_batch.rs).
+API reference: [ruLLM exports](https://github.com/shuqi2077/RUDA/blob/main/ruLLM/src/lib.rs), [Generation options](https://github.com/shuqi2077/RUDA/blob/main/ruLLM/src/generation.rs), [Scheduler](https://github.com/shuqi2077/RUDA/blob/main/ruLLM/src/continuous_batch.rs).

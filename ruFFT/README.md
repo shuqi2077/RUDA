@@ -1,6 +1,6 @@
 # ruFFT
 
-**English** | [简体中文](docs/zh/README.md) | [日本語](docs/ja/README.md) | [Deutsch](docs/de/README.md) | [Русский](docs/ru/README.md)
+**English** | [简体中文](https://github.com/shuqi2077/RUDA/blob/main/ruFFT/docs/zh/README.md) | [日本語](https://github.com/shuqi2077/RUDA/blob/main/ruFFT/docs/ja/README.md) | [Deutsch](https://github.com/shuqi2077/RUDA/blob/main/ruFFT/docs/de/README.md) | [Русский](https://github.com/shuqi2077/RUDA/blob/main/ruFFT/docs/ru/README.md)
 
 Fast Fourier transforms for Ruda.
 
@@ -29,11 +29,11 @@ cargo build --release --locked -p ruda-fft --no-default-features --features std,
 
 - [User guide](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/rufft.md)
 - [Environment setup](https://github.com/shuqi2077/RUDA/blob/main/docs/en/getting-started.md)
-- [Cargo features](Cargo.toml) · [Module exports](src/lib.rs)
+- [Cargo features](https://github.com/shuqi2077/RUDA/blob/main/ruFFT/Cargo.toml) · [Module exports](https://github.com/shuqi2077/RUDA/blob/main/ruFFT/src/lib.rs)
 
 ## ruFFT User Guide
 
-[Compute libraries](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/README.md) · [Tensor framework](https://github.com/shuqi2077/RUDA/blob/main/docs/en/tensor-framework.md) · [中文](docs/zh/README.md)
+[Compute libraries](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/README.md) · [Tensor framework](https://github.com/shuqi2077/RUDA/blob/main/docs/en/tensor-framework.md) · [中文](https://github.com/shuqi2077/RUDA/blob/main/ruFFT/docs/zh/README.md)
 
 ruFFT computes real-signal FFTs and inverse transforms on the device. The `rufft::tensor` interface allocates outputs; use `rfft_launch` and `irfft_launch` when managing device bindings directly.
 
@@ -146,4 +146,4 @@ To avoid materializing zero-padded input when managing buffers, use these entry 
 
 N must be a power of two of at least 2, and real/imaginary shapes must match. `signal_len` cannot exceed the input axis length or N. `spec_bins` must be at least 1 and cannot exceed the input spectrum axis length or `N / 2 + 1`. Output buffers still require full allocation; these interfaces avoid materializing the zero-padded input tail.
 
-API reference: [Tensor interface](src/tensor.rs), [Forward launch](src/fft/rfft.rs), [Inverse launch](src/fft/irfft.rs).
+API reference: [Tensor interface](https://github.com/shuqi2077/RUDA/blob/main/ruFFT/src/tensor.rs), [Forward launch](https://github.com/shuqi2077/RUDA/blob/main/ruFFT/src/fft/rfft.rs), [Inverse launch](https://github.com/shuqi2077/RUDA/blob/main/ruFFT/src/fft/irfft.rs).

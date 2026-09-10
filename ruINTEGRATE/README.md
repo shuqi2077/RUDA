@@ -36,7 +36,7 @@ cargo run --locked -p ruintegrate --example integrate-demo
 
 - [User guide](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/ruintegrate.md)
 - [Extended numerical science](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/science-extended.md)
-- [Cargo configuration](Cargo.toml) · [Module exports](src/lib.rs)
+- [Cargo configuration](https://github.com/shuqi2077/RUDA/blob/main/ruINTEGRATE/Cargo.toml) · [Module exports](https://github.com/shuqi2077/RUDA/blob/main/ruINTEGRATE/src/lib.rs)
 
 ## ruINTEGRATE User Guide
 
@@ -82,7 +82,7 @@ The initial interval costs 15 function evaluations; each split adds 30. Reversed
 
 Error estimates are not guaranteed bounds. Narrow peaks, singularities, and oscillations can be missed; infinite integrals must genuinely converge. Dedicated singular, oscillatory, and principal-value quadrature methods are not provided.
 
-Source: [Finite quadrature](src/quadrature.rs) and [infinite-domain transforms](src/improper.rs).
+Source: [Finite quadrature](https://github.com/shuqi2077/RUDA/blob/main/ruINTEGRATE/src/quadrature.rs) and [infinite-domain transforms](https://github.com/shuqi2077/RUDA/blob/main/ruINTEGRATE/src/improper.rs).
 
 ### 3. Non-stiff and stiff ODEs
 
@@ -97,7 +97,7 @@ BDF1 compares one full step with two half steps and accepts the two-half-step re
 
 Both solvers support forward/backward integration and step/evaluation budgets. Final-state-only output is the default. Enable `save_trajectory` for bounded trajectory storage. Reaching a step, evaluation, or output limit does not mean the endpoint was reached.
 
-Source: [RK45](src/ode.rs) and [BDF1](src/stiff.rs).
+Source: [RK45](https://github.com/shuqi2077/RUDA/blob/main/ruINTEGRATE/src/ode.rs) and [BDF1](https://github.com/shuqi2077/RUDA/blob/main/ruINTEGRATE/src/stiff.rs).
 
 ### 4. Events and convergence status
 
@@ -107,13 +107,13 @@ Event roots are located using cubic Hermite interpolation of accepted-step endpo
 
 Inspect the returned status: `QuadratureReport::converged()` checks quadrature, and `OdeReport::reached_end()` checks endpoint completion. A terminal event is reported as `OdeStatus::Event`, not endpoint completion. Event reports contain the located times, states, and event indices.
 
-The [advanced example](examples/advanced_integrate.rs) combines whole-line Gaussian integration, BDF1, and a terminating oscillator event:
+The [advanced example](https://github.com/shuqi2077/RUDA/blob/main/ruINTEGRATE/examples/advanced_integrate.rs) combines whole-line Gaussian integration, BDF1, and a terminating oscillator event:
 
 ```sh
 cargo run --locked -p ruintegrate --example advanced-integrate
 ```
 
-Source: [Event interfaces](src/events.rs).
+Source: [Event interfaces](https://github.com/shuqi2077/RUDA/blob/main/ruINTEGRATE/src/events.rs).
 
 ### 5. Execution scope
 
