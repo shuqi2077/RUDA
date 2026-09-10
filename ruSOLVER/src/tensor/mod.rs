@@ -2,8 +2,9 @@
 //! Opt-in native device kernels. No numerical operation falls back to the host.
 //! Contiguous FP32 batched input only. LU/Cholesky/eigen n<=32, QR n<=32
 //! and m<=64, dense CG n<=128. Consult each explicit API for its shape contract.
-//! A single GPU thread owns a system; systems in a batch execute independently.
-//! This is a correctness-first small-batch kernel, not a high-throughput blocked
+//! Default baselines use one GPU thread per system; explicit `*_warp` paths
+//! cooperate within a full 32-thread block and reuse shared scratch.
+//! These are experimental small-matrix kernels, not high-throughput blocked
 //! large-matrix solver. Benchmarks must not compare its scope to full cuSOLVER.
 use std::{
     error::Error, fmt
@@ -13,7 +14,7 @@ use ruda_core::{
 };
 use ruda_kernel::{
     dsl::{
-        Runtime, calculate_cube_count_elemwise, prelude::CubeDim
+        Runtime, calculate_ruda_count_elemwise, prelude::RudaDim
     },
     tensor::{
         RudaTensor, allocation::empty_device_contiguous_dtype, readback::into_data
@@ -141,8 +142,8 @@ options: BatchedCholeskyOptions)->Result<BatchedCholeskyResult<R>, DeviceSolverE
             lower, solution, info, submitted_kernels: 0
         });
     }
-    let dim=CubeDim::new(client.properties(), batch);
-    kernel::cholesky_solve::launch::<R>(&client, calculate_cube_count_elemwise(&client, batch, dim), dim,
+    let dim=RudaDim::new(client.properties(), batch);
+    kernel::cholesky_solve::launch::<R>(&client, calculate_ruda_count_elemwise(&client, batch, dim), dim,
     a.clone().into_array_arg(), b.clone().into_array_arg(), lower.clone().into_array_arg(),
     solution.clone().into_array_arg(), info.clone().into_array_arg(), n as u32, nrhs as u32,
     options.diagonal_shift, options.symmetry_absolute_tolerance, options.symmetry_relative_tolerance,
@@ -156,3 +157,11 @@ options: BatchedCholeskyOptions)->Result<BatchedCholeskyResult<R>, DeviceSolverE
 mod advanced_kernel;
 mod advanced;
 pub use advanced::*;
+
+#[cfg(feature = "warp-solvers")]
+#[allow(unsafe_code)] // Generated checked launch boundary; no manual unsafe code.
+mod warp_kernel;
+#[cfg(feature = "warp-solvers")]
+mod warp;
+#[cfg(feature = "warp-solvers")]
+pub use warp::{cholesky_solve_batched_warp, lu_solve_batched_warp};

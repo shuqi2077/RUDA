@@ -60,3 +60,6 @@ pub mod adjoint;
 #[cfg(test)]mod advanced_tests;
 
 #[cfg(test)]mod advanced_fixtures;
+
+/// Launch planning for explicit small-matrix warp-shared kernels.
+pub mod kernel_plan;

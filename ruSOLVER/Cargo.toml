@@ -9,6 +9,7 @@ description = "Explicit scientific solvers: real/complex/sparse host algebra and
 default = []
 sparse = ["dep:rusparse"]
 tensor = ["dep:ruda-core", "dep:ruda-kernel"]
+warp-solvers = ["tensor"]
 collective = ["dep:ruccl"]
 cuda = ["tensor", "dep:ruda-driver-cuda"]
 
@@ -59,3 +60,16 @@ path = "examples/advanced_solver.rs"
 name = "solver-cuda-advanced"
 path = "examples/solver_cuda_advanced.rs"
 required-features = ["cuda"]
+
+[dev-dependencies]
+serde_json = "1"
+
+[[test]]
+name = "device_warp"
+path = "tests/device_warp.rs"
+required-features = ["cuda", "warp-solvers"]
+
+[[example]]
+name = "solver-warp-bench"
+path = "examples/solver_warp_bench.rs"
+required-features = ["cuda", "warp-solvers"]

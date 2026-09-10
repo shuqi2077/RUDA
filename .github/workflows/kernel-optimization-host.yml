@@ -1,0 +1,31 @@
+name: Kernel planning and Python model checks (not GPU)
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'ruSOLVER/**'
+      - 'tools/kernel_optimization/**'
+      - 'tools/run_kernel_optimization_regressions.py'
+      - 'tools/run_safety_regressions.py'
+      - '.github/workflows/kernel-optimization-host.yml'
+permissions:
+  contents: read
+jobs:
+  host-plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RUSTUP_TOOLCHAIN: '1.90.0'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install scoped dependencies
+        run: |
+          rustup toolchain install 1.90.0 --profile minimal
+          python3 -m venv "$RUNNER_TEMP/kernel-oracle"
+          "$RUNNER_TEMP/kernel-oracle/bin/python" -m pip install -r tools/kernel_optimization/requirements.txt
+      - name: Compile and run real host launch planner
+        run: python3 tools/run_kernel_optimization_regressions.py --suite plan
+      - name: Check Python model and result plumbing (not Rust/GPU execution)
+        run: |
+          "$RUNNER_TEMP/kernel-oracle/bin/python" -m unittest discover -s tools/kernel_optimization -p test_runner.py -v
+          "$RUNNER_TEMP/kernel-oracle/bin/python" tools/run_kernel_optimization_regressions.py --suite oracle

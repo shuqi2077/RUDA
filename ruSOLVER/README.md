@@ -111,7 +111,10 @@ cargo run --locked -p rusolver --features cuda --example solver-cuda-advanced
 | `symmetric_eigen_batched` | Square order 1..32 |
 | `conjugate_gradient_batched` | Square order 1..128; one RHS; zero initial guess |
 
-Inputs must be unquantized, contiguous, row-major FP32 tensors on the same device and execution queue. Each thread processes one small system; this is not a blocked, warp-cooperative large-matrix implementation or a cuSOLVER performance claim. Inputs are unchanged, and outputs/workspace use new device allocations.
+Inputs must be unquantized, contiguous, row-major FP32 tensors on the same device and execution queue. Default paths use one device thread per system. Explicit `*_batched_warp` LU and Cholesky paths cooperate within a 32-thread block using shared memory. They require the opt-in `warp-solvers` feature and are experimental, not enabled by default. This is not a blocked, warp-cooperative large-matrix implementation or a cuSOLVER performance claim. Inputs are unchanged, and outputs/workspace use new device allocations.
+
+[Warp-kernel optimization and A/B benchmark](../docs/en/libraries/solver-kernel-optimization.md) ·
+[优化说明与验证范围](../docs/zh/libraries/solver-kernel-optimization.md)
 
 Call `check_status_sync()` before using results. It synchronizes and reads each system's status; successful submission alone does not establish numerical success. There is no implicit host numerical fallback or LAPACK/cuSOLVER ABI compatibility.
 

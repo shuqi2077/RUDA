@@ -3,7 +3,7 @@ use ruda_kernel::dsl as kernel_dsl;
 use ruda_kernel::dsl::prelude::*;
 // No shared memory or barriers: a failed system cannot strand other systems.
 // Scratch/output allocations are exclusively owned by this launch. Inputs are read-only.
-#[cube(launch)]
+#[ruda(launch)]
 pub(super)fn cholesky_solve(a: &Array<f32>, b: &Array<f32>, lower: &mut Array<f32>,
 x: &mut Array<f32>, info: &mut Array<i32>, order: u32, rhs_count: u32, shift: f32,
 symmetry_atol: f32, symmetry_rtol: f32, #[comptime]_source: String){

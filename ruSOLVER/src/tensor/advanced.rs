@@ -2,7 +2,7 @@
 //! Explicit opt-in device FP32 APIs. No casts, no implicit host computation.
 use super::{DeviceSolverError,validate_tensor,elements,advanced_kernel};
 use ruda_core::{device::Device,tensor::DType};
-use ruda_kernel::{dsl::{Runtime,calculate_cube_count_elemwise,prelude::CubeDim},
+use ruda_kernel::{dsl::{Runtime,calculate_ruda_count_elemwise,prelude::RudaDim},
     tensor::{RudaTensor,allocation::empty_device_contiguous_dtype,readback::into_data}};
 const SOURCE:&str=concat!(include_str!("advanced_kernel.rs"),include_str!("advanced.rs"));
 async fn status<R:Runtime>(info:RudaTensor<R>)->Result<(),DeviceSolverError>{
@@ -36,8 +36,8 @@ pub fn lu_solve_batched<R:Runtime>(a:&RudaTensor<R>,b:&RudaTensor<R>,o:BatchedLu
     let(batch,n)=square(a,32)?;let nr=rhs(a,b,batch,n,8)?;tolerance(o.pivot_absolute_tolerance,o.pivot_relative_tolerance,false)?;
     let packed_lu=alloc(a,[batch,n,n],DType::F32);let solution=alloc(a,[batch,n,nr],DType::F32);
     let pivots=alloc(a,[batch,n],DType::I32);let info=alloc(a,[batch],DType::I32);
-    if batch>0{let dim=CubeDim::new(a.client.properties(),batch);
-        advanced_kernel::lu_solve::launch::<R>(&a.client,calculate_cube_count_elemwise(&a.client,batch,dim),dim,
+    if batch>0{let dim=RudaDim::new(a.client.properties(),batch);
+        advanced_kernel::lu_solve::launch::<R>(&a.client,calculate_ruda_count_elemwise(&a.client,batch,dim),dim,
             a.clone().into_array_arg(),b.clone().into_array_arg(),packed_lu.clone().into_array_arg(),solution.clone().into_array_arg(),
             pivots.clone().into_array_arg(),info.clone().into_array_arg(),n as u32,nr as u32,o.pivot_absolute_tolerance,o.pivot_relative_tolerance,SOURCE.to_owned());}
     Ok(BatchedLuResult{packed_lu,pivots,solution,info,submitted_kernels:usize::from(batch>0)})
@@ -53,8 +53,8 @@ pub fn qr_batched<R:Runtime>(a:&RudaTensor<R>,o:BatchedQrOptions)->Result<Batche
     if n==0||n>32||m<n||m>64{return Err(DeviceSolverError::InvalidInput("QR requires 1<=n<=32, n<=m<=64"));}
     tolerance(o.rank_absolute_tolerance,o.rank_relative_tolerance,false)?;
     let q=alloc(a,[batch,m,n],DType::F32);let r=alloc(a,[batch,n,n],DType::F32);let info=alloc(a,[batch],DType::I32);
-    if batch>0{let work=alloc(a,[batch,m,n],DType::F32);let tau=alloc(a,[batch,n],DType::F32);let dim=CubeDim::new(a.client.properties(),batch);
-        advanced_kernel::qr::launch::<R>(&a.client,calculate_cube_count_elemwise(&a.client,batch,dim),dim,a.clone().into_array_arg(),q.clone().into_array_arg(),
+    if batch>0{let work=alloc(a,[batch,m,n],DType::F32);let tau=alloc(a,[batch,n],DType::F32);let dim=RudaDim::new(a.client.properties(),batch);
+        advanced_kernel::qr::launch::<R>(&a.client,calculate_ruda_count_elemwise(&a.client,batch,dim),dim,a.clone().into_array_arg(),q.clone().into_array_arg(),
             r.clone().into_array_arg(),work.into_array_arg(),tau.into_array_arg(),info.clone().into_array_arg(),m as u32,n as u32,
             o.rank_absolute_tolerance,o.rank_relative_tolerance,SOURCE.to_owned());}
     Ok(BatchedQrResult{q,r,info,submitted_kernels:usize::from(batch>0)})
@@ -70,8 +70,8 @@ pub fn symmetric_eigen_batched<R:Runtime>(a:&RudaTensor<R>,o:BatchedEigenOptions
     let(batch,n)=square(a,32)?;tolerance(o.absolute_tolerance,o.relative_tolerance,true)?;tolerance(0.0,o.symmetry_tolerance,false)?;
     if o.max_sweeps==0||o.max_sweeps>256{return Err(DeviceSolverError::InvalidInput("eigen sweeps 1..256"));}
     let values=alloc(a,[batch,n],DType::F32);let vectors=alloc(a,[batch,n,n],DType::F32);let info=alloc(a,[batch],DType::I32);let sweeps=alloc(a,[batch],DType::I32);
-    if batch>0{let work=alloc(a,[batch,n,n],DType::F32);let dim=CubeDim::new(a.client.properties(),batch);
-        advanced_kernel::eigen::launch::<R>(&a.client,calculate_cube_count_elemwise(&a.client,batch,dim),dim,a.clone().into_array_arg(),values.clone().into_array_arg(),
+    if batch>0{let work=alloc(a,[batch,n,n],DType::F32);let dim=RudaDim::new(a.client.properties(),batch);
+        advanced_kernel::eigen::launch::<R>(&a.client,calculate_ruda_count_elemwise(&a.client,batch,dim),dim,a.clone().into_array_arg(),values.clone().into_array_arg(),
             vectors.clone().into_array_arg(),work.into_array_arg(),info.clone().into_array_arg(),sweeps.clone().into_array_arg(),n as u32,o.max_sweeps,
             o.absolute_tolerance,o.relative_tolerance,o.symmetry_tolerance,SOURCE.to_owned());}
     Ok(BatchedEigenResult{values,vectors,sweeps,info,submitted_kernels:usize::from(batch>0)})
@@ -89,8 +89,8 @@ pub fn conjugate_gradient_batched<R:Runtime>(a:&RudaTensor<R>,b:&RudaTensor<R>,o
     if o.max_iterations>4096{return Err(DeviceSolverError::InvalidInput("CG iteration budget <=4096"));}
     elements(&[batch,4,n])?;
     let solution=alloc(a,[batch,n,1],DType::F32);let info=alloc(a,[batch],DType::I32);let residual_norm=alloc(a,[batch],DType::F32);let iterations=alloc(a,[batch],DType::I32);
-    if batch>0{let scratch=alloc(a,[batch,4,n],DType::F32);let dim=CubeDim::new(a.client.properties(),batch);
-        advanced_kernel::cg::launch::<R>(&a.client,calculate_cube_count_elemwise(&a.client,batch,dim),dim,a.clone().into_array_arg(),b.clone().into_array_arg(),solution.clone().into_array_arg(),
+    if batch>0{let scratch=alloc(a,[batch,4,n],DType::F32);let dim=RudaDim::new(a.client.properties(),batch);
+        advanced_kernel::cg::launch::<R>(&a.client,calculate_ruda_count_elemwise(&a.client,batch,dim),dim,a.clone().into_array_arg(),b.clone().into_array_arg(),solution.clone().into_array_arg(),
             scratch.into_array_arg(),info.clone().into_array_arg(),iterations.clone().into_array_arg(),residual_norm.clone().into_array_arg(),n as u32,o.max_iterations,
             o.absolute_tolerance,o.relative_tolerance,o.symmetry_tolerance,u32::from(o.jacobi),SOURCE.to_owned());}
     Ok(BatchedCgResult{solution,residual_norm,iterations,info,submitted_kernels:usize::from(batch>0)})

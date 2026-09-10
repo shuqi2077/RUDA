@@ -3,7 +3,7 @@
 //! dynamic local allocation, or unsupported GPU f64 assumptions.
 use ruda_kernel::dsl as kernel_dsl;
 use ruda_kernel::dsl::prelude::*;
-#[cube(launch)]
+#[ruda(launch)]
 pub(super)fn lu_solve(a:&Array<f32>,b:&Array<f32>,lu:&mut Array<f32>,x:&mut Array<f32>,piv:&mut Array<i32>,info:&mut Array<i32>,
 order:u32,rhs_count:u32,atol:f32,rtol:f32,#[comptime]_source:String){
     let sys=ABSOLUTE_POS;if sys>=info.len(){terminate!();}
@@ -36,7 +36,7 @@ order:u32,rhs_count:u32,atol:f32,rtol:f32,#[comptime]_source:String){
     if code!=0{for i in 0..n*n{lu[base+i]=0.0;}for i in 0..n*nr{x[rb+i]=0.0;}for i in 0..n{piv[sys*n+i]=-1;}}
     info[sys]=code;
 }
-#[cube(launch)]
+#[ruda(launch)]
 pub(super)fn qr(a:&Array<f32>,q:&mut Array<f32>,r:&mut Array<f32>,work:&mut Array<f32>,tau:&mut Array<f32>,info:&mut Array<i32>,
 rows:u32,cols:u32,atol:f32,rtol:f32,#[comptime]_source:String){
     let sys=ABSOLUTE_POS;if sys>=info.len(){terminate!();}let m=rows as usize;let n=cols as usize;
@@ -68,7 +68,7 @@ rows:u32,cols:u32,atol:f32,rtol:f32,#[comptime]_source:String){
     if code!=0{for i in 0..m*n{q[base+i]=0.0;}for i in 0..n*n{r[rb+i]=0.0;}}
     info[sys]=code;
 }
-#[cube(launch)]
+#[ruda(launch)]
 pub(super)fn eigen(a:&Array<f32>,values:&mut Array<f32>,v:&mut Array<f32>,w:&mut Array<f32>,info:&mut Array<i32>,sweeps:&mut Array<i32>,
 order:u32,max_sweeps:u32,atol:f32,rtol:f32,symmetry_tol:f32,#[comptime]_source:String){
     let sys=ABSOLUTE_POS;if sys>=info.len(){terminate!();}let n=order as usize;let base=sys*n*n;let mut code=0i32;let mut scale=0.0f32;
@@ -107,7 +107,7 @@ order:u32,max_sweeps:u32,atol:f32,rtol:f32,symmetry_tol:f32,#[comptime]_source:S
     if code!=0{for i in 0..n{values[sys*n+i]=0.0;}for i in 0..n*n{v[base+i]=0.0;}}
     info[sys]=code;sweeps[sys]=iter as i32;
 }
-#[cube(launch)]
+#[ruda(launch)]
 pub(super)fn cg(a:&Array<f32>,b:&Array<f32>,x:&mut Array<f32>,scratch:&mut Array<f32>,info:&mut Array<i32>,iterations:&mut Array<i32>,residual:&mut Array<f32>,
 order:u32,max_iterations:u32,atol:f32,rtol:f32,symmetry_tol:f32,jacobi:u32,#[comptime]_source:String){
     let sys=ABSOLUTE_POS;if sys>=info.len(){terminate!();}let n=order as usize;let ab=sys*n*n;let vb=sys*n;let sb=sys*4*n;
