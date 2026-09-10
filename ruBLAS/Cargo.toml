@@ -7,6 +7,7 @@ license-file = "LICENSE"
 repository = "https://github.com/shuqi2077/RUDA"
 
 [features]
+cann = ["dep:ruda-driver-cann"]
 default = ["kernel-ir", "std"]
 tensor-int4 = ["kernel-ir", "ruda-kernel/device-tensor"]
 tensor-matmul = ["kernel-ir", "ruda-kernel/device-tensor-dequantize"]
@@ -21,6 +22,7 @@ extended = ["heavy"]
 full = ["extended"]
 
 [dependencies]
+ruda-driver-cann = { version = "0.1.0", path = "../ruda-driver-cann", optional = true }
 ruda-kernel = { version = "0.1.0", path = "../ruda-kernel", default-features = false }
 ruda = { version = "0.1.0", path = "../ruda", default-features = false }
 half = { version = "=2.7.1", features = ["alloc", "num-traits", "serde", "bytemuck"] }

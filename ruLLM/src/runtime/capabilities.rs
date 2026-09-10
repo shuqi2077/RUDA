@@ -2,7 +2,7 @@ use super::{RuntimeError, RuntimeErrorKind, TensorDType};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
-pub enum BackendKind { Nvidia, Amd, Host, Custom(String) }
+pub enum BackendKind { Nvidia, Amd, Cann, Host, Custom(String) }
 
 /// Backend is part of identity: CUDA:0 and HIP:0 must never alias.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]

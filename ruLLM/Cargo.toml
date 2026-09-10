@@ -11,11 +11,13 @@ name = "rullm"
 
 [features]
 default = []
+cann = ["dep:ruda-driver-cann", "rublas/cann", "rudnn/cann"]
 amd = ["dep:ruda-driver-hip", "ruda-tensor/hip", "ruda-tensor-device/autotune"]
 nvidia = ["ruda-tensor-device/cuda", "ruda-tensor-device/autotune", "dep:ruda-driver-cuda"]
 nvidia-ptx = ["nvidia", "ruda-driver-cuda/direct-ptx"]
 
 [dependencies]
+ruda-driver-cann = { version = "0.1.0", path = "../ruda-driver-cann", optional = true }
 ruda-model = { version = "0.21.0", path = "../ruda-model", default-features = false, features = ["std"] }
 ruda-nn = { version = "0.21.0", path = "../ruda-nn", default-features = false, features = ["std"] }
 ruda-tensor = { version = "0.21.0", path = "../ruda-tensor", default-features = false, features = ["std", "kernel"] }

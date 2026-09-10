@@ -1,6 +1,20 @@
 //! Optional adapters. A custom accelerator still needs a real Ruda runtime,
 //! compiler and tensor kernels; a BackendKind::Custom label cannot supply them.
 
+/// AscendCL runtime and explicit ACLNN tensor operations; not a generic DeviceBackend.
+#[cfg(feature = "cann")]
+pub use ruda_driver_cann as cann;
+
+#[cfg(feature = "cann")]
+pub use ruda_driver_cann::{CannApi, CannDevice, CannError, CannLibrary};
+
+#[cfg(feature = "cann")]
+impl From<CannDevice> for crate::runtime::DeviceKey {
+    fn from(device: CannDevice) -> Self {
+        Self { backend: crate::runtime::BackendKind::Cann, ordinal: device.ordinal() }
+    }
+}
+
 #[cfg(feature = "nvidia")]
 pub use ruda_driver_cuda::{CudaRuntime, CudaDevice as NvidiaDevice};
 

@@ -1,5 +1,8 @@
 //! Ruda BLAS operations and device tensor kernels.
 
+#[cfg(feature = "cann")]
+pub mod cann;
+
 
 
 #[cfg(feature = "kernel-ir")]

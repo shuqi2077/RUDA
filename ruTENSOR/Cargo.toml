@@ -10,10 +10,12 @@ repository = "https://github.com/shuqi2077/RUDA"
 name = "rutensor"
 
 [features]
+cann = ["dep:ruda-driver-cann"]
 default = ["std"]
 std = ["ruda-core/std", "ruda-kernel/frontend-std"]
 
 [dependencies]
+ruda-driver-cann = { version = "0.1.0", path = "../ruda-driver-cann", optional = true }
 ruda-core = { version = "0.1.0", path = "../ruda-core", default-features = false, features = ["tensor"] }
 ruda-kernel = { version = "0.1.0", path = "../ruda-kernel", default-features = false, features = ["kernel-ir", "device-tensor"] }
 

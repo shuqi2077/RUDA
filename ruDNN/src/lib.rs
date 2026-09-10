@@ -1,5 +1,8 @@
 #![cfg_attr(not(feature = "kernel-ir"), no_std)]
 
+#[cfg(feature = "cann")]
+pub mod cann;
+
 pub mod attention;
 
 #[cfg(feature = "tensor-normalization")]

@@ -12,6 +12,7 @@ repository = "https://github.com/shuqi2077/RUDA"
 name = "rudnn"
 
 [features]
+cann = ["dep:ruda-driver-cann"]
 tensor-normalization = ["kernel-ir", "ruda-kernel/device-tensor"]
 tensor-gated-delta = ["kernel-ir", "ruda-kernel/device-tensor", "rublas/tensor-matmul"]
 tensor-moe = ["kernel-ir", "ruda-kernel/device-tensor", "rublas/tensor-grouped"]
@@ -33,6 +34,7 @@ extended = ["heavy"]
 full = ["extended"]
 
 [dependencies]
+ruda-driver-cann = { version = "0.1.0", path = "../ruda-driver-cann", optional = true }
 rublas = { version = "0.1.0", path = "../ruBLAS", default-features = false, optional = true }
 ruda-kernel = { version = "0.1.0", path = "../ruda-kernel", default-features = false, features = ["kernel-ir"], optional = true }
 bytemuck = { version = "1.16.1", optional = true }

@@ -6,6 +6,15 @@
     clippy::type_complexity
 )]
 
+#[cfg(feature = "kernel-ir")]
+pub mod collective;
+
+#[cfg(feature = "kernel-ir")]
+pub mod warp;
+
+#[cfg(feature = "kernel-ir")]
+pub mod block;
+
 
 
 #[cfg(feature = "kernel-ir")]

@@ -40,6 +40,13 @@ fn nvidia_and_amd_zero_are_distinct() {
     assert_ne!(key(BackendKind::Nvidia, 0), key(BackendKind::Amd, 0));
 }
 #[test]
+fn cann_device_identity_is_distinct() {
+    for backend in [BackendKind::Nvidia, BackendKind::Amd, BackendKind::Host, BackendKind::Custom("CANN".into())] {
+        assert_ne!(key(BackendKind::Cann, 0), key(backend, 0));
+    }
+    assert_ne!(key(BackendKind::Cann, 0), key(BackendKind::Cann, 1));
+}
+#[test]
 fn fixed_subgroups_follow_capabilities_not_vendor() {
     for width in [16, 32, 64] {
         assert_eq!(fixed_reduction_width(width, width, true, true, 256, 256), Some(width));

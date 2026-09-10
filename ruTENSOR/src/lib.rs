@@ -11,6 +11,9 @@ mod operation;
 mod plan;
 mod tensor;
 
+#[cfg(feature = "cann")]
+pub mod cann;
+
 pub use descriptor::{Mode, OperandDescriptor, TensorDescriptor};
 pub use einsum::{EinsumPlan, einsum, einsum_with_options};
 pub use error::{Error, Result};

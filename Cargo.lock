@@ -5290,6 +5290,7 @@ dependencies = [
  "ruPRIM",
  "rublas",
  "ruda-core",
+ "ruda-driver-cann",
  "ruda-kernel",
  "ruda-test-runtime",
  "ruda-test-utils",
@@ -5391,6 +5392,7 @@ name = "ruTENSOR"
 version = "0.1.0"
 dependencies = [
  "ruda-core",
+ "ruda-driver-cann",
  "ruda-kernel",
 ]
 
@@ -5403,6 +5405,7 @@ dependencies = [
  "pretty_assertions",
  "ruda",
  "ruda-core",
+ "ruda-driver-cann",
  "ruda-kernel",
  "ruda-test-runtime",
  "ruda-test-utils",
@@ -5618,6 +5621,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruda-driver-cann"
+version = "0.1.0"
+dependencies = [
+ "libloading 0.8.9",
+]
+
+[[package]]
 name = "ruda-driver-cpu"
 version = "0.1.0"
 dependencies = [
@@ -5829,6 +5839,7 @@ dependencies = [
  "rublas",
  "ruda",
  "ruda-core",
+ "ruda-driver-cann",
  "ruda-driver-cuda",
  "ruda-driver-hip",
  "ruda-kernel",

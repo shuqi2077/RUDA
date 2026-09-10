@@ -1,0 +1,10 @@
+[package]
+name = "ruda-driver-cann"
+version.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+description = "Dynamically loaded CANN AscendCL runtime interfaces"
+repository = "https://github.com/shuqi2077/RUDA"
+
+[dependencies]
+libloading = "=0.8.9"
