@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: '2'
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+  RAYON_NUM_THREADS: '2'
+  RUST_TEST_THREADS: '2'
+  RUST_MIN_STACK: '16777216'
+
+jobs:
+  rust:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - name: CPU libraries
+            key: host
+            command: cargo test --locked -p rublas-host -p ruDNN-host -p ruPRIM-host -p ruRAND-host -p ruFFT-host --lib --tests
+          - name: FFT scalar and no_std
+            key: fft-scalar
+            command: |
+              cargo test --locked -p ruFFT-host --no-default-features --features std --lib --tests
+              cargo check --locked -p ruFFT-host --no-default-features --lib
+          - name: Core and compiler tests
+            key: compiler
+            command: cargo test --locked -p ruda-core -p ruda-compiler --lib --features ruda-core/tensor-host-storage,ruda-core/compilation-cache
+          - name: Optimizer CPU tests
+            key: optim
+            command: cargo test --locked -p ruda-optim --lib --features gradient-guard
+          - name: Device libraries compile
+            key: device-libraries
+            command: cargo check --locked --lib -p rublas -p ruPRIM -p ruDNN -p ruRAND -p ruFFT -p ruSPARSE -p ruTENSOR -p ruCCL -p ruLLM -p ruda-optim --features ruda-optim/gradient-guard-device
+          - name: FFT CUDA and WGPU test compilation
+            key: fft-device
+            command: |
+              cargo test --locked -p ruFFT --features cpu-reference --test lib --no-run
+              cargo test --locked -p ruFFT --features cpu-reference,ruda-test-runtime/cuda --test lib --no-run
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup override set 1.97.1
+          rustc --version
+          cargo --version
+      - name: Restore Cargo cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-rust-1.97.1-${{ matrix.key }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-rust-1.97.1-${{ matrix.key }}-${{ hashFiles('Cargo.lock') }}-
+            ${{ runner.os }}-rust-1.97.1-${{ matrix.key }}-
+      - name: Build and test
+        shell: bash
+        run: ${{ matrix.command }}
