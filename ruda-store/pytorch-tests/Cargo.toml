@@ -10,23 +10,19 @@ repository = "https://github.com/shuqi2077/RUDA"
 default-features = false
 features = [ "default",]
 path = "../../ruda-model"
-version = "0.21.0"
 
 [dev-dependencies.ruda-nn]
 default-features = false
 features = [ "default",]
 path = "../../ruda-nn"
-version = "0.21.0"
 
 [dev-dependencies.ruda-optim]
 default-features = false
 features = [ "default",]
 path = "../../ruda-optim"
-version = "0.21.0"
 
 [dev-dependencies.ruda-tensor-host]
 path = "../../ruda-tensor-host"
-version = "0.21.0"
 default-features = false
 features = [ "default",]
 
@@ -34,11 +30,9 @@ features = [ "default",]
 default-features = false
 features = [ "std", "tracing",]
 path = "../../ruda-autodiff"
-version = "0.21.0"
 
 [dev-dependencies.ruda-kernel]
 path = "../../ruda-kernel"
-version = "0.1.0"
 default-features = false
 features = [ "frontend-std", "frontend-tracing",]
 
@@ -46,7 +40,6 @@ features = [ "frontend-std", "frontend-tracing",]
 default-features = false
 features = [ "default", "std", "pytorch",]
 path = ".."
-version = "0.21.0"
 
 [dev-dependencies.serde]
 version = "1.0.228"
@@ -59,6 +52,5 @@ features = []
 
 [dev-dependencies.ruda-tensor]
 path = "../../ruda-tensor"
-version = "0.21.0"
 default-features = false
 features = [ "api",]

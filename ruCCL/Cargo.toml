@@ -123,13 +123,11 @@ optional = true
 
 [dev-dependencies.ruda-tensor-host]
 path = "../ruda-tensor-host"
-version = "0.21.0"
 default-features = false
 features = [ "default",]
 
 [dev-dependencies.ruda-tensor]
 path = "../ruda-tensor"
-version = "0.21.0"
 default-features = false
 features = [ "api-std",]
 

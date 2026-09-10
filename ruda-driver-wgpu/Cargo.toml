@@ -190,7 +190,6 @@ features = [ "frontend", "lowering-wgsl",]
 
 [dev-dependencies.ruda-kernel]
 path = "../ruda-kernel"
-version = "0.1.0"
 default-features = false
 features = [ "frontend", "frontend-default", "frontend-tests", "library", "library-tests",]
 

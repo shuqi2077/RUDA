@@ -43,8 +43,8 @@ serde = { version = "1.0.204", default-features = false, features = ["derive", "
 ruda-test-utils = { version = "0.1.0", path = "../ruda-test-utils", default-features = false, optional = true }
 
 [dev-dependencies]
-ruda-test-runtime = { version = "0.1.0", path = "../ruda-test-runtime", default-features = false, features = ["test-runtime"] }
-ruda-test-utils = { version = "0.1.0", path = "../ruda-test-utils", default-features = false }
+ruda-test-runtime = { path = "../ruda-test-runtime", default-features = false, features = ["test-runtime"] }
+ruda-test-utils = { path = "../ruda-test-utils", default-features = false }
 pretty_assertions = "1.4"
 trybuild = "1"
 

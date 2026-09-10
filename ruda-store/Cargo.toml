@@ -166,7 +166,6 @@ optional = true
 
 [dev-dependencies.ruda-tensor-host]
 path = "../ruda-tensor-host"
-version = "0.21.0"
 features = [ "default",]
 default-features = false
 
@@ -179,7 +178,6 @@ version = "3.24.0"
 [dev-dependencies.ruda-nn]
 default-features = false
 path = "../ruda-nn"
-version = "0.21.0"
 
 [lints.clippy]
 

@@ -46,18 +46,15 @@ optional = true
 
 [dev-dependencies.ruda-test-runtime]
 path = "../ruda-test-runtime"
-version = "0.1.0"
 features = ["test-runtime"]
 default-features = false
 
 [dev-dependencies.ruda-kernel]
 path = "../ruda-kernel"
-version = "0.1.0"
 features = ["quantization-kernels"]
 
 [dev-dependencies.ruda-test-utils]
 path = "../ruda-test-utils"
-version = "0.1.0"
 default-features = false
 
 [dev-dependencies.pretty_assertions]

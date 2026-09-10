@@ -40,7 +40,7 @@ lowering-metal = [ "lowering-cpp", "ruda-compiler/cpp-metal",]
 ruda-kernel-macros = { version = "0.1.0", path = "../ruda-kernel-macros", default-features = false }
 
 [dev-dependencies]
-ruda = { version = "0.1.0", path = "../ruda" }
+ruda = { path = "../ruda" }
 half = "=2.7.1"
 
 [lints.rust]
@@ -54,7 +54,6 @@ optional = true
 
 [dev-dependencies.ruda-test-utils]
 path = "../ruda-test-utils"
-version = "0.1.0"
 default-features = false
 
 [dependencies.serde]
@@ -65,7 +64,6 @@ optional = true
 
 [dev-dependencies.ruda-test-runtime]
 path = "../ruda-test-runtime"
-version = "0.1.0"
 features = ["test-runtime"]
 default-features = false
 
