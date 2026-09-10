@@ -188,10 +188,14 @@ fn requires_explicit_target() {
 
 #[test]
 fn validation_mode_is_not_silently_unchecked() {
-    assert!(matches!(
-        compile(kernel("validate"), ExecutionMode::Validate, UIntKind::U32),
-        Err(CompilationError::UnsupportedInstruction { .. })
-    ));
+    let k = add_kernel("validate", Type::scalar(ElemType::Float(FloatKind::F32)), UIntKind::U32);
+    let checked = compile(k.clone(), ExecutionMode::Checked, UIntKind::U32).unwrap();
+    let validated = compile(k, ExecutionMode::Validate, UIntKind::U32).unwrap();
+    assert_eq!(validated.source.matches("setp.ge.").count(), 3);
+    assert_eq!(validated.source.matches("call.uni (printf_status), vprintf").count(), 3);
+    assert!(!checked.source.contains("vprintf"));
+    assert_eq!(validated.source.matches("ld.global.f32").count(), 2);
+    assert_eq!(validated.source.matches("st.global.f32").count(), 1);
 }
 
 #[test]
@@ -206,7 +210,7 @@ fn unsupported_ir_is_not_sent_to_nvrtc() {
         Err(CompilationError::UnsupportedInstruction { .. })
     ));
     let mut k = kernel("unsupported");
-    let ty = Type::scalar(ElemType::Float(FloatKind::F32));
+    let ty = Type::scalar(ElemType::Float(FloatKind::F64));
     k.body.instructions.push(Instruction::new(
         Arithmetic::Exp(UnaryOperator {
             input: Variable::constant(ConstantValue::Float(1.0), ty),
@@ -217,6 +221,25 @@ fn unsupported_ir_is_not_sent_to_nvrtc() {
         compile(k, ExecutionMode::Checked, UIntKind::U32),
         Err(CompilationError::UnsupportedInstruction { .. })
     ));
+}
+
+#[test]
+fn f32_exponential_emits_native_ptx() {
+    let mut k = kernel("exp_f32");
+    let ty = Type::scalar(ElemType::Float(FloatKind::F32));
+    k.body.instructions.push(Instruction::new(
+        Arithmetic::Exp(UnaryOperator {
+            input: Variable::constant(ConstantValue::Float(1.0), ty),
+        }),
+        local(0, ty),
+    ));
+    let result = compile(k, ExecutionMode::Checked, UIntKind::U32).unwrap();
+    assert!(result.source.contains("ld.const.u64"));
+    assert!(result.source.contains("cvt.rn.f32.f64"));
+    assert!(result.source.contains("setp.neu.f32"));
+    assert!(result.source.contains("setp.gt.f32"));
+    assert!(result.source.contains("setp.lt.f32"));
+    assert!(!result.source.contains("ex2.approx"));
 }
 
 #[test]

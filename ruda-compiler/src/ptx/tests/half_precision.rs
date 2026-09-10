@@ -80,17 +80,26 @@ fn half_target_requirements_are_explicit() {
 
 #[test]
 fn half_division_is_not_emitted_as_invalid_ptx() {
-    let mut k = kernel("half_division");
-    let ty = Type::scalar(ElemType::Float(FloatKind::F16));
-    let a = Variable::constant(ConstantValue::Float(1.0), ty);
-    k.body.register(Instruction::new(
-        Arithmetic::Div(BinaryOperator { lhs: a, rhs: a }),
-        local(0, ty),
-    ));
-    assert!(matches!(
-        compile(k, ExecutionMode::Checked, UIntKind::U32),
-        Err(CompilationError::UnsupportedInstruction { .. })
-    ));
+    for kind in [FloatKind::F16, FloatKind::BF16] {
+        let mut k = kernel("half_division");
+        let ty = Type::scalar(ElemType::Float(kind));
+        let a = Variable::constant(ConstantValue::Float(1.0), ty);
+        k.body.register(Instruction::new(
+            Arithmetic::Div(BinaryOperator { lhs: a, rhs: a }),
+            local(0, ty),
+        ));
+        let result = compile(k, ExecutionMode::Checked, UIntKind::U32).unwrap();
+        let suffix = types::Scalar::of(ty).unwrap().suffix();
+        if kind == FloatKind::F16 {
+            assert_eq!(result.source.matches("cvt.f32.f16").count(), 2);
+        } else {
+            assert_eq!(result.source.matches("{0, ").count(), 2);
+        }
+        assert_eq!(result.source.matches("div.rn.f32").count(), 1);
+        assert!(result.source.contains(&format!("cvt.rn.{suffix}.f32")));
+        assert!(!result.source.contains("div.rn.f16"));
+        assert!(!result.source.contains("div.rn.bf16"));
+    }
 }
 
 #[test]

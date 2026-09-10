@@ -65,7 +65,7 @@ fn freeing_unused_shared_storage_does_not_allocate() {
 
 #[test]
 fn invalid_shared_layouts_fail_before_allocation() {
-    for (alignment, unroll_factor) in [(0, 1), (3, 1), (4, 1), (128, 2)] {
+    for (alignment, unroll_factor) in [(0, 1), (3, 1), (4, 1), (128, 0)] {
         let mut k = kernel("invalid_shared");
         let ty: Type = UIntKind::U64.into();
         let variable = Variable::new(
@@ -81,6 +81,27 @@ fn invalid_shared_layouts_fail_before_allocation() {
         load(&mut k.body, variable, 0u32.into(), value);
         assert!(compile(k, ExecutionMode::Checked, UIntKind::U32).is_err());
     }
+}
+
+#[test]
+fn shared_unroll_factor_scales_allocation() {
+    let mut k = kernel("unrolled_shared");
+    let ty: Type = UIntKind::U64.into();
+    let variable = Variable::new(
+        VariableKind::SharedArray {
+            id: 0,
+            length: 64,
+            unroll_factor: 2,
+            alignment: Some(128),
+        },
+        ty,
+    );
+    let value = *k.body.create_local(ty);
+    load(&mut k.body, variable, 0u32.into(), value);
+    let result = compile(k, ExecutionMode::Checked, UIntKind::U32).unwrap();
+    assert_eq!(result.shared_memory_bytes, 64 * 2 * 8);
+    assert!(result.source.contains(".extern .shared .align 128 .b8 dynamic_shared_mem[]"));
+    assert!(result.source.contains("ld.shared.u64"));
 }
 
 #[test]
