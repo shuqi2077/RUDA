@@ -13,10 +13,39 @@ use super::{
     momentum::{Momentum, MomentumConfig, MomentumState},
 };
 use crate::LearningRate;
+use ruda_model::tensor::DType;
+
+mod error;
+pub use error::MuonError;
+mod grouped;
+pub use grouped::{MuonAdamW, MuonAdamWConfig, MuonAdamWRecord};
+
+/// Momentum convention. Checkpoint buffers are NOT interchangeable between modes.
+#[derive(Clone, Default, Debug, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MuonMomentumMode {
+    /// Preserve RUDA's existing SGD momentum (including first-step initialization).
+    #[default]
+    Sgd,
+    /// Exponential moving average: m = beta*m + (1-beta)*g, starting at zero.
+    /// Nesterov update is (1-beta)*g + beta*m. Dampening must be zero.
+    Ema,
+}
 
 #[cfg(not(feature = "std"))]
 #[allow(unused_imports)]
 use num_traits::Float as _;
+
+/// Logical orientation used ONLY for shape-based learning-rate scaling.
+/// The tensor itself is not reshaped and its update keeps the same geometry.
+#[derive(Clone, Default, Debug, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MuonMatrixLayout {
+    /// Interpret [rows, columns] as [outputs, inputs]; legacy behavior.
+    #[default]
+    AsStored,
+    /// Tensor is [inputs, outputs], as in ruda-nn Linear. Use the reversed
+    /// aspect ratio for Original LR scaling (the RMS rule is symmetric).
+    InputOutput,
+}
 
 /// Learning rate adjustment method for Muon optimizer.
 ///
@@ -156,21 +185,88 @@ pub struct MuonConfig {
     /// See [`AdjustLrFn`] for available methods.
     #[config(default = "AdjustLrFn::Original")]
     adjust_lr_fn: AdjustLrFn,
+
+    /// Legacy SGD momentum by default; choose Ema explicitly for the current
+    /// reference implementation's buffer convention. Save this config with records.
+    #[config(default = "MuonMomentumMode::Sgd")]
+    momentum_mode: MuonMomentumMode,
+
+    /// Scale before squaring to avoid FP32 Frobenius-norm overflow/underflow.
+    /// Opt-in to preserve legacy rounding. Requires FP32 parameters and gradients.
+    #[config(default = false)]
+    stable_normalization: bool,
+
+    /// Explicit matrix orientation; embeddings are not identified by this flag.
+    #[config(default = "MuonMatrixLayout::AsStored")]
+    matrix_layout: MuonMatrixLayout,
 }
 
 impl MuonConfig {
     /// Build a [`Muon`] from the config.
     pub fn build<B: Backend>(&self) -> Muon<B> {
+        self.try_build().unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    /// Validate host configuration without launching a device operation.
+    pub fn validate(&self) -> Result<(), MuonError> {
+        let beta = self.momentum.momentum;
+        let dampening = self.momentum.dampening;
+        if !beta.is_finite() || !(0.0..1.0).contains(&beta) {
+            return Err(MuonError::InvalidConfig("momentum must be finite in [0, 1)"));
+        }
+        if !dampening.is_finite() || !(0.0..=1.0).contains(&dampening) {
+            return Err(MuonError::InvalidConfig("dampening must be finite in [0, 1]"));
+        }
+        if self.momentum.nesterov && (beta == 0.0 || dampening != 0.0) {
+            return Err(MuonError::InvalidConfig("Nesterov requires positive momentum and zero dampening"));
+        }
+        if self.momentum_mode == MuonMomentumMode::Ema && dampening != 0.0 {
+            return Err(MuonError::InvalidConfig("EMA momentum requires zero dampening"));
+        }
+        if !self.epsilon.is_finite() || self.epsilon <= 0.0 {
+            return Err(MuonError::InvalidConfig("epsilon must be finite and positive"));
+        }
+        if !(1..100).contains(&self.ns_steps) {
+            return Err(MuonError::InvalidConfig("Newton-Schulz steps must be in 1..100"));
+        }
+        let (a, b, c) = self.ns_coefficients;
+        if !a.is_finite() || !b.is_finite() || !c.is_finite() {
+            return Err(MuonError::InvalidConfig("Newton-Schulz coefficients must be finite"));
+        }
+        if let Some(decay) = &self.weight_decay {
+            if !decay.penalty.is_finite() || decay.penalty < 0.0 {
+                return Err(MuonError::InvalidConfig("weight decay must be finite and nonnegative"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Build with explicit configuration errors instead of a panic.
+    pub fn try_build<B: Backend>(&self) -> Result<Muon<B>, MuonError> {
+        self.validate()?;
         let momentum = Momentum::new(&self.momentum);
         let weight_decay_penalty = self.weight_decay.as_ref().map(|wd| wd.penalty);
 
-        Muon {
+        Ok(Muon {
             momentum,
             ns_params: NewtonSchulzParams::new(self.ns_coefficients, self.ns_steps),
             weight_decay_penalty,
             epsilon: self.epsilon,
             adjust_lr_fn: self.adjust_lr_fn,
-        }
+            momentum_mode: self.momentum_mode,
+            momentum_beta: self.momentum.momentum,
+            nesterov: self.momentum.nesterov,
+            stable_normalization: self.stable_normalization,
+            matrix_layout: self.matrix_layout,
+        })
+    }
+
+    /// Fallible model optimizer initialization. Only pass matrix-only modules;
+    /// use MuonAdamWConfig for a complete model with biases/embeddings.
+    pub fn try_init<B: AutodiffBackend, M: AutodiffModule<B>>(
+        &self,
+    ) -> Result<OptimizerAdaptor<Muon<B::InnerBackend>, M, B>, MuonError> {
+        Ok(OptimizerAdaptor::from(self.try_build()?))
     }
 
     /// Initialize Muon optimizer.
@@ -235,13 +331,14 @@ impl NewtonSchulzParams {
 /// Muon optimizer.
 ///
 /// Muon internally runs standard SGD-momentum, and then performs an orthogonalization
-/// post-processing step, in which each 2D parameter's update is replaced with the
-/// nearest orthogonal matrix. For efficient orthogonalization we use a Newton-Schulz
-/// iteration, which has the advantage that it can be stably run in bfloat16 on the GPU.
+/// post-processing step using a finite quintic Newton-Schulz iteration. This is an
+/// approximate spectral transformation, NOT an exact polar decomposition or a
+/// guarantee that U*U^T is identity. This implementation computes in the tensor's
+/// dtype; it does not silently cast to BF16 or create FP32 master parameters.
 ///
 /// # Important Notes
 ///
-/// 1. **Only for 2D+ parameters**: Muon is designed for weight matrices. Use AdamW
+/// 1. **Only for nonempty 2D parameters**: Muon is designed for hidden weight matrices. Use AdamW
 ///    or SGD for biases, embeddings, and layer norms.
 ///
 /// 2. **Learning rate adjustment**: Muon automatically adjusts the learning rate based
@@ -256,9 +353,81 @@ pub struct Muon<B: Backend> {
     weight_decay_penalty: Option<f32>,
     epsilon: f32,
     adjust_lr_fn: AdjustLrFn,
+    momentum_mode: MuonMomentumMode,
+    momentum_beta: f64,
+    nesterov: bool,
+    stable_normalization: bool,
+    matrix_layout: MuonMatrixLayout,
 }
 
 impl<B: Backend> Muon<B> {
+    /// Check tensor metadata before submitting kernels. Does not scan values for
+    /// NaN/Inf. Unscale and validate gradients before calling (on every rank).
+    pub fn validate_step<const D: usize>(
+        &self, lr: LearningRate, tensor: &Tensor<B, D>, grad: &Tensor<B, D>,
+        state: Option<&MuonState<B, D>>,
+    ) -> Result<(), MuonError> {
+        if D != 2 { return Err(MuonError::ExpectedMatrix { rank: D }); }
+        if !lr.is_finite() || lr < 0.0 {
+            return Err(MuonError::InvalidConfig("learning rate must be finite and nonnegative"));
+        }
+        let shape = tensor.shape();
+        if shape.iter().any(|dim| *dim == 0) { return Err(MuonError::EmptyMatrix); }
+        if shape != grad.shape() { return Err(MuonError::ShapeMismatch("gradient")); }
+        if tensor.dtype() != grad.dtype() { return Err(MuonError::DTypeMismatch("gradient")); }
+        if tensor.device() != grad.device() { return Err(MuonError::DeviceMismatch("gradient")); }
+        if self.stable_normalization && tensor.dtype() != DType::F32 {
+            return Err(MuonError::InvalidConfig("stable normalization requires FP32 tensors"));
+        }
+        if let Some(state) = state {
+            let buffer = state.momentum.velocity();
+            if shape != buffer.shape() { return Err(MuonError::ShapeMismatch("momentum")); }
+            if tensor.dtype() != buffer.dtype() { return Err(MuonError::DTypeMismatch("momentum")); }
+            if tensor.device() != buffer.device() { return Err(MuonError::DeviceMismatch("momentum")); }
+        }
+        let adjusted = self.adjust_lr(lr, &shape);
+        let decay = lr * self.weight_decay_penalty.unwrap_or(0.0) as f64;
+        if !adjusted.is_finite() || !decay.is_finite()
+            || (tensor.dtype() == DType::F32 && (!(adjusted as f32).is_finite() || !(decay as f32).is_finite())) {
+            return Err(MuonError::InvalidConfig("effective learning rate/decay overflows"));
+        }
+        Ok(())
+    }
+
+    /// Fallible metadata-checked update. Output and state may still be executing
+    /// asynchronously. An accepted submission is not proof of device completion.
+    ///
+    /// Uses a complete 2D matrix, never a flattened mixed-parameter buffer or
+    /// an arbitrary shard. Missing gradients must be skipped by the caller.
+    pub fn try_step<const D: usize>(
+        &self, lr: LearningRate, tensor: Tensor<B, D>, grad: Tensor<B, D>,
+        state: Option<MuonState<B, D>>,
+    ) -> Result<(Tensor<B, D>, Option<MuonState<B, D>>), MuonError> {
+        self.validate_step(lr, &tensor, &grad, state.as_ref())?;
+        let (update, momentum) = match self.momentum_mode {
+            MuonMomentumMode::Sgd => self.momentum.transform(grad, state.map(|s| s.momentum)),
+            MuonMomentumMode::Ema => {
+                let beta = self.momentum_beta;
+                let buffer = match state {
+                    Some(s) => s.momentum.velocity().clone().mul_scalar(beta)
+                        .add(grad.clone().mul_scalar(1.0 - beta)),
+                    None => grad.clone().mul_scalar(1.0 - beta),
+                };
+                let update = if self.nesterov {
+                    grad.mul_scalar(1.0 - beta).add(buffer.clone().mul_scalar(beta))
+                } else { buffer.clone() };
+                (update, MomentumState::new(buffer))
+            }
+        };
+        let update = self.zeropower_via_newtonschulz(update);
+        let adjusted_lr = self.adjust_lr(lr, &tensor.shape());
+        let tensor = match self.weight_decay_penalty {
+            Some(penalty) => tensor.mul_scalar(1.0 - lr * penalty as f64),
+            None => tensor,
+        };
+        Ok((tensor - update.mul_scalar(adjusted_lr), Some(MuonState::new(momentum))))
+    }
+
     /// Adjust learning rate based on parameter shape.
     ///
     /// # Arguments
@@ -276,7 +445,12 @@ impl<B: Backend> Muon<B> {
     /// // MatchRmsAdamW: 0.01 * 0.2 * sqrt(1024) = 0.01 * 0.2 * 32 = 0.064
     /// ```
     fn adjust_lr(&self, lr: LearningRate, shape: &[usize]) -> LearningRate {
-        lr * self.adjust_lr_fn.adjustment_ratio(shape)
+        let ratio = match self.matrix_layout {
+            MuonMatrixLayout::InputOutput if shape.len() == 2 =>
+                self.adjust_lr_fn.adjustment_ratio(&[shape[1], shape[0]]),
+            _ => self.adjust_lr_fn.adjustment_ratio(shape),
+        };
+        lr * ratio
     }
 
     /// Perform Newton-Schulz orthogonalization on a gradient tensor.
@@ -312,15 +486,21 @@ impl<B: Backend> Muon<B> {
 
         // Step 2: Normalize by Frobenius norm
         // X = X / (||X|| + epsilon)
-        let norm = x
-            .clone()
-            .powf_scalar(2.0)
-            .sum()
-            .sqrt()
-            .clamp_min(self.epsilon)
-            .unsqueeze();
-
-        x = x.div(norm);
+        if self.stable_normalization {
+            // Equivalent in real arithmetic to x / max(||x||_F, eps), without
+            // forming x*x at its original scale. A zero matrix stays zero.
+            // The caller validates FP32; MIN_POSITIVE is not representable in FP16.
+            let scale = x.clone().abs().max().clamp_min(f32::MIN_POSITIVE);
+            let scaled = x.div(scale.clone().unsqueeze());
+            let floor = scale.recip().mul_scalar(self.epsilon);
+            let norm = scaled.clone().square().sum().sqrt().max_pair(floor);
+            x = scaled.div(norm.unsqueeze());
+        } else {
+            // Preserve the existing RUDA normalization and dtype/rounding path.
+            let norm = x.clone().powf_scalar(2.0).sum().sqrt()
+                .clamp_min(self.epsilon).unsqueeze();
+            x = x.div(norm);
+        }
 
         // Step 3: Newton-Schulz iteration
         // This is the quintic iteration with coefficients (a, b, c)
@@ -384,36 +564,8 @@ impl<B: Backend> SimpleOptimizer<B> for Muon<B> {
         grad: Tensor<B, D>,
         state: Option<Self::State<D>>,
     ) -> (Tensor<B, D>, Option<Self::State<D>>) {
-        assert!(
-            D == 2,
-            "Newton-Schulz iteration requires 2D tensors, got {}D",
-            D
-        );
-
-        // Step 1: Apply momentum
-        let state_momentum = state.map(|s| s.momentum);
-        let (grad, new_momentum_state) = self.momentum.transform(grad, state_momentum);
-
-        // Step 2: Orthogonalize via Newton-Schulz
-        let update = self.zeropower_via_newtonschulz(grad);
-
-        // Step 3: Adjust learning rate based on parameter shape
-        let adjusted_lr = self.adjust_lr(lr, &tensor.shape());
-
-        // Step 4: Apply weight decay (using ORIGINAL lr, not adjusted)
-        // Muon applies weight decay AFTER orthogonalization
-        let tensor = if let Some(penalty) = self.weight_decay_penalty {
-            let decay_factor = 1.0 - lr * penalty as f64;
-            tensor.mul_scalar(decay_factor)
-        } else {
-            tensor
-        };
-
-        // Step 5: Update parameter (using ADJUSTED lr)
-        let delta = update.mul_scalar(adjusted_lr);
-        let new_state = MuonState::new(new_momentum_state);
-
-        (tensor - delta, Some(new_state))
+        self.try_step(lr, tensor, grad, state)
+            .unwrap_or_else(|error| panic!("{error}"))
     }
 
     fn to_device<const D: usize>(mut state: Self::State<D>, device: &Device<B>) -> Self::State<D> {

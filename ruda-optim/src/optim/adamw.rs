@@ -112,6 +112,20 @@ impl<B: Backend> SimpleOptimizer<B> for AdamW {
 }
 
 impl AdamWConfig {
+    /// Validation shared by explicit mixed-optimizer configuration.
+    pub(crate) fn validate_hyperparameters(&self) -> Result<(), &'static str> {
+        if !self.beta_1.is_finite() || !self.beta_2.is_finite()
+            || !(0.0..1.0).contains(&self.beta_1) || !(0.0..1.0).contains(&self.beta_2) {
+            return Err("AdamW betas must be finite in [0, 1)");
+        }
+        if !self.epsilon.is_finite() || self.epsilon <= 0.0 {
+            return Err("AdamW epsilon must be finite and positive");
+        }
+        if !self.weight_decay.is_finite() || self.weight_decay < 0.0 {
+            return Err("AdamW weight decay must be finite and nonnegative");
+        }
+        Ok(())
+    }
     /// Build an [`AdamW`] from the config.
     pub fn build(&self) -> AdamW {
         AdamW {

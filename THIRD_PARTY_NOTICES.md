@@ -498,3 +498,22 @@ SOFTWARE.
 - https://github.com/tracel-ai/cubecl/issues/1120
 - https://github.com/tracel-ai/cubecl/pull/1312
 - https://github.com/tracel-ai/cubek/issues/194
+
+
+## Muon integration additions (2026-09-10)
+
+The Muon implementation in ruda-optim already exists in the supplied baseline and
+retains its original RUDA/Burn-derived provenance and package license. This patch
+adds explicit parameter routing, validation, numerical options and tests; it does
+not relabel the existing optimizer as a newly invented algorithm. New files carry
+an Apache-2.0 SPDX identifier. No upstream Python source file is bundled.
+
+Algorithm references: Keller Jordan et al., Muon (https://github.com/KellerJordan/Muon),
+and PyTorch's fixed v2.9 implementation
+(https://github.com/pytorch/pytorch/blob/v2.9.0/torch/optim/_muon.py).
+The learning-rate option MatchRmsAdamW refers to Moonshot's
+Muon is Scalable for LLM Training (https://arxiv.org/abs/2502.16982).
+
+The numerical oracle additionally calls the locally installed, unmodified
+torch.optim.Muon. Its source hash/version are recorded in the validation results;
+the installed PyTorch source is not redistributed with this patch.

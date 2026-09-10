@@ -77,6 +77,11 @@ impl<B: Backend> Momentum<B> {
 }
 
 impl<B: Backend, const D: usize> MomentumState<B, D> {
+    /// Read the momentum buffer without changing its ownership or contents.
+    pub fn velocity(&self) -> &Tensor<B, D> {
+        &self.velocity
+    }
+
     /// Moves the state to a device.
     ///
     /// # Arguments

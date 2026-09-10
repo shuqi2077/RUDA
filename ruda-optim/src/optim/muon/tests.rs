@@ -1,11 +1,10 @@
 use super::*;
-use crate::TestAutodiffBackend;
+use crate::{TestBackend, TestAutodiffBackend};
 use crate::{GradientsParams, Optimizer};
 use ruda_model::module::{Module, Param};
 use ruda_model::tensor::{Distribution, Tensor, TensorData};
 use ruda_nn::{Linear, LinearConfig, LinearRecord};
 
-type TestBackend = ruda_tensor_host::Host;
 
 const TOLERANCE: f64 = 1e-8;
 
@@ -60,13 +59,7 @@ fn test_adjust_lr_fn_match_rms_adamw() {
 fn test_1d_tensor_panics() {
     let device = Default::default();
     let config = MuonConfig::new();
-    let optim: Muon<TestBackend> = Muon {
-        momentum: Momentum::new(&config.momentum),
-        ns_params: NewtonSchulzParams::new(config.ns_coefficients, config.ns_steps),
-        weight_decay_penalty: None,
-        epsilon: config.epsilon,
-        adjust_lr_fn: config.adjust_lr_fn,
-    };
+    let optim: Muon<TestBackend> = config.build();
 
     let tensor_1d = Tensor::<TestBackend, 1>::zeros([512], &device);
     let grad_1d = Tensor::<TestBackend, 1>::ones([512], &device);
@@ -139,36 +132,14 @@ fn test_muon_with_weight_decay() {
 }
 
 #[test]
-fn test_newton_schulz_orthogonalization() {
+fn test_newton_schulz_matches_polynomial_not_exact_identity() {
     let device = Default::default();
     let matrix = Tensor::<TestBackend, 2>::from_floats([[1.0, 0.5], [0.5, 1.0]], &device);
-
-    let config = MuonConfig::new();
-    let muon: Muon<TestBackend> = Muon {
-        momentum: Momentum::new(&config.momentum),
-        ns_params: NewtonSchulzParams::new(config.ns_coefficients, config.ns_steps),
-        weight_decay_penalty: None,
-        epsilon: config.epsilon,
-        adjust_lr_fn: config.adjust_lr_fn,
-    };
-
-    let orthogonalized = muon.zeropower_via_newtonschulz(matrix);
-    let o_t = orthogonalized.clone().transpose();
-    let product = orthogonalized.matmul(o_t);
-
-    let data = product.into_data();
-    let values = data.as_slice::<f32>().unwrap();
-
-    assert!(
-        (values[0] - 1.0).abs() < 0.1,
-        "Product[0,0] should be ~1.0, got {}",
-        values[0]
-    );
-    assert!(
-        (values[3] - 1.0).abs() < 0.1,
-        "Product[1,1] should be ~1.0, got {}",
-        values[3]
-    );
+    let muon: Muon<TestBackend> = MuonConfig::new().build();
+    let out = muon.zeropower_via_newtonschulz(matrix);
+    let expected = scalar_reference::orthogonalize(&[1.0, 0.5, 0.5, 1.0], 2, 2, 5, 1e-7, false);
+    assert_close(&values(out), &expected, 3e-5);
+    // Five quintic iterations do not promise an exact orthogonal factor.
 }
 
 #[test]
@@ -193,13 +164,7 @@ fn test_tall_matrix_transpose() {
     );
 
     let config = MuonConfig::new();
-    let muon: Muon<TestBackend> = Muon {
-        momentum: Momentum::new(&config.momentum),
-        ns_params: NewtonSchulzParams::new(config.ns_coefficients, config.ns_steps),
-        weight_decay_penalty: None,
-        epsilon: config.epsilon,
-        adjust_lr_fn: config.adjust_lr_fn,
-    };
+    let muon: Muon<TestBackend> = config.build();
 
     // Perform Newton-Schulz orthogonalization
     let orthogonalized = muon.zeropower_via_newtonschulz(tall_matrix.clone());
@@ -264,13 +229,7 @@ fn test_zero_gradient() {
     let zero_grad = Tensor::<TestBackend, 2>::zeros([4, 4], &device);
 
     let config = MuonConfig::new();
-    let muon: Muon<TestBackend> = Muon {
-        momentum: Momentum::new(&config.momentum),
-        ns_params: NewtonSchulzParams::new(config.ns_coefficients, config.ns_steps),
-        weight_decay_penalty: None,
-        epsilon: config.epsilon,
-        adjust_lr_fn: config.adjust_lr_fn,
-    };
+    let muon: Muon<TestBackend> = config.build();
 
     // Should not panic or produce NaN
     let (updated_tensor, state) = muon.step(0.01, tensor.clone(), zero_grad, None);
@@ -301,13 +260,7 @@ fn test_zero_gradient() {
     }
 
     // Test with weight decay - should still work
-    let muon_with_decay: Muon<TestBackend> = Muon {
-        momentum: Momentum::new(&config.momentum),
-        ns_params: NewtonSchulzParams::new(config.ns_coefficients, config.ns_steps),
-        weight_decay_penalty: Some(0.01),
-        epsilon: config.epsilon,
-        adjust_lr_fn: config.adjust_lr_fn,
-    };
+    let muon_with_decay: Muon<TestBackend> = MuonConfig::new().with_weight_decay(Some(WeightDecayConfig::new(0.01))).build();
 
     let tensor2 = Tensor::<TestBackend, 2>::from_floats(
         [
@@ -347,4 +300,175 @@ fn test_zero_gradient() {
             );
         }
     }
+}
+
+#[path = "test_reference.rs"]
+mod scalar_reference;
+
+fn values<const D: usize>(tensor: Tensor<TestBackend, D>) -> Vec<f32> {
+    tensor.into_data().as_slice::<f32>().unwrap().to_vec()
+}
+fn assert_close(actual: &[f32], expected: &[f64], tolerance: f64) {
+    assert_eq!(actual.len(), expected.len());
+    for (i, (a, e)) in actual.iter().zip(expected).enumerate() {
+        assert!(a.is_finite() && e.is_finite());
+        assert!((*a as f64 - e).abs() <= tolerance * (1.0 + e.abs()),
+            "element {i}: {a} vs {e}");
+    }
+}
+fn data_tensor(values: &[f64], rows: usize, cols: usize) -> Tensor<TestBackend, 2> {
+    Tensor::from_data(TensorData::new(values.iter().map(|v| *v as f32).collect(), [rows, cols]), &Default::default())
+}
+
+#[test]
+fn muon_numerics_multistep_against_independent_f64() {
+    for (rows, cols) in [(3, 5), (5, 3), (3, 3)] {
+        for ema in [false, true] {
+            for nesterov in [false, true] {
+                for stable in [false, true] {
+                    for rms in [false, true] {
+                        let config = MuonConfig::new()
+                            .with_momentum(MomentumConfig::new().with_momentum(0.95).with_dampening(0.0).with_nesterov(nesterov))
+                            .with_momentum_mode(if ema { MuonMomentumMode::Ema } else { MuonMomentumMode::Sgd })
+                            .with_stable_normalization(stable)
+                            .with_adjust_lr_fn(if rms { AdjustLrFn::MatchRmsAdamW } else { AdjustLrFn::Original })
+                            .with_weight_decay(Some(WeightDecayConfig::new(0.01)));
+                        let optim: Muon<TestBackend> = config.build();
+                        let reference_config = scalar_reference::Settings { ema, nesterov, stable, rms, ..Default::default() };
+                        let mut weights: Vec<f64> = (0..rows*cols).map(|i| (i as f64 - 6.0) * 0.03).collect();
+                        let mut tensor = data_tensor(&weights, rows, cols);
+                        let mut state = None;
+                        let mut reference_state = None;
+                        for step in 0..4 {
+                            let grad: Vec<f64> = (0..rows*cols).map(|i| (((i*7 + step*3)%17) as f64 - 8.0)*0.125).collect();
+                            let expected = scalar_reference::step(&weights, &grad, reference_state.as_deref(), rows, cols, &reference_config);
+                            let (next, next_state) = optim.try_step(0.02, tensor, data_tensor(&grad, rows, cols), state).unwrap();
+                            assert_close(&values(next.clone()), &expected.0, 2e-4);
+                            assert_close(&values(next_state.as_ref().unwrap().momentum.velocity().clone()), &expected.1, 2e-5);
+                            tensor = next; state = next_state;
+                            weights = expected.0; reference_state = Some(expected.1);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn muon_invalid_config_is_rejected_before_build() {
+    for bad in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+        assert!(MuonConfig::new().with_epsilon(bad).validate().is_err());
+    }
+    for bad in [0, 100, usize::MAX] {
+        assert!(MuonConfig::new().with_ns_steps(bad).validate().is_err());
+    }
+    for bad in [-1.0, 1.0, f64::NAN, f64::INFINITY] {
+        assert!(MuonConfig::new().with_momentum(MomentumConfig::new().with_momentum(bad)).validate().is_err());
+    }
+    assert!(MuonConfig::new().with_ns_coefficients((f32::NAN, 1.0, 1.0)).validate().is_err());
+    assert!(MuonConfig::new().with_weight_decay(Some(WeightDecayConfig::new(-0.1))).validate().is_err());
+}
+
+#[test]
+fn muon_ema_rejects_dampening_and_invalid_nesterov() {
+    assert!(MuonConfig::new().with_momentum_mode(MuonMomentumMode::Ema)
+        .with_momentum(MomentumConfig::new().with_dampening(0.1)).validate().is_err());
+    assert!(MuonConfig::new().with_momentum(MomentumConfig::new()
+        .with_momentum(0.0).with_dampening(0.0).with_nesterov(true)).validate().is_err());
+    assert!(MuonConfig::new().with_momentum(MomentumConfig::new()
+        .with_momentum(0.0).with_dampening(0.0).with_nesterov(false)).validate().is_ok());
+}
+
+#[test]
+fn muon_shape_broadcast_is_rejected() {
+    let device = Default::default();
+    let optim: Muon<TestBackend> = MuonConfig::new().build();
+    assert!(matches!(optim.try_step::<2>(0.02, Tensor::ones([2, 3], &device), Tensor::ones([1, 3], &device), None),
+        Err(MuonError::ShapeMismatch("gradient"))));
+}
+
+#[test]
+fn muon_bad_state_shape_is_rejected() {
+    let device = Default::default();
+    let optim: Muon<TestBackend> = MuonConfig::new().build();
+    let bad = MuonState::new(MomentumState::new(Tensor::zeros([2, 4], &device)));
+    assert!(matches!(optim.try_step::<2>(0.02, Tensor::ones([2, 3], &device), Tensor::ones([2, 3], &device), Some(bad)),
+        Err(MuonError::ShapeMismatch("momentum"))));
+}
+
+#[test]
+fn muon_nonmatrix_returns_error_without_indexing() {
+    let device = Default::default();
+    let optim: Muon<TestBackend> = MuonConfig::new().build();
+    assert!(matches!(optim.try_step::<1>(0.02, Tensor::ones([3], &device), Tensor::ones([3], &device), None),
+        Err(MuonError::ExpectedMatrix { rank: 1 })));
+}
+
+#[test]
+fn muon_negative_or_nonfinite_lr_is_rejected() {
+    let device = Default::default();
+    let optim: Muon<TestBackend> = MuonConfig::new().build();
+    for lr in [-0.01, f64::NAN, f64::INFINITY, f64::MAX] {
+        assert!(optim.try_step::<2>(lr, Tensor::ones([2, 3], &device), Tensor::ones([2, 3], &device), None).is_err());
+    }
+}
+
+#[test]
+fn muon_zero_lr_does_not_change_weights_but_updates_momentum() {
+    let w = data_tensor(&[1.0, 2.0, 3.0, 4.0], 2, 2);
+    let optim: Muon<TestBackend> = MuonConfig::new().with_momentum_mode(MuonMomentumMode::Ema).build();
+    let (out, state) = optim.try_step(0.0, w, data_tensor(&[1.0; 4], 2, 2), None).unwrap();
+    assert_close(&values(out), &[1.0, 2.0, 3.0, 4.0], 0.0);
+    assert_close(&values(state.unwrap().momentum.velocity().clone()), &[0.05; 4], 1e-6);
+}
+
+#[test]
+fn muon_stable_normalization_extreme_finite_and_zero() {
+    let optim: Muon<TestBackend> = MuonConfig::new().with_stable_normalization(true).build();
+    for scale in [0.0, 1e-30, 1e30] {
+        let values_in = [scale, -scale*0.5, scale*0.25, scale*0.75];
+        let out = optim.zeropower_via_newtonschulz(data_tensor(&values_in, 2, 2));
+        let reference = scalar_reference::orthogonalize(&values_in, 2, 2, 5, 1e-7, true);
+        assert_close(&values(out), &reference, 5e-5);
+    }
+}
+
+#[test]
+fn muon_orientation_changes_original_scale_not_decay() {
+    let normal: Muon<TestBackend> = MuonConfig::new().build();
+    let io: Muon<TestBackend> = MuonConfig::new().with_matrix_layout(MuonMatrixLayout::InputOutput).build();
+    assert!((normal.adjust_lr(0.02, &[2, 8]) - 0.02).abs() < 1e-12);
+    assert!((io.adjust_lr(0.02, &[2, 8]) - 0.04).abs() < 1e-12);
+    let optim: Muon<TestBackend> = MuonConfig::new().with_matrix_layout(MuonMatrixLayout::InputOutput)
+        .with_weight_decay(Some(WeightDecayConfig::new(0.1))).build();
+    let device = Default::default();
+    let (out, _) = optim.try_step::<2>(0.02, Tensor::ones([2, 8], &device), Tensor::zeros([2, 8], &device), None).unwrap();
+    assert_close(&values(out), &[0.998; 16], 1e-6);
+}
+
+#[test]
+fn muon_legacy_default_is_preserved() {
+    let config = MuonConfig::new();
+    assert_eq!(config.momentum_mode, MuonMomentumMode::Sgd);
+    assert!(!config.stable_normalization);
+    assert_eq!(config.matrix_layout, MuonMatrixLayout::AsStored);
+    let optim: Muon<TestBackend> = config.build();
+    let (out, state) = optim.try_step(0.02, data_tensor(&[1.0; 4], 2, 2), data_tensor(&[0.25; 4], 2, 2), None).unwrap();
+    assert!(values(out).iter().all(|v| v.is_finite()));
+    assert_close(&values(state.unwrap().momentum.velocity().clone()), &[0.25; 4], 0.0);
+}
+
+#[test]
+fn muon_state_roundtrip_continuation_matches() {
+    use ruda_model::record::FullPrecisionSettings;
+    let optim: Muon<TestBackend> = MuonConfig::new().with_momentum_mode(MuonMomentumMode::Ema).build();
+    let (w, state) = optim.try_step(0.02, data_tensor(&[1.0; 6], 2, 3), data_tensor(&[0.25; 6], 2, 3), None).unwrap();
+    let state = state.unwrap();
+    let item = state.clone().into_item::<FullPrecisionSettings>();
+    let loaded = MuonState::<TestBackend, 2>::from_item::<FullPrecisionSettings>(item, &Default::default());
+    let grad = data_tensor(&[-0.125, 0.25, 0.5, 0.25, 0.75, -0.5], 2, 3);
+    let (a, _) = optim.try_step(0.02, w.clone(), grad.clone(), Some(state)).unwrap();
+    let (b, _) = optim.try_step(0.02, w, grad, Some(loaded)).unwrap();
+    assert_eq!(values(a), values(b));
 }
