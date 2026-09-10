@@ -119,6 +119,7 @@ impl ValueTable {
             }
             Operation::Comparison(cmp) => self.create_expr_cmp(cmp, inst.out()),
             Operation::Bitwise(bitwise) => self.create_expr_simple_op(bitwise, inst.out()),
+            Operation::Operator(Operator::NativeStore(_)) => Err(None),
             Operation::Operator(operator) => self.create_expr_operator(operator, inst.out()),
             Operation::Metadata(metadata) => self.create_expr_meta(metadata, inst.out()),
             Operation::Plane(_) | Operation::Atomic(_) => Err(value_of_var(&inst.out())),
@@ -190,9 +191,10 @@ impl ValueTable {
         out: Variable,
     ) -> Result<(Expression, Option<Value>), Option<Value>> {
         let (expr, val) = match operator {
-            Operator::Index(_) | Operator::UncheckedIndex(_) => Err(value_of_var(&out))?,
+            Operator::Index(_) | Operator::UncheckedIndex(_) | Operator::NativeLoad(_) => Err(value_of_var(&out))?,
 
             Operator::IndexAssign(_)
+            | Operator::NativeStore(_)
             | Operator::UncheckedIndexAssign(_)
             | Operator::CopyMemoryBulk(_)
             | Operator::CopyMemory(_) => Err(None)?,

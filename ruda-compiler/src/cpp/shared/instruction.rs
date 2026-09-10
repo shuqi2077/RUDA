@@ -230,6 +230,9 @@ pub enum Instruction<D: Dialect> {
     Warp(WarpInstruction<D>),
     Wmma(WmmaInstruction<D>),
     Bitcast(UnaryInstruction<D>),
+    NativeAddress(BinaryInstruction<D>),
+    NativeLoad(UnaryInstruction<D>),
+    NativeStore { address: Variable<D>, value: Variable<D> },
     AtomicLoad(UnaryInstruction<D>),
     AtomicStore(UnaryInstruction<D>),
     AtomicSwap(BinaryInstruction<D>),
@@ -618,6 +621,19 @@ for ({i_ty} {i} = {start}; {i} {cmp} {end}; {increment}) {{
                         "{out} = reinterpret_cast<{addr_space}{out_item}{qualifier}&>({input});"
                     )
                 }
+            }
+            Instruction::NativeAddress(BinaryInstruction { lhs, rhs, out }) => {
+                let output = out.fmt_left();
+                writeln!(f, "{output} = reinterpret_cast<unsigned long long>(&{lhs}[{rhs}]);")
+            }
+            Instruction::NativeLoad(UnaryInstruction { input, out }) => {
+                let ty = out.item();
+                let output = out.fmt_left();
+                writeln!(f, "{output} = *reinterpret_cast<const {ty}*>({input});")
+            }
+            Instruction::NativeStore { address, value } => {
+                let ty = value.item();
+                writeln!(f, "*reinterpret_cast<{ty}*>({address}) = {value};")
             }
             Instruction::AtomicAdd(BinaryInstruction { lhs, rhs, out }) => {
                 D::compile_atomic_add(f, lhs, rhs, out)

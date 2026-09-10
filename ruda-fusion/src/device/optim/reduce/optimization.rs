@@ -197,7 +197,7 @@ impl<R: Runtime> ReduceOptimizationTuneArg<R> {
 
         self.fallback.run(context);
 
-        #[cfg(feature = "device-autotune-checks")]
+        #[cfg(any(feature = "device-autotune-checks", feature = "device-stack-autotune"))]
         if let TuneOutput::Checked { handles } = &mut output_read {
             let out_desc = context.tensors.get(&self.info.reduce.op.out.id).unwrap();
             let handle_out = context

@@ -128,6 +128,12 @@ where
         <I as TuneInputs>::At<'a>: Clone + Send,
         Out: AutotuneOutput,
     {
+        #[cfg(std_io)]
+        if super::stack::stack_autotuner().is_some() && operations.stack_reference().is_some() {
+            return super::stack::try_execute_stack(
+                self.name, &id.to_string(), client, operations, inputs,
+            ).expect("Full-stack autotune failed; request was not replayed");
+        }
         let key = operations.generate_key(&inputs);
 
         let tuner = {

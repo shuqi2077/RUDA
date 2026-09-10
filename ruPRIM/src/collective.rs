@@ -5,23 +5,30 @@ use ruda_kernel::dsl::prelude::*;
 
 pub(crate) mod merge;
 pub mod radix;
+pub mod record;
+pub mod decompose;
+
+#[ruda]
+pub trait RudaUnaryOp<T: RudaType, U: RudaType>: RudaType {
+    fn apply(&self, value: T) -> U;
+}
 
 /// A binary operator. Scans and reductions require associativity and preserve
 /// operand order; adjacent-difference operations do not require associativity.
 #[ruda]
-pub trait RudaBinaryOp<T: RudaPrimitive>: RudaType {
+pub trait RudaBinaryOp<T: RudaType>: RudaType {
     fn combine(&self, left: T, right: T) -> T;
 }
 
 /// A strict weak ordering for comparison-based algorithms.
 #[ruda]
-pub trait RudaCompare<T: RudaPrimitive>: RudaType {
+pub trait RudaCompare<T: RudaType>: RudaType {
     fn before(&self, left: T, right: T) -> bool;
 }
 
 /// An equivalence relation for adjacent-key operations.
 #[ruda]
-pub trait RudaKeyEqual<T: RudaPrimitive>: RudaType {
+pub trait RudaKeyEqual<T: RudaType>: RudaType {
     fn equal(&self, left: T, right: T) -> bool;
 }
 

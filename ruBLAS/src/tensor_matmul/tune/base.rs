@@ -18,7 +18,15 @@ fn matmul_input_gen<R: Runtime>(
     _key: &MatmulAutotuneKey,
     (lhs, rhs, out): &(RudaTensor<R>, RudaTensor<R>, RudaTensor<R>),
 ) -> (RudaTensor<R>, RudaTensor<R>, RudaTensor<R>) {
-    (lhs.clone(), rhs.clone(), out.copy())
+    // Matmul overwrites its output. A generic tensor copy both reads uninitialized outputs
+    // and may make a strided view contiguous, benchmarking the wrong layout. Preserve the
+    // complete allocation span and view offsets on a new, exclusively owned output buffer.
+    let mut scratch = out.clone();
+    let mut handle = out.client.empty(usize::try_from(out.handle.size()).expect("matmul scratch span exceeds usize"));
+    handle.offset_start = out.handle.offset_start;
+    handle.offset_end = out.handle.offset_end;
+    scratch.handle = handle;
+    (lhs.clone(), rhs.clone(), scratch)
 }
 
 /// Executes autotune on matmul operations
@@ -168,7 +176,10 @@ pub fn matmul_autotune_with_precision<R: Runtime>(
             }
         }
 
-        let mut set = TunableSet::new(create_key::<R>, matmul_input_gen::<R>);
+        let mut set = TunableSet::new(create_key::<R>, matmul_input_gen::<R>)
+            .with_stack_tuning(0, "matmul-whole-operator-v1", |(lhs, rhs, out)| {
+                format!("lhs={};rhs={};out={}", lhs.autotune_signature(), rhs.autotune_signature(), out.autotune_signature())
+            });
 
         // First entry should always work, since it is considered the fallback.
         set = set.with(

@@ -57,12 +57,12 @@ impl<'a, R: Runtime> LaunchPlanExecutor<'a, R> {
             }
         }
 
-        #[cfg(feature = "device-autotune-checks")]
+        #[cfg(any(feature = "device-autotune-checks", feature = "device-stack-autotune"))]
         let mut tune_output = TuneOutput::Checked {
             handles: std::collections::HashMap::new(),
         };
 
-        #[cfg(not(feature = "device-autotune-checks"))]
+        #[cfg(not(any(feature = "device-autotune-checks", feature = "device-stack-autotune")))]
         let mut tune_output = TuneOutput::UnChecked(PhantomData);
 
         if num_writes == 0 {
@@ -212,7 +212,7 @@ fn register_outputs<R: Runtime>(
                 precision,
                 global_shape,
                 strides,
-                #[cfg(feature = "device-autotune-checks")]
+                #[cfg(any(feature = "device-autotune-checks", feature = "device-stack-autotune"))]
                 debug_info,
             } => {
                 outputs.tensors.push(GlobalTensorArg::new(
@@ -226,7 +226,7 @@ fn register_outputs<R: Runtime>(
                     AddressType::default(),
                 ));
 
-                #[cfg(feature = "device-autotune-checks")]
+                #[cfg(any(feature = "device-autotune-checks", feature = "device-stack-autotune"))]
                 if let TuneOutput::Checked { handles, .. } = tune_output {
                     handles.insert(
                         debug_info.relative_id,
@@ -239,13 +239,13 @@ fn register_outputs<R: Runtime>(
                 handle,
                 global_shape,
                 vectorization: vector_size,
-                #[cfg(feature = "device-autotune-checks")]
+                #[cfg(any(feature = "device-autotune-checks", feature = "device-stack-autotune"))]
                 relative_id,
                 ..
             } => {
                 let at = handle.required_address_type();
 
-                #[cfg(feature = "device-autotune-checks")]
+                #[cfg(any(feature = "device-autotune-checks", feature = "device-stack-autotune"))]
                 if let TuneOutput::Checked { handles, .. } = tune_output {
                     handles.insert(relative_id, (global_shape.clone(), handle.clone()));
                 }

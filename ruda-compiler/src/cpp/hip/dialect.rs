@@ -33,6 +33,7 @@ pub struct HipDialect<M> {
 
 impl<M: DialectWmmaCompiler<Self>> Dialect for HipDialect<M> {
     type Architecture = AMDArchitecture;
+    fn supports_native_addresses() -> bool { true }
 }
 
 impl<M: DialectWmmaCompiler<Self>> DialectWarpReduceCompiler<Self> for HipDialect<M> {}

@@ -11,6 +11,7 @@ name = "rullm"
 
 [features]
 default = []
+stack-autotune = ["ruda-tensor-device/stack-autotune"]
 cann = ["dep:ruda-driver-cann", "rublas/cann", "rudnn/cann"]
 amd = ["dep:ruda-driver-hip", "ruda-tensor/hip", "ruda-tensor-device/autotune"]
 nvidia = ["ruda-tensor-device/cuda", "ruda-tensor-device/autotune", "dep:ruda-driver-cuda"]
@@ -63,3 +64,17 @@ required-features = ["amd"]
 [[example]]
 name = "qwen2_multi_gpu"
 required-features = ["nvidia"]
+
+[[example]]
+name = "qwen2_autotune"
+required-features = ["nvidia", "stack-autotune"]
+
+[[example]]
+name = "qwen2_autotune_amd"
+path = "examples/qwen2_autotune_amd.rs"
+required-features = ["amd", "stack-autotune"]
+
+[[test]]
+name = "stack_autotune_gpu"
+path = "tests/stack_autotune_gpu.rs"
+required-features = ["stack-autotune"]

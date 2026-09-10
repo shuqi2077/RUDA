@@ -12,6 +12,9 @@ use crate::mlir::visitor::prelude::*;
 impl<'a> Visitor<'a> {
     pub fn visit_operator_with_out(&mut self, operator: &Operator, out: Variable) {
         match operator {
+            Operator::NativeAddress(_) | Operator::NativeLoad(_) | Operator::NativeStore(_) => {
+                panic!("native addresses are not supported by the memref MLIR backend");
+            }
             Operator::And(and) => {
                 let lhs = self.get_variable(and.lhs);
                 let rhs = self.get_variable(and.rhs);

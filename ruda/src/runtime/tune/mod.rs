@@ -26,6 +26,11 @@
 //! See [`TuneInputs`] for the borrowed-inputs story, and [`Tunable::new`] for why its
 //! HRTB bound is spelled out directly (closure inference).
 
+#[cfg(std_io)]
+pub mod stack;
+mod validation;
+pub use validation::*;
+
 mod base;
 mod input_generator;
 mod key_generator;

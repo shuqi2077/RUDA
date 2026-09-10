@@ -1,0 +1,53 @@
+name: Full-stack autotune host contracts
+on:
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'ruda/**'
+      - 'ruBLAS/**'
+      - 'ruDNN/**'
+      - 'ruLLM/**'
+      - 'ruda-fusion/**'
+      - 'ruda-kernel/**'
+      - 'ruda-driver-*/**'
+      - 'ruda-tensor-device/**'
+      - 'tools/*stack_autotune*'
+      - 'tools/stack_autotune/**'
+      - '.github/workflows/stack-autotune-host.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'ruda/**'
+      - 'ruBLAS/**'
+      - 'ruDNN/**'
+      - 'ruLLM/**'
+      - 'ruda-fusion/**'
+      - 'ruda-kernel/**'
+      - 'ruda-driver-*/**'
+      - 'ruda-tensor-device/**'
+      - 'tools/*stack_autotune*'
+      - 'tools/stack_autotune/**'
+      - '.github/workflows/stack-autotune-host.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  std-only-core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Select a fixed host test compiler
+        run: |
+          rustup toolchain install 1.90.0 --profile minimal
+          rustup override set 1.90.0
+      - name: Independent references and actual std-only production Rust tests
+        run: python3 tools/run_stack_autotune_validation.py --suite reference --suite core --timeout 180
+      - name: Report exact execution status
+        if: always()
+        run: cat validation/stack-autotune-v3/validation.json

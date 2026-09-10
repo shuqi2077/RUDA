@@ -27,6 +27,7 @@ pub struct CudaDialect<M> {
 
 impl<M: DialectWmmaCompiler<Self>> Dialect for CudaDialect<M> {
     type Architecture = CudaArchitecture;
+    fn supports_native_addresses() -> bool { true }
 }
 
 impl<M: DialectWmmaCompiler<Self>> DialectIncludes<Self> for CudaDialect<M> {

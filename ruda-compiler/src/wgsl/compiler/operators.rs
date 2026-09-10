@@ -120,8 +120,12 @@ impl<P: WgslLowering> WgslCompiler<P> {
         out: Option<ruda::Variable>,
         instructions: &mut Vec<wgsl::Instruction>,
     ) {
+        if matches!(value, ruda::Operator::NativeAddress(_) | ruda::Operator::NativeLoad(_) | ruda::Operator::NativeStore(_)) {
+            panic!("WGSL does not expose native device addresses");
+        }
         let out = out.unwrap();
         match value {
+            ruda::Operator::NativeAddress(_) | ruda::Operator::NativeLoad(_) | ruda::Operator::NativeStore(_) => unreachable!(),
             ruda::Operator::Cast(op) => instructions.push(wgsl::Instruction::Assign {
                 input: self.compile_variable(op.input),
                 out: self.compile_variable(out),

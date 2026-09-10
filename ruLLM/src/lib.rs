@@ -31,3 +31,7 @@ pub use paged_kv::*;
 /// Optional backend adapters and host-side execution controls.
 pub mod runtime;
 pub mod backends;
+
+/// Shared whole-generation calibration, enabled explicitly for native targets.
+#[cfg(all(feature = "stack-autotune", any(target_os = "linux", target_os = "windows", target_os = "macos", target_os = "android")))]
+pub mod autotune;

@@ -11,11 +11,11 @@ use std::{
     marker::PhantomData,
 };
 
-#[cfg(feature = "device-autotune-checks")]
+#[cfg(any(feature = "device-autotune-checks", feature = "device-stack-autotune"))]
 use crate::device::RudaFusionHandle;
-#[cfg(feature = "device-autotune-checks")]
+#[cfg(any(feature = "device-autotune-checks", feature = "device-stack-autotune"))]
 use ruda_tensor::TensorData;
-#[cfg(feature = "device-autotune-checks")]
+#[cfg(any(feature = "device-autotune-checks", feature = "device-stack-autotune"))]
 use std::collections::HashMap;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -52,7 +52,7 @@ impl core::fmt::Display for FuseTrace {
 
 pub enum TuneOutput<R: Runtime> {
     UnChecked(PhantomData<R>),
-    #[cfg(feature = "device-autotune-checks")]
+    #[cfg(any(feature = "device-autotune-checks", feature = "device-stack-autotune"))]
     Checked {
         handles: HashMap<TensorId, (Shape, RudaFusionHandle<R>)>,
     },
@@ -65,7 +65,7 @@ impl<R: Runtime> TuneOutput<R> {
 
         match &mut result {
             TuneOutput::UnChecked(..) => {}
-            #[cfg(feature = "device-autotune-checks")]
+            #[cfg(any(feature = "device-autotune-checks", feature = "device-stack-autotune"))]
             TuneOutput::Checked { handles } => match other {
                 TuneOutput::UnChecked(..) => {}
                 TuneOutput::Checked { handles: o } => {
@@ -81,6 +81,34 @@ impl<R: Runtime> TuneOutput<R> {
 }
 
 impl<R: Runtime> ruda_kernel::dsl::tune::AutotuneOutput for TuneOutput<R> {
+    fn validate_for_tuning(&self, other: &Self, absolute: f64, relative: f64, max_bytes: u64) -> Result<bool, String> {
+        #[cfg(any(feature = "device-autotune-checks", feature = "device-stack-autotune"))]
+        if let (Self::Checked { handles: expected }, Self::Checked { handles: actual }) = (self, other) {
+            use ruda_kernel::tensor::RudaTensor;
+            use ruda_kernel::dsl::tune::AutotuneOutput;
+            use ruda_core::tensor::Metadata;
+            if expected.is_empty() { return Ok(false); }
+            let mut bytes = 0u64;
+            for (id, (shape, a)) in expected {
+                let (bshape, b) = actual.get(id).ok_or_else(|| format!("missing fused output {id:?}"))?;
+                if shape != bshape || a.dtype != b.dtype { return Err(format!("fused output metadata mismatch {id:?}")); }
+                if matches!(a.dtype, ruda_core::tensor::DType::QFloat(_)) { return Ok(false); }
+                let count = shape.iter().try_fold(1u64, |n, &d| n.checked_mul(d as u64))
+                    .and_then(|n| n.checked_mul(a.dtype.size() as u64)).and_then(|n| n.checked_mul(2));
+                bytes = match count.and_then(|n| bytes.checked_add(n)) { Some(n) if n <= max_bytes => n, _ => return Ok(false) };
+            }
+            for (id, (shape, a)) in expected {
+                let (_, b) = actual.get(id).ok_or_else(|| format!("missing fused output {id:?}"))?;
+                let a = RudaTensor::new(a.client.clone(), a.handle.clone(), Metadata::new(shape.clone(), a.strides.clone()), a.device.clone(), a.dtype);
+                let b = RudaTensor::new(b.client.clone(), b.handle.clone(), Metadata::new(shape.clone(), b.strides.clone()), b.device.clone(), b.dtype);
+                if !a.validate_for_tuning(&b, absolute, relative, max_bytes)? { return Ok(false); }
+            }
+            return Ok(true);
+        }
+        let _ = (other, absolute, relative, max_bytes);
+        Ok(false)
+    }
+
     #[cfg(feature = "device-autotune-checks")]
     fn check_equivalence(&self, other: Self) {
         use ruda_tensor::Tolerance;

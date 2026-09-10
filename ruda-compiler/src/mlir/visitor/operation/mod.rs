@@ -23,6 +23,9 @@ use super::Visitor;
 impl<'a> Visitor<'a> {
     pub fn visit_operation(&mut self, operation: &Operation) {
         match operation {
+            Operation::Operator(ruda_core::ir::Operator::NativeStore(_)) => {
+                panic!("native addresses are not supported by the memref MLIR backend");
+            }
             Operation::NonSemantic(NonSemantic::Print {
                 format_string,
                 args,

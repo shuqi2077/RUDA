@@ -435,7 +435,7 @@ impl<'a, R: Runtime> OutputPlanner<'a, R> {
             precision: output.precision,
             global_shape: tensor_global.shape.clone(),
             strides,
-            #[cfg(feature = "device-autotune-checks")]
+            #[cfg(any(feature = "device-autotune-checks", feature = "device-stack-autotune"))]
             debug_info: super::HandleOutputAliasDebugInfo {
                 relative_id: output.tensor_relative.id,
                 handle: handle_input.handle.clone(),
@@ -580,7 +580,7 @@ impl<'a, R: Runtime> OutputPlanner<'a, R> {
                     precision: output.precision,
                     global_shape: tensor_global.shape.clone(),
                     strides: handle.strides.clone(),
-                    #[cfg(feature = "device-autotune-checks")]
+                    #[cfg(any(feature = "device-autotune-checks", feature = "device-stack-autotune"))]
                     debug_info: super::HandleOutputAliasDebugInfo {
                         relative_id: output.tensor_relative.id,
                         handle: handle.clone(),
@@ -649,7 +649,7 @@ impl<'a, R: Runtime> OutputPlanner<'a, R> {
             precision: output.precision,
             global_shape: tensor_global.shape.clone(),
             strides: handle.strides.clone(),
-            #[cfg(feature = "device-autotune-checks")]
+            #[cfg(any(feature = "device-autotune-checks", feature = "device-stack-autotune"))]
             debug_info: super::HandleOutputAliasDebugInfo {
                 relative_id: output.tensor_relative.id,
                 handle: handle.clone(),

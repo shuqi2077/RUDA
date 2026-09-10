@@ -41,6 +41,9 @@ pub struct TunableSet<K: AutotuneKey, F: TuneInputs, Output: 'static> {
     tunables: Vec<Tunable<K, F, Output>>,
     key_gen: Arc<dyn KeyGenerator<K, F> + Send + Sync>,
     input_gen: Arc<dyn InputGenerator<K, F> + Send + Sync>,
+    stack_reference: Option<usize>,
+    stack_revision: String,
+    stack_workload: Option<Arc<dyn for<'a> Fn(&F::At<'a>) -> String + Send + Sync>>,
 }
 
 impl<K: AutotuneKey, F: TuneInputs, Output: 'static> TunableSet<K, F, Output> {
@@ -60,7 +63,27 @@ impl<K: AutotuneKey, F: TuneInputs, Output: 'static> TunableSet<K, F, Output> {
             tunables: Default::default(),
             input_gen: Arc::new(input_gen),
             key_gen: Arc::new(key_gen),
+            stack_reference: None,
+            stack_revision: String::new(),
+            stack_workload: None,
         }
+    }
+
+    /// Register an exact workload signature and a known-safe reference for full-stack tuning.
+    /// The input generator MUST isolate all mutable state for each benchmark invocation.
+    /// Include dtype, exact shape/strides, precision, optional inputs and semantic parameters.
+    pub fn with_stack_tuning(
+        mut self, reference: usize, revision: &str,
+        workload: impl for<'a> Fn(&F::At<'a>) -> String + Send + Sync + 'static,
+    ) -> Self {
+        self.stack_reference = Some(reference);
+        self.stack_revision = revision.into();
+        self.stack_workload = Some(Arc::new(workload));
+        self
+    }
+    pub fn stack_reference(&self) -> Option<usize> { self.stack_reference }
+    pub fn stack_workload<'a>(&self, inputs: &F::At<'a>) -> Option<String> {
+        self.stack_workload.as_ref().map(|f| f(inputs))
     }
 
     /// Shorthand for [`new`](Self::new) with a [`CloneInputGenerator`]: benchmarks run
@@ -94,9 +117,17 @@ impl<K: AutotuneKey, F: TuneInputs, Output: 'static> TunableSet<K, F, Output> {
     /// Compute a checksum that invalidates outdated cached auto-tune results when the
     /// set of tunable names changes.
     pub fn compute_checksum(&self) -> String {
+        // Preserve legacy cache identity when the new controller is not enabled.
         let mut checksum = String::new();
+        for tune in &self.tunables { checksum += &tune.function.name; }
+        format!("{:x}", md5::compute(checksum))
+    }
+
+    /// Separate, length-delimited manifest for the opt-in full-stack cache.
+    pub fn stack_checksum(&self) -> String {
+        let mut checksum = format!("stack-v1:{}:{};reference={:?};", self.stack_revision.len(), self.stack_revision, self.stack_reference);
         for tune in &self.tunables {
-            checksum += &tune.function.name;
+            checksum += &format!("{}:{}", tune.function.name.len(), tune.function.name);
         }
         format!("{:x}", md5::compute(checksum))
     }

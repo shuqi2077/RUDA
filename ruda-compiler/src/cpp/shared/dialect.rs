@@ -35,6 +35,7 @@ pub trait Dialect:
     + 'static
 {
     type Architecture: Architecture;
+    fn supports_native_addresses() -> bool { false }
 }
 
 // Includes

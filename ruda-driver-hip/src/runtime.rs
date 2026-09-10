@@ -61,6 +61,26 @@ impl Runtime for HipRuntime {
         "hip"
     }
 
+    fn autotune_driver_fingerprint(client: &ComputeClient<Self>) -> Option<String> {
+        use std::{collections::BTreeMap, sync::{Mutex, OnceLock}};
+        static IDS: OnceLock<Mutex<BTreeMap<u16, Option<String>>>> = OnceLock::new();
+        let index = client.device_id().index_id;
+        let mut ids = IDS.get_or_init(|| Mutex::new(BTreeMap::new())).lock().unwrap_or_else(|p| p.into_inner());
+        ids.entry(index).or_insert_with(|| {
+            let mut version = 0i32; let mut name = [0i8; 256];
+            // SAFETY: both HIP queries write bounded stack outputs and retain no pointers.
+            let (vs, ns) = unsafe {
+                (ruda_hip_sys::hipRuntimeGetVersion(&mut version),
+                 ruda_hip_sys::hipDeviceGetName(name.as_mut_ptr(), name.len() as i32, index as i32))
+            };
+            if vs != HIP_SUCCESS || ns != HIP_SUCCESS || version <= 0 { return None; }
+            let module = std::fs::read_to_string("/sys/module/amdgpu/srcversion").ok()?;
+            let kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease").ok()?;
+            let name: Vec<u8> = name.iter().take_while(|&&v| v != 0).map(|&v| v as u8).collect();
+            Some(format!("device={};hip-runtime={version};amdgpu={module};kernel={kernel}", String::from_utf8_lossy(&name)))
+        }).clone()
+    }
+
     fn require_array_lengths() -> bool {
         true
     }

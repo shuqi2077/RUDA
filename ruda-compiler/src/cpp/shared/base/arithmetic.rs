@@ -415,8 +415,20 @@ impl<D: Dialect, P: super::super::DialectProcessors> CppCompiler<D, P> {
         out: Option<gpu::Variable>,
         instructions: &mut Vec<Instruction<D>>,
     ) {
+        if matches!(&value, gpu::Operator::NativeAddress(_) | gpu::Operator::NativeLoad(_) | gpu::Operator::NativeStore(_)) {
+            assert!(D::supports_native_addresses(), "this dialect does not expose native device addresses");
+        }
+        if let gpu::Operator::NativeStore(op) = &value {
+            instructions.push(Instruction::NativeStore {
+                address: self.compile_variable(op.lhs), value: self.compile_variable(op.rhs),
+            });
+            return;
+        }
         let out = out.unwrap();
         match value {
+            gpu::Operator::NativeAddress(op) => instructions.push(Instruction::NativeAddress(self.compile_binary(op, out))),
+            gpu::Operator::NativeLoad(op) => instructions.push(Instruction::NativeLoad(self.compile_unary(op, out))),
+            gpu::Operator::NativeStore(_) => unreachable!("native store handled before output resolution"),
             gpu::Operator::Index(op) | gpu::Operator::UncheckedIndex(op) => {
                 instructions.push(Instruction::Index(self.compile_index(op, out)));
             }

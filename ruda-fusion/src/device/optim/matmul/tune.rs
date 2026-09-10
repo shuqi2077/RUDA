@@ -230,6 +230,10 @@ pub fn fused_matmul_autotune<R: Runtime>(
             }
         }
 
+        #[cfg(any(feature = "device-autotune-checks", feature = "device-stack-autotune"))]
+        let set = set.with_stack_tuning(0, "fused-matmul-whole-graph-v1", |input| {
+            format!("{};{}", input.optimization().info.autotune_graph_signature(), input.autotune_context_signature())
+        });
         set
     });
 

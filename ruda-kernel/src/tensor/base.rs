@@ -39,6 +39,29 @@ impl<R: Runtime> From<RudaTensor<R>> for TensorHandle<R> {
 }
 
 impl<R: Runtime> crate::dsl::tune::AutotuneOutput for RudaTensor<R> {
+    fn validate_for_tuning(&self, other: &Self, absolute: f64, relative: f64, max_bytes: u64)
+        -> Result<bool, String> {
+        if self.dtype != other.dtype || self.meta.shape != other.meta.shape {
+            return Err("autotune tensor dtype/shape mismatch".into());
+        }
+        // Packed quantized data needs a scheme-aware validator, not an integer-code comparison.
+        if matches!(self.dtype, DType::QFloat(_)) { return Ok(false); }
+        let bytes = self.meta.shape.iter().try_fold(1u64, |n, &d| n.checked_mul(d as u64))
+            .and_then(|n| n.checked_mul(self.elem_size() as u64)).and_then(|n| n.checked_mul(2));
+        if bytes.is_none_or(|n| n > max_bytes) { return Ok(false); }
+        let expected = ruda_core::future::block_on(super::readback::into_data(self.clone()))
+            .map_err(|e| format!("reference readback failed: {e:?}"))?;
+        let actual = ruda_core::future::block_on(super::readback::into_data(other.clone()))
+            .map_err(|e| format!("candidate readback failed: {e:?}"))?;
+        match self.dtype {
+            DType::F64 | DType::F32 | DType::Flex32 | DType::F16 | DType::BF16 => {
+                crate::dsl::tune::validate_finite_values(expected.iter::<f64>(), actual.iter::<f64>(), absolute, relative)?;
+            }
+            _ => if expected.bytes != actual.bytes { return Err("autotune non-floating output differs".into()); },
+        }
+        Ok(true)
+    }
+
     #[cfg(feature = "device-tensor-autotune-checks")]
     fn check_equivalence(&self, other: Self) {
         use super::readback::into_data_sync;
@@ -124,6 +147,14 @@ impl<R> RudaTensor<R>
 where
     R: Runtime,
 {
+    /// Exact tuning metadata, including view offsets and accessible storage size.
+    /// Deliberately excludes allocation ids so equivalent invocations can share a cache entry.
+    pub fn autotune_signature(&self) -> String {
+        format!("dtype={:?};shape={:?};strides={:?};offset={:?}/{:?};bytes={}",
+            self.dtype, self.meta.shape, self.meta.strides, self.handle.offset_start,
+            self.handle.offset_end, self.handle.size_in_used())
+    }
+
     /// Create a new standard tensor
     pub fn new(
         client: ComputeClient<R>,

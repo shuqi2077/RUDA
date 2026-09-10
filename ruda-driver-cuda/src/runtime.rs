@@ -70,6 +70,26 @@ impl Runtime for CudaRuntime {
         "cuda"
     }
 
+    fn autotune_driver_fingerprint(client: &ComputeClient<Self>) -> Option<String> {
+        use std::{collections::BTreeMap, sync::{Mutex, OnceLock}};
+        static IDS: OnceLock<Mutex<BTreeMap<u16, Option<String>>>> = OnceLock::new();
+        let index = client.device_id().index_id;
+        let mut ids = IDS.get_or_init(|| Mutex::new(BTreeMap::new())).lock().unwrap_or_else(|p| p.into_inner());
+        ids.entry(index).or_insert_with(|| {
+            let api = crate::diagnostics::query_driver_api_version().ok()?;
+            // CUDA API compatibility version alone does not identify a driver release.
+            // Missing trustworthy release information disables cross-process reuse.
+            let release = std::fs::read_to_string("/proc/driver/nvidia/version").ok()?;
+            let mut name = [0i8; 256];
+            // SAFETY: valid bounded output buffer; querying metadata does not retain its pointer.
+            let status = unsafe { cudarc::driver::sys::cuDeviceGetName(name.as_mut_ptr(), name.len() as i32, index as i32) };
+            if status != cudarc::driver::sys::CUresult::CUDA_SUCCESS { return None; }
+            let name: Vec<u8> = name.iter().take_while(|&&v| v != 0).map(|&v| v as u8).collect();
+            Some(format!("device={};driver={release};api={api};toolkit={CUDA_VERSION};direct-ptx={};ptx-wmma={}",
+                String::from_utf8_lossy(&name), cfg!(feature = "direct-ptx"), cfg!(feature = "ptx-wmma")))
+        }).clone()
+    }
+
     fn require_array_lengths() -> bool {
         true
     }

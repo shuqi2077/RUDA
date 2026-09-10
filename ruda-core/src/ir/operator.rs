@@ -11,6 +11,13 @@ use crate::ir::{BinaryOperator, OperationArgs, OperationReflect, UnaryOperator, 
 #[derive(Debug, Clone, TypeHash, PartialEq, Eq, Hash, OperationReflect)]
 #[operation(opcode_name = OperatorOpCode)]
 pub enum Operator {
+    /// Native byte address of an element in a bound array (U64 result).
+    #[operation(pure)]
+    NativeAddress(BinaryOperator),
+    /// Read through a native U64 byte address. Not a pure operation.
+    NativeLoad(UnaryOperator),
+    /// Write rhs through the native U64 byte address lhs; no result.
+    NativeStore(BinaryOperator),
     #[operation(pure)]
     Index(IndexOperator),
     CopyMemory(CopyMemoryOperator),
@@ -39,6 +46,9 @@ pub enum Operator {
 impl Display for Operator {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Operator::NativeAddress(op) => write!(f, "address({}[{}])", op.lhs, op.rhs),
+            Operator::NativeLoad(op) => write!(f, "load_native({})", op.input),
+            Operator::NativeStore(op) => write!(f, "store_native({}, {})", op.lhs, op.rhs),
             Operator::Index(op) => write!(f, "{}[{}]", op.list, op.index),
             Operator::CopyMemory(op) => {
                 write!(f, "[{}] = {}[{}]", op.out_index, op.input, op.in_index)

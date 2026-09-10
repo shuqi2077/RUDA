@@ -52,6 +52,12 @@ impl<R: Runtime> ComputeClient<R> {
         &self.utilities.info
     }
 
+    /// Physical runtime device ordinal/type used by tuning identity probes.
+    pub fn device_id(&self) -> DeviceId { self.device.device_id() }
+
+    /// Cached capability/hardware checksum. Does not probe the driver on every operator call.
+    pub fn properties_fingerprint(&self) -> u64 { self.utilities.properties_hash }
+
     /// Create a new client with a new server.
     pub fn init<D: Device>(device: &D, server: R::Server) -> Self {
         let utilities = server.utilities();

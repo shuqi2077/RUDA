@@ -109,7 +109,7 @@ impl Runtime for DummyRuntime {
     }
 
     fn name(_client: &ComputeClient<Self>) -> &'static str {
-        unimplemented!()
+        "dummy-host-test"
     }
 
     fn max_ruda_count() -> (u32, u32, u32) {

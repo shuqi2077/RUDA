@@ -46,6 +46,16 @@ impl Runtime for CpuRuntime {
         "cpu"
     }
 
+    fn autotune_driver_fingerprint(_client: &ComputeClient<Self>) -> Option<String> {
+        static ID: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+        ID.get_or_init(|| {
+            let info = std::fs::read_to_string("/proc/cpuinfo").ok()?;
+            let mut features: Vec<_> = info.lines().filter(|line| line.starts_with("model name") || line.starts_with("flags") || line.starts_with("Features") || line.starts_with("CPU implementer") || line.starts_with("CPU part")).collect();
+            features.sort_unstable(); features.dedup();
+            if features.is_empty() { None } else { Some(format!("host={}/{};{}", std::env::consts::ARCH, std::env::consts::OS, features.join(";"))) }
+        }).clone()
+    }
+
     fn max_ruda_count() -> (u32, u32, u32) {
         (u32::MAX, u32::MAX, u32::MAX)
     }

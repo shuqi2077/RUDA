@@ -74,6 +74,15 @@ pub struct MatmulOptimizationState {
 }
 
 impl<R: Runtime> MatmulOptimizationInfo<R> {
+    pub(crate) fn autotune_graph_signature(&self) -> String {
+        fn stable_trace(trace: &FuseTrace) -> String {
+            let mut trace = trace.clone();
+            let mut dropped: Vec<_> = trace.resources.dropped.drain().collect();
+            dropped.sort();
+            format!("{trace:?};dropped={dropped:?}")
+        }
+        format!("fused={};fallback={};matmul={:?}", stable_trace(&self.trace), stable_trace(&self.trace_fallback), self.matmul)
+    }
     /// Returns the number of output buffers added by fusion.
     pub fn num_output_buffers(&self) -> usize {
         self.trace_fallback.resources.outputs.len()
@@ -100,14 +109,14 @@ impl<R: Runtime> MatmulOptimizationTuneArg<R> {
     pub fn execute_fallback(&self, context: &mut Context<RudaFusionHandle<R>>) -> TuneOutput<R> {
         self.fallback.run(context);
 
-        #[cfg(feature = "device-autotune-checks")]
+        #[cfg(any(feature = "device-autotune-checks", feature = "device-stack-autotune"))]
         let mut output = TuneOutput::Checked {
             handles: Default::default(),
         };
-        #[cfg(not(feature = "device-autotune-checks"))]
+        #[cfg(not(any(feature = "device-autotune-checks", feature = "device-stack-autotune")))]
         let output = TuneOutput::UnChecked(core::marker::PhantomData);
 
-        #[cfg(feature = "device-autotune-checks")]
+        #[cfg(any(feature = "device-autotune-checks", feature = "device-stack-autotune"))]
         if let TuneOutput::Checked { handles } = &mut output {
             let out_desc = context.tensors.get(&self.info.matmul.op.out.id).unwrap();
             let handle_out = context
@@ -125,7 +134,27 @@ impl<R: Runtime> MatmulOptimizationTuneArg<R> {
             .launch(&self.info.client, &self.info.device, context)
             .unwrap();
 
-        output.merge(output_write)
+        let output = output.merge(output_write);
+        #[cfg(feature = "device-stack-autotune")]
+        let output = match output {
+            TuneOutput::Checked { mut handles } => {
+                let required: Vec<_> = (0..self.info.trace.resources.outputs.len())
+                    .filter_map(|i| self.info.trace.resources.outputs.get_id(i)).collect();
+                handles.retain(|id, _| required.contains(id));
+                let mut complete = true;
+                for id in required {
+                    if handles.contains_key(&id) { continue; }
+                    if let Some(tensor) = context.tensors.get(&id) {
+                        if let Some(handle) = context.handles.get_handle_ref(&tensor.id) {
+                            handles.insert(id, (tensor.shape.clone(), handle.clone()));
+                        } else { complete = false; }
+                    } else { complete = false; }
+                }
+                if complete { TuneOutput::Checked { handles } } else { TuneOutput::UnChecked(core::marker::PhantomData) }
+            }
+            other => other,
+        };
+        output
     }
 }
 

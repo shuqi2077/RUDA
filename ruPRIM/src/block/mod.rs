@@ -14,9 +14,10 @@ pub mod histogram;
 pub mod run_length;
 pub mod rank;
 pub mod topk;
+pub mod record;
 
 #[ruda]
-pub trait RudaBlockPrefix<T: RudaPrimitive>: RudaType {
+pub trait RudaBlockPrefix<T: RudaType>: RudaType {
     fn prefix(&mut self, aggregate: T) -> T;
 }
 

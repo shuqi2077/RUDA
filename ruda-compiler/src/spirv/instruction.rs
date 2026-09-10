@@ -188,8 +188,12 @@ impl<T: SpirvTarget> SpirvCompiler<T> {
     }
 
     pub fn compile_operator(&mut self, op: Operator, out: Option<core::Variable>, uniform: bool) {
+        if matches!(op, Operator::NativeAddress(_) | Operator::NativeLoad(_) | Operator::NativeStore(_)) {
+            panic!("native addresses require a physical-storage-buffer SPIR-V backend");
+        }
         let out = out.unwrap();
         match op {
+            Operator::NativeAddress(_) | Operator::NativeLoad(_) | Operator::NativeStore(_) => unreachable!(),
             Operator::Index(op) | Operator::UncheckedIndex(op) => {
                 let is_atomic = op.list.ty.is_atomic();
                 let value = self.compile_variable(op.list);

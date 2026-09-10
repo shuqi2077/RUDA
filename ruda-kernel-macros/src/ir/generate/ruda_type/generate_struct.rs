@@ -159,7 +159,8 @@ impl RudaTypeStruct {
         let name_debug = &self.ident;
         let fields = self.fields.iter().map(TypeField::compilation_arg_field);
         let generics = &self.generics;
-        let (type_generics_names, impl_generics, where_generics) = self.generics.split_for_impl();
+        let (type_generics_names, impl_generics, _) = self.generics.split_for_impl();
+        let where_generics = self.launch_arg_where();
         let vis = &self.vis;
 
         fn generate<'a, F: Fn(&Ident) -> TokenStream>(
@@ -183,7 +184,7 @@ impl RudaTypeStruct {
         );
 
         quote! {
-            #vis struct #name #generics {
+            #vis struct #name #generics #where_generics {
                 #(#fields),*
             }
 
@@ -330,7 +331,11 @@ impl RudaTypeStruct {
             .iter()
             .filter(|it| !it.comptime.is_present())
             .cloned();
-        bounded_where_clause(&self.generics, fields, |param| quote![#param: #launch_arg])
+        let mut generics = self.generics.clone();
+        generics.where_clause = bounded_where_clause(&self.generics, fields, |param| quote![#param: #launch_arg]);
+        let compilation_arg = prelude_type("CompilationArg");
+        let comptime_fields = self.fields.iter().filter(|it| it.comptime.is_present()).cloned();
+        bounded_where_clause(&generics, comptime_fields, |param| quote![#param: #compilation_arg])
     }
 }
 

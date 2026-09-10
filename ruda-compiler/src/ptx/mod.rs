@@ -7,6 +7,7 @@ mod atomic;
 mod arrays;
 mod memory_copy;
 mod memory_scalar;
+mod native_memory;
 mod matrix;
 mod diagnostics;
 mod printf;

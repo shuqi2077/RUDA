@@ -160,3 +160,8 @@ optional = true
 version = "0.10.0"
 features = [ "mutex", "spin_mutex", "mutex", "spin_mutex",]
 optional = true
+
+[[test]]
+name = "stack_autotune"
+path = "tests/runtime/stack_autotune.rs"
+required-features = ["runtime", "runtime-std", "runtime-storage-bytes"]

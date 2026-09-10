@@ -6,6 +6,12 @@ use ruda_core::profile::ProfileDuration;
 
 /// The trait to be implemented by an autotune output.
 pub trait AutotuneOutput: Send + 'static {
+    /// Fallible correctness gate for stack autotuning. `Ok(false)` explicitly means that this
+    /// output has no validator; a successful launch alone is NOT a correctness check.
+    /// Existing implementers need not add a method. Strict stack policy rejects unsupported output.
+    fn validate_for_tuning(&self, _other: &Self, _absolute: f64, _relative: f64, _max_bytes: u64)
+        -> Result<bool, alloc::string::String> { Ok(false) }
+
     #[cfg(feature = "runtime-autotune-checks")]
     /// Checks if the output of an autotune operation is the same as another one on the same
     /// problem.
@@ -109,7 +115,8 @@ fn warmup<'a, R: Runtime, F: TuneInputs, Out: AutotuneOutput>(
         let profiled = client.profile(move || operation.execute(inputs), &operation.name);
 
         match profiled {
-            Ok(_) => {}
+            Ok((Ok(_), _)) => {}
+            Ok((Err(err), _)) => return Err(err),
             Err(err) => errors.push(err),
         }
     }

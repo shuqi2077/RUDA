@@ -136,7 +136,7 @@ impl<R: Runtime> LaunchPlan<'_, R> {
 }
 
 /// Debugging information for aliased handles when `autotune-checks` is enabled.
-#[cfg(feature = "device-autotune-checks")]
+#[cfg(any(feature = "device-autotune-checks", feature = "device-stack-autotune"))]
 #[derive(Debug, Clone)]
 pub struct HandleOutputAliasDebugInfo<R: Runtime> {
     pub handle: RudaFusionHandle<R>,
@@ -156,7 +156,7 @@ pub enum HandleOutput<R: Runtime> {
         precision: FuseType,
         global_shape: Shape,
         strides: Strides,
-        #[cfg(feature = "device-autotune-checks")]
+        #[cfg(any(feature = "device-autotune-checks", feature = "device-stack-autotune"))]
         debug_info: HandleOutputAliasDebugInfo<R>,
     },
     /// An output that requires a newly allocated memory buffer.

@@ -199,10 +199,12 @@ impl Optimizer {
         mut visit_read: impl FnMut(&mut Self, &mut Variable),
     ) {
         match op {
-            Operator::And(binary_operator) | Operator::Or(binary_operator) => {
+            Operator::And(binary_operator) | Operator::Or(binary_operator)
+            | Operator::NativeAddress(binary_operator) | Operator::NativeStore(binary_operator) => {
                 self.visit_binop(binary_operator, visit_read)
             }
             Operator::Not(unary_operator)
+            | Operator::NativeLoad(unary_operator)
             | Operator::Cast(unary_operator)
             | Operator::Reinterpret(unary_operator) => self.visit_unop(unary_operator, visit_read),
             Operator::Index(index_operator) | Operator::UncheckedIndex(index_operator) => {

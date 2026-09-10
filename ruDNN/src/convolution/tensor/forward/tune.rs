@@ -17,6 +17,11 @@ pub fn conv_autotune<R: Runtime, const N: usize>(
 
     let tunables = TUNER.init(|| {
         TunableSet::new(create_key::<R, N>, create_conv_input::<R, N>)
+            .with_stack_tuning(0, "convolution-whole-operator-v1", |(input, weight, bias, options)| {
+                format!("input={};weight={};bias={:?};options={:?}",
+                    input.autotune_signature(), weight.autotune_signature(),
+                    bias.as_ref().map(|t| t.autotune_signature()), options)
+            })
             .with(Tunable::new(
                 "conv_direct",
                 |(input, weight, bias, options)| conv_direct::<R, N>(input, weight, bias, options),

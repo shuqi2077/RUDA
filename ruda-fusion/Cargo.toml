@@ -43,6 +43,7 @@ rustdoc-args = [
 device-tensor = ["device", "ruda-kernel/device-tensor"]
 device = ["dep:ruda-kernel", "dep:rublas", "dep:ruprim", "ruda-core/ir"]
 device-autotune = ["device"]
+device-stack-autotune = ["device-autotune", "device-tensor", "device-std"]
 device-autotune-checks = ["device", "dep:ruda", "ruda/runtime-autotune-checks", "ruda-kernel/device-tensor-autotune-checks", "dep:half"]
 device-std = ["device", "std", "ruda-kernel/frontend-std", "ruda-test-runtime/std"]
 device-tracing = ["device", "tracing", "ruda-kernel/frontend-tracing", "ruda-test-runtime/tracing"]
@@ -157,7 +158,7 @@ path = "../ruPRIM"
 version = "0.1.0"
 default-features = false
 optional = true
-features = ["kernel-ir", "std"]
+features = ["kernel-ir", "std", "elementwise"]
 
 [dependencies.ruda]
 path = "../ruda"

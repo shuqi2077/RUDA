@@ -31,6 +31,7 @@ impl Emitter {
                 | ruda_core::ir::BarrierOps::TmaLoadIm2col { .. })
             | Operation::Arithmetic(_) | Operation::Plane(_) | Operation::CoopMma(_)
             | Operation::Operator(Operator::Cast(_) | Operator::Reinterpret(_) | Operator::Select(_)
+                | Operator::NativeAddress(_) | Operator::NativeLoad(_) | Operator::NativeStore(_)
                 | Operator::InitVector(_) | Operator::Index(_) | Operator::UncheckedIndex(_)
                 | Operator::IndexAssign(_) | Operator::UncheckedIndexAssign(_)
                 | Operator::CopyMemory(_) | Operator::CopyMemoryBulk(_))

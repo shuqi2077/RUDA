@@ -25,6 +25,13 @@ pub trait Runtime: Sized + Send + Sync + 'static + core::fmt::Debug + Clone {
     /// The runtime name on the given device.
     fn name(client: &ComputeClient<Self>) -> &'static str;
 
+    /// Stable loaded driver/runtime identity for persistent autotuning. Unknown backends return
+    /// None and use session-only caches; device ordinal or API major version alone is insufficient.
+    /// Adding a default preserves existing custom Runtime implementations.
+    fn autotune_driver_fingerprint(_client: &ComputeClient<Self>) -> Option<alloc::string::String> {
+        None
+    }
+
     /// Return true if global input array lengths should be added to kernel info.
     fn require_array_lengths() -> bool {
         false

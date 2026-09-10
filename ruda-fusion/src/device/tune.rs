@@ -124,6 +124,23 @@ impl<'a, R: Runtime, O> TuneInput<'a, R, O> {
         matches!(self.state, TuneState::Original { .. })
     }
 
+    /// Deterministic exact graph context key. Relative ids are sorted before encoding.
+    pub(crate) fn autotune_context_signature(&self) -> String {
+        let mut tensors: Vec<_> = self.context().tensors.iter().collect();
+        tensors.sort_by_key(|(id, _)| id.value());
+        let mut parts = Vec::new();
+        for (id, tensor) in tensors {
+            let handle = self.handles().get_handle_ref(&tensor.id);
+            parts.push(format!("relative_id={id:?};shape={:?};dtype={:?};status={:?};layout={:?}", tensor.shape, tensor.dtype, tensor.status, handle.map(|h|
+                (&h.strides, h.dtype, h.handle.offset_start, h.handle.offset_end, h.handle.size_in_used()))));
+        }
+        let mut scalars: Vec<_> = self.context().scalars.iter().collect();
+        scalars.sort_by_key(|(id, _)| id.value);
+        let mut shapes: Vec<_> = self.context().shapes_relative2global.iter().collect();
+        shapes.sort_by_key(|(id, _)| **id);
+        format!("{};scalars={scalars:?};shapes={shapes:?}", parts.join(";"))
+    }
+
     /// Read-only access to the wrapped context.
     pub(crate) fn context(&self) -> &Context<RudaFusionHandle<R>> {
         match &self.state {

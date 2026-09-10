@@ -34,7 +34,13 @@ pub fn attention_autotune<R: Runtime>(
             }
         });
 
-        let mut set = TunableSet::new(create_key::<R>, input_gen::<R>);
+        let mut set = TunableSet::new(create_key::<R>, input_gen::<R>)
+            .with_stack_tuning(0, "attention-whole-operator-v1", |(q, k, v, mask, bias, options)| {
+                format!("q={};k={};v={};mask={:?};bias={:?};options={:?}",
+                    q.autotune_signature(), k.autotune_signature(), v.autotune_signature(),
+                    mask.as_ref().map(|t| t.autotune_signature()),
+                    bias.as_ref().map(|t| t.autotune_signature()), options)
+            });
 
         // First entry should always work, since it is considered the fallback.
         set = set.with(

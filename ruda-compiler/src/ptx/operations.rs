@@ -47,6 +47,9 @@ impl Emitter {
             Operation::CoopMma(op) => self.matrix(op, out()?),
             Operation::Comparison(op) => self.comparison(op, out()?),
             Operation::Operator(op) => match op {
+                Operator::NativeAddress(op) => self.native_address(op.lhs, op.rhs, out()?),
+                Operator::NativeLoad(op) => self.native_memory(op.input, out()?, false),
+                Operator::NativeStore(op) => self.native_memory(op.lhs, op.rhs, true),
                 Operator::Index(op) => {
                     Self::scalar_index(op.vector_size, op.unroll_factor)?;
                     self.memory(op.list, op.index, out()?, false, true)
