@@ -22,7 +22,7 @@ autotests = false
 autobenches = false
 description = "Tensor operation fusion planning, registration and execution for Ruda."
 documentation = "https://github.com/shuqi2077/RUDA/blob/main/docs/en/README.md"
-readme = false
+readme = "../README.md"
 keywords = [
     "deep-learning",
     "machine-learning",

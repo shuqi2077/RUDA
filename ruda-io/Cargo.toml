@@ -1,12 +1,12 @@
 [package]
 name = "ruda-io"
-version = "0.21.0"
+version = "0.21.1"
 edition = "2024"
 authors = ["Dilshod Tadjibaev (@antimora)"]
 description = "Ruda host-side input/output utilities."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/shuqi2077/RUDA/tree/main/ruda-io"
-readme = false
+readme = "../README.md"
 build = false
 autobins = false
 autoexamples = false

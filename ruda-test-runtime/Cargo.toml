@@ -1,5 +1,6 @@
 [package]
 name = "ruda-test-runtime"
+readme = "../README.md"
 version.workspace = true
 edition.workspace = true
 build = "build.rs"

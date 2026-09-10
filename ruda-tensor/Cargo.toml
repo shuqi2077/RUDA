@@ -11,7 +11,7 @@ autotests = false
 autobenches = false
 description = "Ruda tensor operations, backend contracts, and framework-facing primitives."
 documentation = "https://github.com/shuqi2077/RUDA/blob/main/docs/en/README.md"
-readme = false
+readme = "../README.md"
 keywords = [
     "deep-learning",
     "machine-learning",

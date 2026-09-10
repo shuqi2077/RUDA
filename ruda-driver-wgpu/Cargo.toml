@@ -21,7 +21,7 @@ autoexamples = false
 autotests = false
 autobenches = false
 description = "WGPU driver backend for Ruda"
-readme = false
+readme = "../README.md"
 keywords = [
     "gpu",
     "wgpu",

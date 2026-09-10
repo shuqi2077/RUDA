@@ -11,6 +11,8 @@ required-features = [ "runtime", "runtime-storage-bytes",]
 
 [package]
 name = "ruda"
+version = "0.1.1"
+readme = "../README.md"
 description = "Ruda portable host runtime."
 license-file = "../LICENSE"
 repository = "https://github.com/shuqi2077/RUDA"
@@ -28,9 +30,6 @@ runtime-profile-tracy = [ "runtime", "dep:tracy-client",]
 runtime-std = [ "runtime", "ruda-core/std", "ruda-core/compiler-std", "toml", "dirs", "thiserror/std",]
 runtime-storage-bytes = [ "runtime",]
 runtime-tracing = [ "runtime", "dep:tracing", "ruda-core/tracing", "ruda-core/tracing",]
-
-[package.version]
-workspace = true
 
 [package.edition]
 workspace = true

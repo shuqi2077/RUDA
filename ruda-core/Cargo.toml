@@ -6,6 +6,7 @@ harness = false
 [package]
 edition = "2024"
 name = "ruda-core"
+version = "0.1.1"
 authors = [ "Dilshod Tadjibaev (@antimora)", "Nathaniel Simard (@nathanielsimard)",]
 build = "build.rs"
 autolib = false
@@ -14,7 +15,7 @@ autoexamples = false
 autotests = false
 autobenches = false
 description = "Shared types, device contracts and utilities for Ruda."
-readme = false
+readme = "../README.md"
 keywords = [ "gpu", "cuda", "wgpu",]
 categories = [ "science", "mathematics", "algorithms",]
 license = "MIT OR Apache-2.0"
@@ -61,9 +62,6 @@ path = "src/lib.rs"
 version = "2"
 default-features = false
 optional = true
-
-[package.version]
-workspace = true
 
 [dependencies.backtrace]
 version = "0.3"

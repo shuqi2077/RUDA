@@ -5425,7 +5425,7 @@ dependencies = [
 
 [[package]]
 name = "ruda"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-channel",
  "bytemuck",
@@ -5499,7 +5499,7 @@ dependencies = [
 
 [[package]]
 name = "ruda-compiler"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bitflags",
  "bytemuck",
@@ -5525,7 +5525,7 @@ dependencies = [
 
 [[package]]
 name = "ruda-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ahash",
  "backtrace",
@@ -5751,7 +5751,7 @@ dependencies = [
 
 [[package]]
 name = "ruda-io"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "indicatif",
  "reqwest",
@@ -5760,7 +5760,7 @@ dependencies = [
 
 [[package]]
 name = "ruda-ir-macros"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -5770,7 +5770,7 @@ dependencies = [
 
 [[package]]
 name = "ruda-kernel"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bitflags",
  "bytemuck",
@@ -5803,7 +5803,7 @@ dependencies = [
 
 [[package]]
 name = "ruda-kernel-macros"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "darling 0.23.0",
  "derive-new",

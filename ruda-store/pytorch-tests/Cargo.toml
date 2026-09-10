@@ -1,5 +1,6 @@
 [package]
 name = "ruda-store-pytorch-tests"
+readme = "../../README.md"
 version = "0.21.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"

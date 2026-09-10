@@ -1,6 +1,7 @@
 [package]
 edition = "2024"
 name = "ruda-ir-macros"
+version = "0.1.1"
 authors = [ "nathanielsimard <nathaniel.simard.42@gmail.com>", "louisfd <louisfd94@gmail.com",]
 build = false
 autolib = false
@@ -9,7 +10,7 @@ autoexamples = false
 autotests = false
 autobenches = false
 description = "Procedural macros for Ruda intermediate-representation implementations."
-readme = false
+readme = "../README.md"
 keywords = []
 categories = [ "science",]
 license = "MIT OR Apache-2.0"
@@ -19,9 +20,6 @@ repository = "https://github.com/shuqi2077/RUDA/tree/main/ruda-ir-macros"
 name = "ruda_ir_macros"
 path = "src/lib.rs"
 proc-macro = true
-
-[package.version]
-workspace = true
 
 [dependencies.darling]
 version = "0.23.0"
