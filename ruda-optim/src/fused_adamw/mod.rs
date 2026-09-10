@@ -24,3 +24,17 @@ pub use device::{AdamWState, AdamWUpdate, adamw_step};
 
 #[cfg(test)]
 mod existing_optimizer_tests;
+
+/// Explicit local-group gradient diagnostics and clipping policy.
+#[cfg(feature = "gradient-guard")]
+pub mod gradient_norm;
+
+#[cfg(feature = "gradient-guard-device")]
+mod guard_kernel;
+#[cfg(feature = "gradient-guard-device")]
+mod guard_device;
+#[cfg(feature = "gradient-guard-device")]
+pub use guard_device::{
+    AdamWEntry, GuardedAdamWUpdate, GradientStatsReport, SkipReason,
+    gradient_stats_sync, guarded_adamw_step,
+};

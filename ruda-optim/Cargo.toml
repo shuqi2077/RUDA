@@ -18,6 +18,10 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/shuqi2077/RUDA/tree/main/ruda-optim"
 
 [features]
+# Opt-in gradient diagnostics/global-L2 clipping for the fused optimizer.
+gradient-guard = ["fused-adamw"]
+gradient-guard-device = ["gradient-guard", "fused-adamw-device"]
+gradient-guard-cuda = ["gradient-guard-device", "fused-adamw-cuda"]
 # Experimental: explicitly opted in; existing model optimizer dispatch is unchanged.
 fused-adamw = ["std"]
 fused-adamw-device = ["fused-adamw", "dep:ruda-core", "dep:ruda-kernel", "ruda-kernel/frontend-std", "ruda-kernel/device-tensor"]
@@ -181,3 +185,13 @@ required-features = ["fused-adamw-cuda"]
 name = "fused-adamw-cuda"
 path = "tests/fused_adamw_cuda.rs"
 required-features = ["fused-adamw-cuda"]
+
+[[test]]
+name = "gradient-guard-cuda"
+path = "tests/gradient_guard_cuda.rs"
+required-features = ["gradient-guard-cuda"]
+
+[[example]]
+name = "gradient-guard-bench"
+path = "examples/gradient_guard_bench.rs"
+required-features = ["gradient-guard-cuda"]

@@ -9,13 +9,14 @@ pub(super) fn adamw<G: Float>(
     parameters_out: &mut Array<f32>, first_out: &mut Array<f32>,
     second_out: &mut Array<f32>, maximum_out: &mut Array<f32>,
     learning_rate: f32, beta1: f32, beta2: f32, epsilon: f32,
-    decay_multiplier: f32, inverse_bias1: f32, inverse_bias2: f32, inverse_scale: f32,
-    #[comptime] initialized: bool, #[comptime] amsgrad: bool, #[comptime] maximize: bool,
+    decay_multiplier: f32, inverse_bias1: f32, inverse_bias2: f32, inverse_scale: f32, clip_multiplier: f32,
+    #[comptime] initialized: bool, #[comptime] amsgrad: bool, #[comptime] maximize: bool, #[comptime] clipped: bool,
     #[comptime] _source: String, #[define(G)] _gradient_dtype: StorageType,
 ) {
     let i = ABSOLUTE_POS;
     if i >= parameters_out.len() { terminate!(); }
     let mut gradient = f32::cast_from(gradients[i]) * inverse_scale;
+    if comptime!(clipped) { gradient *= clip_multiplier; }
     if comptime!(maximize) { gradient = -gradient; }
     let mut old_m = 0.0f32;
     let mut old_v = 0.0f32;

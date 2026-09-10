@@ -182,3 +182,6 @@ Rust type/macro expansion, CUDA execution and measured performance remain mandat
 New tests must pass alongside the previous safety regression suites before release.
 Further optimizations should start from measured profiler results, not this traffic
 model. Do not enable a new default dispatcher until the comparison is complete.
+
+
+See [experimental gradient checks and group clipping](gradient-guard.md) for an opt-in extension.

@@ -72,3 +72,6 @@ CUDA 测试分别运行 NVRTC 和直接 PTX，并检验参数、动量、精度�
 缺少工具会记录 blocked，不填写虚构结果。
 
 完整契约和限制见 [英文说明](../en/fused-adamw.md)。
+
+
+可选扩展见：[梯度检测与全组裁剪](gradient-guard.md)，不替换默认优化器。

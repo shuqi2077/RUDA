@@ -79,20 +79,23 @@ pub fn adamw_step<R: Runtime>(
     options: &AdamWOptions,
     control: StepControl,
 ) -> Result<AdamWUpdate<R>, FusedAdamWError> {
-    options.validate()?;
-    control.validate()?;
-    let size = validate_tensor(parameters, false)?;
-    validate_related(parameters, gradients, true, "gradient")?;
-    if let Some(state) = state {
-        if state.step == 0 || state.maximum.is_some() != options.amsgrad {
-            return Err(FusedAdamWError::InvalidState("step/AMSGrad mode"));
-        }
-        validate_related(parameters, &state.first, false, "first moment")?;
-        validate_related(parameters, &state.second, false, "second moment")?;
-        if let Some(maximum) = &state.maximum {
-            validate_related(parameters, maximum, false, "max second moment")?;
-        }
+    adamw_step_scaled(parameters, gradients, state, options, control, 1.0)
+}
+
+// Clip factor is deliberately applied AFTER FP32 unscale, not folded into the
+// reciprocal loss scale: folding changes overflow detection and rounding.
+pub(super) fn adamw_step_scaled<R: Runtime>(
+    parameters: &RudaTensor<R>,
+    gradients: &RudaTensor<R>,
+    state: Option<&AdamWState<R>>,
+    options: &AdamWOptions,
+    control: StepControl,
+    clip_multiplier: f32,
+) -> Result<AdamWUpdate<R>, FusedAdamWError> {
+    if !clip_multiplier.is_finite() || !(0.0..=1.0).contains(&clip_multiplier) {
+        return Err(FusedAdamWError::InvalidOption("clip_multiplier"));
     }
+    let size = validate_step(parameters, gradients, state, options, control)?;
     if size == 0 || control.skip_update {
         return Ok(AdamWUpdate { parameters: parameters.clone(), state: state.cloned(), updated: false });
     }
@@ -122,8 +125,8 @@ pub fn adamw_step<R: Runtime>(
         new_second.clone().into_array_arg(), maximum_output.clone().into_array_arg(),
         options.learning_rate, options.beta1, options.beta2, options.epsilon,
         coefficients.decay_multiplier, coefficients.inverse_bias1, coefficients.inverse_bias2,
-        coefficients.inverse_gradient_scale,
-        state.is_some(), options.amsgrad, options.maximize,
+        coefficients.inverse_gradient_scale, clip_multiplier,
+        state.is_some(), options.amsgrad, options.maximize, clip_multiplier != 1.0,
         // Scope the cache identity to this kernel's algorithm, not only its name.
         concat!(include_str!("kernel.rs"), include_str!("config.rs")).to_owned(),
         gradients.dtype.into(),
@@ -133,6 +136,32 @@ pub fn adamw_step<R: Runtime>(
         state: Some(AdamWState { step: coefficients.step, first: new_first, second: new_second, maximum: new_maximum }),
         updated: true,
     })
+}
+
+// Shared preflight: the guarded group validates EVERY entry before any kernel
+// launch, and checks step overflow before calculating gradient statistics.
+pub(super) fn validate_step<R: Runtime>(
+    parameters: &RudaTensor<R>, gradients: &RudaTensor<R>,
+    state: Option<&AdamWState<R>>, options: &AdamWOptions, control: StepControl,
+) -> Result<usize, FusedAdamWError> {
+    options.validate()?;
+    control.validate()?;
+    let size = validate_tensor(parameters, false)?;
+    validate_related(parameters, gradients, true, "gradient")?;
+    if let Some(state) = state {
+        if state.step == 0 || state.maximum.is_some() != options.amsgrad {
+            return Err(FusedAdamWError::InvalidState("step/AMSGrad mode"));
+        }
+        validate_related(parameters, &state.first, false, "first moment")?;
+        validate_related(parameters, &state.second, false, "second moment")?;
+        if let Some(maximum) = &state.maximum {
+            validate_related(parameters, maximum, false, "max second moment")?;
+        }
+    }
+    if size != 0 && !control.skip_update {
+        state.map_or(0, |s| s.step).checked_add(1).ok_or(FusedAdamWError::StepOverflow)?;
+    }
+    Ok(size)
 }
 
 fn validate_related<R: Runtime>(
@@ -150,7 +179,7 @@ fn validate_related<R: Runtime>(
     Ok(())
 }
 
-fn validate_tensor<R: Runtime>(tensor: &RudaTensor<R>, gradient: bool) -> Result<usize, FusedAdamWError> {
+pub(super) fn validate_tensor<R: Runtime>(tensor: &RudaTensor<R>, gradient: bool) -> Result<usize, FusedAdamWError> {
     let dtype_ok = if gradient {
         matches!(tensor.dtype, DType::F32 | DType::F16 | DType::BF16)
     } else { tensor.dtype == DType::F32 };
