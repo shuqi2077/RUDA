@@ -1,6 +1,6 @@
 # ruFFT
 
-[English](../../README.md) | **简体中文**
+[English](../../README.md) | **简体中文** | [日本語](../ja/README.md) | [Deutsch](../de/README.md) | [Русский](../ru/README.md)
 
 Ruda 快速傅里叶变换库。
 

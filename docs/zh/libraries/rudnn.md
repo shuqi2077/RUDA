@@ -1,6 +1,6 @@
 # ruDNN 用户指南
 
-[计算库](README.md) · [ruBLAS](rublas.md) · [张量框架](../tensor-framework.md) · [English](../../en/libraries/rudnn.md)
+[计算库](README.md) · [ruBLAS](rublas.md) · [张量框架](../tensor-framework.md) · [English](../../en/libraries/rudnn.md) | [日本語](../../ja/libraries/rudnn.md) | [Deutsch](../../de/libraries/rudnn.md) | [Русский](../../ru/libraries/rudnn.md)
 
 ## 1. 概述与功能入口
 

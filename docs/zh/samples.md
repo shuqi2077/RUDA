@@ -1,6 +1,6 @@
 # 示例与教程
 
-[文档首页](README.md) · [快速开始](getting-started.md) · [English](../en/samples.md)
+[文档首页](README.md) · [快速开始](getting-started.md) · [English](../en/samples.md) | [日本語](../ja/samples.md) | [Deutsch](../de/samples.md) | [Русский](../ru/samples.md)
 
 ## 1. NVIDIA 运行时示例
 

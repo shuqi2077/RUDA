@@ -1,6 +1,6 @@
 # ruCCL User Guide
 
-[Compute libraries](README.md) · [Tensors and frameworks](../tensor-framework.md) · [中文](../../zh/libraries/ruccl.md)
+[Compute libraries](README.md) · [Tensors and frameworks](../tensor-framework.md) · [中文](../../zh/libraries/ruccl.md) | [日本語](../../ja/libraries/ruccl.md) | [Deutsch](../../de/libraries/ruccl.md) | [Русский](../../ru/libraries/ruccl.md)
 
 ## 1. Layers and entry points
 

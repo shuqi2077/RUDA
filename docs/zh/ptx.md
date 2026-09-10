@@ -1,6 +1,6 @@
 # PTX 后端参考
 
-[文档首页](README.md) · [编译器指南](compiler-guide.md) · [示例](samples.md) · [English](../en/ptx.md)
+[文档首页](README.md) · [编译器指南](compiler-guide.md) · [示例](samples.md) · [English](../en/ptx.md) | [日本語](../ja/ptx.md) | [Deutsch](../de/ptx.md) | [Русский](../ru/ptx.md)
 
 ## 1. 使用范围
 

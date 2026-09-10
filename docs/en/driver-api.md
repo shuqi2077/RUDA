@@ -1,6 +1,6 @@
 # Driver API and Backends
 
-[Documentation](README.md) · [Runtime API](runtime-api.md) · [Compatibility](compatibility.md) · [中文](../zh/driver-api.md)
+[Documentation](README.md) · [Runtime API](runtime-api.md) · [Compatibility](compatibility.md) · [中文](../zh/driver-api.md) | [日本語](../ja/driver-api.md) | [Deutsch](../de/driver-api.md) | [Русский](../ru/driver-api.md)
 
 Ruda driver crates connect the general-purpose runtime contract to execution backends. This guide describes Rust backend entry points, not drop-in replacements for CUDA Driver API functions.
 

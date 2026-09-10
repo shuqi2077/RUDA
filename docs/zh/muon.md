@@ -1,5 +1,7 @@
 # Muon 与显式 Muon + AdamW 参数分组
 
+[English](../en/muon.md) | **简体中文** | [日本語](../ja/muon.md) | [Deutsch](../de/muon.md) | [Русский](../ru/muon.md)
+
 ## 已有内容与本次补充
 
 基线已经包含 `ruda-optim/src/optim/muon/mod.rs`，公开 `MuonConfig`、`Muon`、`MuonState` 和两种学习率缩放。

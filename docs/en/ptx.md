@@ -1,6 +1,6 @@
 # PTX Backend Reference
 
-[Documentation](README.md) · [Compiler guide](compiler-guide.md) · [Examples](samples.md) · [中文](../zh/ptx.md)
+[Documentation](README.md) · [Compiler guide](compiler-guide.md) · [Examples](samples.md) · [中文](../zh/ptx.md) | [日本語](../ja/ptx.md) | [Deutsch](../de/ptx.md) | [Русский](../ru/ptx.md)
 
 ## 1. Scope
 

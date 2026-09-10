@@ -1,6 +1,6 @@
 # 计算库参考
 
-[文档首页](../README.md) · [张量框架](../tensor-framework.md) · [English](../../en/libraries/README.md)
+[文档首页](../README.md) · [张量框架](../tensor-framework.md) · [English](../../en/libraries/README.md) | [日本語](../../ja/libraries/README.md) | [Deutsch](../../de/libraries/README.md) | [Русский](../../ru/libraries/README.md)
 
 领域库负责具体计算，运行时负责设备执行，张量框架负责上层组合。库名代表职责划分，不表示与对应 CUDA 库拥有相同 API 或完整功能覆盖。
 

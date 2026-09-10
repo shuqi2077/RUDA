@@ -1,6 +1,6 @@
 # Tensors and Frameworks
 
-[Documentation](README.md) · [Compute libraries](libraries/README.md) · [Programming guide](programming-guide.md) · [中文](../zh/tensor-framework.md)
+[Documentation](README.md) · [Compute libraries](libraries/README.md) · [Programming guide](programming-guide.md) · [中文](../zh/tensor-framework.md) | [日本語](../ja/tensor-framework.md) | [Deutsch](../de/tensor-framework.md) | [Русский](../ru/tensor-framework.md)
 
 ## 1. Layers
 

@@ -1,6 +1,6 @@
 # Ruda Documentation
 
-[Documentation index](../README.md) · [中文](../zh/README.md)
+[Documentation index](../README.md) · [中文](../zh/README.md) | [日本語](../ja/README.md) | [Deutsch](../de/README.md) | [Русский](../ru/README.md)
 
 From your first GPU kernel to compute libraries, tensor training, and local model inference. Start with your task, then explore the programming guides and API references.
 

@@ -1,6 +1,6 @@
 # ruSPARSE 用户指南
 
-[计算库](README.md) · [English](../../en/libraries/rusparse.md)
+[计算库](README.md) · [English](../../en/libraries/rusparse.md) | [日本語](../../ja/libraries/rusparse.md) | [Deutsch](../../de/libraries/rusparse.md) | [Русский](../../ru/libraries/rusparse.md)
 
 ## 1. 概述
 

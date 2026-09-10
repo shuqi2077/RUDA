@@ -1,5 +1,7 @@
 # 梯度检测、全组 L2 裁剪与融合 AdamW（实验性）
 
+[English](../en/gradient-guard.md) | **简体中文** | [日本語](../ja/gradient-guard.md) | [Deutsch](../de/gradient-guard.md) | [Русский](../ru/gradient-guard.md)
+
 新功能默认关闭，原来的 `adamw_step` 签名和模型优化器默认分派不变。
 
 ## 本次补上的能力

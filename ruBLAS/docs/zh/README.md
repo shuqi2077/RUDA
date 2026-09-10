@@ -1,6 +1,6 @@
 # ruBLAS
 
-[English](../../README.md) | **简体中文**
+[English](../../README.md) | **简体中文** | [日本語](../ja/README.md) | [Deutsch](../de/README.md) | [Русский](../ru/README.md)
 
 Ruda 线性代数与矩阵乘法库。
 

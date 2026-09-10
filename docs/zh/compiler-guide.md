@@ -1,6 +1,6 @@
 # 编译器指南
 
-[文档首页](README.md) · [PTX 参考](ptx.md) · [编程指南](programming-guide.md) · [English](../en/compiler-guide.md)
+[文档首页](README.md) · [PTX 参考](ptx.md) · [编程指南](programming-guide.md) · [English](../en/compiler-guide.md) | [日本語](../ja/compiler-guide.md) | [Deutsch](../de/compiler-guide.md) | [Русский](../ru/compiler-guide.md)
 
 ## 1. 编译流程
 

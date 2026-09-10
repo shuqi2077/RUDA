@@ -1,6 +1,6 @@
 # Ruda 文档
 
-[文档目录](../README.md) · [English](../en/README.md)
+[文档目录](../README.md) · [English](../en/README.md) | [日本語](../ja/README.md) | [Deutsch](../de/README.md) | [Русский](../ru/README.md)
 
 从第一个 GPU Kernel，到领域计算库、张量训练和本地模型推理。按任务开始，再查阅概念指南与 API 参考。
 

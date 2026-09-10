@@ -1,6 +1,6 @@
 # Installation and Quickstart
 
-[Documentation](README.md) · [Next: Programming guide](programming-guide.md) · [中文](../zh/getting-started.md)
+[Documentation](README.md) · [Next: Programming guide](programming-guide.md) · [中文](../zh/getting-started.md) | [日本語](../ja/getting-started.md) | [Deutsch](../de/getting-started.md) | [Русский](../ru/getting-started.md)
 
 ## 1. Choose your entry point
 

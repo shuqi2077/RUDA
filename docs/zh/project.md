@@ -1,6 +1,6 @@
 # Ruda — Rust 高性能计算库
 
-[English](../../README.md) | **简体中文**
+[English](../../README.md) | **简体中文** | [日本語](../ja/project.md) | [Deutsch](../de/project.md) | [Русский](../ru/project.md)
 
 Ruda 是 Rust 高性能计算库，正在构建从 GPU Kernel、编译器、运行时到数学计算、张量与模型的完整软件栈。
 

@@ -1,6 +1,6 @@
 # ruRAND User Guide
 
-[Compute libraries](README.md) · [Runtime API](../runtime-api.md) · [中文](../../zh/libraries/rurand.md)
+[Compute libraries](README.md) · [Runtime API](../runtime-api.md) · [中文](../../zh/libraries/rurand.md) | [日本語](../../ja/libraries/rurand.md) | [Deutsch](../../de/libraries/rurand.md) | [Русский](../../ru/libraries/rurand.md)
 
 ruRAND generates device tensors with uniform, normal, and Bernoulli distributions. Use `rurand::tensor` to allocate new tensors, or the same-named functions at the crate root to fill existing device storage.
 

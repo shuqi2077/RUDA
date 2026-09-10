@@ -1,6 +1,6 @@
 # 参与 Ruda
 
-[English](../../CONTRIBUTING.md) | **简体中文**
+[English](../../CONTRIBUTING.md) | **简体中文** | [日本語](../ja/CONTRIBUTING.md) | [Deutsch](../de/CONTRIBUTING.md) | [Русский](../ru/CONTRIBUTING.md)
 
 ## 范围
 

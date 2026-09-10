@@ -1,6 +1,6 @@
 # ruCCL 用户指南
 
-[计算库](README.md) · [张量框架](../tensor-framework.md) · [English](../../en/libraries/ruccl.md)
+[计算库](README.md) · [张量框架](../tensor-framework.md) · [English](../../en/libraries/ruccl.md) | [日本語](../../ja/libraries/ruccl.md) | [Deutsch](../../de/libraries/ruccl.md) | [Русский](../../ru/libraries/ruccl.md)
 
 ## 1. 层级与入口
 

@@ -1,6 +1,6 @@
 # ruSPARSE User Guide
 
-[Compute libraries](README.md) · [中文](../../zh/libraries/rusparse.md)
+[Compute libraries](README.md) · [中文](../../zh/libraries/rusparse.md) | [日本語](../../ja/libraries/rusparse.md) | [Deutsch](../../de/libraries/rusparse.md) | [Русский](../../ru/libraries/rusparse.md)
 
 ## 1. Overview
 

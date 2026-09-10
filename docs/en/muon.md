@@ -1,5 +1,7 @@
 # Muon and explicit Muon + AdamW groups
 
+**English** | [简体中文](../zh/muon.md) | [日本語](../ja/muon.md) | [Deutsch](../de/muon.md) | [Русский](../ru/muon.md)
+
 The existing `MuonConfig`, `Muon`, `MuonState` implementation is extended, not duplicated.
 See [中文完整契约](../zh/muon.md) for the detailed scope.
 

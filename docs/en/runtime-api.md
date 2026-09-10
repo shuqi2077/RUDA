@@ -1,6 +1,6 @@
 # Runtime API Reference
 
-[Documentation](README.md) · [Programming guide](programming-guide.md) · [Driver API](driver-api.md) · [中文](../zh/runtime-api.md)
+[Documentation](README.md) · [Programming guide](programming-guide.md) · [Driver API](driver-api.md) · [中文](../zh/runtime-api.md) | [日本語](../ja/runtime-api.md) | [Deutsch](../de/runtime-api.md) | [Русский](../ru/runtime-api.md)
 
 The general-purpose runtime is in `ruda::runtime`, enabled by the `ruda/runtime` feature. Each backend also requires its corresponding driver crate.
 

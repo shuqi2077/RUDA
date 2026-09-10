@@ -1,6 +1,6 @@
 # ruPRIM User Guide
 
-[Compute libraries](README.md) · [Tensor framework](../tensor-framework.md) · [中文](../../zh/libraries/ruprim.md)
+[Compute libraries](README.md) · [Tensor framework](../tensor-framework.md) · [中文](../../zh/libraries/ruprim.md) | [日本語](../../ja/libraries/ruprim.md) | [Deutsch](../../de/libraries/ruprim.md) | [Русский](../../ru/libraries/ruprim.md)
 
 ruPRIM provides device tensor reductions, cumulative scans, elementwise operations, and indexing. This page uses `RudaTensor<R>`, where R is a device Runtime.
 

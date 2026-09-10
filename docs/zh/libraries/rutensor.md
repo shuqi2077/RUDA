@@ -1,6 +1,6 @@
 # ruTENSOR 用户指南
 
-[计算库](README.md) · [张量框架](../tensor-framework.md) · [English](../../en/libraries/rutensor.md)
+[计算库](README.md) · [张量框架](../tensor-framework.md) · [English](../../en/libraries/rutensor.md) | [日本語](../../ja/libraries/rutensor.md) | [Deutsch](../../de/libraries/rutensor.md) | [Русский](../../ru/libraries/rutensor.md)
 
 ruTENSOR 提供基于模式标签的张量收缩、归约、物理置换和逐元素运算。输入使用 `RudaTensor<R>`，由应用选择设备 Runtime。它与上层张量框架 `ruda-tensor` 是不同的库。
 

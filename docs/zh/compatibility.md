@@ -1,6 +1,6 @@
 # 兼容性指南
 
-[文档首页](README.md) · [编程指南](programming-guide.md) · [English](../en/compatibility.md)
+[文档首页](README.md) · [编程指南](programming-guide.md) · [English](../en/compatibility.md) | [日本語](../ja/compatibility.md) | [Deutsch](../de/compatibility.md) | [Русский](../ru/compatibility.md)
 
 ## 1. CUDA 开发概念对照
 

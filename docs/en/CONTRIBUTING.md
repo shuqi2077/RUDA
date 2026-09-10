@@ -1,6 +1,6 @@
 # Contributing to Ruda
 
-[Documentation](README.md) · [中文](../zh/CONTRIBUTING.md)
+[Documentation](README.md) · [中文](../zh/CONTRIBUTING.md) | [日本語](../ja/CONTRIBUTING.md) | [Deutsch](../de/CONTRIBUTING.md) | [Русский](../ru/CONTRIBUTING.md)
 
 ## Scope
 

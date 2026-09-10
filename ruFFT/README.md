@@ -1,6 +1,6 @@
 # ruFFT
 
-**English** | [简体中文](docs/zh/README.md)
+**English** | [简体中文](docs/zh/README.md) | [日本語](docs/ja/README.md) | [Deutsch](docs/de/README.md) | [Русский](docs/ru/README.md)
 
 Fast Fourier transforms for Ruda.
 

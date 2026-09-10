@@ -1,6 +1,6 @@
 # ruSPARSE
 
-**English** | [简体中文](docs/zh/README.md)
+**English** | [简体中文](docs/zh/README.md) | [日本語](docs/ja/README.md) | [Deutsch](docs/de/README.md) | [Русский](docs/ru/README.md)
 
 This repository is a source mirror. Run the commands below from the [RUDA monorepo](https://github.com/shuqi2077/RUDA) root.
 

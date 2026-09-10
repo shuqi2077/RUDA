@@ -1,6 +1,6 @@
 # Runtime API 参考
 
-[文档首页](README.md) · [编程指南](programming-guide.md) · [Driver API](driver-api.md) · [English](../en/runtime-api.md)
+[文档首页](README.md) · [编程指南](programming-guide.md) · [Driver API](driver-api.md) · [English](../en/runtime-api.md) | [日本語](../ja/runtime-api.md) | [Deutsch](../de/runtime-api.md) | [Русский](../ru/runtime-api.md)
 
 本页按设备、内存和执行职责介绍当前通用运行时入口。模块位于 `ruda::runtime`，需要 `ruda/runtime` feature；具体后端还需对应驱动 crate。
 

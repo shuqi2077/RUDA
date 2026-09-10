@@ -1,6 +1,6 @@
 # 张量与框架指南
 
-[文档首页](README.md) · [计算库](libraries/README.md) · [编程指南](programming-guide.md) · [English](../en/tensor-framework.md)
+[文档首页](README.md) · [计算库](libraries/README.md) · [编程指南](programming-guide.md) · [English](../en/tensor-framework.md) | [日本語](../ja/tensor-framework.md) | [Deutsch](../de/tensor-framework.md) | [Русский](../ru/tensor-framework.md)
 
 ## 1. 层级
 

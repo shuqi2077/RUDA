@@ -1,6 +1,6 @@
 # Model Loading and Inference
 
-[Documentation](README.md) · [Training](training.md) · [中文](../zh/model-inference.md)
+[Documentation](README.md) · [Training](training.md) · [中文](../zh/model-inference.md) | [日本語](../ja/model-inference.md) | [Deutsch](../de/model-inference.md) | [Русский](../ru/model-inference.md)
 
 ruLLM provides model loading, tokenization, cached autoregressive generation, and request scheduling. Its Cargo package is `ruLLM`; its Rust import name is `rullm`.
 

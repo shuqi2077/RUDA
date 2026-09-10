@@ -1,6 +1,6 @@
 # Ruda Programming Guide
 
-[Documentation](README.md) · [Runtime API](runtime-api.md) · [Compute libraries](libraries/README.md) · [中文](../zh/programming-guide.md)
+[Documentation](README.md) · [Runtime API](runtime-api.md) · [Compute libraries](libraries/README.md) · [中文](../zh/programming-guide.md) | [日本語](../ja/programming-guide.md) | [Deutsch](../de/programming-guide.md) | [Русский](../ru/programming-guide.md)
 
 ## 1. Host and device
 

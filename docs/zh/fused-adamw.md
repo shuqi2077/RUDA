@@ -1,5 +1,7 @@
 # 实验性融合 AdamW / AMSGrad
 
+[English](../en/fused-adamw.md) | **简体中文** | [日本語](../ja/fused-adamw.md) | [Deutsch](../de/fused-adamw.md) | [Русский](../ru/fused-adamw.md)
+
 本次在现有 `ruda-optim` 中增加可选路径，不新建重复的优化器库，也不改原来的
 `AdamW`、模型优化器适配器和 checkpoint 格式。**新 Rust/GPU 路径尚未编译运行验收。**
 

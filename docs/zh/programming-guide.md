@@ -1,6 +1,6 @@
 # Ruda 编程指南
 
-[文档首页](README.md) · [Runtime API](runtime-api.md) · [计算库](libraries/README.md) · [English](../en/programming-guide.md)
+[文档首页](README.md) · [Runtime API](runtime-api.md) · [计算库](libraries/README.md) · [English](../en/programming-guide.md) | [日本語](../ja/programming-guide.md) | [Deutsch](../de/programming-guide.md) | [Русский](../ru/programming-guide.md)
 
 ## 1. 主机与设备
 

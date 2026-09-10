@@ -1,6 +1,6 @@
 # ruPRIM 用户指南
 
-[计算库](README.md) · [张量框架](../tensor-framework.md) · [English](../../en/libraries/ruprim.md)
+[计算库](README.md) · [张量框架](../tensor-framework.md) · [English](../../en/libraries/ruprim.md) | [日本語](../../ja/libraries/ruprim.md) | [Deutsch](../../de/libraries/ruprim.md) | [Русский](../../ru/libraries/ruprim.md)
 
 ruPRIM 提供设备张量归约、累积扫描、逐元素计算和索引操作。本页使用 `RudaTensor<R>` 接口，参数中的 R 是设备 Runtime。
 

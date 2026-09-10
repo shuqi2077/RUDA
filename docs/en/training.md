@@ -1,6 +1,6 @@
 # Training and Saving State
 
-[Documentation](README.md) · [Tensor framework](tensor-framework.md) · [中文](../zh/training.md)
+[Documentation](README.md) · [Tensor framework](tensor-framework.md) · [中文](../zh/training.md) | [日本語](../ja/training.md) | [Deutsch](../de/training.md) | [Русский](../ru/training.md)
 
 ## Configure the training backend
 

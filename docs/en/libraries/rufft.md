@@ -1,6 +1,6 @@
 # ruFFT User Guide
 
-[Compute libraries](README.md) · [Tensor framework](../tensor-framework.md) · [中文](../../zh/libraries/rufft.md)
+[Compute libraries](README.md) · [Tensor framework](../tensor-framework.md) · [中文](../../zh/libraries/rufft.md) | [日本語](../../ja/libraries/rufft.md) | [Deutsch](../../de/libraries/rufft.md) | [Русский](../../ru/libraries/rufft.md)
 
 ruFFT computes real-signal FFTs and inverse transforms on the device. The `rufft::tensor` interface allocates outputs; use `rfft_launch` and `irfft_launch` when managing device bindings directly.
 

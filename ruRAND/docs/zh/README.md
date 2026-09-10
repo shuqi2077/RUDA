@@ -1,6 +1,6 @@
 # ruRAND
 
-[English](../../README.md) | **简体中文**
+[English](../../README.md) | **简体中文** | [日本語](../ja/README.md) | [Deutsch](../de/README.md) | [Русский](../ru/README.md)
 
 Ruda 随机数生成库。
 

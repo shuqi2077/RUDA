@@ -1,6 +1,6 @@
 # 调试与诊断
 
-[文档首页](README.md) · [编译器](compiler-guide.md) · [Runtime API](runtime-api.md) · [English](../en/debugging.md)
+[文档首页](README.md) · [编译器](compiler-guide.md) · [Runtime API](runtime-api.md) · [English](../en/debugging.md) | [日本語](../ja/debugging.md) | [Deutsch](../de/debugging.md) | [Русский](../ru/debugging.md)
 
 ## 1. 按阶段定位
 

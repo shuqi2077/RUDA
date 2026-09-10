@@ -1,6 +1,6 @@
 # ruDNN User Guide
 
-[Compute libraries](README.md) · [ruBLAS](rublas.md) · [Tensors and frameworks](../tensor-framework.md) · [中文](../../zh/libraries/rudnn.md)
+[Compute libraries](README.md) · [ruBLAS](rublas.md) · [Tensors and frameworks](../tensor-framework.md) · [中文](../../zh/libraries/rudnn.md) | [日本語](../../ja/libraries/rudnn.md) | [Deutsch](../../de/libraries/rudnn.md) | [Русский](../../ru/libraries/rudnn.md)
 
 ## 1. Overview and features
 

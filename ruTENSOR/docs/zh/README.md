@@ -1,6 +1,6 @@
 # ruTENSOR
 
-[English](../../README.md) | **简体中文**
+[English](../../README.md) | **简体中文** | [日本語](../ja/README.md) | [Deutsch](../de/README.md) | [Русский](../ru/README.md)
 
 Ruda 设备张量线性代数：张量收缩与 einsum、归约、物理置换及逐元素运算。
 

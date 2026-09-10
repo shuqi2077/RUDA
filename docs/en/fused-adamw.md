@@ -1,5 +1,7 @@
 # Experimental fused device AdamW / AMSGrad
 
+**English** | [简体中文](../zh/fused-adamw.md) | [日本語](../ja/fused-adamw.md) | [Deutsch](../de/fused-adamw.md) | [Русский](../ru/fused-adamw.md)
+
 This is an **opt-in implementation awaiting RUDA Rust/GPU execution validation**.
 It extends `ruda-optim`; it does not create another optimizer library or change the
 existing `AdamW`, model optimizer adaptor, autograd graph, or checkpoint format.

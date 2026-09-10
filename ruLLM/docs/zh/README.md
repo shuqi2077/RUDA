@@ -1,6 +1,6 @@
 # ruLLM
 
-[English](../../README.md) | **简体中文**
+[English](../../README.md) | **简体中文** | [日本語](../ja/README.md) | [Deutsch](../de/README.md) | [Русский](../ru/README.md)
 
 基于 Ruda 的 LLM 推理、模型加载与文本生成库。
 

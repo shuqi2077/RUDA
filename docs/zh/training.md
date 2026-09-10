@@ -1,6 +1,6 @@
 # 训练与状态保存
 
-[文档首页](README.md) · [张量框架](tensor-framework.md) · [English](../en/training.md)
+[文档首页](README.md) · [张量框架](tensor-framework.md) · [English](../en/training.md) | [日本語](../ja/training.md) | [Deutsch](../de/training.md) | [Русский](../ru/training.md)
 
 ## 配置训练后端
 

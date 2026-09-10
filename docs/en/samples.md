@@ -1,6 +1,6 @@
 # Examples and Tutorials
 
-[Documentation](README.md) · [Quickstart](getting-started.md) · [中文](../zh/samples.md)
+[Documentation](README.md) · [Quickstart](getting-started.md) · [中文](../zh/samples.md) | [日本語](../ja/samples.md) | [Deutsch](../de/samples.md) | [Русский](../ru/samples.md)
 
 ## 1. NVIDIA runtime example
 

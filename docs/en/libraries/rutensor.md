@@ -1,6 +1,6 @@
 # ruTENSOR User Guide
 
-[Compute libraries](README.md) · [Tensor framework](../tensor-framework.md) · [中文](../../zh/libraries/rutensor.md)
+[Compute libraries](README.md) · [Tensor framework](../tensor-framework.md) · [中文](../../zh/libraries/rutensor.md) | [日本語](../../ja/libraries/rutensor.md) | [Deutsch](../../de/libraries/rutensor.md) | [Русский](../../ru/libraries/rutensor.md)
 
 ruTENSOR provides named-axis tensor contractions, reductions, physical permutations, and elementwise operations. Inputs use `RudaTensor<R>`; the application selects a device Runtime. This library is distinct from the higher-level `ruda-tensor` framework.
 

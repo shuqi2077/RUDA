@@ -1,6 +1,6 @@
 # 模型加载与推理
 
-[文档首页](README.md) · [训练](training.md) · [English](../en/model-inference.md)
+[文档首页](README.md) · [训练](training.md) · [English](../en/model-inference.md) | [日本語](../ja/model-inference.md) | [Deutsch](../de/model-inference.md) | [Русский](../ru/model-inference.md)
 
 ruLLM 提供模型加载、分词、带缓存的自回归生成和请求调度。Cargo package 名为 `ruLLM`，Rust 导入名为 `rullm`。
 

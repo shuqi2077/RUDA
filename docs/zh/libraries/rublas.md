@@ -1,6 +1,6 @@
 # ruBLAS 用户指南
 
-[计算库](README.md) · [Runtime API](../runtime-api.md) · [English](../../en/libraries/rublas.md)
+[计算库](README.md) · [Runtime API](../runtime-api.md) · [English](../../en/libraries/rublas.md) | [日本語](../../ja/libraries/rublas.md) | [Deutsch](../../de/libraries/rublas.md) | [Русский](../../ru/libraries/rublas.md)
 
 ## 1. 概述与功能入口
 

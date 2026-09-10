@@ -1,6 +1,6 @@
 # Compute Library Reference
 
-[Documentation](../README.md) · [Tensors and frameworks](../tensor-framework.md) · [中文](../../zh/libraries/README.md)
+[Documentation](../README.md) · [Tensors and frameworks](../tensor-framework.md) · [中文](../../zh/libraries/README.md) | [日本語](../../ja/libraries/README.md) | [Deutsch](../../de/libraries/README.md) | [Русский](../../ru/libraries/README.md)
 
 Compute libraries implement operations, the runtime executes them on devices, and the tensor framework composes them. Library names describe responsibilities, not identical APIs or complete feature parity with similarly named CUDA libraries.
 

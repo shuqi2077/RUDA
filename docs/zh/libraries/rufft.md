@@ -1,6 +1,6 @@
 # ruFFT 用户指南
 
-[计算库](README.md) · [张量框架](../tensor-framework.md) · [English](../../en/libraries/rufft.md)
+[计算库](README.md) · [张量框架](../tensor-framework.md) · [English](../../en/libraries/rufft.md) | [日本語](../../ja/libraries/rufft.md) | [Deutsch](../../de/libraries/rufft.md) | [Русский](../../ru/libraries/rufft.md)
 
 ruFFT 在设备上计算实数信号的 FFT 和逆变换。使用 `rufft::tensor` 接口可由库分配输出；已有设备绑定时使用底层 `rfft_launch`、`irfft_launch`。
 

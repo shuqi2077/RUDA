@@ -1,6 +1,6 @@
 # ruPRIM
 
-[English](../../README.md) | **简体中文**
+[English](../../README.md) | **简体中文** | [日本語](../ja/README.md) | [Deutsch](../de/README.md) | [Русский](../ru/README.md)
 
 Ruda 并行基础算子库，提供归约、扫描与索引操作。
 

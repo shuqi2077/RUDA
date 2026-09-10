@@ -1,6 +1,6 @@
 # Debugging and Diagnostics
 
-[Documentation](README.md) · [Compiler](compiler-guide.md) · [Runtime API](runtime-api.md) · [中文](../zh/debugging.md)
+[Documentation](README.md) · [Compiler](compiler-guide.md) · [Runtime API](runtime-api.md) · [中文](../zh/debugging.md) | [日本語](../ja/debugging.md) | [Deutsch](../de/debugging.md) | [Русский](../ru/debugging.md)
 
 ## 1. Locate the failing stage
 

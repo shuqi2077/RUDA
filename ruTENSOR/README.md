@@ -1,6 +1,6 @@
 # ruTENSOR
 
-**English** | [简体中文](docs/zh/README.md)
+**English** | [简体中文](docs/zh/README.md) | [日本語](docs/ja/README.md) | [Deutsch](docs/de/README.md) | [Русский](docs/ru/README.md)
 
 Tensor linear algebra for Ruda device tensors: contractions and einsum, reductions, physical permutations, and elementwise operations.
 

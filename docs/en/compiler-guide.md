@@ -1,6 +1,6 @@
 # Compiler Guide
 
-[Documentation](README.md) · [PTX reference](ptx.md) · [Programming guide](programming-guide.md) · [中文](../zh/compiler-guide.md)
+[Documentation](README.md) · [PTX reference](ptx.md) · [Programming guide](programming-guide.md) · [中文](../zh/compiler-guide.md) | [日本語](../ja/compiler-guide.md) | [Deutsch](../de/compiler-guide.md) | [Русский](../ru/compiler-guide.md)
 
 ## 1. Compilation pipeline
 

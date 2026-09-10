@@ -1,0 +1,97 @@
+# ruSPARSE Руководство пользователя
+
+[English](../../en/libraries/rusparse.md) | [简体中文](../../zh/libraries/rusparse.md) | [日本語](../../ja/libraries/rusparse.md) | [Deutsch](../../de/libraries/rusparse.md) | **Русский**
+
+[Вычислительные библиотеки](README.md) · [中文](../../zh/libraries/rusparse.md)
+
+## 1. Обзор
+
+ruSPARSE обеспечивает разреженные вычисления.
+
+## 2. Дескрипторы данных
+
+|Тип|Цель|
+| --- | --- |
+|`CsrMatrix`, `CsrMatrixOwned`|Заимствованные представления CSR и собственное хранилище|
+|`CooMatrix`, `CooMatrixOwned`|COO представление|
+|`CscMatrix`, `CscMatrixOwned`|CSC представление|
+|`BsrMatrix`, `EllMatrix`|Разреженные блоки и представления ELL|
+|`DenseMatrix`, `DenseMatrixOwned`|Дескрипторы плотной матрицы|
+|`SparseVector`|Разреженный вектор|
+|`IndexBase`| База индексов Zero или One |
+|`DenseOrder`| RowMajor или ColumnMajor |
+|`Operation`| None, Transpose или ConjugateTranspose |
+
+База индекса, макет и тип операции являются явными контрактами и не могут быть выведены только на основе длины массива. Owned отличает собственные данные от заимствованных представлений; он не выделяет хранилище общего назначения GPU автоматически.
+
+## 3. Операции
+
+Операции организованы в умножение матрицы на вектор, умножение матрицы, умножение/сложение разреженной матрицы, скалярное произведение разреженных векторов, SDDMM и преобразование формата. Уровень выполнения содержит `SparsePlan`, `SparseError` и типы результатов для конкретных операций.
+
+CSR Умножение матрицы на вектор использует контракт альфа, op(A), x, beta, y. При переносе вызова сопоставьте базу индексов, режим транспонирования и расположение данных, а не просто меняйте префикс библиотеки.
+
+## 4. CUDA CSR матрично-векторное умножение
+
+Пакет Cargo — `ruSPARSE`; имя импорта Rust — `rusparse`. Функция `tensor` включает `rusparse::tensor`; `cuda` поддерживает как тензоры устройств, так и зависимости CUDA. Запускаем из корня исходников:
+
+```powershell
+cargo run --locked -p ruSPARSE --features cuda --example csrmv
+```
+
+В этом примере вычисляется `0.5 × A × x + 2 × y`:
+
+```rust
+use ruda_core::tensor::data::TensorData;
+use ruda_driver_cuda::{CudaDevice, CudaRuntime};
+use ruda_kernel::tensor::{readback::into_data_sync, transfer::from_data};
+use rusparse::{
+    CsrMatrix, IndexBase, Operation,
+    tensor::{CsrTensor, csrmv},
+};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let device = CudaDevice::default();
+    let host = CsrMatrix::new(
+        3, 3,
+        &[0, 2, 3, 4],
+        &[0, 1, 1, 2],
+        &[2., 1., -1., 5.],
+        IndexBase::Zero,
+    )?;
+    let matrix = CsrTensor::<CudaRuntime>::from_csr(host, Operation::None, &device)?;
+    let x = from_data(TensorData::new(vec![3f32, 4., 5.], [3]), &device);
+    let y = from_data(TensorData::new(vec![1f32, 2., 3.], [3]), &device);
+    let output = into_data_sync(csrmv(&matrix, 0.5, x, 2., y)?).to_vec::<f32>()?;
+    assert_eq!(output, [7., 2., 18.5]);
+    println!("alpha * A * x + beta * y = {output:?}");
+    Ok(())
+}
+```
+
+Аргументами `CsrMatrix::new` являются строки, столбцы, смещения строк, индексы столбцов, ненулевые значения и база индекса. В первой строке хранятся две записи; второй и третий хранят по одному. Результат: `[7.0, 2.0, 18.5]`.
+
+`CsrTensor::from_csr` загружает структуру и значения. Укажите здесь `Operation::Transpose`, чтобы транспонировать матрицу. Для `csrmv(&matrix, alpha, x, beta, y)` длина x равна количеству столбцов, а длина y равна количеству строк. Плотные входные данные должны быть неквантованными тензорами F32 на устройстве матрицы. Вызов возвращает новый тензор устройства; повторное использование матрицы не требует повторной загрузки ее структуры CSR.
+
+Для умножения разреженной/плотной матрицы используйте `csrmm(&matrix, operation_b, alpha, b, beta, c, output_order)`. Здесь c является необязательным, а `DenseOrder` определяет макет вывода. Чтобы изменить только ненулевые значения, вызовите `matrix.with_values(values)` с тензором устройства F32 длины nnz; структура сохранена.
+
+## 5. CSR в тензорном каркасе
+
+`ruda_tensor::api::CsrTensor<B>` предназначен для серверных частей, реализующих `SparseOps`. Это другой тип, чем `rusparse::tensor::CsrTensor<R>`, описанный выше. Создайте его с помощью `CsrTensor::<B>::from_data(&data, &device)`, где данные имеют тип `B::CsrData` бэкенда.
+
+|Метод|Использование|
+| --- | --- |
+|`matmul(rhs)`, `transpose_matmul(rhs)`|Умножьте разреженную матрицу или ее транспонирование на двумерный плотный тензор.|
+|`sparse_matmul(&rhs)`|Умножьте разреженные матрицы и создайте выходной шаблон.|
+|`add(&rhs)`, `add_scaled(&rhs, alpha, beta)`|Добавьте разреженные матрицы, опционально с коэффициентами.|
+|`gather(dense)`|Собрать плотные значения в позициях CSR в одномерный тензор.|
+|`scatter_add()`|Добавьте сохраненные значения в их плотные позиции.|
+|`mul_dense(rhs)`|Умножить на плотные значения в позициях CSR.|
+|`sampled_matmul(lhs, rhs)`|Оценить продукт с плотной матрицей только в текущих позициях CSR.|
+|`sampled_sparse_matmul(&lhs, &rhs)`|Оценить продукт с разреженной матрицей только в текущих позициях CSR.|
+|`transpose()`, `to_dense()`|Транспонировать или преобразовать в плотный тензор|
+|`with_values(values)`|Замените тензор одномерных значений, сохранив структуру.|
+|`to_data().await`|Асинхронное обратное чтение `B::CsrData`|
+
+Эти методы вычислений возвращают `Result`. Тензоры значений, используемые в разреженных операциях платформы, должны быть неквантованными.
+
+API Ссылка: [Устройство CSR](../../../ruSPARSE/src/tensor/mod.rs), [Рамка CSR](../../../ruda-tensor/src/api/sparse.rs).

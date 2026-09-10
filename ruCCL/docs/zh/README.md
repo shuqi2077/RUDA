@@ -1,6 +1,6 @@
 # ruCCL
 
-[English](../../README.md) | **简体中文**
+[English](../../README.md) | **简体中文** | [日本語](../ja/README.md) | [Deutsch](../de/README.md) | [Русский](../ru/README.md)
 
 本仓库是源码镜像。以下命令需在 [RUDA 主仓库](https://github.com/shuqi2077/RUDA)根目录运行。
 

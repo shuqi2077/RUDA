@@ -1,6 +1,6 @@
 # 安装与快速开始
 
-[文档首页](README.md) · [下一步：编程指南](programming-guide.md) · [English](../en/getting-started.md)
+[文档首页](README.md) · [下一步：编程指南](programming-guide.md) · [English](../en/getting-started.md) | [日本語](../ja/getting-started.md) | [Deutsch](../de/getting-started.md) | [Русский](../ru/getting-started.md)
 
 ## 1. 选择使用层级
 

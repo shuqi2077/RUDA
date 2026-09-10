@@ -1,6 +1,6 @@
 # ruRAND 用户指南
 
-[计算库](README.md) · [Runtime API](../runtime-api.md) · [English](../../en/libraries/rurand.md)
+[计算库](README.md) · [Runtime API](../runtime-api.md) · [English](../../en/libraries/rurand.md) | [日本語](../../ja/libraries/rurand.md) | [Deutsch](../../de/libraries/rurand.md) | [Русский](../../ru/libraries/rurand.md)
 
 ruRAND 生成均匀、正态和伯努利分布的设备张量。用 `rurand::tensor` 分配并生成新张量，或用 crate 根部的同名函数填充已有设备存储。
 

@@ -1,6 +1,6 @@
 # Compatibility Guide
 
-[Documentation](README.md) · [Programming guide](programming-guide.md) · [中文](../zh/compatibility.md)
+[Documentation](README.md) · [Programming guide](programming-guide.md) · [中文](../zh/compatibility.md) | [日本語](../ja/compatibility.md) | [Deutsch](../de/compatibility.md) | [Русский](../ru/compatibility.md)
 
 ## 1. CUDA concepts
 

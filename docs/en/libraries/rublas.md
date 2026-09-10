@@ -1,6 +1,6 @@
 # ruBLAS User Guide
 
-[Compute libraries](README.md) · [Runtime API](../runtime-api.md) · [中文](../../zh/libraries/rublas.md)
+[Compute libraries](README.md) · [Runtime API](../runtime-api.md) · [中文](../../zh/libraries/rublas.md) | [日本語](../../ja/libraries/rublas.md) | [Deutsch](../../de/libraries/rublas.md) | [Русский](../../ru/libraries/rublas.md)
 
 ## 1. Overview and features
 
