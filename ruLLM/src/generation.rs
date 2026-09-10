@@ -9,11 +9,18 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 
 mod awq;
+mod control;
+use control::StopSequenceMatcher;
+use std::ops::ControlFlow;
+pub use control::{
+    ControlledGenerationOutput, GenerationCancellation, GenerationControl,
+    GenerationEvent, GenerationFinishReason,
+};
 mod sampling;
 pub use awq::{generate_greedy_awq, generate_sampled_awq};
 pub use sampling::{
     SamplingConfig, SamplingGenerationConfig, TokenSampler, generate_causal_sampled, generate_sampled,
-    generate_sampled_packed, generate_sampled_packed_ruda,
+    generate_sampled_packed, generate_sampled_packed_ruda, generate_causal_sampled_stream,
 };
 
 /// Deterministic autoregressive decoding options. Sampling is deliberately not
@@ -253,17 +260,51 @@ pub fn generate_causal_greedy<B: Backend, M: CausalModel<B>>(
     })
 }
 
+/// Cached greedy generation with token-level streaming and request controls.
+/// The callback runs synchronously once per selected token. Return
+/// `ControlFlow::Break(())` to stop after retaining that token. Natural stopping
+/// (EOS, then stop sequence, then length) takes precedence over cancellation.
+pub fn generate_causal_greedy_stream<B: Backend, M: CausalModel<B>>(
+    model: &M,
+    model_limits: &CausalModelLimits,
+    prompt_token_ids: &[i32],
+    generation: &GreedyGenerationConfig,
+    control: &GenerationControl,
+    device: &B::Device,
+    on_token: impl FnMut(GenerationEvent<'_>) -> ControlFlow<()>,
+) -> Result<ControlledGenerationOutput, GenerationError> {
+    generate_with_selector_stream(
+        model, model_limits, prompt_token_ids, generation, control, device,
+        |model, logits| model.greedy_token(logits), on_token,
+    )
+}
+
 fn generate_with_selector<B: Backend, M: CausalModel<B>>(
     model: &M,
     model_config: &CausalModelLimits,
     prompt_token_ids: &[i32],
     generation: &GreedyGenerationConfig,
     device: &B::Device,
-    mut select: impl FnMut(&M, Tensor<B, 3>) -> Result<i32, GenerationError>,
+    select: impl FnMut(&M, Tensor<B, 3>) -> Result<i32, GenerationError>,
 ) -> Result<TokenGenerationOutput, GenerationError> {
+    Ok(generate_with_selector_stream(
+        model, model_config, prompt_token_ids, generation,
+        &GenerationControl::default(), device, select,
+        |_| ControlFlow::Continue(()),
+    )?.output)
+}
+
+fn validate_generation(
+    model_config: &CausalModelLimits,
+    prompt_token_ids: &[i32],
+    generation: &GreedyGenerationConfig,
+) -> Result<BTreeSet<i32>, GenerationError> {
+    if model_config.vocab_size == 0 || model_config.vocab_size - 1 > i32::MAX as usize {
+        return Err(GenerationError("model requires a nonempty i32-indexed vocabulary".into()));
+    }
     if prompt_token_ids.is_empty() {
         return Err(GenerationError(
-            "greedy generation requires at least one prompt token".into(),
+            "generation requires at least one prompt token".into(),
         ));
     }
     for &token in prompt_token_ids {
@@ -299,33 +340,90 @@ fn generate_with_selector<B: Backend, M: CausalModel<B>>(
         )));
     }
 
-    let mut all_tokens = prompt_token_ids.to_vec();
-    let mut generated = Vec::with_capacity(generation.max_new_tokens);
-    if generation.max_new_tokens == 0 {
-        return Ok(TokenGenerationOutput {
-            token_ids: all_tokens,
-            generated_token_ids: generated,
-            stopped_on_eos: false,
+    Ok(eos)
+}
+
+fn generate_with_selector_stream<B: Backend, M: CausalModel<B>>(
+    model: &M,
+    model_config: &CausalModelLimits,
+    prompt_token_ids: &[i32],
+    generation: &GreedyGenerationConfig,
+    control: &GenerationControl,
+    device: &B::Device,
+    mut select: impl FnMut(&M, Tensor<B, 3>) -> Result<i32, GenerationError>,
+    mut on_token: impl FnMut(GenerationEvent<'_>) -> ControlFlow<()>,
+) -> Result<ControlledGenerationOutput, GenerationError> {
+    let eos = validate_generation(model_config, prompt_token_ids, generation)?;
+    control.validate(model_config.vocab_size)?;
+    let mut output = TokenGenerationOutput {
+        token_ids: prompt_token_ids.to_vec(),
+        generated_token_ids: Vec::new(),
+        stopped_on_eos: false,
+    };
+    if generation.max_new_tokens == 0 || control.is_cancelled() {
+        return Ok(ControlledGenerationOutput {
+            output,
+            finish_reason: if control.is_cancelled() {
+                GenerationFinishReason::Cancelled
+            } else {
+                GenerationFinishReason::MaxNewTokens
+            },
         });
     }
-
+    // Bound eager allocation even when a caller supplies a very large limit.
+    let initial_capacity = generation.max_new_tokens.min(1024);
+    output.token_ids.reserve(initial_capacity);
+    output.generated_token_ids.reserve(initial_capacity);
+    let mut matcher = StopSequenceMatcher::new(&control.stop_token_sequences);
     let mut cache = model.new_cache();
     let prompt = Tensor::<B, 2, Int>::from_data(
-        TensorData::new(prompt_token_ids.to_vec(), [1, prompt_token_ids.len()]),
-        device,
+        TensorData::new(prompt_token_ids.to_vec(), [1, prompt_token_ids.len()]), device,
     );
     let mut logits = model.try_forward_cached_last(prompt, &mut cache)?;
-    let mut stopped_on_eos = false;
+    let mut finish_reason = GenerationFinishReason::MaxNewTokens;
 
     for step in 0..generation.max_new_tokens {
-        let token = select(model, logits)?;
-        all_tokens.push(token);
-        generated.push(token);
-        if eos.contains(&token) {
-            stopped_on_eos = true;
+        if control.is_cancelled() {
+            finish_reason = GenerationFinishReason::Cancelled;
             break;
         }
-        if step + 1 == generation.max_new_tokens {
+        let [batch, sequence, vocabulary] = logits.dims();
+        if batch != 1 || sequence == 0 || vocabulary != model_config.vocab_size {
+            return Err(GenerationError(format!(
+                "expected batch-one logits with vocabulary {}, got [{batch}, {sequence}, {vocabulary}]",
+                model_config.vocab_size
+            )));
+        }
+        let token = select(model, logits)?;
+        if token < 0 || token as usize >= model_config.vocab_size {
+            return Err(GenerationError(format!(
+                "selected token {token} is outside vocabulary [0, {})", model_config.vocab_size
+            )));
+        }
+        output.token_ids.push(token);
+        output.generated_token_ids.push(token);
+        let matched = matcher.push(token);
+        let natural_stop = if eos.contains(&token) {
+            output.stopped_on_eos = true;
+            Some(GenerationFinishReason::EosToken(token))
+        } else if let Some(index) = matched {
+            Some(GenerationFinishReason::StopSequence(index))
+        } else if step + 1 == generation.max_new_tokens {
+            Some(GenerationFinishReason::MaxNewTokens)
+        } else {
+            None
+        };
+        let response = on_token(GenerationEvent {
+            token_id: token,
+            generated_token_ids: &output.generated_token_ids,
+            finish_reason: natural_stop,
+        });
+        if let Some(reason) = natural_stop {
+            finish_reason = reason;
+            break;
+        }
+        if response.is_break() || control.is_cancelled() {
+            finish_reason = GenerationFinishReason::Cancelled;
             break;
         }
         let input = Tensor::<B, 2, Int>::from_data([[token]], device);
@@ -333,11 +431,22 @@ fn generate_with_selector<B: Backend, M: CausalModel<B>>(
     }
     B::sync(device)
         .map_err(|error| GenerationError(format!("generation did not complete: {error}")))?;
-    Ok(TokenGenerationOutput {
-        token_ids: all_tokens,
-        generated_token_ids: generated,
-        stopped_on_eos,
-    })
+    Ok(ControlledGenerationOutput { output, finish_reason })
+}
+
+fn read_last_logits<B: Backend>(logits: Tensor<B, 3>) -> Result<Vec<f32>, GenerationError> {
+    let [batch, sequence, vocabulary] = logits.dims();
+    if batch != 1 || sequence == 0 || vocabulary == 0 {
+        return Err(GenerationError(format!(
+            "expected non-empty batch-one logits, got [{batch}, {sequence}, {vocabulary}]"
+        )));
+    }
+    logits.slice([0..1, sequence - 1..sequence, 0..vocabulary])
+        .cast(FloatDType::F32)
+        .try_into_data()
+        .map_err(|error| GenerationError(format!("cannot read sampling logits: {error}")))?
+        .to_vec::<f32>()
+        .map_err(|error| GenerationError(format!("cannot decode sampling logits: {error}")))
 }
 
 fn greedy_token<B: Backend>(logits: Tensor<B, 3>) -> Result<i32, GenerationError> {

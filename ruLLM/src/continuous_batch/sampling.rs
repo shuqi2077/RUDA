@@ -64,6 +64,10 @@ impl ContinuousBatchScheduler {
                 tokens.push(next.sample(values).map_err(|error| {
                     ContinuousBatchError(format!("sampling batch row {row}: {error}"))
                 })?);
+                // Batch previews retain RNG checkpoints, not one O(vocabulary)
+                // buffer per request. Streaming single requests still reuse
+                // their TokenSampler workspace across every decode step.
+                next.clear_workspace();
                 samplers.push((sequence.request_id, next));
             } else {
                 tokens.push(greedy_token(values, row)?);

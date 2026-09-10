@@ -118,6 +118,23 @@ impl PagedKvCacheManager {
         self.config
     }
 
+    /// Constant-time counters; unlike `snapshot`, these never clone page tables.
+    pub fn free_page_count(&self) -> usize {
+        self.free_pages.len()
+    }
+
+    pub fn allocated_page_count(&self) -> usize {
+        self.config.num_pages - self.free_pages.len()
+    }
+
+    pub fn sequence_count(&self) -> usize {
+        self.sequences.len()
+    }
+
+    pub fn reservation_count(&self) -> usize {
+        self.reservations.len()
+    }
+
     pub fn create_sequence(&mut self, request_id: RequestId) -> Result<(), PagedKvError> {
         if self.sequences.contains_key(&request_id) {
             return Err(PagedKvError(format!(
@@ -251,6 +268,7 @@ impl PagedKvCacheManager {
         &mut self,
         reservation_id: KvReservationId,
     ) -> Result<usize, PagedKvError> {
+        self.validate_reservation(reservation_id)?;
         let reservation = self.take_reservation(reservation_id)?;
         let sequence = self
             .sequences
@@ -272,6 +290,7 @@ impl PagedKvCacheManager {
     }
 
     pub fn cancel_append(&mut self, reservation_id: KvReservationId) -> Result<(), PagedKvError> {
+        self.validate_reservation(reservation_id)?;
         let reservation = self.take_reservation(reservation_id)?;
         let sequence = self
             .sequences
@@ -289,6 +308,59 @@ impl PagedKvCacheManager {
             let inserted = self.free_pages.insert(page);
             debug_assert!(inserted, "released page must not already be free");
         }
+        Ok(())
+    }
+
+    /// Commit a group atomically with respect to validation errors. Unknown or
+    /// duplicate IDs leave every reservation, sequence and page unchanged.
+    pub fn commit_appends(
+        &mut self,
+        reservation_ids: &[KvReservationId],
+    ) -> Result<Vec<usize>, PagedKvError> {
+        self.validate_reservations(reservation_ids)?;
+        Ok(reservation_ids.iter().map(|&id| {
+            self.commit_append(id).expect("all reservations were validated before commit")
+        }).collect())
+    }
+
+    /// Cancel a group atomically with respect to validation errors.
+    pub fn cancel_appends(
+        &mut self,
+        reservation_ids: &[KvReservationId],
+    ) -> Result<(), PagedKvError> {
+        self.validate_reservations(reservation_ids)?;
+        for &id in reservation_ids {
+            self.cancel_append(id).expect("all reservations were validated before cancellation");
+        }
+        Ok(())
+    }
+
+    fn validate_reservations(&self, ids: &[KvReservationId]) -> Result<(), PagedKvError> {
+        let mut seen = BTreeSet::new();
+        for &id in ids {
+            if !seen.insert(id) {
+                return Err(PagedKvError(format!("duplicate reservation {}", id.0)));
+            }
+            self.validate_reservation(id)?;
+        }
+        Ok(())
+    }
+
+    fn validate_reservation(&self, id: KvReservationId) -> Result<(), PagedKvError> {
+        let reservation = self.reservations.get(&id).ok_or_else(|| {
+            PagedKvError(format!("paged KV reservation {} does not exist", id.0))
+        })?;
+        let sequence = self.sequence(reservation.request_id)?;
+        if sequence.pending != Some(id)
+            || sequence.committed_tokens != reservation.start_position
+            || sequence.pages.len() < reservation.previous_page_count
+        {
+            return Err(PagedKvError(format!(
+                "reservation {} does not own a consistent sequence state", id.0
+            )));
+        }
+        reservation.start_position.checked_add(reservation.token_count)
+            .ok_or_else(|| PagedKvError("paged KV committed length overflow".into()))?;
         Ok(())
     }
 
@@ -347,3 +419,6 @@ impl PagedKvCacheManager {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;

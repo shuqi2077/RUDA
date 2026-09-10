@@ -5836,6 +5836,7 @@ dependencies = [
  "ruda-store",
  "ruda-tensor",
  "ruda-tensor-device",
+ "ruda-tensor-host",
  "serde",
  "serde_json",
  "tokenizers",

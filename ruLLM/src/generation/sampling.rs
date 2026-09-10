@@ -1,6 +1,7 @@
 use super::{
     CausalModel, CausalModelLimits, RudaPackedModel, GenerationError, GreedyGenerationConfig,
-    TokenGenerationOutput, generate_with_selector,
+    TokenGenerationOutput, ControlledGenerationOutput, GenerationControl, GenerationEvent,
+    generate_with_selector_stream, read_last_logits,
 };
 use crate::{LlamaConfig, LlamaForCausalLm, PackedLlamaForCausalLm};
 use ruda::runtime::server::ComputeServer;
@@ -8,8 +9,11 @@ use chacha20::ChaCha12Rng;
 use ruda_core::rand::{RngExt, SeedableRng, get_seeded_rng};
 use ruda_tensor::DeviceOps;
 use ruda_tensor::api::backend::Backend;
-use ruda_tensor::api::FloatDType;
+use std::ops::ControlFlow;
 use ruda_tensor_device::{BoolElement, DeviceBackend, DeviceRuntime, FloatElement, IntElement};
+
+mod distribution;
+use distribution::SamplingWorkspace;
 
 /// Temperature, top-k, then nucleus filtering for categorical token sampling.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -71,6 +75,7 @@ impl Default for SamplingGenerationConfig {
 pub struct TokenSampler {
     config: SamplingConfig,
     rng: ChaCha12Rng,
+    workspace: SamplingWorkspace,
 }
 
 impl Clone for TokenSampler {
@@ -78,6 +83,9 @@ impl Clone for TokenSampler {
         Self {
             config: self.config,
             rng: ChaCha12Rng::deserialize_state(&self.rng.serialize_state()),
+            // Scratch buffers are not semantic state. Avoid copying a full
+            // vocabulary when the scheduler previews a request's next draw.
+            workspace: SamplingWorkspace::default(),
         }
     }
 }
@@ -89,17 +97,23 @@ impl TokenSampler {
             .seed
             .map(ChaCha12Rng::seed_from_u64)
             .unwrap_or_else(|| ChaCha12Rng::from_rng(&mut get_seeded_rng()));
-        Ok(Self { config, rng })
+        Ok(Self { config, rng, workspace: SamplingWorkspace::default() })
+    }
+
+    /// Release reusable vocabulary buffers without changing configuration or
+    /// RNG state. Useful when retaining many idle samplers between requests.
+    pub fn clear_workspace(&mut self) {
+        self.workspace = SamplingWorkspace::default();
     }
 
     /// Sample one vocabulary index. Negative infinity masks a token; NaN,
     /// positive infinity and a fully masked vocabulary return an error.
     pub fn sample(&mut self, logits: &[f32]) -> Result<i32, GenerationError> {
-        let probabilities = filtered_probabilities(logits, self.config)?;
+        let probabilities = self.workspace.fill(logits, self.config)?;
         let draw = self.rng.random::<f64>();
         let mut cumulative = 0.0;
         let mut last = None;
-        for (token, probability) in probabilities.into_iter().enumerate() {
+        for (token, probability) in probabilities.iter().copied().enumerate() {
             if probability == 0.0 {
                 continue;
             }
@@ -114,68 +128,12 @@ impl TokenSampler {
     }
 }
 
+#[cfg(test)]
 fn filtered_probabilities(
     logits: &[f32],
     config: SamplingConfig,
 ) -> Result<Vec<f64>, GenerationError> {
-    config.validate()?;
-    if logits.is_empty() || logits.len() - 1 > i32::MAX as usize {
-        return Err(GenerationError(
-            "sampling requires a nonempty i32-indexed vocabulary".into(),
-        ));
-    }
-    if logits
-        .iter()
-        .any(|value| value.is_nan() || *value == f32::INFINITY)
-    {
-        return Err(GenerationError(
-            "sampling logits contain NaN or positive infinity".into(),
-        ));
-    }
-    let maximum = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-    if maximum == f32::NEG_INFINITY {
-        return Err(GenerationError("all sampling logits are masked".into()));
-    }
-    let mut order: Vec<usize> = (0..logits.len()).collect();
-    if config.top_k > 0 || config.top_p < 1.0 {
-        // Equal logits have a deterministic token-ID order for nucleus filtering.
-        order.sort_by(|&left, &right| {
-            logits[left]
-                .partial_cmp(&logits[right])
-                .unwrap()
-                .then(left.cmp(&right))
-        });
-    }
-    let threshold = if config.top_k > 0 {
-        logits[order[logits.len() - config.top_k.min(logits.len())]]
-    } else {
-        f32::NEG_INFINITY
-    };
-    let mut probabilities: Vec<f64> = logits
-        .iter()
-        .map(|&value| {
-            if value < threshold {
-                0.0
-            } else {
-                ((value as f64 - maximum as f64) / config.temperature).exp()
-            }
-        })
-        .collect();
-    let total: f64 = probabilities.iter().sum();
-    if config.top_p < 1.0 {
-        let mut cumulative = 0.0;
-        for &token in order.iter().take(order.len() - 1) {
-            cumulative += probabilities[token] / total;
-            if cumulative <= 1.0 - config.top_p {
-                probabilities[token] = 0.0;
-            }
-        }
-    }
-    let retained: f64 = probabilities.iter().sum();
-    for probability in &mut probabilities {
-        *probability /= retained;
-    }
-    Ok(probabilities)
+    Ok(SamplingWorkspace::default().fill(logits, config)?.to_vec())
 }
 
 pub fn generate_sampled<B: Backend>(
@@ -239,35 +197,31 @@ pub fn generate_causal_sampled<B: Backend, M: CausalModel<B>>(
     generation: &SamplingGenerationConfig,
     device: &B::Device,
 ) -> Result<TokenGenerationOutput, GenerationError> {
+    Ok(generate_causal_sampled_stream(
+        model, model_limits, prompt_token_ids, generation,
+        &GenerationControl::default(), device, |_| ControlFlow::Continue(()),
+    )?.output)
+}
+
+/// Sample with the same filtering/RNG semantics as `generate_causal_sampled`,
+/// while observing token callbacks, stop sequences and cooperative cancellation.
+pub fn generate_causal_sampled_stream<B: Backend, M: CausalModel<B>>(
+    model: &M,
+    model_limits: &CausalModelLimits,
+    prompt_token_ids: &[i32],
+    generation: &SamplingGenerationConfig,
+    control: &GenerationControl,
+    device: &B::Device,
+    on_token: impl FnMut(GenerationEvent<'_>) -> ControlFlow<()>,
+) -> Result<ControlledGenerationOutput, GenerationError> {
     let mut sampler = TokenSampler::new(generation.sampling)?;
     let limits = GreedyGenerationConfig {
         max_new_tokens: generation.max_new_tokens,
         eos_token_ids: generation.eos_token_ids.clone(),
     };
-    generate_with_selector(
-        model,
-        model_limits,
-        prompt_token_ids,
-        &limits,
-        device,
-        |_, logits| {
-            let [batch, sequence, vocabulary] = logits.dims();
-            if batch != 1 || sequence == 0 || vocabulary == 0 {
-                return Err(GenerationError(format!(
-                    "expected non-empty batch-one logits, got [{batch}, {sequence}, {vocabulary}]"
-                )));
-            }
-            let row = logits
-                .slice([0..1, sequence - 1..sequence, 0..vocabulary])
-                .cast(FloatDType::F32)
-                .try_into_data()
-                .map_err(|error| GenerationError(format!("cannot read sampling logits: {error}")))?
-                .to_vec::<f32>()
-                .map_err(|error| {
-                    GenerationError(format!("cannot decode sampling logits: {error}"))
-                })?;
-            sampler.sample(&row)
-        },
+    generate_with_selector_stream(
+        model, model_limits, prompt_token_ids, &limits, control, device,
+        |_, logits| sampler.sample(&read_last_logits(logits)?), on_token,
     )
 }
 

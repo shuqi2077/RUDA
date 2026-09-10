@@ -23,5 +23,6 @@ pub use llama::awq::{AwqBackend, AwqLlamaForCausalLm};
 pub use continuous_batch::{
     ContinuousBatchConfig, ContinuousBatchError, ContinuousBatchScheduler, ContinuousBatchSnapshot,
     FinishedGeneration, ScheduledBatch, ScheduledBatchKind, ScheduledSequence,
+    CancelledGeneration, ContinuousBatchOptions, KvAdmissionPolicy,
 };
 pub use paged_kv::*;

@@ -1,5 +1,7 @@
 # ruLLM
 
+新增采样优化、逐 token 回调、停止序列、请求取消与可选的缓存容量准入。
+
 [English](../../README.md) | **简体中文** | [日本語](../ja/README.md) | [Deutsch](../de/README.md) | [Русский](../ru/README.md)
 
 基于 Ruda 的 LLM 推理、模型加载与文本生成库。

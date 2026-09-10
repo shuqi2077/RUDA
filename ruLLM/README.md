@@ -9,6 +9,22 @@ ruLLM combines tokenization, model loading, cached autoregressive generation, an
 - Cargo package: `ruda-llm`
 - Rust crate: `rullm`
 
+## Generation and scheduler extensions
+
+This source revision adds token callbacks, token-sequence stopping, cooperative
+cancellation, bounded scheduler queuing, optional full-sequence KV admission,
+and atomic multi-reservation cache operations. Existing generation configuration
+structs and entry points remain available.
+
+Sampling now reuses scratch buffers and selects the top-k boundary without a
+full vocabulary sort.
+
+```sh
+cargo test --locked -p ruda-llm --lib --test generation_control
+cargo run --release --locked -p ruda-llm --example sampling_bench -- 32000 100
+cargo run --release --locked -p ruda-llm --features nvidia --example qwen2_stream -- ./models/qwen2 "Hello" 32
+```
+
 ## Quick Start
 
 Set up the [NVIDIA environment](https://github.com/shuqi2077/RUDA/blob/main/docs/en/getting-started.md) and prepare a local [Qwen3.5-0.8B model directory](https://github.com/shuqi2077/RUDA/blob/main/docs/en/model-inference.md#prepare-a-local-model).

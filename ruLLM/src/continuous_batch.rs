@@ -7,6 +7,8 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 
 mod sampling;
+mod lifecycle;
+pub use lifecycle::{CancelledGeneration, ContinuousBatchOptions, KvAdmissionPolicy};
 pub(crate) use sampling::BatchTokenSelection;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -174,6 +176,7 @@ struct ActiveRequest {
 #[derive(Debug)]
 pub struct ContinuousBatchScheduler {
     config: ContinuousBatchConfig,
+    options: ContinuousBatchOptions,
     kv_cache: PagedKvCacheManager,
     pending: VecDeque<PendingRequest>,
     active: BTreeMap<RequestId, ActiveRequest>,
@@ -189,9 +192,20 @@ impl ContinuousBatchScheduler {
         config: ContinuousBatchConfig,
         kv_config: PagedKvCacheConfig,
     ) -> Result<Self, ContinuousBatchError> {
+        Self::with_options(config, kv_config, ContinuousBatchOptions::default())
+    }
+
+    /// Configure bounded queuing and optional full-sequence KV admission.
+    pub fn with_options(
+        config: ContinuousBatchConfig,
+        kv_config: PagedKvCacheConfig,
+        options: ContinuousBatchOptions,
+    ) -> Result<Self, ContinuousBatchError> {
         config.validate()?;
+        options.validate()?;
         Ok(Self {
             config,
+            options,
             kv_cache: PagedKvCacheManager::new(kv_config)?,
             pending: VecDeque::new(),
             active: BTreeMap::new(),
@@ -239,6 +253,26 @@ impl ContinuousBatchScheduler {
                 self.kv_cache.config().max_sequence_length
             )));
         }
+        if prompt_token_ids.iter().chain(&generation.eos_token_ids).any(|&id| id < 0) {
+            return Err(ContinuousBatchError("prompt and EOS token IDs must be non-negative".into()));
+        }
+        if generation.max_new_tokens > 0 {
+            let kv = self.kv_cache.config();
+            let required_pages = match self.options.kv_admission {
+                KvAdmissionPolicy::OnDemand => prompt_token_ids.len().div_ceil(kv.block_size),
+                KvAdmissionPolicy::ReserveSequenceCapacity =>
+                    Self::request_page_budget(prompt_token_ids.len(), &generation, kv.block_size),
+            };
+            if required_pages > kv.num_pages {
+                return Err(ContinuousBatchError(format!(
+                    "request needs {required_pages} KV pages under the admission policy, but the pool has {}",
+                    kv.num_pages
+                )));
+            }
+            if self.options.max_pending_requests.is_some_and(|limit| self.pending.len() >= limit) {
+                return Err(ContinuousBatchError("pending request queue is full".into()));
+            }
+        }
         let id = RequestId(self.next_request);
         self.next_request = self
             .next_request
@@ -270,6 +304,11 @@ impl ContinuousBatchScheduler {
                 "batch {} is still in flight",
                 batch.id
             )));
+        }
+        // Check before acquiring reservations: an exhausted batch ID must not
+        // leak pages or strand requests in a partially scheduled batch.
+        if self.next_batch == u64::MAX {
+            return Err(ContinuousBatchError("batch id overflow".into()));
         }
         self.promote_pending()?;
         if self.prefer_prefill
@@ -308,6 +347,10 @@ impl ContinuousBatchScheduler {
                 generated_token_ids.len()
             )));
         }
+        if generated_token_ids.iter().any(|&token| token < 0) {
+            self.in_flight = Some(batch);
+            return Err(ContinuousBatchError("generated token IDs must be non-negative".into()));
+        }
         let ownership_error = batch.sequences.iter().find_map(|sequence| {
             let Some(request) = self.active.get(&sequence.request_id) else {
                 return Some(ContinuousBatchError(format!(
@@ -326,8 +369,10 @@ impl ContinuousBatchScheduler {
             self.in_flight = Some(batch);
             return Err(error);
         }
-        for sequence in &batch.sequences {
-            self.kv_cache.commit_append(sequence.reservation_id)?;
+        let reservations = batch.sequences.iter().map(|row| row.reservation_id).collect::<Vec<_>>();
+        if let Err(error) = self.kv_cache.commit_appends(&reservations) {
+            self.in_flight = Some(batch);
+            return Err(error.into());
         }
         for (sequence, &token) in batch.sequences.iter().zip(generated_token_ids) {
             let request = self
@@ -361,14 +406,21 @@ impl ContinuousBatchScheduler {
     /// requests to the exact state from which that batch was scheduled.
     pub fn fail_batch(&mut self, batch_id: u64) -> Result<(), ContinuousBatchError> {
         let batch = self.take_batch(batch_id)?;
+        if batch.sequences.iter().any(|row| {
+            self.active.get(&row.request_id)
+                .is_none_or(|request| request.phase != RequestPhase::InFlight(batch_id))
+        }) {
+            self.in_flight = Some(batch);
+            return Err(ContinuousBatchError("failed batch does not own every request".into()));
+        }
+        let reservations = batch.sequences.iter().map(|row| row.reservation_id).collect::<Vec<_>>();
+        if let Err(error) = self.kv_cache.cancel_appends(&reservations) {
+            self.in_flight = Some(batch);
+            return Err(error.into());
+        }
         for sequence in &batch.sequences {
-            self.kv_cache.cancel_append(sequence.reservation_id)?;
-            let request = self.active.get_mut(&sequence.request_id).ok_or_else(|| {
-                ContinuousBatchError(format!(
-                    "failed batch references missing request {}",
-                    sequence.request_id.0
-                ))
-            })?;
+            let request = self.active.get_mut(&sequence.request_id)
+                .expect("batch ownership was validated before cancellation");
             request.phase = match batch.kind {
                 ScheduledBatchKind::Prefill => RequestPhase::NeedsPrefill,
                 ScheduledBatchKind::Decode => RequestPhase::AwaitingDecode(sequence.token_ids[0]),
@@ -382,14 +434,13 @@ impl ContinuousBatchScheduler {
     }
 
     pub fn snapshot(&self) -> ContinuousBatchSnapshot {
-        let kv = self.kv_cache.snapshot();
         ContinuousBatchSnapshot {
             pending_requests: self.pending.len(),
             active_requests: self.active.len(),
             has_in_flight_batch: self.in_flight.is_some(),
             finished_requests: self.finished.len(),
-            free_kv_pages: kv.free_pages,
-            total_kv_pages: kv.total_pages,
+            free_kv_pages: self.kv_cache.free_page_count(),
+            total_kv_pages: self.kv_cache.config().num_pages,
         }
     }
 
@@ -398,7 +449,25 @@ impl ContinuousBatchScheduler {
     }
 
     fn promote_pending(&mut self) -> Result<(), ContinuousBatchError> {
+        let mut available_pages = self.kv_cache.config().num_pages;
+        if self.options.kv_admission == KvAdmissionPolicy::ReserveSequenceCapacity {
+            for request in self.active.values() {
+                available_pages = available_pages.checked_sub(Self::request_page_budget(
+                    request.prompt_token_ids.len(), &request.generation, self.kv_cache.config().block_size,
+                )).ok_or_else(|| ContinuousBatchError("active KV page budgets exceed the pool".into()))?;
+            }
+        }
         while self.active.len() < self.config.max_active_sequences {
+            if self.options.kv_admission == KvAdmissionPolicy::ReserveSequenceCapacity {
+                let Some(pending) = self.pending.front() else { break; };
+                let pages = Self::request_page_budget(
+                    pending.prompt_token_ids.len(), &pending.generation, self.kv_cache.config().block_size,
+                );
+                // FIFO admission prevents a stream of short arrivals from
+                // indefinitely overtaking an older, larger request.
+                if pages > available_pages { break; }
+                available_pages -= pages;
+            }
             let Some(pending) = self.pending.pop_front() else {
                 break;
             };
@@ -435,7 +504,13 @@ impl ContinuousBatchScheduler {
             if !self.kv_cache.can_append(request_id, 1)? {
                 continue;
             }
-            let reservation = self.kv_cache.begin_append(request_id, 1)?;
+            let reservation = match self.kv_cache.begin_append(request_id, 1) {
+                Ok(reservation) => reservation,
+                Err(error) => {
+                    self.rollback_scheduled_rows(&rows)?;
+                    return Err(error.into());
+                }
+            };
             rows.push(Self::scheduled_sequence(reservation, vec![token]));
         }
         self.finish_schedule(ScheduledBatchKind::Decode, rows)
@@ -486,10 +561,22 @@ impl ContinuousBatchScheduler {
                 .expect("prefill candidate came from the active request map")
                 .prompt_token_ids
                 .clone();
-            let reservation = self.kv_cache.begin_append(request_id, next_n)?;
+            let reservation = match self.kv_cache.begin_append(request_id, next_n) {
+                Ok(reservation) => reservation,
+                Err(error) => {
+                    self.rollback_scheduled_rows(&rows)?;
+                    return Err(error.into());
+                }
+            };
             rows.push(Self::scheduled_sequence(reservation, prompt));
         }
         self.finish_schedule(ScheduledBatchKind::Prefill, rows)
+    }
+
+    fn rollback_scheduled_rows(&mut self, rows: &[ScheduledSequence]) -> Result<(), ContinuousBatchError> {
+        let ids = rows.iter().map(|row| row.reservation_id).collect::<Vec<_>>();
+        self.kv_cache.cancel_appends(&ids)?;
+        Ok(())
     }
 
     fn finish_schedule(
@@ -501,10 +588,15 @@ impl ContinuousBatchScheduler {
             return Ok(None);
         }
         let id = self.next_batch;
-        self.next_batch = self
-            .next_batch
-            .checked_add(1)
-            .ok_or_else(|| ContinuousBatchError("batch id overflow".into()))?;
+        let Some(next_batch) = self.next_batch.checked_add(1) else {
+            self.rollback_scheduled_rows(&rows)?;
+            return Err(ContinuousBatchError("batch id overflow".into()));
+        };
+        if rows.iter().any(|row| !self.active.contains_key(&row.request_id)) {
+            self.rollback_scheduled_rows(&rows)?;
+            return Err(ContinuousBatchError("scheduled request disappeared".into()));
+        }
+        self.next_batch = next_batch;
         for row in &rows {
             let request = self.active.get_mut(&row.request_id).ok_or_else(|| {
                 ContinuousBatchError(format!(

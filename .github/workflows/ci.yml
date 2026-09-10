@@ -44,6 +44,11 @@ jobs:
           - name: Optimizer CPU tests
             key: optim
             command: cargo test --locked -p ruda-optim --lib --features gradient-guard
+          - name: ruLLM host regression tests
+            key: rullm-host
+            command: |
+              cargo test --locked -p ruda-llm --lib --test generation_control
+              cargo check --locked -p ruda-llm --example sampling_bench
           - name: Device libraries compile
             key: device-libraries
             command: cargo check --locked --lib -p rublas -p ruPRIM -p ruDNN -p ruRAND -p ruda-fft -p ruSPARSE -p ruTENSOR -p ruCCL -p ruda-llm -p ruda-optim --features ruda-optim/gradient-guard-device

@@ -44,3 +44,10 @@ required-features = ["nvidia"]
 [[example]]
 name = "qwen35_generate"
 required-features = ["nvidia"]
+
+[dev-dependencies]
+ruda-tensor-host = { path = "../ruda-tensor-host", default-features = false, features = ["std"] }
+
+[[example]]
+name = "qwen2_stream"
+required-features = ["nvidia"]
