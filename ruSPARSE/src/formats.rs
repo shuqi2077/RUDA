@@ -129,25 +129,23 @@ impl<'a> CooMatrix<'a> {
     /// original relative order, including duplicate coordinates.
     pub fn to_csr(self) -> Result<CsrMatrixOwned, SparseError> {
         let base = self.index_base.value();
-        let mut permutation = (0..self.nnz()).collect::<Vec<_>>();
-        permutation.sort_by_key(|&entry| self.row_indices[entry]);
-
         let mut row_offsets = vec![0_u32; self.rows + 1];
         for &row in self.row_indices {
             let row = (row - base) as usize;
-            row_offsets[row + 1] = row_offsets[row + 1]
+            row_offsets[row] = row_offsets[row]
                 .checked_add(1)
                 .ok_or(SparseError::SizeOverflow("COO row counts"))?;
         }
         prefix_offsets(&mut row_offsets, base, "COO row offsets")?;
-        let column_indices = permutation
-            .iter()
-            .map(|&entry| self.column_indices[entry])
-            .collect();
-        let values = permutation
-            .iter()
-            .map(|&entry| self.values[entry])
-            .collect();
+        let mut column_indices = vec![0_u32; self.nnz()];
+        let mut values = vec![0.0_f32; self.nnz()];
+        for entry in (0..self.nnz()).rev() {
+            let row = (self.row_indices[entry] - base) as usize;
+            row_offsets[row] -= 1;
+            let destination = (row_offsets[row] - base) as usize;
+            column_indices[destination] = self.column_indices[entry];
+            values[destination] = self.values[entry];
+        }
         CsrMatrixOwned::new(
             self.rows,
             self.columns,
