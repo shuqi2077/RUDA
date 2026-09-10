@@ -1,6 +1,6 @@
 [package]
 name = "ruda-kernel-macros"
-readme = "../README.md"
+readme = "README.md"
 version = "0.1.1"
 edition.workspace = true
 description = "Compile-time bridge from Rust kernel functions to Ruda IR."

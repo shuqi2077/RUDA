@@ -22,7 +22,7 @@ autotests = false
 autobenches = false
 description = "Automatic differentiation graphs, gradients and recomputation for Ruda tensors."
 documentation = "https://github.com/shuqi2077/RUDA/blob/main/docs/en/README.md"
-readme = "../README.md"
+readme = "README.md"
 keywords = [
     "deep-learning",
     "machine-learning",

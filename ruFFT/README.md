@@ -39,11 +39,11 @@ ruFFT computes real-signal FFTs and inverse transforms on the device. The `rufft
 
 ### 1. Configure dependencies
 
-The Cargo package is `ruFFT`; its Rust import name is `rufft`. Feature `tensor` enables device tensor interfaces. This configuration places the application directory alongside the `RUDA` source directory. See [Getting started](https://github.com/shuqi2077/RUDA/blob/main/docs/en/getting-started.md) for NVIDIA setup.
+The Cargo package is `ruda-fft`; its Rust import name is `rufft`. Feature `tensor` enables device tensor interfaces. This configuration places the application directory alongside the `RUDA` source directory. See [Getting started](https://github.com/shuqi2077/RUDA/blob/main/docs/en/getting-started.md) for NVIDIA setup.
 
 ```toml
 [dependencies]
-rufft = { package = "ruFFT", path = "../RUDA/ruFFT", default-features = false, features = ["std", "tensor"] }
+rufft = { package = "ruda-fft", path = "../RUDA/ruFFT", default-features = false, features = ["std", "tensor"] }
 ruda-core = { path = "../RUDA/ruda-core", default-features = false, features = ["std", "tensor-host-data"] }
 ruda-kernel = { path = "../RUDA/ruda-kernel", default-features = false, features = ["frontend-std", "device-tensor"] }
 ruda-driver-cuda = { path = "../RUDA/ruda-driver-cuda", default-features = false, features = ["std"] }

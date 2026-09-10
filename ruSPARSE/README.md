@@ -2,7 +2,7 @@
 
 **English** | [简体中文](https://github.com/shuqi2077/RUDA/blob/main/ruSPARSE/docs/zh/README.md) | [日本語](https://github.com/shuqi2077/RUDA/blob/main/ruSPARSE/docs/ja/README.md) | [Deutsch](https://github.com/shuqi2077/RUDA/blob/main/ruSPARSE/docs/de/README.md) | [Русский](https://github.com/shuqi2077/RUDA/blob/main/ruSPARSE/docs/ru/README.md)
 
-This repository is a source mirror. Run the commands below from the [RUDA monorepo](https://github.com/shuqi2077/RUDA) root.
+This crate is part of the RUDA workspace. Run the commands below from the [RUDA monorepo](https://github.com/shuqi2077/RUDA) root.
 
 Ruda's sparse-computing library, reusing shared tensors, runtimes, and device backends.
 

@@ -30,7 +30,7 @@ Replace `./models/qwen35` with your model directory. The final arguments select 
 
 [Documentation](https://github.com/shuqi2077/RUDA/blob/main/docs/en/README.md) · [Training](https://github.com/shuqi2077/RUDA/blob/main/docs/en/training.md) · [中文](https://github.com/shuqi2077/RUDA/blob/main/ruLLM/docs/zh/README.md)
 
-ruLLM provides model loading, tokenization, cached autoregressive generation, and request scheduling. Its Cargo package is `ruLLM`; its Rust import name is `rullm`.
+ruLLM provides model loading, tokenization, cached autoregressive generation, and request scheduling. Its Cargo package is `ruda-llm`; its Rust import name is `rullm`.
 
 ### Prepare a local model
 
@@ -93,7 +93,7 @@ For an application directory alongside the `RUDA` source directory, use these de
 
 ```toml
 [dependencies]
-rullm = { package = "ruLLM", path = "../RUDA/ruLLM", features = ["nvidia"] }
+rullm = { package = "ruda-llm", path = "../RUDA/ruLLM", features = ["nvidia"] }
 ruda-tensor-device = { path = "../RUDA/ruda-tensor-device", default-features = false, features = ["std", "cuda"] }
 ruda-driver-cuda = { path = "../RUDA/ruda-driver-cuda", default-features = false, features = ["std"] }
 half = "=2.7.1"

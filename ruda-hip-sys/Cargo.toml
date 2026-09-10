@@ -22,7 +22,7 @@ autoexamples = false
 autotests = false
 autobenches = false
 description = "Rust bindings for AMD ROCm HIP runtime libraries used by Ruda."
-readme = "../README.md"
+readme = "README.md"
 keywords = [
     "ruda",
     "ROCm",

@@ -7,7 +7,7 @@ Numerical linear solvers and matrix factorizations for Ruda.
 - Cargo package: `ruda-solver`
 - Rust crate: `rusolver`
 
-This repository is a source mirror. Build from the [RUDA workspace](https://github.com/shuqi2077/RUDA), which provides shared configuration and optional dependencies.
+This crate is part of the RUDA workspace. Build from the [RUDA workspace](https://github.com/shuqi2077/RUDA), which provides shared configuration and optional dependencies.
 
 ## Features
 

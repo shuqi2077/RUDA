@@ -21,7 +21,7 @@ autoexamples = false
 autotests = false
 autobenches = false
 description = "AMD ROCm HIP driver backend for Ruda"
-readme = "../README.md"
+readme = "README.md"
 keywords = [
     "gpu",
     "amd",

@@ -7,7 +7,7 @@ Numerical integration and ordinary differential equation solvers for Ruda.
 - Cargo package: `ruintegrate`
 - Rust crate: `ruintegrate`
 
-This repository is a source mirror. Build from the [RUDA workspace](https://github.com/shuqi2077/RUDA), which provides shared configuration and the local `rusolver` dependency.
+This crate is part of the RUDA workspace. Build from the [RUDA workspace](https://github.com/shuqi2077/RUDA), which provides shared configuration and the local `rusolver` dependency.
 
 ## Features
 

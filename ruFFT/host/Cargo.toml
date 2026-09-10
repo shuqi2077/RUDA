@@ -4,7 +4,7 @@ edition = "2024"
 authors = [ "Dilshod Tadjibaev (@antimora)",]
 license = "MIT OR Apache-2.0"
 description = "ruFFT CPU real transforms, twiddle tables and SIMD butterflies."
-readme = "../../README.md"
+readme = "README.md"
 build = false
 repository = "https://github.com/shuqi2077/RUDA"
 
