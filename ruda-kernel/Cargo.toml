@@ -168,7 +168,7 @@ optional = true
 
 [dependencies.ruda]
 path = "../ruda"
-version = "0.1.0"
+version = "0.1.3"
 default-features = false
 optional = true
 
