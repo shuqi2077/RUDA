@@ -48,7 +48,7 @@ default-features = false
 
 [dependencies.ruda-core]
 path = "../ruda-core"
-version = "0.1.0"
+version = "0.1.3"
 features = ["ir", "tensor-host-data"]
 default-features = false
 

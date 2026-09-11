@@ -36,7 +36,7 @@ workspace = true
 
 [dependencies.ruda-core]
 path = "../ruda-core"
-version = "0.1.0"
+version = "0.1.3"
 default-features = false
 features = [ "ir", "ir-serde", "tensor", "compiler", "communication",]
 optional = true
@@ -142,7 +142,7 @@ optional = true
 
 [target."cfg(any(target_os = \"windows\", target_os = \"linux\", target_os = \"macos\", target_os = \"android\"))".dependencies.ruda-core]
 path = "../ruda-core"
-version = "0.1.0"
+version = "0.1.3"
 default-features = false
 features = [ "cache", "serde", "hash",]
 optional = true

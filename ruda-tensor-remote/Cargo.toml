@@ -94,7 +94,7 @@ features = [ "graph", "std", "serde",]
 
 [dependencies.ruda-core]
 path = "../ruda-core"
-version = "0.1.0"
+version = "0.1.3"
 default-features = false
 features = [ "serde", "shared-bytes", "tensor-data", "id", "std", "id-tests-std",]
 

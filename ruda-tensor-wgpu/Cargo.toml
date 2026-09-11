@@ -70,7 +70,7 @@ features = [ "frontend", "library",]
 
 [dependencies.ruda-core]
 path = "../ruda-core"
-version = "0.1.0"
+version = "0.1.3"
 default-features = false
 features = [ "ir", "communication", "tensor-elements-flex32", "serde", "shared-bytes", "tensor-data", "id",]
 

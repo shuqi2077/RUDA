@@ -6,7 +6,7 @@ harness = false
 [package]
 edition = "2024"
 name = "ruda-core"
-version = "0.1.2"
+version = "0.1.3"
 authors = [ "Dilshod Tadjibaev (@antimora)", "Nathaniel Simard (@nathanielsimard)",]
 build = "build.rs"
 autolib = false

@@ -25,7 +25,7 @@ ruda-tensor = { version = "0.21.0", path = "../ruda-tensor", default-features = 
 ruda-tensor-device = { version = "0.21.0", path = "../ruda-tensor-device", default-features = false, features = ["std", "fusion"] }
 ruda-store = { version = "0.21.0", path = "../ruda-store", default-features = false, features = ["std", "safetensors", "memmap"] }
 ruda-kernel = { version = "0.1.0", path = "../ruda-kernel", default-features = false, features = ["frontend-std", "library"] }
-ruda-core = { version = "0.1.0", path = "../ruda-core", default-features = false, features = ["std", "ir", "tensor"] }
+ruda-core = { version = "0.1.3", path = "../ruda-core", default-features = false, features = ["std", "ir", "tensor"] }
 ruda = { version = "0.1.0", path = "../ruda", default-features = false, features = ["runtime", "runtime-std", "runtime-storage-bytes"] }
 ruda-driver-hip = { version = "0.1.0", path = "../ruda-driver-hip", default-features = false, features = ["std"], optional = true }
 ruda-driver-cuda = { version = "0.1.0", path = "../ruda-driver-cuda", default-features = false, features = ["std"], optional = true }

@@ -155,7 +155,7 @@ invalid_html_tags = "deny"
 
 [dependencies.ruda-core]
 path = "../ruda-core"
-version = "0.1.0"
+version = "0.1.3"
 default-features = false
 features = ["tensor-host-data", "tensor-device-settings", "serde", "shared-bytes", "tensor-data"]
 
