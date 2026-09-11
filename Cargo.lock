@@ -6246,6 +6246,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruda-torch-native"
+version = "0.1.0"
+dependencies = [
+ "half",
+ "ruda",
+ "ruda-core",
+ "ruda-driver-cuda",
+ "ruda-kernel",
+]
+
+[[package]]
 name = "ruintegrate"
 version = "0.1.1"
 dependencies = [

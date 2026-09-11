@@ -1,0 +1,15 @@
+[package]
+name = "ruda-torch-native"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+half = "=2.7.1"
+ruda = { path = "../ruda", features = ["runtime-default"] }
+ruda-core = { path = "../ruda-core", features = ["std"] }
+ruda-kernel = { path = "../ruda-kernel" }
+ruda-driver-cuda = { path = "../ruda-driver-cuda", features = ["direct-ptx"] }
