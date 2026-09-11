@@ -38,7 +38,7 @@ lowering-cpp = [ "frontend", "dep:ruda-compiler", "ruda-compiler/cpp",]
 lowering-metal = [ "lowering-cpp", "ruda-compiler/cpp-metal",]
 
 [dependencies]
-ruda-kernel-macros = { version = "0.1.0", path = "../ruda-kernel-macros", default-features = false }
+ruda-kernel-macros = { version = "0.1.2", path = "../ruda-kernel-macros", default-features = false }
 
 [dev-dependencies]
 ruda = { path = "../ruda" }
