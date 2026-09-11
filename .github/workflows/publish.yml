@@ -24,20 +24,35 @@ env:
 jobs:
   plan:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
+    permissions:
+      contents: write
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       pending: ${{ steps.plan.outputs.pending }}
+      revision: ${{ steps.prepare.outputs.revision }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          persist-credentials: false
+          ref: main
+          fetch-depth: 0
       - name: Install Rust
         run: |
           rustup toolchain install 1.97.1 --profile minimal
           rustup override set 1.97.1
-      - name: Test publisher
-        run: python3 -m unittest discover -s .github/scripts -p 'test_publish.py' -v
+      - name: Install release-plz
+        uses: taiki-e/install-action@9534c84618278caac52cb373bb164ed464dbd8af
+        with:
+          tool: release-plz@0.3.165
+      - name: Test publisher and version preparation
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+      - name: Configure version commit author
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+      - name: Prepare and persist crate versions
+        id: prepare
+        run: python3 .github/scripts/prepare_release.py
       - name: Plan unpublished versions
         id: plan
         run: python3 .github/scripts/publish.py --plan
@@ -63,6 +78,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ needs.plan.outputs.revision }}
           persist-credentials: false
       - name: Install Rust
         run: |
@@ -77,9 +93,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: publish-${{ runner.os }}-rust-1.97.1-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.batch }}
+          key: publish-${{ runner.os }}-rust-1.97.1-${{ hashFiles('Cargo.lock') }}-${{ needs.plan.outputs.revision }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.batch }}
           restore-keys: |
-            publish-${{ runner.os }}-rust-1.97.1-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}-
+            publish-${{ runner.os }}-rust-1.97.1-${{ hashFiles('Cargo.lock') }}-${{ needs.plan.outputs.revision }}-
             publish-${{ runner.os }}-rust-1.97.1-${{ hashFiles('Cargo.lock') }}-
       - name: Publish next five versions in dependency order
         env:
@@ -94,6 +110,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ needs.plan.outputs.revision }}
           persist-credentials: false
       - name: Install Rust
         run: |
