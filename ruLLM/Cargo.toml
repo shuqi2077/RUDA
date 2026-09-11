@@ -27,7 +27,7 @@ ruda-store = { version = "0.21.0", path = "../ruda-store", default-features = fa
 ruda-kernel = { version = "0.1.2", path = "../ruda-kernel", default-features = false, features = ["frontend-std", "library"] }
 ruda-core = { version = "0.1.3", path = "../ruda-core", default-features = false, features = ["std", "ir", "tensor"] }
 ruda = { version = "0.1.3", path = "../ruda", default-features = false, features = ["runtime", "runtime-std", "runtime-storage-bytes"] }
-ruda-driver-hip = { version = "0.1.0", path = "../ruda-driver-hip", default-features = false, features = ["std"], optional = true }
+ruda-driver-hip = { version = "0.1.1", path = "../ruda-driver-hip", default-features = false, features = ["std"], optional = true }
 ruda-driver-cuda = { version = "0.1.1", path = "../ruda-driver-cuda", default-features = false, features = ["std"], optional = true }
 rublas = { version = "0.1.0", path = "../ruBLAS", default-features = false, features = ["tensor-int4", "tensor-matmul", "std"] }
 rudnn = { version = "0.1.0", package = "ruDNN", path = "../ruDNN", default-features = false, features = ["tensor-gated-delta", "tensor-normalization", "std"] }
