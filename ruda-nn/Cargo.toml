@@ -80,7 +80,7 @@ default-features = false
 [dependencies.ruda-model]
 default-features = false
 path = "../ruda-model"
-version = "0.21.0"
+version = "0.21.1"
 
 [dependencies.ruda-tensor-device]
 optional = true
