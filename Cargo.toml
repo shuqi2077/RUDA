@@ -4,7 +4,7 @@ members = ["ruda-hip-sys", "ruTENSOR", "ruLLM", "ruda-dataset", "ruda-tensor-rou
 resolver = "3"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [workspace.lints.rust]
