@@ -107,7 +107,7 @@ default-features = false
 [dependencies.ruprim-host]
 package = "ruPRIM-host"
 path = "../ruPRIM/host"
-version = "0.1.0"
+version = "0.1.1"
 default-features = false
 
 [dependencies.rurand-host]
