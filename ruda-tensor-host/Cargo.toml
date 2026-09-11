@@ -113,7 +113,7 @@ default-features = false
 [dependencies.rurand-host]
 package = "ruRAND-host"
 path = "../ruRAND/host"
-version = "0.1.0"
+version = "0.1.1"
 default-features = false
 
 [dependencies.rusparse]
