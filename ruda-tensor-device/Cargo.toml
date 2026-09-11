@@ -42,7 +42,7 @@ tracing = ["dep:tracing", "ruda-kernel/frontend-tracing", "ruda-kernel/device-te
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
-version = "0.21.0"
+version = "0.21.1"
 features = ["kernel", "graph"]
 default-features = false
 

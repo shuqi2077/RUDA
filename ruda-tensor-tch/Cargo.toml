@@ -55,7 +55,7 @@ version = "0.22.0"
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
-version = "0.21.0"
+version = "0.21.1"
 default-features = false
 
 [dependencies.ruda-core]
