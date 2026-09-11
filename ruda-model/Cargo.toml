@@ -72,7 +72,7 @@ default-features = false
 
 [dependencies.ruda-dataset]
 path = "../ruda-dataset"
-version = "0.21.0"
+version = "0.21.1"
 optional = true
 default-features = false
 
