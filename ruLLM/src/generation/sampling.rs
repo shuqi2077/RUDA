@@ -128,8 +128,7 @@ impl TokenSampler {
     }
 }
 
-#[cfg(test)]
-fn filtered_probabilities(
+pub(super) fn filtered_probabilities(
     logits: &[f32],
     config: SamplingConfig,
 ) -> Result<Vec<f64>, GenerationError> {

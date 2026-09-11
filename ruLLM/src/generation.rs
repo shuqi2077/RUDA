@@ -17,6 +17,11 @@ pub use control::{
     GenerationEvent, GenerationFinishReason,
 };
 mod sampling;
+mod speculative;
+pub use speculative::{
+    SpeculativeGenerationConfig, SpeculativeGenerationOutput, SpeculativeModel,
+    SpeculativeStats, generate_causal_speculative, generate_causal_speculative_stream,
+};
 pub use awq::{generate_greedy_awq, generate_sampled_awq};
 pub use sampling::{
     SamplingConfig, SamplingGenerationConfig, TokenSampler, generate_causal_sampled, generate_sampled,

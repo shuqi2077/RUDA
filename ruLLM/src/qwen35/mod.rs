@@ -74,6 +74,7 @@ pub struct Qwen35TextModel<B: Backend> {
     head: Linear<B>,
 }
 
+#[derive(Clone)]
 enum LayerCache<B: Backend> {
     Full {
         key: Option<Tensor<B, 4>>,
@@ -85,6 +86,7 @@ enum LayerCache<B: Backend> {
     },
 }
 
+#[derive(Clone)]
 pub struct Qwen35Cache<B: Backend> {
     layers: Vec<LayerCache<B>>,
     position: usize,
@@ -230,6 +232,21 @@ where
         cache.position += sequence;
         cache.batch = Some(batch);
         Ok(hidden)
+    }
+}
+
+impl<R, F, I, BT> crate::SpeculativeModel<DeviceBackend<R, F, I, BT>>
+    for Qwen35TextModel<DeviceBackend<R, F, I, BT>>
+where
+    R: DeviceRuntime, R::Server: ComputeServer, R::Device: DeviceOps,
+    F: FloatElement, I: IntElement, BT: BoolElement,
+{
+    fn fork_cache(&self, cache: &Self::Cache) -> Self::Cache { cache.clone() }
+
+    fn try_forward_cached_block(
+        &self, tokens: Tensor<DeviceBackend<R, F, I, BT>, 2, Int>, cache: &mut Self::Cache,
+    ) -> Result<Tensor<DeviceBackend<R, F, I, BT>, 3>, GenerationError> {
+        self.forward_cached(tokens, cache)
     }
 }
 
