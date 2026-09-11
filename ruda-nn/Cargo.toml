@@ -61,7 +61,7 @@ default-features = false
 
 [dependencies.ruda-tensor-tch]
 path = "../ruda-tensor-tch"
-version = "0.21.0"
+version = "0.21.1"
 features = [ "default",]
 optional = true
 default-features = false
