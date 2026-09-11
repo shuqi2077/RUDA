@@ -299,7 +299,7 @@ fn generate_with_selector<B: Backend, M: CausalModel<B>>(
     )?.output)
 }
 
-fn validate_generation(
+pub(crate) fn validate_generation(
     model_config: &CausalModelLimits,
     prompt_token_ids: &[i32],
     generation: &GreedyGenerationConfig,

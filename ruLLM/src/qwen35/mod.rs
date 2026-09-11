@@ -1,4 +1,6 @@
 mod attention;
+mod batching;
+pub use batching::Qwen35BatchCache;
 mod config;
 mod delta;
 mod layer;

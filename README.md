@@ -66,7 +66,7 @@ One repository, multiple crates with clearly defined responsibilities. From doma
 | Shared contracts | `ruda-core` |
 | Compilation and kernels | `ruda-compiler`, `ruda-kernel`, macro components |
 | Runtime and driver backends | `ruda`, `ruda-driver-cuda/cpu/wgpu/hip` |
-| Domain libraries | ruBLAS, ruDNN, ruPRIM, ruFFT, ruRAND, ruSPARSE |
+| Domain libraries | [ruBLAS](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/rublas.md), [ruDNN](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/rudnn.md), [ruPRIM](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/ruprim.md), [ruFFT](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/rufft.md), [ruRAND](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/rurand.md), [ruSPARSE](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/rusparse.md) |
 | Experimental numerical science | [ruSOLVER](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/rusolver.md), [ruINTEGRATE](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/ruintegrate.md) |
 | Collective communication | ruCCL, `ruda-communication` |
 | Tensors and frameworks | `ruda-tensor*`, `ruda-autodiff`, `ruda-fusion` |

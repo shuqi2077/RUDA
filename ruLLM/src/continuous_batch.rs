@@ -7,6 +7,8 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 
 mod sampling;
+mod device;
+pub use device::{DeviceBatchModel, DeviceBatchExecutor, ExecutedBatch};
 mod fenced;
 pub use fenced::{BatchFence, BatchLaunchFailure, FencedBatchScheduler};
 mod lifecycle;

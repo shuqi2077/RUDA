@@ -12,6 +12,7 @@ pub use qwen35::{Qwen35TextConfig, Qwen35TextModel, Qwen35Cache, Qwen35LayerType
 pub use qwen35::{LoadedQwen35Vision, Qwen35VisionConfig, Qwen35VisionModel, Qwen35VisionOutput, load_huggingface_qwen35_vision};
 pub use qwen35::{Qwen35MultimodalCache, Qwen35MultimodalModel, load_huggingface_qwen35_multimodal};
 pub use qwen35::{Qwen35ImageProcessor, Qwen35PreparedImages, Qwen35RgbImage};
+pub use qwen35::Qwen35BatchCache;
 
 pub use generation::*;
 pub use huggingface::*;
@@ -25,6 +26,7 @@ pub use continuous_batch::{
     FinishedGeneration, ScheduledBatch, ScheduledBatchKind, ScheduledSequence,
     CancelledGeneration, ContinuousBatchOptions, KvAdmissionPolicy,
     BatchFence, BatchLaunchFailure, FencedBatchScheduler,
+    DeviceBatchModel, DeviceBatchExecutor, ExecutedBatch,
 };
 pub use paged_kv::*;
 

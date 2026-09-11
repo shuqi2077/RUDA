@@ -10,7 +10,7 @@ pub(super) struct Attention<B: Backend> {
     pub k_norm: Norm<B>,
 }
 
-fn mask_floor(dtype: DType) -> f32 {
+pub(super) fn mask_floor(dtype: DType) -> f32 {
     match dtype {
         DType::F32 => f32::MIN,
         DType::F16 => half::f16::MIN.to_f32(),
