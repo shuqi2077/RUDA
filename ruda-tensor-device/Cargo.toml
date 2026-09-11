@@ -98,7 +98,7 @@ features = ["std", "tensor"]
 [dependencies.rusparse]
 package = "ruSPARSE"
 path = "../ruSPARSE"
-version = "0.1.0"
+version = "0.1.1"
 default-features = false
 features = ["tensor", "serde"]
 optional = true

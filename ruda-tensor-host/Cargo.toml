@@ -119,7 +119,7 @@ default-features = false
 [dependencies.rusparse]
 package = "ruSPARSE"
 path = "../ruSPARSE"
-version = "0.1.0"
+version = "0.1.1"
 default-features = false
 features = [ "serde",]
 optional = true
