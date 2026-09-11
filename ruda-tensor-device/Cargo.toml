@@ -54,7 +54,7 @@ default-features = false
 
 [dependencies.ruda-tensor-config]
 path = "../ruda-tensor-config"
-version = "0.21.0"
+version = "0.21.1"
 default-features = false
 
 [dependencies.ruda]

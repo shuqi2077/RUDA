@@ -69,7 +69,7 @@ features = [ "ir", "communication", "tensor-elements-flex32", "serde", "shared-b
 
 [dependencies.ruda-tensor-config]
 path = "../ruda-tensor-config"
-version = "0.21.0"
+version = "0.21.1"
 default-features = false
 
 [dependencies.ruda-test-runtime]
