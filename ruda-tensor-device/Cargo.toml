@@ -91,7 +91,7 @@ invalid_html_tags = "deny"
 [dependencies.rufft]
 package = "ruda-fft"
 path = "../ruFFT"
-version = "0.1.0"
+version = "0.1.1"
 default-features = false
 features = ["std", "tensor"]
 
