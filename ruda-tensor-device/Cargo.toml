@@ -130,7 +130,7 @@ features = ["kernel-ir", "std", "pooling", "interpolation", "grid-sample", "ctc"
 [dependencies.ruprim]
 package = "ruPRIM"
 path = "../ruPRIM"
-version = "0.1.0"
+version = "0.1.1"
 default-features = false
 features = ["kernel-ir", "std", "elementwise", "indexing", "tensor-scan", "tensor-reduce"]
 
