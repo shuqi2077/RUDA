@@ -137,7 +137,7 @@ features = ["kernel-ir", "std", "elementwise", "indexing", "tensor-scan", "tenso
 
 [dependencies.ruda-kernel]
 path = "../ruda-kernel"
-version = "0.1.0"
+version = "0.1.2"
 default-features = false
 features = ["kernel-ir", "quantization-kernels", "device-tensor", "device-tensor-dequantize", "device-tensor-quantize"]
 

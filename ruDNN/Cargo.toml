@@ -36,7 +36,7 @@ full = ["extended"]
 [dependencies]
 ruda-driver-cann = { version = "0.1.0", path = "../ruda-driver-cann", optional = true }
 rublas = { version = "0.1.0", path = "../ruBLAS", default-features = false, optional = true }
-ruda-kernel = { version = "0.1.0", path = "../ruda-kernel", default-features = false, features = ["kernel-ir"], optional = true }
+ruda-kernel = { version = "0.1.2", path = "../ruda-kernel", default-features = false, features = ["kernel-ir"], optional = true }
 bytemuck = { version = "1.16.1", optional = true }
 derive-new = { version = "0.7.0", default-features = false, optional = true }
 enumset = { version = "1.1.10", default-features = false, optional = true }

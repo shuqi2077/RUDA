@@ -17,7 +17,7 @@ std = ["ruda-core/std", "ruda-kernel/frontend-std"]
 [dependencies]
 ruda-driver-cann = { version = "0.1.0", path = "../ruda-driver-cann", optional = true }
 ruda-core = { version = "0.1.3", path = "../ruda-core", default-features = false, features = ["tensor"] }
-ruda-kernel = { version = "0.1.0", path = "../ruda-kernel", default-features = false, features = ["kernel-ir", "device-tensor"] }
+ruda-kernel = { version = "0.1.2", path = "../ruda-kernel", default-features = false, features = ["kernel-ir", "device-tensor"] }
 
 [lints.rust]
 unsafe_code = "deny"
