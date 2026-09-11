@@ -386,7 +386,7 @@ impl<D: Dialect> Unary<D> for Assign {
         if elem != input.elem() {
             match elem {
                 Elem::TF32 => write!(f, "nvcuda::wmma::__float_to_tf32({input})"),
-                elem => write!(f, "{elem}({input})"),
+                elem => D::compile_numeric_cast(f, input, elem),
             }
         } else {
             write!(f, "{input}")

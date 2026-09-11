@@ -421,6 +421,12 @@ impl<M: DialectWmmaCompiler<Self>> DialectRudaBuiltins<Self> for CudaDialect<M> 
 // Instructions
 
 impl<M: DialectWmmaCompiler<Self>> DialectInstructions<Self> for CudaDialect<M> {
+    fn compile_numeric_cast<Input: Component<Self>>(
+        f: &mut std::fmt::Formatter<'_>, input: Input, elem: Elem<Self>,
+    ) -> std::fmt::Result {
+        super::convert::numeric_cast(f, input, elem)
+    }
+
     // sync
     fn compile_instruction_sync_threads(f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "__syncthreads();\n")

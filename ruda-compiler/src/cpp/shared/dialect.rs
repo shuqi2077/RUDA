@@ -404,6 +404,12 @@ pub trait DialectRudaBuiltins<D: Dialect> {
 // Instructions
 
 pub trait DialectInstructions<D: Dialect> {
+    fn compile_numeric_cast<Input: Component<D>>(
+        f: &mut std::fmt::Formatter<'_>, input: Input, elem: Elem<D>,
+    ) -> std::fmt::Result {
+        write!(f, "{elem}({input})")
+    }
+
     // atomics
     fn compile_atomic_add(
         f: &mut std::fmt::Formatter<'_>,

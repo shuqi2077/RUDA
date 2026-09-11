@@ -251,3 +251,50 @@ fn numeric_conversions_and_signed_remainders() {
     assert_eq!(read::<u64>(selected.count),[5]);
     assert_eq!(&read::<i32>(selected.values)[..5],[-4,-2,0,2,4]);
 }
+
+#[ruda(launch_unchecked, explicit_define)]
+fn conversion_f32_kernel<T: Numeric>(input:&Array<f32>,output:&mut Array<T>,count:usize) {
+    if ABSOLUTE_POS<count { output[ABSOLUTE_POS]=T::cast_from(input[ABSOLUTE_POS]); }
+}
+
+fn conversions_f32<T: TensorElement>(input:&RudaTensor<R>,expected:&[T]) {
+    let output=ruda_kernel::tensor::allocation::empty_device_dtype(input.client.clone(),input.device.clone(),
+        ruda_core::tensor::Shape::new([expected.len()]),<T as ruda_core::tensor::element::Element>::dtype());
+    unsafe { conversion_f32_kernel::launch_unchecked::<T,R>(&input.client,RudaCount::Static(expected.len().div_ceil(32) as u32,1,1),RudaDim::new_1d(32),
+        ArrayArg::from_raw_parts(input.handle.clone(),expected.len()),ArrayArg::from_raw_parts(output.handle.clone(),expected.len()),expected.len()); }
+    assert_eq!(read::<T>(output),expected);
+}
+
+#[test]
+fn numeric_conversion_boundaries_f32_f64() {
+    let mut values=vec![f64::NAN,f64::INFINITY,f64::NEG_INFINITY,-0.0,0.0,-1.9,1.9];
+    for bits in [7,8,15,16,31,32,63,64] {
+        let upper=2.0f64.powi(bits);
+        values.extend([upper.next_down(),upper,upper.next_up(),(-upper).next_down(),-upper,(-upper).next_up()]);
+    }
+    for chunk in values.chunks(32) {
+        let input=tensor(chunk);
+        conversions(&input,&chunk.iter().map(|&x|x as i8).collect::<Vec<_>>());
+        conversions(&input,&chunk.iter().map(|&x|x as u8).collect::<Vec<_>>());
+        conversions(&input,&chunk.iter().map(|&x|x as i16).collect::<Vec<_>>());
+        conversions(&input,&chunk.iter().map(|&x|x as u16).collect::<Vec<_>>());
+        conversions(&input,&chunk.iter().map(|&x|x as i32).collect::<Vec<_>>());
+        conversions(&input,&chunk.iter().map(|&x|x as u32).collect::<Vec<_>>());
+        conversions(&input,&chunk.iter().map(|&x|x as i64).collect::<Vec<_>>());
+        conversions(&input,&chunk.iter().map(|&x|x as u64).collect::<Vec<_>>());
+    }
+    let mut values=vec![f32::NAN,f32::INFINITY,f32::NEG_INFINITY,-0.0,0.0,-1.9,1.9];
+    for bits in [7,8,15,16,31,32,63,64] {
+        let upper=2.0f32.powi(bits);
+        values.extend([upper.next_down(),upper,upper.next_up(),(-upper).next_down(),-upper,(-upper).next_up()]);
+    }
+    let input=tensor(&values);
+    conversions_f32(&input,&values.iter().map(|&x|x as i8).collect::<Vec<_>>());
+    conversions_f32(&input,&values.iter().map(|&x|x as u8).collect::<Vec<_>>());
+    conversions_f32(&input,&values.iter().map(|&x|x as i16).collect::<Vec<_>>());
+    conversions_f32(&input,&values.iter().map(|&x|x as u16).collect::<Vec<_>>());
+    conversions_f32(&input,&values.iter().map(|&x|x as i32).collect::<Vec<_>>());
+    conversions_f32(&input,&values.iter().map(|&x|x as u32).collect::<Vec<_>>());
+    conversions_f32(&input,&values.iter().map(|&x|x as i64).collect::<Vec<_>>());
+    conversions_f32(&input,&values.iter().map(|&x|x as u64).collect::<Vec<_>>());
+}

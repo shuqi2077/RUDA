@@ -8,6 +8,83 @@ use crate::cpp::{
     shared::{Component, Elem, FP8Kind, FmtLeft, Instruction, Item, UnaryInstruction, Variable},
 };
 
+pub(crate) fn numeric_cast<D: Dialect, Input: Component<D>>(
+    f: &mut fmt::Formatter<'_>, input: Input, elem: Elem<D>,
+) -> fmt::Result {
+    let (float, suffix) = match input.elem() {
+        Elem::F64 => ("double", ""),
+        Elem::F32 | Elem::TF32 | Elem::F16 | Elem::BF16 => ("float", "f"),
+        _ => return write!(f, "{elem}({input})"),
+    };
+    let (bits, signed) = match elem {
+        Elem::I8 => (8, true), Elem::I16 => (16, true),
+        Elem::I32 => (32, true), Elem::I64 => (64, true),
+        Elem::U8 => (8, false), Elem::U16 => (16, false),
+        Elem::U32 => (32, false), Elem::U64 => (64, false),
+        _ => return write!(f, "{elem}({input})"),
+    };
+    let upper = 1u128 << (bits - u32::from(signed));
+    let maximum = upper - 1;
+    let (lower, minimum, maximum) = if signed {
+        (format!("-{upper}.0{suffix}"), format!("(-{maximum}LL - 1LL)"), format!("{maximum}LL"))
+    } else {
+        (format!("0.0{suffix}"), "0ULL".into(), format!("{maximum}ULL"))
+    };
+    let value = format!("{float}({input})");
+    write!(f, "(isnan({value}) ? {elem}(0) : \
+        ({value} <= {lower} ? {elem}({minimum}) : \
+        ({value} >= {upper}.0{suffix} ? {elem}({maximum}) : {elem}({value}))))")
+}
+
+#[cfg(test)]
+mod numeric_cast_tests {
+    use super::*;
+    use crate::cpp::cuda::{CudaDialect, mma::CudaWmmaCompiler};
+
+    type D = CudaDialect<CudaWmmaCompiler>;
+
+    fn assign(from: Elem<D>, to: Elem<D>, lanes: usize) -> String {
+        Instruction::Assign(UnaryInstruction {
+            input: Variable::Named { name: "input", item: Item::new(from, lanes, false) },
+            out: Variable::Named { name: "output", item: Item::new(to, lanes, false) },
+        }).to_string()
+    }
+
+    #[test]
+    fn float_integer_casts_cover_all_widths_and_vector_lanes() {
+        for from in [Elem::F16, Elem::BF16, Elem::F32, Elem::TF32, Elem::F64] {
+            for to in [Elem::I8, Elem::U8, Elem::I16, Elem::U16, Elem::I32, Elem::U32, Elem::I64, Elem::U64] {
+                for lanes in [1, 4] {
+                    let source = assign(from, to, lanes);
+                    assert_eq!(source.matches("isnan(").count(), lanes, "{source}");
+                    assert_eq!(source.matches(" >= ").count(), lanes, "{source}");
+                    assert_eq!(source.matches(" <= ").count(), lanes, "{source}");
+                    assert!(source.contains(if from == Elem::F64 { "double(input" } else { "float(input" }));
+                    if from == Elem::F64 { assert!(!source.contains("float(input")); }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn wide_integer_bounds_are_exact_and_maxima_are_integer_literals() {
+        let signed = assign(Elem::F64, Elem::I64, 1);
+        assert!(signed.contains("<= -9223372036854775808.0"));
+        assert!(signed.contains(">= 9223372036854775808.0"));
+        assert!(signed.contains("(-9223372036854775807LL - 1LL)"));
+        let unsigned = assign(Elem::F32, Elem::U64, 1);
+        assert!(unsigned.contains(">= 18446744073709551616.0f"));
+        assert!(unsigned.contains("18446744073709551615ULL"));
+    }
+
+    #[test]
+    fn other_assignments_do_not_gain_float_integer_clamping() {
+        for (from, to) in [(Elem::I64, Elem::I8), (Elem::U32, Elem::F32), (Elem::F64, Elem::F32), (Elem::F32, Elem::F32)] {
+            assert!(!assign(from, to, 1).contains("isnan"));
+        }
+    }
+}
+
 /// special cast function for recursive conversion in the case of minifloat to minifloat conversion
 ///
 /// Needs to jump through a lot of hoops to deal with CUDA nonsense.
