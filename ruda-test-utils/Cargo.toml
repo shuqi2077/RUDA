@@ -50,7 +50,7 @@ version = "1.16.1"
 
 [dependencies.ruda-kernel]
 path = "../ruda-kernel"
-version = "0.1.2"
+version = "0.1.3"
 default-features = false
 features = ["quantization-kernels"]
 
