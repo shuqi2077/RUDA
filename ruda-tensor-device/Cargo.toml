@@ -122,7 +122,7 @@ features = ["kernel-ir", "std", "tensor-vector", "tensor-matmul"]
 [dependencies.rudnn]
 package = "ruDNN"
 path = "../ruDNN"
-version = "0.1.1"
+version = "0.1.2"
 default-features = false
 features = ["kernel-ir", "std", "pooling", "interpolation", "grid-sample", "ctc", "tensor-convolution", "tensor-attention"]
 
