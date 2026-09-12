@@ -130,7 +130,7 @@ class NativeGpuTests(unittest.TestCase):
         tensor = self.gpu([1, 2])
         before = ruda_torch.execution_stats()
         with self.assertRaisesRegex(NotImplementedError, "CPU fallback is disabled"):
-            torch.sin(tensor)
+            torch.erf(tensor)
         self.assertEqual(before, ruda_torch.execution_stats())
 
     def test_overlap_rejected(self):

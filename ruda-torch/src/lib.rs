@@ -27,7 +27,7 @@ pub struct Descriptor {
 struct View { handle: Handle, shape: Vec<usize>, strides: Vec<usize>, len: usize, dtype: u32 }
 
 fn element_bytes(dtype: u32) -> usize {
-    match dtype { 0 => 4, 1 | 2 => 2, _ => panic!("unsupported RUDA dtype") }
+    match dtype { 0 | 5 => 4, 1 | 2 | 6 => 2, 3 | 7 | 8 => 1, 4 => 8, _ => panic!("unsupported RUDA dtype") }
 }
 
 impl View {
@@ -56,6 +56,16 @@ impl View {
     fn arg(&self) -> TensorArg<CudaRuntime> {
         unsafe { TensorArg::from_raw_parts(self.handle.clone(), self.strides.clone().into(), self.shape.clone().into()) }
     }
+    fn byte_view(&self) -> Self {
+        let bytes = element_bytes(self.dtype);
+        let mut shape = self.shape.clone();
+        shape.push(bytes);
+        let mut strides: Vec<usize> = self.strides.iter()
+            .map(|stride| stride.checked_mul(bytes).expect("byte stride overflow")).collect();
+        strides.push(1);
+        Self { handle: self.handle.clone(), shape, strides,
+            len: self.len.checked_mul(bytes).expect("byte length overflow"), dtype: 8 }
+    }
     fn packed(handle: Handle, shape: Vec<usize>, dtype: u32) -> Self {
         let mut strides = vec![1; shape.len()];
         let mut len = 1;
@@ -82,7 +92,7 @@ fn checked(call: impl FnOnce()) -> i32 {
 pub extern "C" fn ruda_torch_error() -> *const std::ffi::c_char { ERROR.with(|v| v.borrow().as_ptr()) }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ruda_torch_abi_version() -> u32 { 2 }
+pub extern "C" fn ruda_torch_abi_version() -> u32 { 3 }
 
 // All pointer arguments below are valid, aligned, and held alive by the in-process C++ adapter.
 #[unsafe(no_mangle)]
@@ -104,9 +114,105 @@ pub unsafe extern "C" fn ruda_torch_free(allocation: *mut Allocation) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn ruda_torch_sync() -> i32 { checked(|| sync(&client())) }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruda_torch_fill(out: *const Descriptor, bits: u64) -> i32 {
+    checked(|| {
+        let out = unsafe { View::read(&*out) }.byte_view();
+        if out.len == 0 { return; }
+        let client = client();
+        let count = u32::try_from(out.len.div_ceil(128)).expect("launch grid overflow");
+        unsafe {
+            kernels::fill_bytes::launch::<CudaRuntime>(
+                &client, RudaCount::Static(count, 1, 1), RudaDim::new_1d(128),
+                out.arg(), bits as u32, (bits >> 32) as u32);
+        }
+        sync(&client);
+        LAUNCHES.fetch_add(1, Ordering::Relaxed);
+    })
+}
+
 fn launch(op: u32, a: &View, b: &View, out: &View, scalar: f32) {
     if out.len == 0 { return; }
     if op == 0 { convert(a, out); return; }
+    if (78..=88).contains(&op) {
+        let client = client();
+        let work = if op == 84 { out.len.checked_mul(element_bytes(out.dtype)).expect("byte length overflow") } else { out.len };
+        let count = u32::try_from(work.div_ceil(128)).expect("launch grid overflow");
+        unsafe {
+            if op == 84 {
+                assert_eq!(a.dtype, 3);
+                assert_eq!(b.dtype, out.dtype);
+                kernels::select_bytes::launch::<CudaRuntime>(
+                    &client, RudaCount::Static(count, 1, 1), RudaDim::new_1d(128),
+                    a.arg(), b.byte_view().arg(), out.byte_view().arg());
+            } else if op >= 85 {
+                assert_eq!((a.dtype, b.dtype, out.dtype), (3, 3, 3));
+                kernels::logical::launch::<CudaRuntime>(
+                    &client, RudaCount::Static(count, 1, 1), RudaDim::new_1d(128),
+                    a.arg(), b.arg(), out.arg(), op);
+            } else {
+                assert_eq!(a.dtype, b.dtype);
+                assert_eq!(out.dtype, 3);
+                macro_rules! run {
+                    ($dtype:ty) => { kernels::compare_float::launch::<$dtype, CudaRuntime>(
+                        &client, RudaCount::Static(count, 1, 1), RudaDim::new_1d(128),
+                        a.arg(), b.arg(), out.arg(), op) };
+                }
+                match a.dtype {
+                    0 => run!(f32), 1 => run!(f16), 2 => run!(bf16),
+                    3..=8 => kernels::compare_integer::launch::<CudaRuntime>(
+                        &client, RudaCount::Static(count, 1, 1), RudaDim::new_1d(128),
+                        a.byte_view().arg(), b.byte_view().arg(), out.arg(),
+                        (4..=7).contains(&a.dtype), a.dtype == 3, op),
+                    _ => panic!("unsupported RUDA comparison dtype"),
+                }
+            }
+        }
+        sync(&client);
+        LAUNCHES.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
+    assert!(a.dtype <= 2 && b.dtype <= 2 && out.dtype <= 2,
+        "this RUDA arithmetic kernel requires floating tensors");
+    if (74..=77).contains(&op) {
+        assert_eq!(a.dtype, out.dtype);
+        let client = client();
+        let count = u32::try_from(out.len.div_ceil(128)).expect("launch grid overflow");
+        macro_rules! run {
+            ($dtype:ty) => { kernels::adaptive_avg_pool::launch::<$dtype, CudaRuntime>(
+                &client, RudaCount::Static(count, 1, 1), RudaDim::new_1d(128),
+                a.arg(), out.arg(), if op >= 76 { 3 } else { 2 }, op == 75 || op == 77) };
+        }
+        unsafe {
+            match out.dtype {
+                0 => run!(f32), 1 => run!(f16), 2 => run!(bf16),
+                _ => panic!("unsupported RUDA pooling dtype"),
+            }
+        }
+        sync(&client);
+        LAUNCHES.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
+    if (58..=61).contains(&op) || (65..=68).contains(&op) || op == 73 {
+        assert_eq!(a.dtype, out.dtype);
+        assert_eq!(b.dtype, out.dtype);
+        let client = client();
+        let count = u32::try_from(out.len.div_ceil(128)).expect("launch grid overflow");
+        macro_rules! run {
+            ($dtype:ty) => { kernels::storage_pointwise::launch::<$dtype, CudaRuntime>(
+                &client, RudaCount::Static(count, 1, 1), RudaDim::new_1d(128),
+                a.arg(), b.arg(), out.arg(), scalar, op) };
+        }
+        unsafe {
+            match out.dtype {
+                0 => run!(f32), 1 => run!(f16), 2 => run!(bf16),
+                _ => panic!("unsupported RUDA storage dtype"),
+            }
+        }
+        sync(&client);
+        LAUNCHES.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
     if a.dtype != 0 || b.dtype != 0 || out.dtype != 0 {
         let allocate = |v: &View| View::packed(client().empty(v.len.checked_mul(4).expect("size overflow").max(4)), v.shape.clone(), 0);
         let av = (a.dtype != 0).then(|| allocate(a));
@@ -115,6 +221,9 @@ fn launch(op: u32, a: &View, b: &View, out: &View, scalar: f32) {
         if op != 5 {
             if let Some(v) = &av { convert(a, v); }
             if let Some(v) = &bv { convert(b, v); }
+        }
+        if op == 28 || op == 29 || op == 49 || op == 54 || op == 56 || op == 63 || op == 72 {
+            if let Some(v) = &ov { convert(out, v); }
         }
         launch(op, av.as_ref().unwrap_or(a), bv.as_ref().unwrap_or(b), ov.as_ref().unwrap_or(out), scalar);
         if let Some(v) = &ov { convert(v, out); }
@@ -125,7 +234,7 @@ fn launch(op: u32, a: &View, b: &View, out: &View, scalar: f32) {
     let count = u32::try_from(work.div_ceil(128)).expect("launch grid overflow");
     unsafe {
         match op {
-            0..=5 | 8..=18 => kernels::pointwise::launch::<CudaRuntime>(
+            0..=5 | 8..=29 | 35..=57 | 62..=64 | 69..=72 => kernels::pointwise::launch::<CudaRuntime>(
                 &client, RudaCount::Static(count, 1, 1), RudaDim::new_1d(128),
                 a.arg(), b.arg(), out.arg(), scalar, op),
             6 => kernels::reduce::launch::<CudaRuntime>(
@@ -148,16 +257,57 @@ fn convert(a: &View, out: &View) {
     assert_eq!(a.shape, out.shape);
     if out.len == 0 { return; }
     let client = client();
-    let count = u32::try_from(out.len.div_ceil(128)).expect("launch grid overflow");
+    let byte_work = a.dtype >= 3 && out.dtype >= 3;
+    let work = if byte_work { out.len.checked_mul(element_bytes(out.dtype)).expect("byte length overflow") } else { out.len };
+    let count = u32::try_from(work.div_ceil(128)).expect("launch grid overflow");
     macro_rules! run {
         ($i:ty, $o:ty) => { kernels::convert::launch::<$i, $o, CudaRuntime>(
             &client, RudaCount::Static(count, 1, 1), RudaDim::new_1d(128), a.arg(), out.arg()) };
     }
-    match (a.dtype, out.dtype) {
-        (0, 0) => run!(f32, f32), (0, 1) => run!(f32, f16), (0, 2) => run!(f32, bf16),
-        (1, 0) => run!(f16, f32), (1, 1) => run!(f16, f16), (1, 2) => run!(f16, bf16),
-        (2, 0) => run!(bf16, f32), (2, 1) => run!(bf16, f16), (2, 2) => run!(bf16, bf16),
-        _ => panic!("unsupported RUDA conversion"),
+    if byte_work {
+        unsafe {
+            if a.dtype == out.dtype {
+                kernels::copy_bytes::launch::<CudaRuntime>(
+                    &client, RudaCount::Static(count, 1, 1), RudaDim::new_1d(128),
+                    a.byte_view().arg(), out.byte_view().arg());
+            } else {
+                kernels::convert_integer::launch::<CudaRuntime>(
+                    &client, RudaCount::Static(count, 1, 1), RudaDim::new_1d(128),
+                    a.byte_view().arg(), out.byte_view().arg(),
+                    (4..=7).contains(&a.dtype), a.dtype == 3, out.dtype == 3);
+            }
+        }
+    } else if a.dtype == 3 || out.dtype == 3 {
+        macro_rules! boolean {
+            ($kernel:ident, $dtype:ty) => { kernels::$kernel::launch::<$dtype, CudaRuntime>(
+                &client, RudaCount::Static(count, 1, 1), RudaDim::new_1d(128), a.arg(), out.arg()) };
+        }
+        unsafe {
+            match (a.dtype, out.dtype) {
+                (0, 3) => boolean!(float_to_bool, f32),
+                (1, 3) => boolean!(float_to_bool, f16),
+                (2, 3) => boolean!(float_to_bool, bf16),
+                (3, 0) => boolean!(bool_to_float, f32),
+                (3, 1) => boolean!(bool_to_float, f16),
+                (3, 2) => boolean!(bool_to_float, bf16),
+                _ => panic!("unsupported RUDA bool conversion"),
+            }
+        }
+    } else {
+        macro_rules! convert_to {
+            ($input:ty) => { match out.dtype {
+                0 => run!($input, f32), 1 => run!($input, f16), 2 => run!($input, bf16),
+                4 => run!($input, i64), 5 => run!($input, i32), 6 => run!($input, i16),
+                7 => run!($input, i8), 8 => run!($input, u8),
+                _ => panic!("unsupported RUDA conversion dtype"),
+            } };
+        }
+        match a.dtype {
+            0 => convert_to!(f32), 1 => convert_to!(f16), 2 => convert_to!(bf16),
+            4 => convert_to!(i64), 5 => convert_to!(i32), 6 => convert_to!(i16),
+            7 => convert_to!(i8), 8 => convert_to!(u8),
+            _ => panic!("unsupported RUDA conversion dtype"),
+        }
     }
     sync(&client);
     LAUNCHES.fetch_add(1, Ordering::Relaxed);
@@ -168,8 +318,20 @@ pub unsafe extern "C" fn ruda_torch_execute(op: u32, a: *const Descriptor, b: *c
     checked(|| {
         let (a, b, out) = unsafe { (View::read(&*a), View::read(&*b), View::read(&*out)) };
         match op {
-            0..=4 | 8..=18 => { assert_eq!(a.shape, out.shape); assert_eq!(b.shape, out.shape); }
+            0..=4 | 8..=29 | 35..=73 => { assert_eq!(a.shape, out.shape); assert_eq!(b.shape, out.shape); }
+            78..=88 => { assert_eq!(a.shape, out.shape); assert_eq!(b.shape, out.shape); }
             5 => (),
+            74..=77 => {
+                let spatial = if op >= 76 { 3 } else { 2 };
+                let rank = a.shape.len();
+                assert!(rank == spatial + 1 || rank == spatial + 2);
+                assert_eq!(rank, out.shape.len());
+                assert_eq!(a.shape[..rank - spatial], out.shape[..rank - spatial]);
+                assert!(a.shape[rank - spatial..].iter().all(|&size| size > 0));
+                if op == 75 || op == 77 {
+                    assert!(out.shape[rank - spatial..].iter().all(|&size| size > 0));
+                }
+            }
             6 => {
                 assert_eq!(a.shape.len(), out.shape.len());
                 assert!(a.shape.iter().zip(&out.shape).all(|(a, o)| *o == 1 || a == o));

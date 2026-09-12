@@ -8,6 +8,7 @@
 #include <torch/extension.h>
 #include <torch/library.h>
 #include <cstdio>
+#include <cstring>
 
 namespace {
 struct Descriptor {
@@ -22,12 +23,14 @@ using Alloc = int (*)(size_t, void**, uint64_t*);
 using Free = int (*)(void*);
 using Error = const char* (*)();
 using Execute = int (*)(uint32_t, const Descriptor*, const Descriptor*, const Descriptor*, float);
+using Fill = int (*)(const Descriptor*, uint64_t);
 using Transfer = int (*)(const Descriptor*, void*, bool);
 using Sync = int (*)();
 Alloc allocate_native = nullptr;
 Free free_native = nullptr;
 Error error_native = nullptr;
 Execute execute_native = nullptr;
+Fill fill_native = nullptr;
 Transfer transfer_native = nullptr;
 Sync sync_native = nullptr;
 
@@ -41,7 +44,13 @@ uint32_t dtype_code(c10::ScalarType dtype) {
   if (dtype == at::kFloat) return 0;
   if (dtype == at::kHalf) return 1;
   if (dtype == at::kBFloat16) return 2;
-  TORCH_CHECK(false, "RUDA native storage supports float32, float16 and bfloat16");
+  if (dtype == at::kBool) return 3;
+  if (dtype == at::kLong) return 4;
+  if (dtype == at::kInt) return 5;
+  if (dtype == at::kShort) return 6;
+  if (dtype == at::kChar) return 7;
+  if (dtype == at::kByte) return 8;
+  TORCH_CHECK(false, "RUDA native storage supports float32, float16, bfloat16, bool, int64, int32, int16, int8 and uint8");
 }
 void release(void* handle) {
   if (handle && free_native(handle)) std::fprintf(stderr, "RUDA release: %s\n", error_native());
@@ -136,6 +145,31 @@ void execute(uint32_t op, const at::Tensor& a, const at::Tensor& b, at::Tensor o
   check(execute_native(op, &av.desc, &bv.desc, &ov.desc, scalar));
 }
 
+template <typename T>
+uint64_t scalar_bits(const at::Scalar& value) {
+  const T converted = value.to<T>();
+  uint64_t bits = 0;
+  std::memcpy(&bits, &converted, sizeof(T));
+  return bits;
+}
+void fill(at::Tensor out, const at::Scalar& value) {
+  at::assert_no_internal_overlap(out);
+  Argument ov(out);
+  uint64_t bits = 0;
+  switch (ov.desc.dtype) {
+    case 0: bits = scalar_bits<float>(value); break;
+    case 1: bits = scalar_bits<at::Half>(value); break;
+    case 2: bits = scalar_bits<at::BFloat16>(value); break;
+    case 3: bits = scalar_bits<bool>(value); break;
+    case 4: bits = scalar_bits<int64_t>(value); break;
+    case 5: bits = scalar_bits<int32_t>(value); break;
+    case 6: bits = scalar_bits<int16_t>(value); break;
+    case 7: bits = scalar_bits<int8_t>(value); break;
+    case 8: bits = scalar_bits<uint8_t>(value); break;
+  }
+  check(fill_native(&ov.desc, bits));
+}
+
 at::Tensor copy_from(const at::Tensor& source, const at::Tensor& dest, bool non_blocking) {
   dtype_code(source.scalar_type());
   dtype_code(dest.scalar_type());
@@ -161,13 +195,25 @@ at::Tensor copy_from(const at::Tensor& source, const at::Tensor& dest, bool non_
   return dest;
 }
 at::Tensor& copy_(at::Tensor& dest, const at::Tensor& source, bool non_blocking) { copy_from(source, dest, non_blocking); return dest; }
-at::Scalar scalar(const at::Tensor& value) {
-  TORCH_CHECK(value.numel() == 1);
-  float result = 0;
-  auto converted = value.scalar_type() == at::kFloat ? value : value.to(at::kFloat);
-  Argument arg(converted);
+template <typename T>
+T read_scalar(const at::Tensor& value) {
+  T result{};
+  Argument arg(value);
   check(transfer_native(&arg.desc, &result, false));
   return result;
+}
+at::Scalar scalar(const at::Tensor& value) {
+  TORCH_CHECK(value.numel() == 1);
+  switch (dtype_code(value.scalar_type())) {
+    case 3: return read_scalar<uint8_t>(value) != 0;
+    case 4: return read_scalar<int64_t>(value);
+    case 5: return int64_t(read_scalar<int32_t>(value));
+    case 6: return int64_t(read_scalar<int16_t>(value));
+    case 7: return int64_t(read_scalar<int8_t>(value));
+    case 8: return int64_t(read_scalar<uint8_t>(value));
+  }
+  auto converted = value.scalar_type() == at::kFloat ? value : value.to(at::kFloat);
+  return read_scalar<float>(converted);
 }
 void unsupported(const c10::OperatorHandle& op, torch::jit::Stack*) {
   TORCH_CHECK_NOT_IMPLEMENTED(false, "RUDA GPU operator not implemented: ", op.schema().operator_name(), "; CPU fallback is disabled");
@@ -176,6 +222,7 @@ TORCH_LIBRARY_IMPL(aten, PrivateUse1, m) {
   m.impl("empty.memory_format", empty);
   m.impl("empty_strided", empty_strided);
   m.impl("as_strided", at::native::as_strided_tensorimpl);
+  m.impl("as_strided_", at::native::as_strided__symint);
   m.impl("view", at::native::view);
   m.impl("_reshape_alias", at::native::_reshape_alias);
   m.impl("copy_", copy_);
@@ -188,9 +235,9 @@ TORCH_LIBRARY_IMPL(_, PrivateUse1, m) {
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  m.attr("abi_version") = 2;
+  m.attr("abi_version") = 3;
   m.def("initialize", [](std::vector<uintptr_t> addresses) {
-    TORCH_CHECK(addresses.size() == 6 && !allocate_native, "invalid or repeated RUDA initialization");
+    TORCH_CHECK(addresses.size() == 7 && !allocate_native, "invalid or repeated RUDA initialization");
     for (auto address : addresses) TORCH_CHECK(address != 0, "null RUDA ABI function");
     allocate_native = reinterpret_cast<Alloc>(addresses[0]);
     free_native = reinterpret_cast<Free>(addresses[1]);
@@ -198,9 +245,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     execute_native = reinterpret_cast<Execute>(addresses[3]);
     transfer_native = reinterpret_cast<Transfer>(addresses[4]);
     sync_native = reinterpret_cast<Sync>(addresses[5]);
+    fill_native = reinterpret_cast<Fill>(addresses[6]);
     synchronize();
     at::RegisterPrivateUse1HooksInterface(new Hooks());
   });
   m.def("execute", execute);
+  m.def("fill", fill);
   m.def("synchronize", synchronize);
 }

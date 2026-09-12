@@ -1,0 +1,147 @@
+name: RUDA Torch Windows build
+
+on:
+  push:
+    branches: [main, build/ruda-torch-windows]
+    paths:
+      - 'ruda-torch/**'
+      - 'ruda/**'
+      - 'ruda-core/**'
+      - 'ruda-kernel/**'
+      - 'ruda-kernel-macros/**'
+      - 'ruda-ir-macros/**'
+      - 'ruda-compiler/**'
+      - 'ruda-driver-cuda/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/ruda-torch-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ruda-torch-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: pwsh
+
+env:
+  CARGO_BUILD_JOBS: '2'
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_TERM_COLOR: never
+  RUST_MIN_STACK: '16777216'
+  PYTHONUNBUFFERED: '1'
+  PIP_NO_CACHE_DIR: '1'
+
+jobs:
+  native:
+    name: Windows Rust DLL
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Inspect runner resources
+        run: |
+          Get-Date -AsUTC -Format o
+          Get-CimInstance Win32_OperatingSystem | Select-Object TotalVisibleMemorySize, FreePhysicalMemory
+          Get-CimInstance Win32_ComputerSystem | Select-Object NumberOfLogicalProcessors
+          Get-PSDrive -PSProvider FileSystem | Select-Object Name, Used, Free
+          if ((Get-Item $env:GITHUB_WORKSPACE).PSDrive.Free -lt 6GB) { throw 'Insufficient disk space for the bounded Rust build' }
+      - name: Install Rust 1.97.1
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          rustup override set 1.97.1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          rustc --version
+          cargo --version
+      - name: Restore Rust build cache
+        id: cargo-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: torch-win-rust-1.97.1-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            torch-win-rust-1.97.1-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}-
+            torch-win-rust-1.97.1-${{ hashFiles('Cargo.lock') }}-
+      - name: Build native DLL
+        timeout-minutes: 12
+        run: cargo build --locked -p ruda-torch-native
+      - name: Save native DLL
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ruda-torch-native-win-amd64-abi3-${{ github.sha }}
+          path: target/debug/ruda_torch_native.dll
+          if-no-files-found: error
+          retention-days: 7
+      - name: Save Rust build cache
+        if: always() && steps.cargo-cache.outcome == 'success'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
+  wheel:
+    name: Windows Python wheel
+    needs: native
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13.7'
+          architecture: x64
+      - name: Inspect runner resources
+        run: |
+          Get-Date -AsUTC -Format o
+          Get-CimInstance Win32_OperatingSystem | Select-Object TotalVisibleMemorySize, FreePhysicalMemory
+          Get-CimInstance Win32_ComputerSystem | Select-Object NumberOfLogicalProcessors
+          Get-PSDrive -PSProvider FileSystem | Select-Object Name, Used, Free
+          if ((Get-Item $env:GITHUB_WORKSPACE).PSDrive.Free -lt 10GB) { throw 'Insufficient disk space for the PyTorch wheel build' }
+      - name: Install matching PyTorch and build dependencies
+        timeout-minutes: 8
+        run: |
+          python -m pip install setuptools==80.9.0 wheel==0.45.1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -m pip install 'torch==2.13.0+cu130' --index-url https://download.pytorch.org/whl/cu130
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Restore native DLL
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ruda-torch-native-win-amd64-abi3-${{ github.sha }}
+          path: ruda-torch/python/ruda_torch
+      - name: Build C++ extension and wheel
+        working-directory: ruda-torch/python
+        timeout-minutes: 10
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'MSVC x64 build tools were not found' }
+          Import-Module (Join-Path $vs 'Common7/Tools/Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
+          $env:DISTUTILS_USE_SDK = '1'
+          $env:MSSdk = '1'
+          python setup.py bdist_wheel
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Save installable wheel
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ruda-torch-win-amd64-cp313-torch2.13.0-cu130-abi3-${{ github.sha }}
+          path: ruda-torch/python/dist/*.whl
+          if-no-files-found: error
+          retention-days: 7

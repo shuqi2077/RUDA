@@ -1,9 +1,11 @@
 import math
 import torch
+from torch._prims_common import suggest_memory_format
 from . import _C
 
 _registry = torch.library.Library("aten", "IMPL", "PrivateUse1")
 _dtypes = (torch.float32, torch.float16, torch.bfloat16)
+_storage_dtypes = _dtypes + (torch.bool, torch.int64, torch.int32, torch.int16, torch.int8, torch.uint8)
 
 def _out(shape, tensor):
     return torch.empty(shape, device=tensor.device, dtype=tensor.dtype)
@@ -28,30 +30,57 @@ def _scalar(value, tensor):
     return fill_(result, value)
 
 def fill_(tensor, value):
-    _C.execute(5, tensor, tensor, tensor, float(value))
+    _C.fill(tensor, value)
     return tensor
 
+def _binary(op, a, b, *, scalar=0.0, inplace=False):
+    if a.dtype not in _dtypes:
+        raise RuntimeError("RUDA arithmetic requires a supported floating dtype")
+    dtype = a.dtype
+    if isinstance(b, torch.Tensor):
+        if b.device != a.device or b.dtype not in _dtypes:
+            raise RuntimeError("RUDA arithmetic inputs must use supported floating dtypes on the same device")
+        dtype = torch.promote_types(a.dtype, b.dtype)
+    else:
+        b = _scalar(b, a)
+    left, right = torch.broadcast_tensors(a, b)
+    if inplace:
+        if a.shape != left.shape:
+            raise RuntimeError("RUDA in-place output cannot change shape through broadcasting")
+        result = a
+    else:
+        result = torch.empty(left.shape, device=a.device, dtype=dtype)
+    _C.execute(op, left, right, result, float(scalar))
+    return result
+
+
 def add(a, b, *, alpha=1):
-    return _apply(1, a, _scalar(b, a), scalar=float(alpha))
+    return _binary(1, a, b, scalar=alpha)
 
 def add_(a, b, *, alpha=1):
-    return _apply(1, a, _scalar(b, a), out=a, scalar=float(alpha))
+    return _binary(1, a, b, inplace=True, scalar=alpha)
 
 def mul(a, b):
-    return _apply(2, a, _scalar(b, a))
+    return _binary(2, a, b)
 
 def mul_(a, b):
-    return _apply(2, a, _scalar(b, a), out=a)
+    return _binary(2, a, b, inplace=True)
+
+def _division_op(rounding_mode):
+    if rounding_mode is None:
+        return 8
+    if rounding_mode == "trunc":
+        return 57
+    if rounding_mode == "floor":
+        raise NotImplementedError("RUDA floor division is not implemented")
+    raise RuntimeError("rounding_mode must be None, 'trunc' or 'floor'")
+
 
 def div(a, b, *, rounding_mode=None):
-    if rounding_mode is not None:
-        raise NotImplementedError("RUDA rounded division is not implemented")
-    return _apply(8, a, _scalar(b, a))
+    return _binary(_division_op(rounding_mode), a, b)
 
 def div_(a, b, *, rounding_mode=None):
-    if rounding_mode is not None:
-        raise NotImplementedError("RUDA rounded division is not implemented")
-    return _apply(8, a, _scalar(b, a), out=a)
+    return _binary(_division_op(rounding_mode), a, b, inplace=True)
 
 def mm(a, b):
     _scalar(b, a)
@@ -205,26 +234,617 @@ def clone(a, *, memory_format=torch.preserve_format):
     out = torch.empty_like(a, memory_format=memory_format)
     return out.copy_(a)
 
+
+def leaky_relu(a, negative_slope=0.01):
+    return _apply(41, a, scalar=float(negative_slope))
+
+
+def leaky_relu_(a, negative_slope=0.01):
+    return _apply(41, a, out=a, scalar=float(negative_slope))
+
+
+def leaky_relu_backward(grad, a, negative_slope, self_is_result):
+    if self_is_result and negative_slope < 0:
+        raise RuntimeError("in-place leaky_relu backward does not support a negative slope")
+    return _apply(42, grad, a, scalar=float(negative_slope))
+
+
+def log_sigmoid_forward(a):
+    return _apply(47, a), _out((0,), a)
+
+
+def log_sigmoid_backward(grad, a, buffer):
+    return _apply(48, grad, a)
+
+
+def _ternary(op, a, b, c, *, value=1, inplace=False, dtype=None):
+    for tensor in (a, b, c):
+        if tensor.device != a.device or tensor.dtype not in _dtypes:
+            raise RuntimeError("RUDA ternary inputs must use supported floating dtypes on the same device")
+    if dtype is None:
+        dtype = torch.promote_types(torch.promote_types(a.dtype, b.dtype), c.dtype)
+    shape = torch.broadcast_shapes(a.shape, b.shape, c.shape)
+    if inplace and a.shape != shape:
+        raise RuntimeError("RUDA in-place output cannot change shape through broadcasting")
+    if inplace:
+        result = a
+    else:
+        result = torch.empty(shape, device=a.device, dtype=dtype)
+        result.copy_(a)
+    _C.execute(op, b.expand(shape), c.expand(shape), result, float(value))
+    return result
+
+
+def addcmul(a, tensor1, tensor2, *, value=1):
+    return _ternary(28, a, tensor1, tensor2, value=value)
+
+
+def addcmul_(a, tensor1, tensor2, *, value=1):
+    return _ternary(28, a, tensor1, tensor2, value=value, inplace=True)
+
+
+def addcdiv(a, tensor1, tensor2, *, value=1):
+    return _ternary(29, a, tensor1, tensor2, value=value)
+
+
+def addcdiv_(a, tensor1, tensor2, *, value=1):
+    return _ternary(29, a, tensor1, tensor2, value=value, inplace=True)
+
+
+def lerp(a, end, weight, *, inplace=False):
+    _scalar(end, a)
+    weight = _scalar(weight, a)
+    return _ternary(49, a, end, weight, inplace=inplace, dtype=a.dtype)
+
+
+def cat(tensors, dim=0):
+    tensors = tuple(tensors)
+    if not tensors:
+        raise RuntimeError("cat expects a non-empty tensor list")
+    first = tensors[0]
+    dtype = first.dtype
+    memory_format = None
+    for tensor in tensors:
+        if tensor.device != first.device or tensor.dtype not in _storage_dtypes or tensor.layout != torch.strided:
+            raise RuntimeError("RUDA cat requires supported strided tensors on the same device")
+        if tensor.ndim == 0:
+            raise RuntimeError("zero-dimensional tensors cannot be concatenated")
+        dtype = torch.promote_types(dtype, tensor.dtype)
+        current_format = suggest_memory_format(tensor)
+        if memory_format is None:
+            memory_format = current_format
+        elif memory_format != current_format:
+            memory_format = torch.contiguous_format
+    inputs = tuple(tensor for tensor in tensors if tensor.ndim != 1 or tensor.shape[0] != 0)
+    if not inputs:
+        return torch.empty((0,), device=first.device, dtype=dtype)
+    dim = _dimension(dim, inputs[0].ndim)
+    shape = list(inputs[0].shape)
+    shape[dim] = 0
+    for tensor in inputs:
+        if tensor.ndim != len(shape) or any(
+            tensor.shape[axis] != shape[axis] for axis in range(len(shape)) if axis != dim
+        ):
+            raise RuntimeError("cat tensor sizes must match except in the concatenation dimension")
+        shape[dim] += tensor.shape[dim]
+    result = torch.empty(shape, device=first.device, dtype=dtype, memory_format=memory_format)
+    cursor = 0
+    for tensor in inputs:
+        if tensor.numel() != 0:
+            destination = torch.as_strided(result, tensor.shape, result.stride(), cursor * result.stride(dim))
+            destination.copy_(tensor)
+        cursor += tensor.shape[dim]
+    return result
+
+
+def stack(tensors, dim=0):
+    tensors = tuple(tensors)
+    if not tensors:
+        raise RuntimeError("stack expects a non-empty tensor list")
+    shape = tensors[0].shape
+    if any(tensor.shape != shape for tensor in tensors):
+        raise RuntimeError("stack expects every tensor to have the same shape")
+    dim = _dimension(dim, len(shape) + 1)
+    if dim < len(shape):
+        output_shape = list(shape)
+        output_shape.insert(dim, len(tensors))
+        return cat(tensors, dim).view(output_shape)
+    return cat(tuple(tensor.unsqueeze(dim) for tensor in tensors), dim)
+
+
+def mv(matrix, vector):
+    if matrix.ndim != 2 or vector.ndim != 1 or matrix.shape[1] != vector.shape[0]:
+        raise RuntimeError("mv requires a matrix and a compatible vector")
+    return mm(matrix, vector.unsqueeze(1)).squeeze(1)
+
+
+def dot(a, b):
+    if a.ndim != 1 or b.ndim != 1 or a.shape != b.shape:
+        raise RuntimeError("dot requires vectors with the same length")
+    return mm(a.unsqueeze(0), b.unsqueeze(1)).view(())
+
+
+def outer(a, b):
+    if a.ndim != 1 or b.ndim != 1:
+        raise RuntimeError("outer requires one-dimensional tensors")
+    if a.device != b.device or a.dtype not in _dtypes or b.dtype not in _dtypes:
+        raise RuntimeError("RUDA outer requires supported floating tensors on the same device")
+    dtype = torch.promote_types(a.dtype, b.dtype)
+    return mul(a.to(dtype).unsqueeze(1), b.to(dtype).unsqueeze(0))
+
+
+def rsub(a, b, alpha=1):
+    return _binary(50, a, b, scalar=alpha)
+
+
+def constant_pad_nd(a, pad, value=0):
+    pad = tuple(pad)
+    if len(pad) % 2 or len(pad) > 2 * a.ndim:
+        raise RuntimeError("padding must contain pairs for no more than the input rank")
+    cropped = a
+    for axis in range(a.ndim - len(pad) // 2, a.ndim):
+        index = 2 * (a.ndim - axis - 1)
+        left, right = pad[index:index + 2]
+        if left < 0:
+            cropped = cropped.narrow(axis, -left, cropped.shape[axis] + left)
+        if right < 0:
+            cropped = cropped.narrow(axis, 0, cropped.shape[axis] + right)
+    if all(amount <= 0 for amount in pad):
+        return clone(cropped)
+    shape = list(a.shape)
+    for axis in range(a.ndim - len(pad) // 2, a.ndim):
+        index = 2 * (a.ndim - axis - 1)
+        shape[axis] += pad[index] + pad[index + 1]
+        if shape[axis] < 0:
+            raise RuntimeError("negative padding results in a negative output size")
+    result = torch.empty(shape, dtype=a.dtype, device=a.device, memory_format=suggest_memory_format(a))
+    fill_(result, value)
+    if cropped.numel() != 0:
+        destination = result
+        for axis in range(a.ndim - len(pad) // 2, a.ndim):
+            index = 2 * (a.ndim - axis - 1)
+            left, right = pad[index:index + 2]
+            if left > 0:
+                destination = destination.narrow(axis, left, destination.shape[axis] - left)
+            if right > 0:
+                destination = destination.narrow(axis, 0, destination.shape[axis] - right)
+        destination.copy_(cropped)
+    return result
+
+
+def _matrix_bias(result, bias, beta, alpha):
+    if alpha != 1:
+        mul_(result, alpha)
+    if beta != 0:
+        add_(result, bias, alpha=beta)
+    return result
+
+
+def addmv(bias, matrix, vector, *, beta=1, alpha=1):
+    _scalar(vector, matrix)
+    _scalar(bias, matrix)
+    if matrix.ndim != 2 or vector.ndim != 1 or matrix.shape[1] != vector.shape[0]:
+        raise RuntimeError("addmv requires a matrix and a compatible vector")
+    shape = (matrix.shape[0],)
+    if torch.broadcast_shapes(bias.shape, shape) != shape:
+        raise RuntimeError("addmv bias cannot broadcast to the output shape")
+    if matrix.dtype != torch.float32:
+        return addmv(bias.float(), matrix.float(), vector.float(), beta=beta, alpha=alpha).to(matrix.dtype)
+    return _matrix_bias(mv(matrix, vector), bias, beta, alpha)
+
+
+def _batch_matrix_bias(bias, a, b, beta, alpha, reduce_batch):
+    _scalar(b, a)
+    _scalar(bias, a)
+    if a.ndim != 3 or b.ndim != 3 or a.shape[0] != b.shape[0] or a.shape[2] != b.shape[1]:
+        raise RuntimeError("batched matrix inputs must have compatible batch and matrix dimensions")
+    shape = (a.shape[1], b.shape[2]) if reduce_batch else (a.shape[0], a.shape[1], b.shape[2])
+    if torch.broadcast_shapes(bias.shape, shape) != shape:
+        raise RuntimeError("batched matrix bias cannot broadcast to the output shape")
+    if a.dtype != torch.float32:
+        return _batch_matrix_bias(bias.float(), a.float(), b.float(), beta, alpha, reduce_batch).to(a.dtype)
+    result = bmm(a, b)
+    if reduce_batch:
+        result = sum_dim(result, (0,))
+    return _matrix_bias(result, bias, beta, alpha)
+
+
+def addbmm(bias, a, b, *, beta=1, alpha=1):
+    return _batch_matrix_bias(bias, a, b, beta, alpha, True)
+
+
+def baddbmm(bias, a, b, *, beta=1, alpha=1):
+    return _batch_matrix_bias(bias, a, b, beta, alpha, False)
+
+
+def hardtanh(a, min_val=-1, max_val=1, *, inplace=False):
+    return _apply(51, a, _scalar(max_val, a), scalar=float(min_val), out=a if inplace else None)
+
+
+def hardtanh_backward(grad, a, min_val, max_val):
+    lower = _apply(4, grad, a, scalar=float(min_val))
+    return _apply(52, lower, a, scalar=float(max_val))
+
+
+def softplus(a, beta=1, threshold=20):
+    return _apply(53, a, _scalar(threshold, a), scalar=float(beta))
+
+
+def softplus_backward(grad, a, beta, threshold):
+    _scalar(grad, a)
+    return _ternary(54, grad, a, _scalar(threshold, a), value=beta, dtype=a.dtype)
+
+
+def mse_loss(a, target, reduction=1):
+    _scalar(target, a)
+    if reduction not in (0, 1, 2):
+        raise RuntimeError("MSE reduction must be none, mean or sum")
+    if a.dtype != torch.float32:
+        return mse_loss(a.float(), target.float(), reduction).to(a.dtype)
+    loss = _apply(55, a, target)
+    if reduction == 0:
+        return loss
+    return mean_dim(loss) if reduction == 1 else sum_dim(loss)
+
+
+def mse_loss_backward(grad, a, target, reduction):
+    _scalar(target, a)
+    _scalar(grad, a)
+    if reduction not in (0, 1, 2):
+        raise RuntimeError("MSE reduction must be none, mean or sum")
+    norm = 2.0
+    if reduction == 1:
+        norm = 2.0 / a.numel() if a.numel() else float("inf")
+    return _ternary(56, grad, a, target, value=norm, dtype=a.dtype)
+
+
+def fill_tensor_(a, value):
+    if value.ndim != 0:
+        raise RuntimeError("fill_ only supports a zero-dimensional value tensor")
+    return a.copy_(value)
+
+
+def fill(a, value):
+    result = torch.empty_like(a, memory_format=torch.preserve_format)
+    if isinstance(value, torch.Tensor):
+        return fill_tensor_(result, value)
+    return fill_(result, value)
+
+
+def hardshrink(a, lambd=0.5):
+    boundary = _scalar(lambd, a).to(a.dtype)
+    return _apply(58, a, boundary)
+
+
+def softshrink(a, lambd=0.5):
+    if not 0 <= lambd <= torch.finfo(a.dtype).max:
+        raise RuntimeError("softshrink lambda must be nonnegative and within the input dtype range")
+    boundary = _scalar(lambd, a).to(a.dtype)
+    return _apply(59, a, boundary)
+
+
+def shrink_backward(grad, a, lambd):
+    _scalar(grad, a)
+    boundary = _scalar(lambd, a).to(a.dtype)
+    return _ternary(60, grad, a, boundary, dtype=a.dtype)
+
+
+def threshold(a, threshold, value, *, inplace=False):
+    boundary = _scalar(threshold, a).to(a.dtype)
+    replacement = _scalar(value, a).to(a.dtype)
+    result = _ternary(61, replacement, a, boundary, dtype=a.dtype)
+    if inplace:
+        a.copy_(result)
+        return a
+    return result
+
+
+def prelu_kernel(a, weight):
+    _scalar(weight, a)
+    return _apply(62, a, weight)
+
+
+def threshold_backward(grad, a, threshold):
+    _scalar(grad, a)
+    boundary = _scalar(threshold, a).to(a.dtype)
+    return _ternary(73, grad, a, boundary, dtype=a.dtype)
+
+
+def prelu_kernel_backward(grad, a, weight):
+    _scalar(weight, a)
+    _scalar(grad, a)
+    a, weight, grad = torch.broadcast_tensors(a, weight, grad)
+    grad_input = _ternary(63, grad, a, weight, dtype=a.dtype)
+    grad_weight = _apply(64, a, grad)
+    return grad_input, grad_weight
+
+
+def _piecewise_loss(a, target, reduction, boundary, *, huber):
+    if reduction not in (0, 1, 2):
+        raise RuntimeError("loss reduction must be none, mean or sum")
+    if huber:
+        if not boundary > 0:
+            raise RuntimeError("huber_loss delta must be positive")
+    elif not boundary >= 0:
+        raise RuntimeError("smooth_l1_loss beta must be nonnegative")
+    if a.device != target.device or a.dtype not in _dtypes or target.dtype not in _dtypes:
+        raise RuntimeError("RUDA loss inputs must use supported floating dtypes on the same device")
+    dtype = torch.promote_types(a.dtype, target.dtype)
+    loss = _apply(66 if huber else 65, a.to(dtype), target.to(dtype), scalar=float(boundary))
+    if reduction == 0:
+        return loss
+    return mean_dim(loss) if reduction == 1 else sum_dim(loss)
+
+
+def smooth_l1_loss(a, target, reduction=1, beta=1.0):
+    return _piecewise_loss(a, target, reduction, beta, huber=False)
+
+
+def huber_loss(a, target, reduction=1, delta=1.0):
+    return _piecewise_loss(a, target, reduction, delta, huber=True)
+
+
+def _piecewise_loss_backward(grad, a, target, reduction, boundary, *, huber):
+    _scalar(target, a)
+    _scalar(grad, a)
+    if reduction not in (0, 1, 2):
+        raise RuntimeError("loss reduction must be none, mean or sum")
+    norm = 1.0
+    if reduction == 1:
+        norm = 1.0 / a.numel() if a.numel() else float("inf")
+    normalization = _scalar(norm, a).to(a.dtype)
+    difference = add(a, target, alpha=-1)
+    return _ternary(68 if huber else 67, normalization, difference, grad,
+                    value=boundary, dtype=a.dtype)
+
+
+def smooth_l1_loss_backward(grad, a, target, reduction, beta):
+    return _piecewise_loss_backward(grad, a, target, reduction, beta, huber=False)
+
+
+def huber_loss_backward(grad, a, target, reduction, delta):
+    return _piecewise_loss_backward(grad, a, target, reduction, delta, huber=True)
+
+
+def _glu_halves(a, dim):
+    if a.ndim == 0:
+        raise RuntimeError("glu does not support zero-dimensional tensors")
+    dim = _dimension(dim, a.ndim)
+    if a.shape[dim] % 2:
+        raise RuntimeError("glu requires an even size along the split dimension")
+    width = a.shape[dim] // 2
+    return a.narrow(dim, 0, width), a.narrow(dim, width, width), dim
+
+
+def glu(a, dim=-1):
+    left, gate, _ = _glu_halves(a, dim)
+    if left.numel() == 0:
+        return _out(left.shape, a)
+    return _apply(71, left, gate)
+
+
+def glu_backward(grad, a, dim):
+    _scalar(grad, a)
+    left, gate, dim = _glu_halves(a, dim)
+    if grad.shape != left.shape:
+        raise RuntimeError("glu gradient shape must match the forward output")
+    if a.numel() == 0:
+        return _out(a.shape, a)
+    grad_left = _apply(71, grad, gate)
+    grad_gate = _ternary(72, grad, left, gate, dtype=a.dtype)
+    return cat((grad_left, grad_gate), dim)
+
+
+def _adaptive_avg_pool(a, output_size, spatial_dims):
+    output_size = tuple(output_size)
+    if a.ndim not in (spatial_dims + 1, spatial_dims + 2):
+        raise RuntimeError("adaptive average pooling input rank does not match its spatial dimensions")
+    if len(output_size) != spatial_dims or any(size < 0 for size in output_size):
+        raise RuntimeError("adaptive average pooling requires nonnegative spatial output sizes")
+    if any(size == 0 for size in a.shape[-spatial_dims:]):
+        raise RuntimeError("adaptive average pooling requires nonempty input spatial dimensions")
+    if spatial_dims == 3 and any(size == 0 for size in a.shape[1:]):
+        raise RuntimeError("adaptive_avg_pool3d requires nonempty non-batch dimensions")
+    shape = tuple(a.shape[:-spatial_dims]) + output_size
+    result = torch.empty(shape, device=a.device, dtype=a.dtype, memory_format=suggest_memory_format(a))
+    if result.numel() != 0:
+        _C.execute(74 if spatial_dims == 2 else 76, a, a, result, 0.0)
+    return result
+
+
+def adaptive_avg_pool2d(a, output_size):
+    return _adaptive_avg_pool(a, output_size, 2)
+
+
+def adaptive_avg_pool3d(a, output_size):
+    return _adaptive_avg_pool(a, output_size, 3)
+
+
+def _adaptive_avg_pool_backward(grad, a, spatial_dims):
+    _scalar(grad, a)
+    if a.ndim not in (spatial_dims + 1, spatial_dims + 2) or grad.ndim != a.ndim:
+        raise RuntimeError("adaptive average pooling gradient rank must match the input")
+    if grad.shape[:-spatial_dims] != a.shape[:-spatial_dims]:
+        raise RuntimeError("adaptive average pooling gradient batch and channel dimensions must match the input")
+    if any(size == 0 for size in grad.shape[1:]):
+        raise RuntimeError("adaptive average pooling requires nonempty gradient non-batch dimensions")
+    result = torch.empty_like(a, memory_format=torch.contiguous_format)
+    if result.numel() != 0:
+        _C.execute(75 if spatial_dims == 2 else 77, grad, grad, result, 0.0)
+    return result
+
+
+def adaptive_avg_pool2d_backward(grad, a):
+    return _adaptive_avg_pool_backward(grad, a, 2)
+
+
+def adaptive_avg_pool3d_backward(grad, a):
+    return _adaptive_avg_pool_backward(grad, a, 3)
+
+
+def _typed_value(value, dtype, device):
+    if dtype not in _storage_dtypes:
+        raise RuntimeError("RUDA does not support the promoted dtype")
+    if isinstance(value, torch.Tensor):
+        if value.device != device:
+            raise RuntimeError("RUDA operands must be on the same device")
+        return value.to(dtype)
+    result = torch.empty((), dtype=dtype, device=device)
+    return fill_(result, value)
+
+
+def _comparison(op, a, b, *, inplace=False):
+    dtype = torch.result_type(a, b)
+    left = _typed_value(a, dtype, a.device)
+    if isinstance(b, int) and dtype not in _dtypes:
+        right = _typed_value(b, torch.int64, a.device).to(dtype)
+    else:
+        right = _typed_value(b, dtype, a.device)
+    left, right = torch.broadcast_tensors(left, right)
+    if inplace and left.shape != a.shape:
+        raise RuntimeError("in-place comparison cannot change the input shape")
+    result = torch.empty(left.shape, dtype=torch.bool, device=a.device)
+    _C.execute(op, left, right, result, 0.0)
+    if inplace:
+        a.copy_(result)
+        return a
+    return result
+
+
+def _logical(op, a, b=None, *, inplace=False):
+    if a.dtype not in _storage_dtypes:
+        raise RuntimeError("RUDA logical operations require a supported dtype")
+    if b is None:
+        b = a
+    if b.device != a.device or b.dtype not in _storage_dtypes:
+        raise RuntimeError("RUDA logical operands must use supported dtypes on the same device")
+    left, right = torch.broadcast_tensors(a.to(torch.bool), b.to(torch.bool))
+    if inplace and left.shape != a.shape:
+        raise RuntimeError("in-place logical operation cannot change the input shape")
+    result = torch.empty(left.shape, dtype=torch.bool, device=a.device)
+    _C.execute(op, left, right, result, 0.0)
+    if inplace:
+        a.copy_(result)
+        return a
+    return result
+
+
+def where(condition, a, b):
+    if condition.dtype != torch.bool:
+        raise RuntimeError("where requires a boolean condition")
+    dtype = torch.result_type(a, b)
+    left = _typed_value(a, dtype, condition.device)
+    right = _typed_value(b, dtype, condition.device)
+    condition, left, right = torch.broadcast_tensors(condition, left, right)
+    result = torch.empty(left.shape, dtype=dtype, device=condition.device)
+    result.copy_(right)
+    _C.execute(84, condition, left, result, 0.0)
+    return result
+
+
+def masked_fill(a, mask, value, *, inplace=False):
+    if mask.dtype != torch.bool or mask.device != a.device:
+        raise RuntimeError("masked_fill requires a boolean mask on the input device")
+    if isinstance(value, torch.Tensor) and value.ndim != 0:
+        raise RuntimeError("masked_fill requires a zero-dimensional value tensor")
+    shape = torch.broadcast_shapes(a.shape, mask.shape)
+    if inplace and shape != a.shape:
+        raise RuntimeError("in-place masked_fill cannot change the input shape")
+    replacement = _typed_value(value, a.dtype, a.device)
+    result = where(mask, replacement, a)
+    if inplace:
+        a.copy_(result)
+        return a
+    return result
+
+
 for name, function in {
     "fill_.Scalar": fill_, "zero_": lambda a: fill_(a, 0),
+    "fill_.Tensor": fill_tensor_, "fill.Scalar": fill, "fill.Tensor": fill,
+    "zero": lambda a: fill(a, 0),
+    "where.self": where, "where.ScalarSelf": where, "where.ScalarOther": where, "where.Scalar": where,
+    "masked_fill.Scalar": masked_fill, "masked_fill.Tensor": masked_fill,
+    "masked_fill_.Scalar": lambda a, mask, value: masked_fill(a, mask, value, inplace=True),
+    "masked_fill_.Tensor": lambda a, mask, value: masked_fill(a, mask, value, inplace=True),
+    "logical_and": lambda a, b: _logical(85, a, b),
+    "logical_or": lambda a, b: _logical(86, a, b),
+    "logical_xor": lambda a, b: _logical(87, a, b),
+    "logical_not": lambda a: _logical(88, a),
+    "logical_and_": lambda a, b: _logical(85, a, b, inplace=True),
+    "logical_or_": lambda a, b: _logical(86, a, b, inplace=True),
+    "logical_xor_": lambda a, b: _logical(87, a, b, inplace=True),
+    "logical_not_": lambda a: _logical(88, a, inplace=True),
     "add.Tensor": add, "add.Scalar": add, "add_.Tensor": add_, "add_.Scalar": add_,
     "mul.Tensor": mul, "mul.Scalar": mul, "mul_.Tensor": mul_, "mul_.Scalar": mul_,
+    "addcmul": addcmul, "addcmul_": addcmul_, "addcdiv": addcdiv, "addcdiv_": addcdiv_,
+    "lerp.Scalar": lerp, "lerp.Tensor": lerp,
+    "lerp_.Scalar": lambda a, end, weight: lerp(a, end, weight, inplace=True),
+    "lerp_.Tensor": lambda a, end, weight: lerp(a, end, weight, inplace=True),
     "div.Tensor": div, "div.Scalar": div, "div.Tensor_mode": div, "div.Scalar_mode": div,
     "div_.Tensor": div_, "div_.Scalar": div_, "div_.Tensor_mode": div_, "div_.Scalar_mode": div_,
     "sub.Tensor": lambda a, b, alpha=1: add(a, b, alpha=-alpha),
     "sub.Scalar": lambda a, b, alpha=1: add(a, b, alpha=-alpha),
+    "sub_.Tensor": lambda a, b, alpha=1: add_(a, b, alpha=-alpha),
+    "sub_.Scalar": lambda a, b, alpha=1: add_(a, b, alpha=-alpha),
+    "rsub.Tensor": rsub, "rsub.Scalar": rsub,
     "neg": lambda a: mul(a, -1),
+    "neg_": lambda a: mul_(a, -1),
     "mm": mm, "addmm": addmm, "bmm": bmm,
+    "mv": mv, "dot": dot, "outer": outer, "cat": cat, "stack": stack,
+    "ger": outer, "vdot": dot,
+    "addmv": addmv, "addbmm": addbmm, "baddbmm": baddbmm,
+    "constant_pad_nd": constant_pad_nd,
+    "_adaptive_avg_pool2d": adaptive_avg_pool2d, "_adaptive_avg_pool2d_backward": adaptive_avg_pool2d_backward,
+    "_adaptive_avg_pool3d": adaptive_avg_pool3d, "_adaptive_avg_pool3d_backward": adaptive_avg_pool3d_backward,
     "relu": lambda a: _apply(3, a),
-    "threshold_backward": lambda grad, a, threshold: _apply(4, grad, a, scalar=float(threshold)),
+    "relu_": lambda a: _apply(3, a, out=a),
+    "threshold_backward": threshold_backward,
     "sum": lambda a, dtype=None: sum_dim(a, dtype=dtype), "sum.dim_IntList": sum_dim,
     "mean": lambda a, dtype=None: mean_dim(a, dtype=dtype), "mean.dim": mean_dim,
     "exp": lambda a: _apply(9, a), "log": lambda a: _apply(10, a),
+    "exp_": lambda a: _apply(9, a, out=a), "log_": lambda a: _apply(10, a, out=a),
     "sqrt": lambda a: _apply(11, a), "rsqrt": lambda a: _apply(12, a),
+    "sqrt_": lambda a: _apply(11, a, out=a), "rsqrt_": lambda a: _apply(12, a, out=a),
     "sigmoid": lambda a: _apply(13, a), "sigmoid_backward": activation_backward,
+    "sigmoid_": lambda a: _apply(13, a, out=a),
     "silu": lambda a: _apply(14, a), "silu_": lambda a: _apply(14, a, out=a),
     "silu_backward": lambda grad, a: _apply(15, grad, a),
     "tanh": lambda a: _apply(17, a), "tanh_backward": lambda grad, y: activation_backward(grad, y, tanh=True),
+    "tanh_": lambda a: _apply(17, a, out=a),
+    "sin": lambda a: _apply(19, a), "sin_": lambda a: _apply(19, a, out=a),
+    "cos": lambda a: _apply(20, a), "cos_": lambda a: _apply(20, a, out=a),
+    "abs": lambda a: _apply(21, a), "abs_": lambda a: _apply(21, a, out=a),
+    "sign": lambda a: _apply(22, a), "sign_": lambda a: _apply(22, a, out=a),
+    "sgn": lambda a: _apply(22, a), "sgn_": lambda a: _apply(22, a, out=a),
+    "floor": lambda a: _apply(23, a), "floor_": lambda a: _apply(23, a, out=a),
+    "ceil": lambda a: _apply(24, a), "ceil_": lambda a: _apply(24, a, out=a),
+    "trunc": lambda a: _apply(25, a), "trunc_": lambda a: _apply(25, a, out=a),
+    "round": lambda a: _apply(26, a), "round_": lambda a: _apply(26, a, out=a),
+    "reciprocal": lambda a: _apply(27, a), "reciprocal_": lambda a: _apply(27, a, out=a),
+    "log1p": lambda a: _apply(35, a), "log1p_": lambda a: _apply(35, a, out=a),
+    "sinh": lambda a: _apply(36, a), "sinh_": lambda a: _apply(36, a, out=a),
+    "cosh": lambda a: _apply(37, a), "cosh_": lambda a: _apply(37, a, out=a),
+    "asinh": lambda a: _apply(38, a), "acosh": lambda a: _apply(39, a), "atanh": lambda a: _apply(40, a),
+    "leaky_relu": leaky_relu, "leaky_relu_": leaky_relu_, "leaky_relu_backward": leaky_relu_backward,
+    "hardsigmoid": lambda a: _apply(43, a), "hardsigmoid_": lambda a: _apply(43, a, out=a),
+    "hardsigmoid_backward": lambda grad, a: _apply(44, grad, a),
+    "hardswish": lambda a: _apply(45, a), "hardswish_": lambda a: _apply(45, a, out=a),
+    "hardswish_backward": lambda grad, a: _apply(46, grad, a),
+    "hardtanh": hardtanh, "hardtanh_": lambda a, min_val=-1, max_val=1: hardtanh(a, min_val, max_val, inplace=True),
+    "hardtanh_backward": hardtanh_backward,
+    "softplus": softplus, "softplus_backward": softplus_backward,
+    "hardshrink": hardshrink, "softshrink": softshrink,
+    "hardshrink_backward": shrink_backward, "softshrink_backward": shrink_backward,
+    "threshold": threshold,
+    "threshold_": lambda a, threshold_value, value: threshold(a, threshold_value, value, inplace=True),
+    "_prelu_kernel": prelu_kernel, "_prelu_kernel_backward": prelu_kernel_backward,
+    "mish": lambda a: _apply(69, a), "mish_": lambda a: _apply(69, a, out=a),
+    "mish_backward": lambda grad, a: _apply(70, grad, a),
+    "glu": glu, "glu_backward": glu_backward,
+    "mse_loss": mse_loss, "mse_loss_backward": mse_loss_backward,
+    "smooth_l1_loss": smooth_l1_loss, "smooth_l1_loss_backward": smooth_l1_loss_backward,
+    "huber_loss": huber_loss, "huber_loss_backward": huber_loss_backward,
+    "log_sigmoid_forward": log_sigmoid_forward, "log_sigmoid_backward": log_sigmoid_backward,
     "_softmax": softmax, "_softmax_backward_data": softmax_backward,
     "_log_softmax": lambda a, dim, half_to_float=False: softmax(a, dim, half_to_float, logarithmic=True),
     "_log_softmax_backward_data": lambda grad, y, dim, dtype: softmax_backward(grad, y, dim, dtype, logarithmic=True),
@@ -232,3 +852,9 @@ for name, function in {
     "pow.Tensor_Scalar": pow_scalar, "clone": clone,
 }.items():
     _registry.impl(name, function)
+
+
+for name, op in (("eq", 78), ("ne", 79), ("lt", 80), ("le", 81), ("gt", 82), ("ge", 83)):
+    for overload in ("Tensor", "Scalar"):
+        _registry.impl(f"{name}.{overload}", lambda a, b, op=op: _comparison(op, a, b))
+        _registry.impl(f"{name}_.{overload}", lambda a, b, op=op: _comparison(op, a, b, inplace=True))

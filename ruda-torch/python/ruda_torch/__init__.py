@@ -11,7 +11,9 @@ if _name != "privateuseone":
 
 _root = Path(__file__).resolve().parents[3]
 _filename = "ruda_torch_native.dll" if sys.platform == "win32" else "libruda_torch_native.so"
-_library = Path(os.environ.get("RUDA_TORCH_LIBRARY", _root / "target" / "debug" / _filename))
+_packaged_library = Path(__file__).resolve().with_name(_filename)
+_default_library = _packaged_library if _packaged_library.is_file() else _root / "target" / "debug" / _filename
+_library = Path(os.environ.get("RUDA_TORCH_LIBRARY", _default_library))
 _dll_directories = []
 if sys.platform == "win32":
     for directory in os.environ.get("RUDA_TORCH_DLL_DIR", "").split(os.pathsep):
@@ -24,11 +26,11 @@ from . import _C
 if not hasattr(_native, "ruda_torch_abi_version"):
     raise RuntimeError("RUDA native library is outdated; rebuild Rust and C++ extensions")
 _native.ruda_torch_abi_version.restype = ctypes.c_uint32
-if _native.ruda_torch_abi_version() != 2 or getattr(_C, "abi_version", None) != 2:
+if _native.ruda_torch_abi_version() != 3 or getattr(_C, "abi_version", None) != 3:
     raise RuntimeError("RUDA native ABI mismatch; rebuild Rust and C++ extensions")
 
 _C.initialize([ctypes.cast(getattr(_native, "ruda_torch_" + name), ctypes.c_void_p).value
-               for name in ("alloc", "free", "error", "execute", "transfer", "sync")])
+               for name in ("alloc", "free", "error", "execute", "transfer", "sync", "fill")])
 torch.utils.rename_privateuse1_backend("ruda")
 
 def is_available():
