@@ -29,7 +29,7 @@ ruda-core = { version = "0.1.3", path = "../ruda-core", default-features = false
 ruda = { version = "0.1.4", path = "../ruda", default-features = false, features = ["runtime", "runtime-std", "runtime-storage-bytes"] }
 ruda-driver-hip = { version = "0.1.2", path = "../ruda-driver-hip", default-features = false, features = ["std"], optional = true }
 ruda-driver-cuda = { version = "0.1.2", path = "../ruda-driver-cuda", default-features = false, features = ["std"], optional = true }
-rublas = { version = "0.1.1", path = "../ruBLAS", default-features = false, features = ["tensor-int4", "tensor-matmul", "std"] }
+rublas = { version = "0.1.2", path = "../ruBLAS", default-features = false, features = ["tensor-int4", "tensor-matmul", "std"] }
 rudnn = { version = "0.1.1", package = "ruDNN", path = "../ruDNN", default-features = false, features = ["tensor-gated-delta", "tensor-normalization", "std"] }
 half = "=2.7.1"
 chacha20 = { version = "=0.10.2", default-features = false, features = ["rng"] }
