@@ -151,7 +151,7 @@ features = [ "cuda-default",]
 optional = true
 default-features = false
 path = "../ruda-tensor-device"
-version = "0.21.1"
+version = "0.21.2"
 
 [dependencies.ruda-core]
 path = "../ruda-core"
