@@ -34,7 +34,7 @@ pub fn fill_bytes(out: &mut Tensor<u8>, low: u32, high: u32) {
         let byte = pos % out.shape(out.rank() - 1);
         let mut word = low;
         if byte >= 4 { word = high; }
-        out[offset(out, pos)] = u8::cast_from((word >> ((byte % 4) * 8)) & 255u32);
+        out[offset(out, pos)] = u8::cast_from((word >> u32::cast_from((byte % 4) * 8)) & 255u32);
     }
 }
 
@@ -70,7 +70,7 @@ pub fn convert_integer(a: &Tensor<u8>, out: &mut Tensor<u8>,
 pub fn float_to_bool<F: Float + RudaElement>(a: &Tensor<F>, out: &mut Tensor<u8>) {
     let pos = ABSOLUTE_POS as usize;
     if pos < out.len() {
-        let mut value = 0u32;
+        let mut value: u32 = 0;
         if a[offset(a, pos)] != F::cast_from(0.0f32) { value = 1; }
         out[offset(out, pos)] = u8::cast_from(value);
     }
@@ -80,7 +80,7 @@ pub fn float_to_bool<F: Float + RudaElement>(a: &Tensor<F>, out: &mut Tensor<u8>
 pub fn bool_to_float<F: Float + RudaElement>(a: &Tensor<u8>, out: &mut Tensor<F>) {
     let pos = ABSOLUTE_POS as usize;
     if pos < out.len() {
-        let mut value = 0u32;
+        let mut value: u32 = 0;
         if u32::cast_from(a[offset(a, pos)]) != 0u32 { value = 1; }
         out[offset(out, pos)] = F::cast_from(value);
     }
@@ -101,7 +101,7 @@ pub fn compare_float<F: Float + RudaElement>(
         else if comptime!(op == 81) { matches = x < y || x == y; }
         else if comptime!(op == 82) { matches = x > y; }
         else if comptime!(op == 83) { matches = x > y || x == y; }
-        let mut value = 0u32;
+        let mut value: u32 = 0;
         if matches { value = 1; }
         out[offset(out, pos)] = u8::cast_from(value);
     }
@@ -136,7 +136,7 @@ pub fn compare_integer(a: &Tensor<u8>, b: &Tensor<u8>, out: &mut Tensor<u8>,
         else if comptime!(op == 81) { matches = less || equal; }
         else if comptime!(op == 82) { matches = !less && !equal; }
         else if comptime!(op == 83) { matches = !less; }
-        let mut value = 0u32;
+        let mut value: u32 = 0;
         if matches { value = 1; }
         out[offset(out, pos)] = u8::cast_from(value);
     }
@@ -164,7 +164,7 @@ pub fn logical(a: &Tensor<u8>, b: &Tensor<u8>, out: &mut Tensor<u8>, #[comptime]
         else if comptime!(op == 86) { matches = x || y; }
         else if comptime!(op == 87) { matches = x != y; }
         else if comptime!(op == 88) { matches = !x; }
-        let mut value = 0u32;
+        let mut value: u32 = 0;
         if matches { value = 1; }
         out[offset(out, pos)] = u8::cast_from(value);
     }
