@@ -222,7 +222,7 @@ features = [ "alloc",]
 
 [target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-tensor-remote]
 path = "../ruda-tensor-remote"
-version = "0.21.1"
+version = "0.21.2"
 optional = true
 default-features = false
 
