@@ -42,7 +42,7 @@ derive-new = { version = "0.7.0", default-features = false, optional = true }
 enumset = { version = "1.1.10", default-features = false, optional = true }
 half = { version = "=2.7.1", default-features = false, features = ["alloc", "num-traits", "serde", "bytemuck"], optional = true }
 serde = { version = "1.0.204", default-features = false, features = ["derive", "alloc"], optional = true }
-ruda-test-utils = { version = "0.1.1", path = "../ruda-test-utils", default-features = false, optional = true }
+ruda-test-utils = { version = "0.1.2", path = "../ruda-test-utils", default-features = false, optional = true }
 
 [dev-dependencies]
 ruda-test-runtime = { path = "../ruda-test-runtime", default-features = false, features = ["test-runtime"] }
