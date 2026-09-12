@@ -178,7 +178,7 @@ features = [ "ir",]
 
 [dependencies.ruda]
 path = "../ruda"
-version = "0.1.3"
+version = "0.1.4"
 default-features = false
 features = [ "runtime", "runtime-channel-mutex",]
 
