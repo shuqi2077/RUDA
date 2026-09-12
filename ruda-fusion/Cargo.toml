@@ -155,7 +155,7 @@ features = ["kernel-ir", "std"]
 [dependencies.ruprim]
 package = "ruPRIM"
 path = "../ruPRIM"
-version = "0.1.1"
+version = "0.1.2"
 default-features = false
 optional = true
 features = ["kernel-ir", "std", "elementwise"]
