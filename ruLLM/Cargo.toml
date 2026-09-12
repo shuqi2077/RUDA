@@ -20,7 +20,7 @@ nvidia-ptx = ["nvidia", "ruda-driver-cuda/direct-ptx"]
 [dependencies]
 ruda-driver-cann = { version = "0.1.0", path = "../ruda-driver-cann", optional = true }
 ruda-model = { version = "0.21.2", path = "../ruda-model", default-features = false, features = ["std"] }
-ruda-nn = { version = "0.21.1", path = "../ruda-nn", default-features = false, features = ["std"] }
+ruda-nn = { version = "0.21.2", path = "../ruda-nn", default-features = false, features = ["std"] }
 ruda-tensor = { version = "0.21.2", path = "../ruda-tensor", default-features = false, features = ["std", "kernel"] }
 ruda-tensor-device = { version = "0.21.2", path = "../ruda-tensor-device", default-features = false, features = ["std", "fusion"] }
 ruda-store = { version = "0.21.1", path = "../ruda-store", default-features = false, features = ["std", "safetensors", "memmap"] }
