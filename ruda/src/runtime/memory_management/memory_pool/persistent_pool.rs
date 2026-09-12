@@ -91,6 +91,7 @@ impl MemoryPool for PersistentPool {
                 if slice.is_free() {
                     slice.storage.utilization.size = size;
                     slice.storage.utilization.offset = 0;
+                    slice.padding = padding;
                     return Some(slice.handle.clone());
                 }
             }
@@ -232,6 +233,57 @@ mod tests {
             pool.try_reserve(size).is_some(),
             "freed slice should be reusable"
         );
+    }
+
+    #[test_log::test]
+    fn persistent_pool_reuse_updates_padding() {
+        for (original_size, reused_size) in [(1025, 1028), (1028, 1025)] {
+            let mut storage = BytesStorage::default();
+            let mut pool = PersistentPool::new(1024 * 1024, 4, 0);
+            let handle = pool.alloc(&mut storage, original_size).expect("alloc");
+            core::mem::drop(handle);
+
+            let reused = pool.try_reserve(reused_size).expect("reuse aligned size");
+            let usage = pool.get_memory_usage();
+            assert_eq!(usage.number_allocs, 1);
+            assert_eq!(usage.bytes_in_use, reused_size);
+            assert_eq!(usage.bytes_padding, 1028 - reused_size);
+            assert_eq!(usage.bytes_reserved, 1028);
+
+            core::mem::drop(reused);
+            let usage = pool.get_memory_usage();
+            assert_eq!(usage.number_allocs, 0);
+            assert_eq!(usage.bytes_in_use, 0);
+            assert_eq!(usage.bytes_padding, 0);
+            assert_eq!(usage.bytes_reserved, 1028);
+        }
+    }
+
+    #[test_log::test]
+    fn persistent_pool_cleanup_preserves_reused_size_class() {
+        for (original_size, reused_size) in [(1025, 1028), (1028, 1025)] {
+            let mut storage = BytesStorage::default();
+            let mut pool = PersistentPool::new(1024 * 1024, 4, 0);
+            let handle = pool.alloc(&mut storage, original_size).expect("alloc");
+            let storage_id = pool
+                .find(&handle.clone().binding())
+                .expect("allocated slice")
+                .storage
+                .id;
+            core::mem::drop(handle);
+
+            let reused = pool.try_reserve(reused_size).expect("reuse aligned size");
+            pool.cleanup(&mut storage, 0, true);
+            core::mem::drop(reused);
+
+            let reserved = pool
+                .try_reserve(original_size)
+                .expect("cleanup must preserve the aligned size class");
+            let slice = pool.find(&reserved.binding()).expect("reused slice");
+            assert_eq!(slice.storage.id, storage_id);
+            assert_eq!(slice.storage.size(), original_size);
+            assert_eq!(slice.effective_size(), 1028);
+        }
     }
 
     #[test_log::test]
