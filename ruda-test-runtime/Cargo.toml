@@ -22,5 +22,5 @@ tracing = ["ruda-kernel/frontend-tracing", "ruda-driver-cpu?/tracing", "ruda-dri
 ruda-kernel = { version = "0.1.3", path = "../ruda-kernel", default-features = false, features = ["frontend"] }
 ruda-driver-cpu = { version = "0.1.2", path = "../ruda-driver-cpu", default-features = false, optional = true }
 ruda-driver-cuda = { version = "0.1.2", path = "../ruda-driver-cuda", default-features = false, features = ["direct-ptx"], optional = true }
-ruda-driver-hip = { version = "0.1.1", path = "../ruda-driver-hip", default-features = false, optional = true }
+ruda-driver-hip = { version = "0.1.2", path = "../ruda-driver-hip", default-features = false, optional = true }
 ruda-driver-wgpu = { version = "0.1.1", path = "../ruda-driver-wgpu", default-features = false, optional = true }
