@@ -144,7 +144,7 @@ features = ["kernel-ir", "quantization-kernels", "device-tensor", "device-tensor
 
 [dependencies.ruda-fusion]
 path = "../ruda-fusion"
-version = "0.21.1"
+version = "0.21.2"
 default-features = false
 features = ["device-tensor"]
 optional = true

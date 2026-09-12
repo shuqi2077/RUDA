@@ -268,4 +268,4 @@ features = [ "std", "tracing",]
 optional = true
 default-features = false
 path = "../ruda-fusion"
-version = "0.21.1"
+version = "0.21.2"
