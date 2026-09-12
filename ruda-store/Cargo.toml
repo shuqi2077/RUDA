@@ -138,7 +138,7 @@ optional = true
 [dependencies.ruda-model]
 default-features = false
 path = "../ruda-model"
-version = "0.21.1"
+version = "0.21.2"
 
 [dependencies.ruda-tensor]
 default-features = false

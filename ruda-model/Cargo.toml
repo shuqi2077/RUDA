@@ -17,7 +17,7 @@ path = "tests/test_record_resilience.rs"
 [package]
 edition = "2024"
 name = "ruda-model"
-version = "0.21.1"
+version = "0.21.2"
 authors = [ "nathanielsimard <nathaniel.simard.42@gmail.com>",]
 build = false
 autolib = false
