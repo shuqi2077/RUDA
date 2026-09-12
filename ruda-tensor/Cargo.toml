@@ -161,7 +161,7 @@ features = ["tensor-host-data", "tensor-device-settings", "serde", "shared-bytes
 
 [dependencies.ruda-driver-cpu]
 path = "../ruda-driver-cpu"
-version = "0.1.1"
+version = "0.1.2"
 default-features = false
 optional = true
 
