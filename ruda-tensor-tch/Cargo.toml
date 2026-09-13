@@ -13,7 +13,7 @@ path = "src/bin/mps.rs"
 [package]
 edition = "2024"
 name = "ruda-tensor-tch"
-version = "0.21.2"
+version = "0.21.3"
 authors = [ "nathanielsimard <nathaniel.simard.42@gmail.com>",]
 build = "build.rs"
 autolib = false
