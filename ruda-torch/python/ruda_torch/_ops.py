@@ -851,7 +851,7 @@ def flip(a, dims):
         output = _out(a.shape, a)
         _C.execute(97, result, result, output, float(dim))
         result = output
-    return result
+    return result if a.is_contiguous() else torch.empty_like(a, memory_format=torch.preserve_format).copy_(result)
 
 
 def _primitive_reduce(op, a, dim=None, keepdim=False, *, dtype=None):
