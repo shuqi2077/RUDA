@@ -43,7 +43,7 @@ fn check_indices(indices: &View, bound: usize) {
     let bytes = client().read_one(status.handle.offset_end(excess)).expect("RUDA index status readback failed");
     DOWNLOAD.fetch_add(4, Ordering::Relaxed);
     assert_eq!(bytes.len(), 4);
-    assert_eq!(u32::from_le_bytes(bytes.as_ref().try_into().unwrap()), 0, "RUDA index out of bounds");
+    assert_eq!(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]), 0, "RUDA index out of bounds");
 }
 
 pub(super) fn launch(op: u32, a: &View, b: &View, out: &View, scalar: f32) {

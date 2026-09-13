@@ -337,6 +337,9 @@ pub unsafe extern "C" fn ruda_torch_execute(op: u32, a: *const Descriptor, b: *c
                 let axis = scalar as usize;
                 assert_eq!(a.shape.len(), out.shape.len());
                 assert!(b.dtype == 4 || b.dtype == 5);
+                if op >= 104 && a.len != 0 {
+                    assert!(out.shape[axis] != 0, "RUDA index out of bounds");
+                }
                 if op == 102 || op == 104 || op == 106 {
                     assert_eq!(a.shape.len(), b.shape.len());
                     assert!(a.shape.iter().zip(&out.shape).enumerate().all(|(d, (x, y))| d == axis || x == y));
