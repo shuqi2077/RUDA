@@ -55,8 +55,32 @@ fn convolution<const N: usize>(op: u32, a: &View, b: &View, out: &View, p: &[i64
 
 pub(super) fn launch(op: u32, a: &View, b: &View, out: &View, p: &[i64]) {
     assert!(a.dtype <= 2);
-    assert_eq!(a.dtype, b.dtype);
     assert_eq!(a.dtype, out.dtype);
+    if op == 6 || op == 7 {
+        assert_eq!(b.dtype, 4);
+        assert_eq!(p.len(), 10);
+        assert_eq!(a.shape.len(), 4);
+        assert_eq!(b.shape.len(), 4);
+        assert_eq!(out.shape.len(), 4);
+        assert_eq!(&b.shape, if op == 6 { &out.shape } else { &a.shape });
+        if out.len == 0 { return; }
+        let kernel = array::<2>(p);
+        let stride = array::<2>(&p[2..]);
+        let padding = array::<2>(&p[4..]);
+        let dilation = array::<2>(&p[6..]);
+        if op == 6 {
+            let (values, indices) = rudnn::pooling::max_pool2d_with_indices_aten(
+                tensor(a), kernel, stride, padding, dilation, p[8] != 0, p[9] != 0);
+            store(values, out);
+            store(indices, b);
+        } else {
+            let result = rudnn::pooling::max_pool2d_with_indices_backward(
+                tensor(out), tensor(a), tensor(b), kernel, stride, padding, dilation, p[8] != 0);
+            store(result, out);
+        }
+        return;
+    }
+    assert_eq!(a.dtype, b.dtype);
     if out.len == 0 { return; }
     let result = match op {
         0..=3 => match a.shape.len() {

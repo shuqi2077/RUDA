@@ -5,7 +5,7 @@ import torch
 
 
 root = Path(__file__).resolve().parents[1] / "ruda_torch"
-for filename in ("_spatial.py", "_batch_norm.py"):
+for filename in ("_spatial.py", "_batch_norm.py", "_max_pool.py"):
     tree = ast.parse((root / filename).read_text(encoding="utf-8"))
     functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
     for node in tree.body:

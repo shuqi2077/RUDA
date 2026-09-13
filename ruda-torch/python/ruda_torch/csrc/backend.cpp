@@ -152,6 +152,10 @@ void spatial(uint32_t op, const at::Tensor& a, const at::Tensor& b, at::Tensor o
   at::assert_no_internal_overlap(out);
   at::assert_no_overlap(out, a);
   at::assert_no_overlap(out, b);
+  if (op == 6) {
+    at::assert_no_internal_overlap(b);
+    at::assert_no_overlap(b, a);
+  }
   Argument av(a), bv(b), ov(out);
   check(spatial_native(op, &av.desc, &bv.desc, &ov.desc, params.data(), params.size()));
 }

@@ -1025,3 +1025,4 @@ for name, op in (("bitwise_and", 89), ("bitwise_or", 90), ("bitwise_xor", 91)):
 from . import _indexing
 from . import _spatial
 from . import _batch_norm
+from . import _max_pool
