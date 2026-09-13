@@ -12,6 +12,7 @@ on:
       - 'ruda-ir-macros/**'
       - 'ruda-compiler/**'
       - 'ruda-driver-cuda/**'
+      - 'ruPRIM/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/ruda-torch-windows.yml'

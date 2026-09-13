@@ -6,6 +6,7 @@ use ruda_kernel::dsl::prelude::*;
 use std::{cell::RefCell, ffi::CString, panic::AssertUnwindSafe, sync::atomic::{AtomicU64, Ordering}};
 
 mod kernels;
+mod primitives;
 
 thread_local! { static ERROR: RefCell<CString> = RefCell::new(CString::default()); }
 static LAUNCHES: AtomicU64 = AtomicU64::new(0);
@@ -134,6 +135,7 @@ pub unsafe extern "C" fn ruda_torch_fill(out: *const Descriptor, bits: u64) -> i
 fn launch(op: u32, a: &View, b: &View, out: &View, scalar: f32) {
     if out.len == 0 { return; }
     if op == 0 { convert(a, out); return; }
+    if (89..=101).contains(&op) { primitives::launch(op, a, b, out, scalar); return; }
     if (78..=88).contains(&op) {
         let client = client();
         let work = if op == 84 { out.len.checked_mul(element_bytes(out.dtype)).expect("byte length overflow") } else { out.len };
@@ -319,7 +321,17 @@ pub unsafe extern "C" fn ruda_torch_execute(op: u32, a: *const Descriptor, b: *c
         let (a, b, out) = unsafe { (View::read(&*a), View::read(&*b), View::read(&*out)) };
         match op {
             0..=4 | 8..=29 | 35..=73 => { assert_eq!(a.shape, out.shape); assert_eq!(b.shape, out.shape); }
-            78..=88 => { assert_eq!(a.shape, out.shape); assert_eq!(b.shape, out.shape); }
+            78..=97 => { assert_eq!(a.shape, out.shape); assert_eq!(b.shape, out.shape); }
+            98..=99 => {
+                assert!(scalar >= 0.0 && scalar.fract() == 0.0 && (scalar as usize) < a.shape.len());
+                let mut shape = a.shape.clone();
+                shape[scalar as usize] = 1;
+                assert_eq!(out.shape, shape);
+            }
+            100..=101 => {
+                assert_eq!(a.shape, out.shape);
+                assert!(scalar >= 0.0 && scalar.fract() == 0.0 && (scalar as usize) < a.shape.len());
+            }
             5 => (),
             74..=77 => {
                 let spatial = if op >= 76 { 3 } else { 2 };

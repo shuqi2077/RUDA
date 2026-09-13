@@ -250,6 +250,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     at::RegisterPrivateUse1HooksInterface(new Hooks());
   });
   m.def("execute", execute);
+  m.def("check_inplace", [](const at::Tensor& out, const at::Tensor& input) {
+    at::assert_no_internal_overlap(out);
+    at::assert_no_partial_overlap(out, input);
+  });
   m.def("fill", fill);
   m.def("synchronize", synchronize);
 }

@@ -13,3 +13,4 @@ ruda = { path = "../ruda", features = ["runtime-default"] }
 ruda-core = { path = "../ruda-core", features = ["std"] }
 ruda-kernel = { path = "../ruda-kernel" }
 ruda-driver-cuda = { path = "../ruda-driver-cuda", features = ["direct-ptx"] }
+ruPRIM = { path = "../ruPRIM", default-features = false, features = ["std", "indexing", "tensor-reduce", "tensor-scan"] }

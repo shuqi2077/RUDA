@@ -34,6 +34,8 @@ def fill_(tensor, value):
     return tensor
 
 def _binary(op, a, b, *, scalar=0.0, inplace=False):
+    if op in (1, 2) and (a.dtype not in _dtypes or isinstance(b, torch.Tensor) and b.dtype not in _dtypes):
+        return _integral_arithmetic(op, a, b, alpha=scalar if op == 1 else 1, inplace=inplace)
     if a.dtype not in _dtypes:
         raise RuntimeError("RUDA arithmetic requires a supported floating dtype")
     dtype = a.dtype
@@ -134,6 +136,8 @@ def softmax_backward(grad, output, dim, input_dtype, *, logarithmic=False):
     return out
 
 def sum_dim(a, dim=None, keepdim=False, *, dtype=None):
+    if a.dtype not in _dtypes or dtype is not None and dtype not in _dtypes:
+        return _primitive_reduce(99, a, dim, keepdim, dtype=dtype)
     if dtype is not None:
         if dtype not in _dtypes:
             raise NotImplementedError("RUDA sum supports float32, float16 and bfloat16")
@@ -220,7 +224,10 @@ def pow_scalar(a, exponent):
         return clone(a)
     if exponent == 0:
         return fill_(_out(a.shape, a), 1)
-    raise NotImplementedError("RUDA native power currently supports exponents 0, 1, 2, 3")
+    if isinstance(exponent, int) and not isinstance(exponent, bool) and a.dtype in _dtypes:
+        indices = _typed_value(exponent, torch.int64, a.device).expand(a.shape)
+        return _apply(96, a, indices)
+    raise NotImplementedError("RUDA power supports integer scalar exponents for floating tensors; non-integral exponents are not implemented")
 
 def activation_backward(grad, output, *, tanh=False):
     if output.dtype == torch.float32:
@@ -758,6 +765,146 @@ def masked_fill(a, mask, value, *, inplace=False):
     return result
 
 
+def _primitive_operands(a, b):
+    dtype = torch.result_type(a, b)
+    left = _typed_value(a, dtype, a.device)
+    right = (_typed_value(b, torch.int64, a.device).to(dtype)
+             if isinstance(b, int) and dtype not in _dtypes else _typed_value(b, dtype, a.device))
+    return (*torch.broadcast_tensors(left, right), dtype)
+
+
+def _primitive_result(result, a, inplace):
+    if inplace:
+        if result.shape != a.shape or not torch.can_cast(result.dtype, a.dtype):
+            raise RuntimeError("RUDA in-place result cannot change shape or cast to the input dtype")
+        a.copy_(result)
+        return a
+    return result
+
+
+def _integral_arithmetic(op, a, b, *, alpha=1, inplace=False):
+    if inplace:
+        _C.check_inplace(a, b if isinstance(b, torch.Tensor) else a)
+    left, right, dtype = _primitive_operands(a, b)
+    if op != 2:
+        if isinstance(alpha, bool) and dtype != torch.bool:
+            raise RuntimeError("Boolean alpha only supported for Boolean results")
+        if dtype not in _dtypes and not isinstance(alpha, int):
+            raise RuntimeError("For integral input tensors alpha must be integral")
+    if inplace and (left.shape != a.shape or not torch.can_cast(dtype, a.dtype)):
+        raise RuntimeError("RUDA in-place result cannot change shape or cast to the input dtype")
+    if dtype in _dtypes:
+        result = _binary(1 if op == 94 else op, left, right,
+                         scalar=-alpha if op == 94 else alpha if op == 1 else 0)
+    elif dtype == torch.bool:
+        if op == 1 and not alpha:
+            result = clone(left)
+        else:
+            result = _logical(86 if op == 1 else 85, left, right)
+    else:
+        if op != 2 and alpha != 1:
+            factor = _typed_value(alpha, torch.int64, a.device).to(dtype)
+            right = _apply(95, right, factor)
+        result = _apply(93 if op == 1 else 94 if op == 94 else 95, left, right)
+    return _primitive_result(result, a, inplace)
+
+
+def sub(a, b, *, alpha=1, inplace=False):
+    if a.dtype == torch.bool or isinstance(b, bool) or isinstance(b, torch.Tensor) and b.dtype == torch.bool:
+        raise RuntimeError("Subtraction with a bool operand is not supported")
+    if isinstance(alpha, bool):
+        raise RuntimeError("Boolean alpha only supported for Boolean results")
+    if a.dtype not in _dtypes or isinstance(b, torch.Tensor) and b.dtype not in _dtypes:
+        return _integral_arithmetic(94, a, b, alpha=alpha, inplace=inplace)
+    return _binary(1, a, b, scalar=-alpha, inplace=inplace)
+
+
+def neg(a, *, inplace=False):
+    if a.dtype == torch.bool:
+        raise RuntimeError("Negation of a bool tensor is not supported")
+    return _binary(2, a, -1, inplace=inplace)
+
+
+def bitwise(op, a, b=None, *, inplace=False):
+    if inplace:
+        _C.check_inplace(a, b if isinstance(b, torch.Tensor) else a)
+    if b is None:
+        left, right, dtype = a, a, a.dtype
+    else:
+        left, right, dtype = _primitive_operands(a, b)
+    if dtype not in _storage_dtypes[3:]:
+        raise RuntimeError("RUDA bitwise operations require bool or integral tensors")
+    if inplace and (left.shape != a.shape or not torch.can_cast(dtype, a.dtype)):
+        raise RuntimeError("RUDA in-place result cannot change shape or cast to the input dtype")
+    result = _logical(op - 4, left, right) if dtype == torch.bool else _apply(op, left, right)
+    return _primitive_result(result, a, inplace)
+
+
+def flip(a, dims):
+    dimensions = tuple(_dimension(dim, a.ndim) for dim in dims)
+    if len(set(dimensions)) != len(dimensions):
+        raise RuntimeError("duplicate flip dimension")
+    if not dimensions or a.ndim == 0:
+        return clone(a)
+    result = a
+    for dim in dimensions:
+        output = _out(a.shape, a)
+        _C.execute(97, result, result, output, float(dim))
+        result = output
+    return result
+
+
+def _primitive_reduce(op, a, dim=None, keepdim=False, *, dtype=None):
+    dtype = dtype or (a.dtype if a.dtype in _dtypes else torch.int64)
+    if dtype not in _storage_dtypes or dtype == torch.bool:
+        raise NotImplementedError("RUDA primitive reduction requires a supported numeric output dtype")
+    if dim is None or isinstance(dim, (tuple, list)) and not dim:
+        dimensions = tuple(range(a.ndim))
+    else:
+        dimensions = tuple(_dimension(d, a.ndim) for d in (dim if isinstance(dim, (tuple, list)) else (dim,)))
+        if len(set(dimensions)) != len(dimensions):
+            raise RuntimeError("duplicate reduction dimension")
+    result = a.to(dtype)
+    if dtype in (torch.float16, torch.bfloat16):
+        result = result.float()
+    if a.ndim == 0:
+        return clone(result).to(dtype)
+    for axis in dimensions:
+        shape = list(result.shape)
+        shape[axis] = 1
+        output = _out(shape, result)
+        if result.shape[axis] == 0:
+            fill_(output, 1 if op == 98 else 0)
+        else:
+            _C.execute(op, result, result, output, float(axis))
+        result = output
+    if not keepdim:
+        result = result.view(tuple(size for axis, size in enumerate(a.shape) if axis not in dimensions))
+    return result.to(dtype)
+
+
+def prod(a, dim=None, keepdim=False, *, dtype=None):
+    return _primitive_reduce(98, a, dim, keepdim, dtype=dtype)
+
+
+def _boolean_reduce(a, dim=None, keepdim=False, *, every):
+    result = _primitive_reduce(98 if every else 99, a.to(torch.bool).to(torch.int64), dim, keepdim)
+    return result.to(torch.bool).to(torch.uint8 if a.dtype == torch.uint8 else torch.bool)
+
+
+def _cumulative(op, a, dim, *, dtype=None):
+    axis = _dimension(dim, a.ndim)
+    dtype = dtype or (a.dtype if a.dtype in _dtypes else torch.int64)
+    if dtype not in _storage_dtypes or dtype == torch.bool:
+        raise NotImplementedError("RUDA cumulative operations require a supported numeric output dtype")
+    value = a.to(dtype)
+    if dtype in (torch.float16, torch.bfloat16):
+        value = value.float()
+    if a.ndim == 0:
+        return clone(value).to(dtype)
+    return _apply(op, value, scalar=float(axis)).to(dtype)
+
+
 for name, function in {
     "fill_.Scalar": fill_, "zero_": lambda a: fill_(a, 0),
     "fill_.Tensor": fill_tensor_, "fill.Scalar": fill, "fill.Tensor": fill,
@@ -782,13 +929,12 @@ for name, function in {
     "lerp_.Tensor": lambda a, end, weight: lerp(a, end, weight, inplace=True),
     "div.Tensor": div, "div.Scalar": div, "div.Tensor_mode": div, "div.Scalar_mode": div,
     "div_.Tensor": div_, "div_.Scalar": div_, "div_.Tensor_mode": div_, "div_.Scalar_mode": div_,
-    "sub.Tensor": lambda a, b, alpha=1: add(a, b, alpha=-alpha),
-    "sub.Scalar": lambda a, b, alpha=1: add(a, b, alpha=-alpha),
-    "sub_.Tensor": lambda a, b, alpha=1: add_(a, b, alpha=-alpha),
-    "sub_.Scalar": lambda a, b, alpha=1: add_(a, b, alpha=-alpha),
+    "sub.Tensor": sub, "sub.Scalar": sub,
+    "sub_.Tensor": lambda a, b, alpha=1: sub(a, b, alpha=alpha, inplace=True),
+    "sub_.Scalar": lambda a, b, alpha=1: sub(a, b, alpha=alpha, inplace=True),
     "rsub.Tensor": rsub, "rsub.Scalar": rsub,
-    "neg": lambda a: mul(a, -1),
-    "neg_": lambda a: mul_(a, -1),
+    "neg": neg,
+    "neg_": lambda a: neg(a, inplace=True),
     "mm": mm, "addmm": addmm, "bmm": bmm,
     "mv": mv, "dot": dot, "outer": outer, "cat": cat, "stack": stack,
     "ger": outer, "vdot": dot,
@@ -850,6 +996,17 @@ for name, function in {
     "_log_softmax_backward_data": lambda grad, y, dim, dtype: softmax_backward(grad, y, dim, dtype, logarithmic=True),
     "native_layer_norm": layer_norm, "native_layer_norm_backward": layer_norm_backward,
     "pow.Tensor_Scalar": pow_scalar, "clone": clone,
+    "flip": flip, "prod": prod, "prod.dim_int": prod,
+    "all": lambda a: _boolean_reduce(a, every=True),
+    "all.dim": lambda a, dim, keepdim=False: _boolean_reduce(a, dim, keepdim, every=True),
+    "all.dims": lambda a, dim=None, keepdim=False: _boolean_reduce(a, dim, keepdim, every=True),
+    "any": lambda a: _boolean_reduce(a, every=False),
+    "any.dim": lambda a, dim, keepdim=False: _boolean_reduce(a, dim, keepdim, every=False),
+    "any.dims": lambda a, dim=None, keepdim=False: _boolean_reduce(a, dim, keepdim, every=False),
+    "cumsum": lambda a, dim, dtype=None: _cumulative(100, a, dim, dtype=dtype),
+    "cumprod": lambda a, dim, dtype=None: _cumulative(101, a, dim, dtype=dtype),
+    "bitwise_not": lambda a: bitwise(92, a),
+    "bitwise_not_": lambda a: bitwise(92, a, inplace=True),
 }.items():
     _registry.impl(name, function)
 
@@ -858,3 +1015,9 @@ for name, op in (("eq", 78), ("ne", 79), ("lt", 80), ("le", 81), ("gt", 82), ("g
     for overload in ("Tensor", "Scalar"):
         _registry.impl(f"{name}.{overload}", lambda a, b, op=op: _comparison(op, a, b))
         _registry.impl(f"{name}_.{overload}", lambda a, b, op=op: _comparison(op, a, b, inplace=True))
+
+for name, op in (("bitwise_and", 89), ("bitwise_or", 90), ("bitwise_xor", 91)):
+    for overload in ("Tensor", "Scalar"):
+        _registry.impl(f"{name}.{overload}", lambda a, b, op=op: bitwise(op, a, b))
+        _registry.impl(f"{name}_.{overload}", lambda a, b, op=op: bitwise(op, a, b, inplace=True))
+    _registry.impl(f"{name}.Scalar_Tensor", lambda a, b, op=op: bitwise(op, b, a))

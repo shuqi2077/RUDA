@@ -6250,6 +6250,7 @@ name = "ruda-torch-native"
 version = "0.1.0"
 dependencies = [
  "half",
+ "ruPRIM",
  "ruda",
  "ruda-core",
  "ruda-driver-cuda",
