@@ -254,6 +254,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     at::assert_no_internal_overlap(out);
     at::assert_no_partial_overlap(out, input);
   });
+  m.def("check_index_output", [](const at::Tensor& out, const at::Tensor& source, const at::Tensor& index) {
+    at::assert_no_internal_overlap(out);
+    at::assert_no_overlap(out, source);
+    at::assert_no_overlap(out, index);
+  });
   m.def("fill", fill);
   m.def("synchronize", synchronize);
 }

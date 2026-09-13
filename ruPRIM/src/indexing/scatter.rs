@@ -1,6 +1,7 @@
 use ruda_kernel::dsl as kernel_dsl;
 use ruda_kernel::dsl::Runtime;
 use crate::elementwise::binary::numeric::AddOp;
+use crate::elementwise::binary::numeric::AssignOp;
 use crate::elementwise::binary::numeric::BinaryOp;
 use crate::elementwise::binary::numeric::BinaryOpFamily;
 use crate::elementwise::binary::numeric::OrOp;
@@ -79,6 +80,26 @@ pub fn scatter<R: Runtime>(
     value: RudaTensor<R>,
     is_bool: bool,
 ) -> RudaTensor<R> {
+    scatter_impl(dim, tensor, indices, value, is_bool, false)
+}
+
+pub fn scatter_assign<R: Runtime>(
+    dim: usize,
+    tensor: RudaTensor<R>,
+    indices: RudaTensor<R>,
+    value: RudaTensor<R>,
+) -> RudaTensor<R> {
+    scatter_impl(dim, tensor, indices, value, false, true)
+}
+
+fn scatter_impl<R: Runtime>(
+    dim: usize,
+    tensor: RudaTensor<R>,
+    indices: RudaTensor<R>,
+    value: RudaTensor<R>,
+    is_bool: bool,
+    assign: bool,
+) -> RudaTensor<R> {
     if value.meta.num_elements() == 0 {
         return tensor;
     }
@@ -94,9 +115,10 @@ pub fn scatter<R: Runtime>(
     let ruda_dim = RudaDim::new(indices.client.properties(), working_units);
     let ruda_count = calculate_ruda_count_elemwise(&indices.client, working_units, ruda_dim);
 
-    let launch = match is_bool {
-        true => scatter_kernel::launch_unchecked::<OrOp, R>,
-        false => scatter_kernel::launch_unchecked::<AddOp, R>,
+    let launch = match (assign, is_bool) {
+        (true, _) => scatter_kernel::launch_unchecked::<AssignOp, R>,
+        (false, true) => scatter_kernel::launch_unchecked::<OrOp, R>,
+        (false, false) => scatter_kernel::launch_unchecked::<AddOp, R>,
     };
 
     let (tensor_dtype, indices_dtype) = (tensor.dtype, indices.dtype);

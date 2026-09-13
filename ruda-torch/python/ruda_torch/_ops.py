@@ -1021,3 +1021,5 @@ for name, op in (("bitwise_and", 89), ("bitwise_or", 90), ("bitwise_xor", 91)):
         _registry.impl(f"{name}.{overload}", lambda a, b, op=op: bitwise(op, a, b))
         _registry.impl(f"{name}_.{overload}", lambda a, b, op=op: bitwise(op, a, b, inplace=True))
     _registry.impl(f"{name}.Scalar_Tensor", lambda a, b, op=op: bitwise(op, b, a))
+
+from . import _indexing

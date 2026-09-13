@@ -135,7 +135,7 @@ pub unsafe extern "C" fn ruda_torch_fill(out: *const Descriptor, bits: u64) -> i
 fn launch(op: u32, a: &View, b: &View, out: &View, scalar: f32) {
     if out.len == 0 { return; }
     if op == 0 { convert(a, out); return; }
-    if (89..=101).contains(&op) { primitives::launch(op, a, b, out, scalar); return; }
+    if (89..=106).contains(&op) { primitives::launch(op, a, b, out, scalar); return; }
     if (78..=88).contains(&op) {
         let client = client();
         let work = if op == 84 { out.len.checked_mul(element_bytes(out.dtype)).expect("byte length overflow") } else { out.len };
@@ -331,6 +331,22 @@ pub unsafe extern "C" fn ruda_torch_execute(op: u32, a: *const Descriptor, b: *c
             100..=101 => {
                 assert_eq!(a.shape, out.shape);
                 assert!(scalar >= 0.0 && scalar.fract() == 0.0 && (scalar as usize) < a.shape.len());
+            }
+            102..=106 => {
+                assert!(scalar >= 0.0 && scalar.fract() == 0.0 && (scalar as usize) < a.shape.len());
+                let axis = scalar as usize;
+                assert_eq!(a.shape.len(), out.shape.len());
+                assert!(b.dtype == 4 || b.dtype == 5);
+                if op == 102 || op == 104 || op == 106 {
+                    assert_eq!(a.shape.len(), b.shape.len());
+                    assert!(a.shape.iter().zip(&out.shape).enumerate().all(|(d, (x, y))| d == axis || x == y));
+                    assert_eq!(b.shape, if op == 102 { &out.shape } else { &a.shape }.clone());
+                } else {
+                    assert_eq!(b.shape.len(), 1);
+                    let mut expected = if op == 103 { a.shape.clone() } else { out.shape.clone() };
+                    expected[axis] = b.len;
+                    assert_eq!(expected, if op == 103 { &out.shape } else { &a.shape }.clone());
+                }
             }
             5 => (),
             74..=77 => {
