@@ -13,6 +13,8 @@ on:
       - 'ruda-compiler/**'
       - 'ruda-driver-cuda/**'
       - 'ruPRIM/**'
+      - 'ruDNN/**'
+      - 'ruBLAS/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/ruda-torch-windows.yml'
@@ -80,7 +82,7 @@ jobs:
       - name: Save native DLL
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ruda-torch-native-win-amd64-abi3-${{ github.sha }}
+          name: ruda-torch-native-win-amd64-abi4-${{ github.sha }}
           path: target/debug/ruda_torch_native.dll
           if-no-files-found: error
           retention-days: 7
@@ -124,8 +126,15 @@ jobs:
       - name: Restore native DLL
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: ruda-torch-native-win-amd64-abi3-${{ github.sha }}
+          name: ruda-torch-native-win-amd64-abi4-${{ github.sha }}
           path: ruda-torch/python/ruda_torch
+      - name: Check Python syntax and registered ATen schemas (no GPU execution)
+        working-directory: ruda-torch/python
+        run: |
+          python -m compileall -q ruda_torch tests
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python tests/check_spatial_schemas.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Build C++ extension and wheel
         working-directory: ruda-torch/python
         timeout-minutes: 10
@@ -142,7 +151,7 @@ jobs:
       - name: Save installable wheel
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ruda-torch-win-amd64-cp313-torch2.13.0-cu130-abi3-${{ github.sha }}
+          name: ruda-torch-win-amd64-cp313-torch2.13.0-cu130-abi4-${{ github.sha }}
           path: ruda-torch/python/dist/*.whl
           if-no-files-found: error
           retention-days: 7

@@ -23,6 +23,7 @@ using Alloc = int (*)(size_t, void**, uint64_t*);
 using Free = int (*)(void*);
 using Error = const char* (*)();
 using Execute = int (*)(uint32_t, const Descriptor*, const Descriptor*, const Descriptor*, float);
+using Spatial = int (*)(uint32_t, const Descriptor*, const Descriptor*, const Descriptor*, const int64_t*, size_t);
 using Fill = int (*)(const Descriptor*, uint64_t);
 using Transfer = int (*)(const Descriptor*, void*, bool);
 using Sync = int (*)();
@@ -30,6 +31,7 @@ Alloc allocate_native = nullptr;
 Free free_native = nullptr;
 Error error_native = nullptr;
 Execute execute_native = nullptr;
+Spatial spatial_native = nullptr;
 Fill fill_native = nullptr;
 Transfer transfer_native = nullptr;
 Sync sync_native = nullptr;
@@ -145,6 +147,15 @@ void execute(uint32_t op, const at::Tensor& a, const at::Tensor& b, at::Tensor o
   check(execute_native(op, &av.desc, &bv.desc, &ov.desc, scalar));
 }
 
+void spatial(uint32_t op, const at::Tensor& a, const at::Tensor& b, at::Tensor out,
+             const std::vector<int64_t>& params) {
+  at::assert_no_internal_overlap(out);
+  at::assert_no_overlap(out, a);
+  at::assert_no_overlap(out, b);
+  Argument av(a), bv(b), ov(out);
+  check(spatial_native(op, &av.desc, &bv.desc, &ov.desc, params.data(), params.size()));
+}
+
 template <typename T>
 uint64_t scalar_bits(const at::Scalar& value) {
   const T converted = value.to<T>();
@@ -235,9 +246,9 @@ TORCH_LIBRARY_IMPL(_, PrivateUse1, m) {
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  m.attr("abi_version") = 3;
+  m.attr("abi_version") = 4;
   m.def("initialize", [](std::vector<uintptr_t> addresses) {
-    TORCH_CHECK(addresses.size() == 7 && !allocate_native, "invalid or repeated RUDA initialization");
+    TORCH_CHECK(addresses.size() == 8 && !allocate_native, "invalid or repeated RUDA initialization");
     for (auto address : addresses) TORCH_CHECK(address != 0, "null RUDA ABI function");
     allocate_native = reinterpret_cast<Alloc>(addresses[0]);
     free_native = reinterpret_cast<Free>(addresses[1]);
@@ -246,10 +257,12 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     transfer_native = reinterpret_cast<Transfer>(addresses[4]);
     sync_native = reinterpret_cast<Sync>(addresses[5]);
     fill_native = reinterpret_cast<Fill>(addresses[6]);
+    spatial_native = reinterpret_cast<Spatial>(addresses[7]);
     synchronize();
     at::RegisterPrivateUse1HooksInterface(new Hooks());
   });
   m.def("execute", execute);
+  m.def("spatial", spatial);
   m.def("check_inplace", [](const at::Tensor& out, const at::Tensor& input) {
     at::assert_no_internal_overlap(out);
     at::assert_no_partial_overlap(out, input);

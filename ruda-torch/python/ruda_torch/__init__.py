@@ -26,11 +26,11 @@ from . import _C
 if not hasattr(_native, "ruda_torch_abi_version"):
     raise RuntimeError("RUDA native library is outdated; rebuild Rust and C++ extensions")
 _native.ruda_torch_abi_version.restype = ctypes.c_uint32
-if _native.ruda_torch_abi_version() != 3 or getattr(_C, "abi_version", None) != 3:
+if _native.ruda_torch_abi_version() != 4 or getattr(_C, "abi_version", None) != 4:
     raise RuntimeError("RUDA native ABI mismatch; rebuild Rust and C++ extensions")
 
 _C.initialize([ctypes.cast(getattr(_native, "ruda_torch_" + name), ctypes.c_void_p).value
-               for name in ("alloc", "free", "error", "execute", "transfer", "sync", "fill")])
+               for name in ("alloc", "free", "error", "execute", "transfer", "sync", "fill", "spatial")])
 torch.utils.rename_privateuse1_backend("ruda")
 
 def is_available():

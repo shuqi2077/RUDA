@@ -14,7 +14,6 @@ use ruda_kernel::tensor::permutation::permute_nchw_to_nhwc;
 use ruda_kernel::tensor::permutation::permute_nhwc_to_nchw;
 use ruda_kernel::tensor::RudaTensor;
 use ruda_core::tensor::Shape;
-use ruda_core::tensor::spatial::calculate_pool_output_size;
 use ruda_kernel::dsl::RudaDim;
 use ruda_kernel::dsl::calculate_ruda_count_elemwise;
 use ruda_kernel::dsl::num_traits::Zero;
@@ -32,6 +31,7 @@ impl Pool2dDirectStrategyFamily for AvgPoolStrategy {
 #[derive(RudaType, Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct AvgPoolStrategyConfig {
     count_include_pad: bool,
+    divisor_override: i64,
     /// Total padded height (input_height + 2 * padding_0)
     padded_h: u32,
     /// Total padded width (input_width + 2 * padding_1)
@@ -84,14 +84,18 @@ impl<T: Numeric, I: Int, N: Size> Pool2dDirectStrategy<T, I, N> for AvgPoolStrat
     }
 
     fn store(
-        #[comptime] _config: &Self::Config,
+        #[comptime] config: &Self::Config,
         position: Position,
         output: &mut View<Vector<T, N>, Position, ReadWrite>,
         _output_indices: &mut (),
         accumulator: Self::Accumulator,
     ) {
         let (sum, count) = accumulator;
-        output[position] = sum / Vector::cast_from(count);
+        if comptime![config.divisor_override != 0] {
+            output[position] = sum / Vector::cast_from(config.divisor_override);
+        } else {
+            output[position] = sum / Vector::cast_from(count);
+        }
     }
 }
 
@@ -103,25 +107,35 @@ pub fn avg_pool2d<R: Runtime>(
     count_include_pad: bool,
     ceil_mode: bool,
 ) -> RudaTensor<R> {
+    avg_pool2d_with_divisor(x, kernel_size, stride, padding, count_include_pad, ceil_mode, None)
+}
+
+pub fn avg_pool2d_with_divisor<R: Runtime>(
+    x: RudaTensor<R>,
+    kernel_size: [usize; 2],
+    stride: [usize; 2],
+    padding: [usize; 2],
+    count_include_pad: bool,
+    ceil_mode: bool,
+    divisor_override: Option<i64>,
+) -> RudaTensor<R> {
+    assert_ne!(divisor_override, Some(0), "average pooling divisor must be nonzero");
     let [batch_size, channels, in_h, in_w] = x.meta.shape().dims();
     let dilation = 1;
 
-    let size_0 = calculate_pool_output_size(
-        kernel_size[0],
-        stride[0],
-        padding[0],
-        dilation,
-        in_h,
-        ceil_mode,
-    );
-    let size_1 = calculate_pool_output_size(
-        kernel_size[1],
-        stride[1],
-        padding[1],
-        dilation,
-        in_w,
-        ceil_mode,
-    );
+    let size = |axis: usize, input: usize| {
+        assert!(stride[axis] > 0 && kernel_size[axis] > 0);
+        let step = stride[axis] as i128;
+        let numerator = input as i128 + 2 * padding[axis] as i128 - kernel_size[axis] as i128;
+        let mut output = (numerator + if ceil_mode { step - 1 } else { 0 }).div_euclid(step) + 1;
+        if ceil_mode && (output - 1) * step >= input as i128 + padding[axis] as i128 {
+            output -= 1;
+        }
+        assert!(output > 0, "average pooling output must be positive");
+        usize::try_from(output).expect("average pooling output size overflow")
+    };
+    let size_0 = size(0, in_h);
+    let size_1 = size(1, in_w);
 
     // Padded dimensions (for count_include_pad with ceil_mode)
     let padded_0 = in_h + 2 * padding[0];
@@ -159,6 +173,7 @@ pub fn avg_pool2d<R: Runtime>(
         (kernel_size[0] as u32, kernel_size[1] as u32),
         AvgPoolStrategyConfig {
             count_include_pad,
+            divisor_override: divisor_override.unwrap_or(0),
             padded_h: padded_0 as u32,
             padded_w: padded_1 as u32,
         },

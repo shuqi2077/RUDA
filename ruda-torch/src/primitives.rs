@@ -13,7 +13,7 @@ fn dtype(code: u32) -> DType {
     }
 }
 
-fn tensor(view: &View) -> RudaTensor<CudaRuntime> {
+pub(super) fn tensor(view: &View) -> RudaTensor<CudaRuntime> {
     RudaTensor::new(client(), view.handle.clone(),
         Metadata::new(view.shape.clone(), view.strides.clone()),
         CudaDevice::default(), dtype(view.dtype))
@@ -115,6 +115,10 @@ pub(super) fn launch(op: u32, a: &View, b: &View, out: &View, scalar: f32) {
         }
         _ => panic!("unsupported RUDA primitive {op}"),
     };
+    store(result, out);
+}
+
+pub(super) fn store(result: RudaTensor<CudaRuntime>, out: &View) {
     sync(&client());
     LAUNCHES.fetch_add(1, Ordering::Relaxed);
     let shape = result.meta.shape.iter().copied().collect::<Vec<_>>();

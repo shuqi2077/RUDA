@@ -7,6 +7,7 @@ use std::{cell::RefCell, ffi::CString, panic::AssertUnwindSafe, sync::atomic::{A
 
 mod kernels;
 mod primitives;
+mod spatial;
 
 thread_local! { static ERROR: RefCell<CString> = RefCell::new(CString::default()); }
 static LAUNCHES: AtomicU64 = AtomicU64::new(0);
@@ -93,7 +94,7 @@ fn checked(call: impl FnOnce()) -> i32 {
 pub extern "C" fn ruda_torch_error() -> *const std::ffi::c_char { ERROR.with(|v| v.borrow().as_ptr()) }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ruda_torch_abi_version() -> u32 { 3 }
+pub extern "C" fn ruda_torch_abi_version() -> u32 { 4 }
 
 // All pointer arguments below are valid, aligned, and held alive by the in-process C++ adapter.
 #[unsafe(no_mangle)]
@@ -313,6 +314,19 @@ fn convert(a: &View, out: &View) {
     }
     sync(&client);
     LAUNCHES.fetch_add(1, Ordering::Relaxed);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruda_torch_spatial(op: u32, a: *const Descriptor, b: *const Descriptor,
+    out: *const Descriptor, params: *const i64, count: usize) -> i32 {
+    checked(|| {
+        assert!(!a.is_null() && !b.is_null() && !out.is_null() && !params.is_null());
+        assert!(count <= 14);
+        let (a, b, out, params) = unsafe {
+            (View::read(&*a), View::read(&*b), View::read(&*out), std::slice::from_raw_parts(params, count))
+        };
+        spatial::launch(op, &a, &b, &out, params);
+    })
 }
 
 #[unsafe(no_mangle)]

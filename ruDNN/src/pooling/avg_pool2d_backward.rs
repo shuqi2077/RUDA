@@ -37,6 +37,7 @@ fn avg_pool2d_backward_kernel<E: Numeric, N: Size>(
     #[comptime] kernel_size_0: i32,
     #[comptime] kernel_size_1: i32,
     #[comptime] count_include_pad: bool,
+    #[comptime] divisor_override: i64,
     #[define(E)] _dtype: StorageType,
 ) {
     if ABSOLUTE_POS >= working_units {
@@ -90,7 +91,9 @@ fn avg_pool2d_backward_kernel<E: Numeric, N: Size>(
                 let iw_start = clamp_min(iw_start, padding_1);
 
                 if begin_w >= iw_start && begin_w < iw_end {
-                    if count_include_pad {
+                    if comptime![divisor_override != 0] {
+                        grad_acc += grad[index / vector_size] / Vector::cast_from(divisor_override);
+                    } else if count_include_pad {
                         let padded_h_end = clamp_max(oh * stride_0 + kernel_size_0, border_bottom + padding_0);
                         let padded_w_end = clamp_max(ow * stride_1 + kernel_size_1, border_right + padding_1);
                         let count = (padded_h_end - oh * stride_0) * (padded_w_end - ow * stride_1);
@@ -141,8 +144,22 @@ pub fn avg_pool2d_backward<R: Runtime>(
     stride: [usize; 2],
     padding: [usize; 2],
     count_include_pad: bool,
-    _ceil_mode: bool,
+    ceil_mode: bool,
 ) -> RudaTensor<R> {
+    avg_pool2d_backward_with_divisor(x, grad, kernel_size, stride, padding, count_include_pad, ceil_mode, None)
+}
+
+pub fn avg_pool2d_backward_with_divisor<R: Runtime>(
+    x: RudaTensor<R>,
+    grad: RudaTensor<R>,
+    kernel_size: [usize; 2],
+    stride: [usize; 2],
+    padding: [usize; 2],
+    count_include_pad: bool,
+    _ceil_mode: bool,
+    divisor_override: Option<i64>,
+) -> RudaTensor<R> {
+    assert_ne!(divisor_override, Some(0), "average pooling divisor must be nonzero");
     let [batches, channels, height, width] = x.meta.shape().dims();
 
     let grad = permute_nchw_to_nhwc(grad);
@@ -184,6 +201,7 @@ pub fn avg_pool2d_backward<R: Runtime>(
             kernel_size[0] as i32,
             kernel_size[1] as i32,
             count_include_pad,
+            divisor_override.unwrap_or(0),
             output.dtype.into(),
         )
     };
