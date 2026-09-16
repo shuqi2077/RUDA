@@ -101,7 +101,7 @@ default-features = false
 [dependencies.rudnn-host]
 package = "ruDNN-host"
 path = "../ruDNN/host"
-version = "0.1.4"
+version = "0.1.5"
 default-features = false
 
 [dependencies.ruprim-host]
