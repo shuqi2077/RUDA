@@ -53,5 +53,5 @@ features = [ "tensor-host-storage",]
 [dependencies.ruprim-host]
 package = "ruPRIM-host"
 path = "../../ruPRIM/host"
-version = "0.1.4"
+version = "0.1.5"
 default-features = false
