@@ -54,7 +54,7 @@ required-features = ["std", "collective"]
 [dependencies.ruccl]
 package = "ruCCL"
 path = "../ruCCL"
-version = "0.21.4"
+version = "0.21.5"
 optional = true
 default-features = false
 
