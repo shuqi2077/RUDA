@@ -6081,7 +6081,7 @@ dependencies = [
 
 [[package]]
 name = "ruda-tensor-device"
-version = "0.21.3"
+version = "0.21.4"
 dependencies = [
  "derive-new",
  "futures-lite",
