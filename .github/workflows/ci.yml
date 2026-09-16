@@ -32,7 +32,24 @@ jobs:
         include:
           - name: CPU libraries
             key: host
-            command: cargo test --locked -p rublas-host -p ruDNN-host -p ruPRIM-host -p ruRAND-host -p ruFFT-host --lib --tests
+            command: |
+              cargo test --locked -p rublas-host -p ruDNN-host -p ruPRIM-host -p ruRAND-host -p ruFFT-host --lib --tests
+              cargo check --locked -p rublas-host --example integer_matmul_bench
+              cargo check --locked -p ruPRIM-host --example topk_bench
+              cargo check --locked -p ruPRIM-host --example select_bench
+              cargo check --locked -p ruDNN-host --example attention_broadcast_bench
+          - name: CPU operator scalar regressions
+            key: host-operators-scalar
+            command: |
+              cargo test --release --locked -p rublas-host -p ruPRIM-host -p ruDNN-host --no-default-features --features std --lib
+              cargo check --locked -p rublas-host -p ruPRIM-host -p ruDNN-host --no-default-features --lib
+              cargo check --locked -p rublas-host --no-default-features --features std --example integer_matmul_bench
+              cargo check --locked -p ruPRIM-host --no-default-features --features std --example topk_bench
+              cargo check --locked -p ruPRIM-host --no-default-features --features std --example select_bench
+              cargo check --locked -p ruDNN-host --no-default-features --features std --example attention_broadcast_bench
+          - name: Attention strategy contract tests
+            key: attention-contract
+            command: cargo test --locked -p ruDNN --features std,tensor-attention-autotune --lib attention::tensor::support::tests
           - name: FFT scalar and no_std
             key: fft-scalar
             command: |

@@ -19,6 +19,32 @@ pub(super) fn mask_floor(dtype: DType) -> f32 {
     }
 }
 
+fn causal_mask<B: Backend>(
+    sequence: usize,
+    position: usize,
+    key_length: usize,
+    dtype: DType,
+    device: &B::Device,
+) -> Option<Tensor<B, 4>> {
+    let length = position + sequence;
+    // Validate the dtype even when single-token decoding needs no mask.
+    let floor = mask_floor(dtype);
+    // The new token can attend to the entire cache. Keep the original mask
+    // path for inconsistent cache lengths, including its broadcast checks.
+    if sequence == 1 && key_length == length {
+        return None;
+    }
+    let mask = (0..sequence)
+        .flat_map(|i| {
+            (0..length).map(move |j| if j <= position + i { 0.0f32 } else { floor })
+        })
+        .collect::<Vec<_>>();
+    Some(Tensor::from_data(
+        TensorData::new(mask, [1, 1, sequence, length]),
+        (device, dtype),
+    ))
+}
+
 pub(super) fn text_rope<B: Backend>(
     config: &Qwen35TextConfig,
     start: usize,
@@ -160,25 +186,15 @@ where
         };
         *key_cache = Some(key.clone());
         *value_cache = Some(value.clone());
-        let length = position + s;
-        let floor = mask_floor(q.dtype());
-        let mask = (0..s)
-            .flat_map(|i| {
-                (0..length).map(move |j| {
-                    if j <= position + i {
-                        0.0f32
-                    } else {
-                    floor
-                    }
-                })
-            })
-            .collect::<Vec<_>>();
-        let mask = Tensor::<DeviceBackend<R, F, I, BT>, 4>::from_data(
-            TensorData::new(mask, [1, 1, s, length]),
-            (&q.device(), q.dtype()),
+        let mask = causal_mask::<DeviceBackend<R, F, I, BT>>(
+            s, position, key.dims()[2], q.dtype(), &q.device(),
         );
         let scores =
-            q.matmul(repeat_heads(key, h / k).swap_dims(2, 3)) * (d as f64).sqrt().recip() + mask;
+            q.matmul(repeat_heads(key, h / k).swap_dims(2, 3)) * (d as f64).sqrt().recip();
+        let scores = match mask {
+            Some(mask) => scores + mask,
+            None => scores,
+        };
         let probs = Self::probabilities(scores)?;
         let out = Self::value_product(probs, repeat_heads(value, h / k))?
             .swap_dims(1, 2)
@@ -211,10 +227,96 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ruda_tensor::api::activation::softmax;
+    use ruda_tensor_host::{Host, HostDevice};
+
     #[test]
     fn causal_mask_uses_dtype_finite_minimum() {
         assert_eq!(mask_floor(DType::F32), -f32::MAX);
         assert_eq!(mask_floor(DType::F16), -65504.0);
         assert_eq!(mask_floor(DType::BF16).to_bits(), 0xff7f0000);
+    }
+
+    #[test]
+    fn causal_mask_preserves_prefill_and_cached_attention() {
+        let device = HostDevice;
+        for dtype in [DType::F32, DType::F16, DType::BF16] {
+            for (position, sequence) in [(0, 1), (0, 4), (5, 1), (5, 3), (256, 1)] {
+                let length = position + sequence;
+                let shape = [2, 3, sequence, length];
+                let scores = Tensor::<Host, 4>::from_data(
+                    TensorData::new(
+                        (0..2 * 3 * sequence * length)
+                            .map(|i| {
+                                if i % 7 == 0 { -0.0 } else { (i % 17) as f32 / 8.0 - 1.0 }
+                            })
+                            .collect::<Vec<_>>(),
+                        shape,
+                    ),
+                    (&device, dtype),
+                );
+                // Explicit additive mask, as used before the decode fast path.
+                let mut reference_mask = vec![mask_floor(dtype); sequence * length];
+                for row in 0..sequence {
+                    reference_mask[row * length..row * length + position + row + 1].fill(0.0);
+                }
+                let reference_scores = scores.clone() + Tensor::<Host, 4>::from_data(
+                    TensorData::new(reference_mask, [1, 1, sequence, length]),
+                    (&device, dtype),
+                );
+                let mask = causal_mask::<Host>(sequence, position, length, dtype, &device);
+                assert_eq!(mask.is_none(), sequence == 1);
+                let actual_scores = match mask {
+                    Some(mask) => scores + mask,
+                    None => scores,
+                };
+                let expected = softmax(reference_scores.cast(DType::F32), 3).cast(dtype);
+                let actual = softmax(actual_scores.cast(DType::F32), 3).cast(dtype);
+                assert_eq!(actual.dims(), shape);
+                assert_eq!(actual.dtype(), dtype);
+                let actual_data = actual.clone().cast(DType::F32).into_data()
+                    .to_vec::<f32>().unwrap();
+                assert_eq!(
+                    actual_data,
+                    expected.clone().cast(DType::F32).into_data().to_vec::<f32>().unwrap(),
+                    "{dtype:?}, position={position}, sequence={sequence}",
+                );
+                for row in 0..sequence {
+                    assert!(actual_data[row * length + position + row] > 0.0);
+                    for col in position + row + 1..length {
+                        assert_eq!(actual_data[row * length + col], 0.0);
+                    }
+                }
+                let values = Tensor::<Host, 4>::from_data(
+                    TensorData::new(
+                        (0..2 * 3 * length * 2)
+                            .map(|i| (i % 11) as f32 / 4.0 - 1.0).collect::<Vec<_>>(),
+                        [2, 3, length, 2],
+                    ),
+                    (&device, dtype),
+                );
+                assert_eq!(
+                    actual.matmul(values.clone()).cast(DType::F32).into_data()
+                        .to_vec::<f32>().unwrap(),
+                    expected.matmul(values).cast(DType::F32).into_data().to_vec::<f32>().unwrap(),
+                    "{dtype:?}, position={position}, sequence={sequence}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "unsupported Qwen3.5 attention dtype")]
+    fn single_token_mask_still_validates_dtype() {
+        let _ = causal_mask::<Host>(1, 0, 1, DType::F64, &HostDevice);
+    }
+
+    #[test]
+    #[should_panic(expected = "The provided tensors have incompatible shapes.")]
+    fn single_token_mask_preserves_incompatible_cache_error() {
+        let device = HostDevice;
+        let mask = causal_mask::<Host>(1, 3, 2, DType::F32, &device).unwrap();
+        let scores = Tensor::<Host, 4>::zeros([1, 1, 1, 2], &device);
+        let _ = scores + mask;
     }
 }

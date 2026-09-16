@@ -49,13 +49,15 @@ pub(super) fn broadcast_batch_dims(
     for i in (0..max_len).rev() {
         let ld = lhs_padded[i];
         let rd = rhs_padded[i];
-        debug_assert!(
+        assert!(
             ld == rd || ld == 1 || rd == 1,
             "matmul: batch dimensions not broadcastable: {:?} vs {:?}",
             lhs_batch,
             rhs_batch
         );
-        broadcast_shape.push(ld.max(rd));
+        // A singleton broadcasts to the other dimension, including zero.
+        // `max` would turn a valid 0-by-1 broadcast into a nonempty batch.
+        broadcast_shape.push(if ld == 1 { rd } else { ld });
         // Stride is 0 if dimension is 1 (broadcast), otherwise actual stride
         lhs_strides.push(if ld == 1 { 0 } else { lhs_stride });
         rhs_strides.push(if rd == 1 { 0 } else { rhs_stride });
@@ -122,4 +124,3 @@ pub(super) fn batch_elem_offset(b: usize, broadcast_shape: &[usize], elem_stride
     }
     offset
 }
-

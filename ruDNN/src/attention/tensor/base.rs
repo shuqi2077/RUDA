@@ -83,15 +83,27 @@ pub fn attention<R: Runtime>(
 
 #[allow(clippy::too_many_arguments)]
 /// Launch a flash attention kernel
+///
+/// Returns an error for options that the current FlashAttention kernels cannot
+/// represent. Use `AttentionStrategy::Fallback` (or autotuning) for those options.
 pub fn flash_attention<R: Runtime>(
     query: RudaTensor<R>,
     key: RudaTensor<R>,
     value: RudaTensor<R>,
     mask: Option<RudaTensor<R>>,
-    _attn_bias: Option<RudaTensor<R>>,
+    attn_bias: Option<RudaTensor<R>>,
     options: AttentionModuleOptions,
     strategy: launch::Strategy,
 ) -> Result<RudaTensor<R>, AttentionSetupError> {
+    if let Some(reason) = super::support::unsupported_flash_reason(
+        &options,
+        attn_bias.is_some(),
+        query.meta.shape[2],
+        key.meta.shape[2],
+    ) {
+        return Err(AttentionSetupError::InvalidConfig(Box::new(reason)));
+    }
+
     let client = query.client.clone();
     let out = init_attention_output(&query, &value);
 

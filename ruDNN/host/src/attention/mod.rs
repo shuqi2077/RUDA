@@ -136,9 +136,9 @@ struct BroadcastMaskBias {
 /// `[1, heads, seq_q, seq_kv]`) stay zero-copy. That matters especially for the flash
 /// path, where materializing an expanded mask/bias would allocate a full
 /// `[batch, heads, seq_q, seq_kv]` buffer and negate flash attention's memory
-/// efficiency. If the trailing `[seq_q, seq_kv]` dims are themselves broadcast (rare in
-/// practice), we fall back to `expand` + `to_contiguous` so the tile stays contiguous
-/// in memory for the inner loop's slice-based access.
+/// efficiency. If the trailing `[seq_q, seq_kv]` dims are themselves broadcast,
+/// materialize only those dims. Leading broadcast dims keep their source size and
+/// zero steps, so each distinct tile is copied once instead of once per batch/head.
 fn broadcast_attn_mask_bias(
     tensor: HostTensor,
     target: [usize; 4],
@@ -159,20 +159,23 @@ fn broadcast_attn_mask_bias(
 
     let tile_len = target[2] * target[3];
 
-    // Broadcast on seq_q or seq_kv: the source's trailing tile has fewer elements
-    // than `tile_len`, so per-pair slice access would under-read. Materialize via
-    // expand + to_contiguous in that case.
-    if src[2] != target[2] || src[3] != target[3] {
-        let expanded = ruprim_host::expand::expand(tensor, ruda_core::tensor::Shape::new(target));
-        return BroadcastMaskBias {
-            tensor: expanded.to_contiguous(),
-            batch_step: target[1] * tile_len,
-            head_step: tile_len,
-        };
-    }
+    // Per-pair slice access requires a full trailing tile. Keep broadcast batch
+    // and head dimensions at size 1, rather than duplicating that tile for every
+    // pair. A zero-sized target leading dimension must still produce no data.
+    let tensor = if src[2] != target[2] || src[3] != target[3] {
+        let tile_shape = [
+            src[0].min(target[0]),
+            src[1].min(target[1]),
+            target[2],
+            target[3],
+        ];
+        ruprim_host::expand::expand(tensor, ruda_core::tensor::Shape::new(tile_shape))
+    } else {
+        tensor
+    };
 
-    // Trailing dims match the target. Keep the source at its own shape (size
-    // `src[0] * src[1] * tile_len`) and zero-out the step for any leading dim of 1.
+    // Leading dimensions are unchanged (except empty targets, where no pair is
+    // read), so these source-based steps apply to both materialization paths.
     BroadcastMaskBias {
         tensor: tensor.to_contiguous(),
         batch_step: if src[0] == 1 { 0 } else { src[1] * tile_len },
@@ -328,3 +331,6 @@ pub use naive::*;
 // they probe flex internals; otherwise add them to that suite.
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod broadcast_tests;

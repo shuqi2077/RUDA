@@ -1,7 +1,9 @@
 use super::*;
 
+mod kernel;
+
 // ============================================================================
-// Integer matmul (naive, with optional SIMD for i32)
+// Integer matmul (contiguous row updates for i64, optional SIMD for i32)
 // ============================================================================
 
 /// Integer matrix multiplication dispatch.
@@ -165,6 +167,16 @@ fn matmul_batched_i32(lhs: HostTensor, rhs: HostTensor) -> HostTensor {
     out_dims.push(n);
     let out_shape = Shape::from(out_dims);
 
+    // Empty matrices must not reach `par_chunks_mut(0)`. Returning before
+    // transposing the RHS also avoids work for batches with no output.
+    if out_shape.num_elements() == 0 {
+        return HostTensor::new(
+            Bytes::from_elems(Vec::<i32>::new()),
+            Layout::contiguous(out_shape),
+            DType::I32,
+        );
+    }
+
     let lhs_data: &[i32] = lhs.storage();
     let rhs_data: &[i32] = rhs.storage();
 
@@ -224,7 +236,7 @@ fn matmul_batched_i32(lhs: HostTensor, rhs: HostTensor) -> HostTensor {
     )
 }
 
-/// i64 matmul using naive triple loop.
+/// i64 matmul using contiguous RHS rows and output rows.
 fn matmul_i64(lhs: HostTensor, rhs: HostTensor) -> HostTensor {
     let lhs = lhs.to_contiguous();
     let rhs = rhs.to_contiguous();
@@ -255,15 +267,7 @@ fn matmul_2d_i64(lhs: &HostTensor, rhs: &HostTensor) -> HostTensor {
 
     let mut output = vec![0i64; m * n];
 
-    for i in 0..m {
-        for j in 0..n {
-            let mut sum = 0i64;
-            for l in 0..k {
-                sum = sum.wrapping_add(lhs_data[i * k + l].wrapping_mul(rhs_data[l * n + j]));
-            }
-            output[i * n + j] = sum;
-        }
-    }
+    kernel::matmul_i64(lhs_data, rhs_data, &mut output, m, k, n);
 
     let out_shape = Shape::from(vec![m, n]);
     HostTensor::new(
@@ -312,17 +316,14 @@ fn matmul_batched_i64(lhs: HostTensor, rhs: HostTensor) -> HostTensor {
         let rhs_offset = rhs_batch_idx * rhs_matrix_size;
         let out_offset = b * out_matrix_size;
 
-        for i in 0..m {
-            for j in 0..n {
-                let mut sum = 0i64;
-                for l in 0..k {
-                    let lhs_idx = lhs_offset + i * k + l;
-                    let rhs_idx = rhs_offset + l * n + j;
-                    sum = sum.wrapping_add(lhs_data[lhs_idx].wrapping_mul(rhs_data[rhs_idx]));
-                }
-                output[out_offset + i * n + j] = sum;
-            }
-        }
+        kernel::matmul_i64(
+            &lhs_data[lhs_offset..lhs_offset + lhs_matrix_size],
+            &rhs_data[rhs_offset..rhs_offset + rhs_matrix_size],
+            &mut output[out_offset..out_offset + out_matrix_size],
+            m,
+            k,
+            n,
+        );
     }
 
     HostTensor::new(
@@ -331,4 +332,3 @@ fn matmul_batched_i64(lhs: HostTensor, rhs: HostTensor) -> HostTensor {
         DType::I64,
     )
 }
-

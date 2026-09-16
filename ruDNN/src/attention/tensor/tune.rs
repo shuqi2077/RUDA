@@ -15,6 +15,20 @@ pub fn attention_autotune<R: Runtime>(
     attn_bias: Option<RudaTensor<R>>,
     options: AttentionModuleOptions,
 ) -> RudaTensor<R> {
+    // Do not benchmark or reuse a cached FlashAttention candidate when it cannot
+    // preserve the requested semantics. The fallback uses the same runtime,
+    // device and tensor dtypes as the ordinary fallback strategy.
+    if super::support::unsupported_flash_reason(
+        &options,
+        attn_bias.is_some(),
+        query.meta.shape[2],
+        key.meta.shape[2],
+    ).is_some() {
+        return crate::attention::fallback::attention_fallback::<super::ops::RudaAttentionOps<R>>(
+            query, key, value, mask, attn_bias, options,
+        );
+    }
+
     let client = query.client.clone();
 
     static TUNER: LocalTuner<AttentionAutotuneKey, RudaTuneId> = LocalTuner::new("ruda_tensor_device::kernel::attention::tune");
