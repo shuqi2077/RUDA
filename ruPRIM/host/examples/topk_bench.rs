@@ -258,7 +258,7 @@ fn check(case: &Case) {
             case.name
         );
         assert_eq!(
-            result.storage::<isize>(),
+            bytemuck::cast_slice::<u8, isize>(result.bytes()),
             expected.as_slice(),
             "{} {name}: indices",
             case.name

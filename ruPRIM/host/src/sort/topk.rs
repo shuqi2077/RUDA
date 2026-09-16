@@ -199,7 +199,7 @@ mod tests {
             assert_eq!(actual.layout().shape(), &expected_shape);
             assert!(actual.layout().is_contiguous());
             assert_eq!(
-                actual.storage::<isize>(),
+                bytemuck::cast_slice::<u8, isize>(actual.bytes()),
                 expected.as_slice(),
                 "dim={dim}, k={k}"
             );
@@ -279,7 +279,7 @@ mod tests {
             DType::F64,
         );
         assert_eq!(
-            argtopk(tensor, 0, 9).storage::<isize>(),
+            bytemuck::cast_slice::<u8, isize>(argtopk(tensor, 0, 9).bytes()),
             &[2, 6, 7, 5, 4, 8, 0, 1, 3]
         );
     }

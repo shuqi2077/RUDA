@@ -143,7 +143,7 @@ fn empty_indices_preserve_rank_and_dtype() {
 #[test]
 fn zero_outer_rows_preserve_lazy_index_checks() {
     for (shape, dim) in [(vec![0, 3], 1), (vec![0, 2, 0], 1), (vec![2, 0, 3], 2)] {
-        let output = select::<i64>(tensor(&shape, vec![]), dim, indices(&[-1]));
+        let output = select::<i64>(tensor::<i64>(&shape, vec![]), dim, indices(&[-1]));
         let mut expected_shape = shape;
         expected_shape[dim] = 1;
         assert_eq!(output.layout().shape().to_vec(), expected_shape);
@@ -154,7 +154,7 @@ fn zero_outer_rows_preserve_lazy_index_checks() {
 #[test]
 fn empty_trailing_slices_with_valid_indices() {
     for (shape, dim) in [(vec![3, 0], 0), (vec![3, 2, 0], 0), (vec![2, 3, 0], 1)] {
-        let output = select::<i64>(tensor(&shape, vec![]), dim, indices(&[2, 0, 2]));
+        let output = select::<i64>(tensor::<i64>(&shape, vec![]), dim, indices(&[2, 0, 2]));
         assert!(output.storage::<i64>().is_empty());
     }
 }
@@ -174,25 +174,25 @@ fn out_of_range_middle_index_panics() {
 #[test]
 #[should_panic(expected = "index -1 out of bounds")]
 fn zero_width_rows_still_check_indices() {
-    select::<i64>(tensor(&[3, 0], vec![]), 0, indices(&[-1]));
+    select::<i64>(tensor::<i64>(&[3, 0], vec![]), 0, indices(&[-1]));
 }
 
 #[test]
 #[should_panic(expected = "index -1 out of bounds")]
 fn zero_width_middle_slices_still_check_indices() {
-    select::<i64>(tensor(&[2, 3, 0], vec![]), 1, indices(&[-1]));
+    select::<i64>(tensor::<i64>(&[2, 3, 0], vec![]), 1, indices(&[-1]));
 }
 
 #[test]
 #[should_panic(expected = "index 0 out of bounds for dimension of size 0")]
 fn empty_selected_axis_with_nonempty_output_panics() {
-    select::<i64>(tensor(&[2, 0, 3], vec![]), 1, indices(&[0]));
+    select::<i64>(tensor::<i64>(&[2, 0, 3], vec![]), 1, indices(&[0]));
 }
 
 #[test]
 #[should_panic(expected = "out of isize range")]
 fn unsigned_index_conversion_checks_range_even_for_empty_output() {
-    select::<i64>(tensor(&[0, 3], vec![]), 1, tensor(&[1], vec![u64::MAX]));
+    select::<i64>(tensor::<i64>(&[0, 3], vec![]), 1, tensor(&[1], vec![u64::MAX]));
 }
 
 #[test]
