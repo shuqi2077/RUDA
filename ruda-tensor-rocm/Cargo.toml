@@ -45,7 +45,7 @@ features = [ "default",]
 
 [dependencies.ruda-fusion]
 path = "../ruda-fusion"
-version = "0.21.3"
+version = "0.21.4"
 default-features = false
 features = [ "std", "tracing",]
 optional = true
