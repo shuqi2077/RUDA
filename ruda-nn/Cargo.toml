@@ -68,7 +68,7 @@ default-features = false
 
 [dependencies.ruda-tensor-wgpu]
 path = "../ruda-tensor-wgpu"
-version = "0.21.4"
+version = "0.21.5"
 optional = true
 default-features = false
 
