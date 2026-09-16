@@ -17,7 +17,7 @@ name = "integrate-demo"
 path = "examples/integrate_demo.rs"
 
 [dependencies]
-rusolver = { version = "0.1.3", package = "ruda-solver", path = "../ruSOLVER", default-features = false }
+rusolver = { version = "0.1.4", package = "ruda-solver", path = "../ruSOLVER", default-features = false }
 
 [[example]]
 name = "advanced-integrate"
