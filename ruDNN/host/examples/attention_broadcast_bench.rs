@@ -56,7 +56,10 @@ fn main() {
             Layout::contiguous(Shape::new([1, 1, 1, seq_kv])),
             DType::Bool(BoolStore::Native),
         );
-        for (strategy, attention_fn) in [("naive", attention_naive), ("flash", attention_flash)] {
+        for (strategy, attention_fn) in [
+            ("naive", attention_naive as fn(_, _, _, _, _, _) -> _),
+            ("flash", attention_flash),
+        ] {
             let dense_call = || attention_fn(
                 black_box(query.clone()), black_box(key.clone()), black_box(value.clone()),
                 Some(expand_full(black_box(mask.clone()), target)),
