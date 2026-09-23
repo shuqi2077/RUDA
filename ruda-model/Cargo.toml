@@ -247,7 +247,7 @@ default-features = false
 
 [target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-tensor-wgpu]
 path = "../ruda-tensor-wgpu"
-version = "0.21.5"
+version = "0.21.6"
 optional = true
 default-features = false
 
