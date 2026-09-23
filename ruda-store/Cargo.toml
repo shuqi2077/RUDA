@@ -29,7 +29,7 @@ harness = false
 [package]
 edition = "2024"
 name = "ruda-store"
-version = "0.21.6"
+version = "0.21.7"
 authors = [ "Dilshod Tadjibaev (@antimora)",]
 build = false
 autolib = false
