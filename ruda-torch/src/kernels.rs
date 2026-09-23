@@ -720,7 +720,7 @@ pub fn softmax_warp<F: Float + RudaElement, O: Float + RudaElement>(
             }
         } else {
             let mut maximum = f32::cast_from(f32::NEG_INFINITY);
-            let mut has_nan = 0.0f32;
+            let mut has_nan: f32 = 0.0f32;
             let mut i = lane;
             while i < width {
                 let value = f32::cast_from(a[ab + i * a.stride(axis)]);
