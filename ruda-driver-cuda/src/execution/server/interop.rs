@@ -111,8 +111,8 @@ impl CudaServer {
             StreamCommand::Elapsed {start,end}=>{
                 let a=self.interop.event(start)?;let b=self.interop.event(end)?;
                 if !a.timing || !b.timing { return Err(error("elapsed_time requires two timing-enabled events")); }
-                let mut ms=0.0f32;
-                status(unsafe{cuEventElapsedTime(&mut ms,a.raw as CUevent,b.raw as CUevent)})?;
+                let ms=unsafe{cudarc::driver::result::event::elapsed(a.raw as CUevent,b.raw as CUevent)}
+                    .map_err(|e|error(&format!("GPU interop error: {:?}",e.0)))?;
                 Ok(ms.to_bits() as u64)
             }
             StreamCommand::DeviceSynchronize=>{

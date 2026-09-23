@@ -168,7 +168,8 @@ pub(super) fn merge<F: Float>(
     for j in 0usize..((value_dim+lanes-1)/lanes) {
         let d=lane+j*lanes;
         if d<value_dim {
-            let result=if denominator!=0.0 { acc[j]/denominator } else { 0.0f32 };
+            let mut result=0.0f32;
+            if denominator!=0.0 { result=acc[j]/denominator; }
             out[output_row*value_dim+d]=F::cast_from(result);
         }
     }
