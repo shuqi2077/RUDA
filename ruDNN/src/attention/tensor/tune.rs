@@ -15,6 +15,12 @@ pub fn attention_autotune<R: Runtime>(
     attn_bias: Option<RudaTensor<R>>,
     options: AttentionModuleOptions,
 ) -> RudaTensor<R> {
+    // A one-row bottom-right causal mask allows all nonempty key positions.
+    // Normalize before both eligibility checks and launch/tuning key creation.
+    let options = super::support::normalize_single_query_causal(
+        options, query.meta.shape[2], key.meta.shape[2],
+    );
+
     // Do not benchmark or reuse a cached FlashAttention candidate when it cannot
     // preserve the requested semantics. The fallback uses the same runtime,
     // device and tensor dtypes as the ordinary fallback strategy.

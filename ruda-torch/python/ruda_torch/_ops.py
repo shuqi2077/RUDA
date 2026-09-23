@@ -95,13 +95,16 @@ def mm(a, b):
 def addmm(bias, a, b, *, beta=1, alpha=1):
     _scalar(b, a)
     _scalar(bias, a)
-    if a.dtype != torch.float32:
-        return addmm(bias.float(), a.float(), b.float(), beta=beta, alpha=alpha).to(a.dtype)
-    result = mm(a, b)
-    if alpha != 1:
-        mul_(result, alpha)
-    if beta != 0:
-        add_(result, bias, alpha=beta)
+    if a.dtype not in _dtypes:
+        raise RuntimeError("RUDA addmm requires a supported floating dtype")
+    if a.ndim != 2 or b.ndim != 2 or a.shape[1] != b.shape[0]:
+        raise RuntimeError("RUDA addmm requires compatible two-dimensional tensors")
+    shape = (a.shape[0], b.shape[1])
+    # Validate broadcasting even when beta=0, but the device kernel will not
+    # read bias values in that case (including NaN or infinity).
+    expanded_bias = bias.expand(shape)
+    result = _out(shape, a)
+    _C.addmm(expanded_bias, a, b, result, float(alpha), float(beta))
     return result
 
 def bmm(a, b):
@@ -121,9 +124,8 @@ def softmax(a, dim, half_to_float=False, *, logarithmic=False):
     if half_to_float:
         if a.dtype != torch.float16:
             raise RuntimeError("half_to_float requires float16 input")
-        a = a.float()
     dim = _dimension(dim, a.ndim)
-    out = _out(a.shape, a)
+    out = torch.empty(a.shape, device=a.device, dtype=torch.float32 if half_to_float else a.dtype)
     _C.execute(33 if logarithmic else 31, a, a, out, float(dim))
     return out
 
@@ -161,8 +163,8 @@ def mean_dim(a, dim=None, keepdim=False, *, dtype=None):
         if dtype not in _dtypes:
             raise NotImplementedError("RUDA mean supports float32, float16 and bfloat16")
         a = a.to(dtype)
-    if a.dtype != torch.float32:
-        return mean_dim(a.float(), dim, keepdim).to(a.dtype)
+    # Native reduction widens individual FP16/BF16 loads to FP32 for the
+    # accumulator, so a full tensor-wide FP32 staging copy is unnecessary.
     result = sum_dim(a, dim, keepdim, dtype=dtype)
     dimensions = tuple(range(a.ndim)) if dim is None or len(dim) == 0 else tuple(_dimension(d, a.ndim) for d in dim)
     count = math.prod(a.shape[d] for d in dimensions) if a.ndim else 1
@@ -179,6 +181,18 @@ def _norm_axes(a, normalized_shape, weight, bias):
 
 def layer_norm(a, normalized_shape, weight=None, bias=None, eps=1e-5):
     axes = _norm_axes(a, normalized_shape, weight, bias)
+    # Transformer inference overwhelmingly normalizes the last feature axis.
+    # Use one fused native GPU kernel for that common case; keep the existing
+    # composition for multi-axis normalization and non-contiguous last axes.
+    if (len(axes) == 1 and axes[0] == a.ndim - 1 and a.is_contiguous() and a.shape[-1] > 0
+            and (weight is None or weight.is_contiguous()) and (bias is None or bias.is_contiguous())):
+        result = torch.empty_like(a)
+        stats_shape = list(a.shape)
+        stats_shape[-1] = 1
+        mean = torch.empty(stats_shape, device=a.device, dtype=a.dtype)
+        rstd = torch.empty(stats_shape, device=a.device, dtype=a.dtype)
+        _C.layer_norm(a, weight, bias, result, mean, rstd, eps)
+        return result, mean, rstd
     if a.dtype != torch.float32:
         result, mean, rstd = layer_norm(a.float(), normalized_shape,
             weight.float() if weight is not None else None, bias.float() if bias is not None else None, eps)
@@ -193,6 +207,25 @@ def layer_norm(a, normalized_shape, weight=None, bias=None, eps=1e-5):
     if bias is not None:
         result = result + bias
     return result, mean, rstd
+
+def rms_norm(a, normalized_shape, weight=None, eps=None):
+    axes = _norm_axes(a, normalized_shape, weight, None)
+    epsilon = torch.finfo(a.dtype).eps if eps is None else float(eps)
+    if not math.isfinite(epsilon) or epsilon <= 0:
+        raise RuntimeError("RMSNorm epsilon must be finite and positive")
+    if (len(axes) == 1 and axes[0] == a.ndim - 1 and a.is_contiguous() and a.shape[-1] > 0
+            and (weight is None or weight.is_contiguous())):
+        result = torch.empty_like(a)
+        _C.rms_norm(a, weight, result, epsilon)
+        return result
+    # Portable device fallback for uncommon multi-axis/view cases. Storage remains
+    # on RUDA; the last-axis common path above is a single fused GPU kernel.
+    square = a * a
+    variance = mean_dim(square, axes, True)
+    result = a * torch.rsqrt(variance + epsilon)
+    if weight is not None:
+        result = result * weight
+    return result
 
 def layer_norm_backward(grad, a, normalized_shape, mean, rstd, weight, bias, output_mask):
     axes = _norm_axes(a, normalized_shape, weight, bias)
@@ -995,6 +1028,7 @@ for name, function in {
     "_log_softmax": lambda a, dim, half_to_float=False: softmax(a, dim, half_to_float, logarithmic=True),
     "_log_softmax_backward_data": lambda grad, y, dim, dtype: softmax_backward(grad, y, dim, dtype, logarithmic=True),
     "native_layer_norm": layer_norm, "native_layer_norm_backward": layer_norm_backward,
+    "rms_norm": rms_norm,
     "pow.Tensor_Scalar": pow_scalar, "clone": clone,
     "flip": flip, "prod": prod, "prod.dim_int": prod,
     "all": lambda a: _boolean_reduce(a, every=True),

@@ -6252,6 +6252,7 @@ dependencies = [
  "half",
  "ruDNN",
  "ruPRIM",
+ "rublas",
  "ruda",
  "ruda-core",
  "ruda-driver-cuda",

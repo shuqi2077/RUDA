@@ -1,3 +1,6 @@
+mod tensorcore;
+mod segmented;
+pub use segmented::{GroupedStrategy, grouped_matmul_nt_segmented};
 mod kernel;
 
 use ruda_core::{

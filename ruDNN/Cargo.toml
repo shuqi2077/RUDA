@@ -12,6 +12,7 @@ repository = "https://github.com/shuqi2077/RUDA"
 name = "rudnn"
 
 [features]
+tensor-paged-attention = ["kernel-ir", "ruda-kernel/device-tensor"]
 cann = ["dep:ruda-driver-cann"]
 tensor-normalization = ["kernel-ir", "ruda-kernel/device-tensor"]
 tensor-gated-delta = ["kernel-ir", "ruda-kernel/device-tensor", "rublas/tensor-matmul"]

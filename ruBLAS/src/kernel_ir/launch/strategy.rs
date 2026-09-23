@@ -561,22 +561,18 @@ fn auto<R: Runtime>(
     out: TensorBinding<R>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
-    if let Err(err) = Strategy::SimpleCyclicCmma(Default::default()).launch_ref(
-        client,
-        lhs.clone(),
-        rhs.clone(),
-        out.clone(),
-        dtypes,
+    // Selection can change internal precisions. Restore the requested policy
+    // before trying another implementation; never retry an actual launch error.
+    let requested = dtypes.clone();
+    match Strategy::SimpleCyclicCmma(Default::default()).launch_ref(
+        client, lhs.clone(), rhs.clone(), out.clone(), dtypes,
     ) {
-        match err {
-            MatmulSetupError::Unavailable(_) => {
-                Strategy::SimpleUnit(Default::default())
-                    .launch_ref(client, lhs, rhs, out, dtypes)
-                    .unwrap();
-            }
-            _ => panic!("{err:?}"),
+        Ok(()) => Ok(()),
+        Err(MatmulSetupError::Unavailable(_)) => {
+            *dtypes = requested;
+            Strategy::SimpleUnit(Default::default())
+                .launch_ref(client, lhs, rhs, out, dtypes)
         }
+        Err(error) => Err(error),
     }
-
-    Ok(())
 }

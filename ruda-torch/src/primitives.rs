@@ -1,4 +1,4 @@
-use super::{CudaDevice, CudaRuntime, DOWNLOAD, LAUNCHES, Ordering, View, client, convert, sync};
+use super::{CudaDevice, CudaRuntime, DOWNLOAD, LAUNCHES, TRUSTED_INDEX_CALLS, Ordering, View, client, convert, finish_dispatch, sync};
 use ruda_core::tensor::{DType, Metadata};
 use ruda_kernel::dsl::prelude::InputScalar;
 use ruda_kernel::tensor::RudaTensor;
@@ -22,6 +22,15 @@ pub(super) fn tensor(view: &View) -> RudaTensor<CudaRuntime> {
 fn check_indices(indices: &View, bound: usize) {
     assert!(indices.dtype == 4 || indices.dtype == 5);
     if indices.len == 0 { return; }
+    // Strict validation is the default and preserves deterministic PyTorch-style
+    // bounds errors. Trusted mode is an explicit inference-only fast path for
+    // tokenizer/model-generated indices whose bounds are already guaranteed.
+    // Invalid trusted indices are undefined behavior and may access invalid GPU
+    // memory, so this is never enabled implicitly.
+    if std::env::var("RUDA_TORCH_INDEX_CHECK").as_deref() == Ok("trusted") {
+        TRUSTED_INDEX_CALLS.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
     let widened;
     let indices = if indices.dtype == 5 {
         widened = View::packed(client().empty(indices.len.checked_mul(8).expect("index size overflow")),
@@ -70,7 +79,7 @@ pub(super) fn launch(op: u32, a: &View, b: &View, out: &View, scalar: f32) {
         97 => {
             assert!(scalar >= 0.0 && scalar.fract() == 0.0 && (scalar as usize) < a.shape.len());
             ruprim::indexing::flip_on_output(tensor(a), tensor(out), &[scalar as usize], DType::U8);
-            sync(&client());
+            finish_dispatch(&client());
             LAUNCHES.fetch_add(1, Ordering::Relaxed);
             return;
         }
@@ -119,7 +128,7 @@ pub(super) fn launch(op: u32, a: &View, b: &View, out: &View, scalar: f32) {
 }
 
 pub(super) fn store(result: RudaTensor<CudaRuntime>, out: &View) {
-    sync(&client());
+    finish_dispatch(&client());
     LAUNCHES.fetch_add(1, Ordering::Relaxed);
     let shape = result.meta.shape.iter().copied().collect::<Vec<_>>();
     let strides = result.meta.strides.iter().copied().collect::<Vec<_>>();

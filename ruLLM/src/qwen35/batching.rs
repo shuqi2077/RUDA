@@ -12,13 +12,23 @@ struct KvPage<B: Backend> {
     value: Tensor<B, 4>,
 }
 
-/// Physical device pages per full-attention layer, plus request-local hybrid state.
-/// Attention gathers these pages on the device into a padded batch; this is not
-/// a fused paged-attention kernel. No KV or recurrent tensor is read back to CPU.
+#[derive(Clone)]
+struct KvArena<B: Backend> {
+    key: Tensor<B,4>,
+    value: Tensor<B,4>,
+    positions: BTreeMap<RequestId,usize>,
+    resident: BTreeSet<KvPageId>,
+}
+
+/// Physical device cache plus request-local hybrid state. The optional fused
+/// path uses a contiguous physical arena with a page table, never gathered KV.
+/// Selection is fixed when the cache is created, not changed mid-generation.
 #[derive(Clone)]
 pub struct Qwen35BatchCache<B: Backend> {
     config: PagedKvCacheConfig,
     pages: Vec<BTreeMap<KvPageId, KvPage<B>>>,
+    arenas: Vec<Option<KvArena<B>>>,
+    fused_paged: bool,
     requests: BTreeMap<RequestId, Qwen35Cache<B>>,
     tables: BTreeMap<RequestId, Vec<KvPageId>>,
 }
@@ -29,7 +39,9 @@ impl<B: Backend> Qwen35BatchCache<B> {
     }
     /// Count layer-specific physical K/V page pairs, not scheduler page IDs.
     pub fn resident_layer_pages(&self) -> usize {
-        self.pages.iter().map(BTreeMap::len).sum()
+        if self.fused_paged {
+            self.arenas.iter().flatten().map(|a|a.resident.len()).sum()
+        } else { self.pages.iter().map(BTreeMap::len).sum() }
     }
     pub fn sequence_length(&self, id: RequestId) -> Option<usize> {
         self.requests.get(&id).map(|cache| cache.position)
@@ -54,8 +66,16 @@ where
         }
     }
     fn new_batch_cache(&self, config: PagedKvCacheConfig) -> Self::Cache {
+        let fused_paged = match std::env::var("RUDA_PAGED_ATTENTION") {
+            Ok(v) if v=="fused" => true,
+            Ok(v) if v=="legacy" => false,
+            Err(std::env::VarError::NotPresent) => false,
+            _ => panic!("RUDA_PAGED_ATTENTION must be fused or legacy"),
+        };
         Qwen35BatchCache {
             config,
+            fused_paged,
+            arenas: (0..self.layers.len()).map(|_|None).collect(),
             pages: (0..self.layers.len()).map(|_| BTreeMap::new()).collect(),
             requests: BTreeMap::new(),
             tables: BTreeMap::new(),
@@ -70,8 +90,10 @@ where
             .retain(|id, _| scheduler.kv_cache().contains_sequence(*id));
         cache.tables.retain(|id, _| cache.requests.contains_key(id));
         let live: BTreeSet<_> = cache.tables.values().flatten().copied().collect();
-        for pages in &mut cache.pages {
-            pages.retain(|id, _| live.contains(id));
+        for pages in &mut cache.pages { pages.retain(|id, _| live.contains(id)); }
+        for arena in cache.arenas.iter_mut().flatten() {
+            arena.resident.retain(|id|live.contains(id));
+            arena.positions.retain(|id,_|cache.requests.contains_key(id));
         }
     }
     fn forward_batch(
@@ -170,6 +192,9 @@ where
                     batch,
                     cache.config.block_size,
                     &mut cache.pages[index],
+                    &mut cache.arenas[index],
+                    cache.config.num_pages,
+                    cache.fused_paged,
                 )?,
                 Mixer::Delta(delta) => {
                     let mut convolutions = Vec::new();
@@ -251,6 +276,121 @@ where
     I: IntElement,
     BT: BoolElement,
 {
+    fn decode_pages(
+        q: Tensor<DeviceBackend<R, F, I, BT>, 4>,
+        batch: &ScheduledBatch,
+        block: usize,
+        pages: &BTreeMap<KvPageId, KvPage<DeviceBackend<R, F, I, BT>>>,
+        h: usize,
+        k: usize,
+        d: usize,
+    ) -> Result<Tensor<DeviceBackend<R, F, I, BT>, 4>, GenerationError> {
+        if h == 0 || k == 0 || h % k != 0 {
+            return Err(GenerationError("invalid grouped-query attention head counts".into()));
+        }
+        let groups = h / k;
+        let scale = (d as f64).sqrt().recip();
+        let output_dtype = q.dtype();
+        let mut rows = Vec::with_capacity(batch.sequences.len());
+        for (row_index, row) in batch.sequences.iter().enumerate() {
+            if row.context_length == 0 || row.block_table.is_empty() {
+                return Err(GenerationError("decode requires a non-empty paged KV history".into()));
+            }
+            let query = q.clone()
+                .slice([row_index..row_index + 1, 0..h, 0..1, 0..d])
+                .cast(DType::F32)
+                .reshape([1, k, groups, d]);
+            let mut running_max = None;
+            let mut running_sum = None;
+            let mut running_out = None;
+            for (page_index, id) in row.block_table.iter().enumerate() {
+                let page = pages.get(id)
+                    .ok_or_else(|| GenerationError("missing physical KV page".into()))?;
+                let count = block.min(row.context_length - page_index * block);
+                let key = page.key.clone().slice([0..1, 0..k, 0..count, 0..d]).cast(DType::F32);
+                let value = page.value.clone().slice([0..1, 0..k, 0..count, 0..d]).cast(DType::F32);
+                let scores = query.clone().matmul(key.swap_dims(2, 3)) * scale;
+                let page_max = scores.clone().max_dim(3);
+                let weights = (scores - page_max.clone()).exp();
+                let page_sum = weights.clone().sum_dim(3);
+                let page_out = weights.matmul(value);
+                match (running_max.take(), running_sum.take(), running_out.take()) {
+                    (None, None, None) => {
+                        running_max = Some(page_max);
+                        running_sum = Some(page_sum);
+                        running_out = Some(page_out);
+                    }
+                    (Some(old_max), Some(old_sum), Some(old_out)) => {
+                        let new_max = old_max.clone().max_pair(page_max.clone());
+                        let old_scale = (old_max - new_max.clone()).exp();
+                        let page_scale = (page_max - new_max.clone()).exp();
+                        running_sum = Some(old_sum * old_scale.clone() + page_sum * page_scale.clone());
+                        running_out = Some(old_out * old_scale + page_out * page_scale);
+                        running_max = Some(new_max);
+                    }
+                    _ => unreachable!("paged attention accumulator state is inconsistent"),
+                }
+            }
+            let sum = running_sum.ok_or_else(|| GenerationError("empty paged attention accumulator".into()))?;
+            let out = running_out.ok_or_else(|| GenerationError("empty paged attention output".into()))? / sum;
+            rows.push(out.reshape([1, h, 1, d]));
+        }
+        Ok(Tensor::cat(rows, 0).cast(output_dtype))
+    }
+
+    fn fused_pages(
+        q: Tensor<DeviceBackend<R,F,I,BT>,4>,
+        key: Tensor<DeviceBackend<R,F,I,BT>,4>,
+        value: Tensor<DeviceBackend<R,F,I,BT>,4>,
+        batch: &ScheduledBatch, block:usize, capacity:usize,
+        arena: &mut Option<KvArena<DeviceBackend<R,F,I,BT>>>,
+    )->Result<Tensor<DeviceBackend<R,F,I,BT>,4>,GenerationError> {
+        use rudnn::paged_attention::{HostPlan,DevicePlan};
+        let [b,h,s,d]=q.dims();let kh=key.dims()[1];
+        let error=|e|GenerationError(format!("fused paged attention: {e}"));
+        let mut tables=Vec::with_capacity(b);let mut lengths=Vec::with_capacity(b);
+        let mut ids=Vec::new();let mut positions=Vec::new();
+        for (seq,row) in batch.sequences.iter().enumerate() {
+            let previous=arena.as_ref().and_then(|a|a.positions.get(&row.request_id)).copied().unwrap_or(0);
+            if previous!=row.start_position { return Err(error("cache position mismatch; rebuild after a failed forward")); }
+            tables.push(row.block_table.iter().map(|id|id.0).collect());
+            lengths.push(u32::try_from(row.context_length).map_err(|_|error("KV length overflow"))?);
+            for step in 0..s {
+                ids.push(u32::try_from(seq).map_err(|_|error("batch overflow"))?);
+                positions.push(u32::try_from(row.start_position+step).map_err(|_|error("position overflow"))?);
+            }
+        }
+        let host=HostPlan::new(block,capacity,&tables,&lengths,&ids,&positions).map_err(|e|error(e.0))?;
+        host.validate_writes().map_err(|e|error(e.0))?;
+        let packed_q=q.swap_dims(1,2).reshape([b*s,h,d]).into_primitive().tensor();
+        let packed_k=key.swap_dims(1,2).reshape([b*s,kh,d]).into_primitive().tensor();
+        let packed_v=value.swap_dims(1,2).reshape([b*s,kh,d]).into_primitive().tensor();
+        let plan=DevicePlan::upload(host,&packed_q);
+        let old=arena.take().unwrap_or_else(||KvArena {
+            key:Tensor::empty([capacity,block,kh,d],(&packed_q.device,packed_q.dtype)),
+            value:Tensor::empty([capacity,block,kh,d],(&packed_q.device,packed_q.dtype)),
+            positions:BTreeMap::new(),resident:BTreeSet::new(),
+        });
+        // DevicePlan performs copy-on-write for a forked arena. A cache is not
+        // recoverable after a failed device append; the generation error escapes.
+        let (keys,values)=plan.append(packed_k,packed_v,old.key.into_primitive().tensor(),
+            old.value.into_primitive().tensor()).map_err(|e|error(e.0))?;
+        let result=plan.attention(packed_q,keys.clone(),values.clone(),(d as f32).sqrt().recip(),true)
+            .map_err(|e|error(e.0))?;
+        let mut stored=KvArena {
+            key:Tensor::from_primitive(TensorPrimitive::Float(keys)),
+            value:Tensor::from_primitive(TensorPrimitive::Float(values)),
+            positions:old.positions,resident:old.resident,
+        };
+        for row in &batch.sequences {
+            stored.positions.insert(row.request_id,row.context_length);
+            stored.resident.extend(row.block_table.iter().copied());
+        }
+        *arena=Some(stored);
+        Ok(Tensor::<DeviceBackend<R,F,I,BT>,3>::from_primitive(TensorPrimitive::Float(result))
+            .reshape([b,s,h,d]).swap_dims(1,2))
+    }
+
     fn forward_pages(
         &self,
         x: Tensor<DeviceBackend<R, F, I, BT>, 3>,
@@ -260,6 +400,9 @@ where
         batch: &ScheduledBatch,
         block: usize,
         pages: &mut BTreeMap<KvPageId, KvPage<DeviceBackend<R, F, I, BT>>>,
+        arena: &mut Option<KvArena<DeviceBackend<R,F,I,BT>>>,
+        capacity: usize,
+        fused: bool,
     ) -> Result<Tensor<DeviceBackend<R, F, I, BT>, 3>, GenerationError> {
         let [b, s, _] = x.dims();
         let (h, k, d) = (c.num_attention_heads, c.num_key_value_heads, c.head_dim);
@@ -279,38 +422,50 @@ where
         let value = self.v.forward(x).reshape([b, s, k, d]).swap_dims(1, 2);
         let q = attention::rotate(q, cos.clone(), sin.clone());
         let key = attention::rotate(key, cos, sin);
+        if fused {
+            let out=Self::fused_pages(q,key,value,batch,block,capacity,arena)?
+                .swap_dims(1,2).reshape([b,s,h*d]);
+            return Ok(self.out.forward(out*sigmoid(gate)));
+        }
         write_pages(pages, batch, block, key, value)?;
-        let length = batch
-            .sequences
-            .iter()
-            .map(|r| r.context_length)
-            .max()
-            .unwrap();
-        let (keys, values) = read_pages(pages, batch, block, length)?;
-        let floor = attention::mask_floor(q.dtype());
-        let mut mask = Vec::with_capacity(b * s * length);
-        for row in &batch.sequences {
-            for i in 0..s {
-                for j in 0..length {
-                    mask.push(if j <= row.start_position + i {
-                        0.0
-                    } else {
-                        floor
-                    });
+        // Decode has a single query token per request. Consume physical KV pages
+        // directly with an online softmax, so the hot path does not gather and
+        // pad the entire history into a temporary contiguous [B,K,S,D] tensor.
+        // Prefill keeps the existing batched path until a tiled paged kernel is
+        // available for multiple query positions.
+        let out = if s == 1 {
+            Self::decode_pages(q, batch, block, pages, h, k, d)?
+                .swap_dims(1, 2)
+                .reshape([b, s, h * d])
+        } else {
+            let length = batch
+                .sequences
+                .iter()
+                .map(|r| r.context_length)
+                .max()
+                .unwrap();
+            let (keys, values) = read_pages(pages, batch, block, length)?;
+            let floor = attention::mask_floor(q.dtype());
+            let mut mask = Vec::with_capacity(b * s * length);
+            for row in &batch.sequences {
+                for i in 0..s {
+                    for j in 0..length {
+                        mask.push(if j <= row.start_position + i { 0.0 } else { floor });
+                    }
                 }
             }
-        }
-        let mask = Tensor::<DeviceBackend<R, F, I, BT>, 4>::from_data(
-            TensorData::new(mask, [b, 1, s, length]),
-            (&q.device(), q.dtype()),
-        );
-        let scores = q.matmul(attention::repeat_heads(keys, h / k).swap_dims(2, 3))
-            * (d as f64).sqrt().recip()
-            + mask;
-        let probabilities = Self::probabilities(scores)?;
-        let out = Self::value_product(probabilities, attention::repeat_heads(values, h / k))?
-            .swap_dims(1, 2)
-            .reshape([b, s, h * d]);
+            let mask = Tensor::<DeviceBackend<R, F, I, BT>, 4>::from_data(
+                TensorData::new(mask, [b, 1, s, length]),
+                (&q.device(), q.dtype()),
+            );
+            let scores = q.matmul(attention::repeat_heads(keys, h / k).swap_dims(2, 3))
+                * (d as f64).sqrt().recip()
+                + mask;
+            let probabilities = Self::probabilities(scores)?;
+            Self::value_product(probabilities, attention::repeat_heads(values, h / k))?
+                .swap_dims(1, 2)
+                .reshape([b, s, h * d])
+        };
         Ok(self.out.forward(out * sigmoid(gate)))
     }
 }

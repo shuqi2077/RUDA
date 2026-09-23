@@ -32,3 +32,6 @@ pub mod ctc;
 
 
 
+
+#[cfg(feature = "tensor-paged-attention")]
+pub mod paged_attention;

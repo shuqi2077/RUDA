@@ -72,3 +72,9 @@ fn empty<R: Runtime>(like: &RudaTensor<R>, shape: impl Into<Shape>, dtype: DType
 
 #[cfg(test)]
 mod tests;
+
+/// Public expert-matrix execution policy.
+pub use rublas::tensor_grouped::GroupedStrategy;
+
+mod grouped_routing;
+pub use grouped_routing::{GroupRoutingOptions,route_sigmoid_grouped};

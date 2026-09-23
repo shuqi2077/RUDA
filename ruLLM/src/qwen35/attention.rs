@@ -19,6 +19,23 @@ pub(super) fn mask_floor(dtype: DType) -> f32 {
     }
 }
 
+use crate::gpu_inference::{gqa_scores, gqa_value_product_with};
+
+// Operations are supplied by the existing device backend, not a model-specific kernel.
+fn shared_tensor_ops<B: Backend>() -> crate::gpu_inference::TensorOps<Tensor<B, 4>> {
+    crate::gpu_inference::TensorOps {
+        shape: |t| t.dims(),
+        reshape: |t, dims| t.reshape(dims),
+        swap_dims: |t, a, b| t.swap_dims(a, b),
+        matmul: |a, b| a.matmul(b),
+        add: |a, b| a + b,
+    }
+}
+
+#[cfg(test)]
+#[path = "../gpu_inference_tensor_tests.rs"]
+mod shared_attention_tests;
+
 fn causal_mask<B: Backend>(
     sequence: usize,
     position: usize,
@@ -189,14 +206,15 @@ where
         let mask = causal_mask::<DeviceBackend<R, F, I, BT>>(
             s, position, key.dims()[2], q.dtype(), &q.device(),
         );
-        let scores =
-            q.matmul(repeat_heads(key, h / k).swap_dims(2, 3)) * (d as f64).sqrt().recip();
+        let ops = shared_tensor_ops::<DeviceBackend<R, F, I, BT>>();
+        let scores = gqa_scores(&ops, q, key) * (d as f64).sqrt().recip();
         let scores = match mask {
             Some(mask) => scores + mask,
             None => scores,
         };
         let probs = Self::probabilities(scores)?;
-        let out = Self::value_product(probs, repeat_heads(value, h / k))?
+        // Preserve the adapter's original accumulation, cast, and error policy.
+        let out = gqa_value_product_with(&ops, probs, value, Self::value_product)?
             .swap_dims(1, 2)
             .reshape([b, s, h * d]);
         Ok(self.out.forward(out * sigmoid(gate)))

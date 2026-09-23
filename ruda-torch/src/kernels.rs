@@ -171,116 +171,117 @@ pub fn logical(a: &Tensor<u8>, b: &Tensor<u8>, out: &mut Tensor<u8>, #[comptime]
 }
 
 #[ruda(launch)]
-pub fn pointwise(a: &Tensor<f32>, b: &Tensor<f32>, out: &mut Tensor<f32>, scalar: f32, #[comptime] op: u32) {
+pub fn pointwise<A: Float + RudaElement, B: Float + RudaElement, O: Float + RudaElement>(
+    a: &Tensor<A>, b: &Tensor<B>, out: &mut Tensor<O>, scalar: f32, #[comptime] op: u32) {
     let pos = ABSOLUTE_POS as usize;
     if pos < out.len() {
         let target = offset(out, pos);
-        if comptime!(op == 5) { out[target] = scalar; }
+        if comptime!(op == 5) { out[target] = O::cast_from(scalar); }
         else {
-            let x = a[offset(a, pos)];
-            if comptime!(op == 0) { out[target] = x; }
-            else if comptime!(op == 1) { out[target] = x + scalar * b[offset(b, pos)]; }
-            else if comptime!(op == 2) { out[target] = x * b[offset(b, pos)]; }
+            let x = f32::cast_from(a[offset(a, pos)]);
+            if comptime!(op == 0) { out[target] = O::cast_from(x); }
+            else if comptime!(op == 1) { out[target] = O::cast_from(x + scalar * f32::cast_from(b[offset(b, pos)])); }
+            else if comptime!(op == 2) { out[target] = O::cast_from(x * f32::cast_from(b[offset(b, pos)])); }
             else if comptime!(op == 3) {
                 let mut result = x;
                 if x < 0.0 { result = 0.0; }
-                out[target] = result;
+                out[target] = O::cast_from(result);
             }
             else if comptime!(op == 4) {
                 let mut result = x;
-                if b[offset(b, pos)] <= scalar { result = 0.0; }
-                out[target] = result;
+                if f32::cast_from(b[offset(b, pos)]) <= scalar { result = 0.0; }
+                out[target] = O::cast_from(result);
             }
-            else if comptime!(op == 8) { out[target] = x / b[offset(b, pos)]; }
-            else if comptime!(op == 9) { out[target] = x.exp(); }
-            else if comptime!(op == 10) { out[target] = x.ln(); }
-            else if comptime!(op == 11) { out[target] = x.sqrt(); }
-            else if comptime!(op == 12) { out[target] = 1.0 / x.sqrt(); }
-            else if comptime!(op == 13) { out[target] = 1.0 / (1.0 + (-x).exp()); }
-            else if comptime!(op == 14) { out[target] = x / (1.0 + (-x).exp()); }
+            else if comptime!(op == 8) { out[target] = O::cast_from(x / f32::cast_from(b[offset(b, pos)])); }
+            else if comptime!(op == 9) { out[target] = O::cast_from(x.exp()); }
+            else if comptime!(op == 10) { out[target] = O::cast_from(x.ln()); }
+            else if comptime!(op == 11) { out[target] = O::cast_from(x.sqrt()); }
+            else if comptime!(op == 12) { out[target] = O::cast_from(1.0 / x.sqrt()); }
+            else if comptime!(op == 13) { out[target] = O::cast_from(1.0 / (1.0 + (-x).exp())); }
+            else if comptime!(op == 14) { out[target] = O::cast_from(x / (1.0 + (-x).exp())); }
             else if comptime!(op == 15) {
-                let input = b[offset(b, pos)];
+                let input = f32::cast_from(b[offset(b, pos)]);
                 let sigmoid = 1.0f32 / (1.0f32 + (-input).exp());
-                out[target] = x * (sigmoid * (1.0f32 + input * (1.0f32 - sigmoid)));
+                out[target] = O::cast_from(x * (sigmoid * (1.0f32 + input * (1.0f32 - sigmoid))));
             }
             else if comptime!(op == 16) {
-                let y = b[offset(b, pos)];
-                out[target] = x * y * (1.0f32 - y);
+                let y = f32::cast_from(b[offset(b, pos)]);
+                out[target] = O::cast_from(x * y * (1.0f32 - y));
             }
-            else if comptime!(op == 17) { out[target] = x.tanh(); }
+            else if comptime!(op == 17) { out[target] = O::cast_from(x.tanh()); }
             else if comptime!(op == 18) {
-                let y = b[offset(b, pos)];
-                out[target] = x * (1.0f32 - y * y);
+                let y = f32::cast_from(b[offset(b, pos)]);
+                out[target] = O::cast_from(x * (1.0f32 - y * y));
             }
-            else if comptime!(op == 19) { out[target] = x.sin(); }
-            else if comptime!(op == 20) { out[target] = x.cos(); }
-            else if comptime!(op == 21) { out[target] = x.abs(); }
+            else if comptime!(op == 19) { out[target] = O::cast_from(x.sin()); }
+            else if comptime!(op == 20) { out[target] = O::cast_from(x.cos()); }
+            else if comptime!(op == 21) { out[target] = O::cast_from(x.abs()); }
             else if comptime!(op == 22) {
                 let mut result = 0.0f32;
                 if x > 0.0 { result = 1.0; }
                 else if x < 0.0 { result = -1.0; }
-                out[target] = result;
+                out[target] = O::cast_from(result);
             }
-            else if comptime!(op == 23) { out[target] = x.floor(); }
-            else if comptime!(op == 24) { out[target] = x.ceil(); }
-            else if comptime!(op == 25) { out[target] = x.trunc(); }
-            else if comptime!(op == 26) { out[target] = x.round(); }
-            else if comptime!(op == 27) { out[target] = x.recip(); }
-            else if comptime!(op == 28) { out[target] = out[target] + scalar * x * b[offset(b, pos)]; }
-            else if comptime!(op == 29) { out[target] = out[target] + scalar * x / b[offset(b, pos)]; }
-            else if comptime!(op == 35) { out[target] = x.log1p(); }
-            else if comptime!(op == 36) { out[target] = x.sinh(); }
-            else if comptime!(op == 37) { out[target] = x.cosh(); }
-            else if comptime!(op == 38) { out[target] = x.asinh(); }
-            else if comptime!(op == 39) { out[target] = x.acosh(); }
-            else if comptime!(op == 40) { out[target] = x.atanh(); }
+            else if comptime!(op == 23) { out[target] = O::cast_from(x.floor()); }
+            else if comptime!(op == 24) { out[target] = O::cast_from(x.ceil()); }
+            else if comptime!(op == 25) { out[target] = O::cast_from(x.trunc()); }
+            else if comptime!(op == 26) { out[target] = O::cast_from(x.round()); }
+            else if comptime!(op == 27) { out[target] = O::cast_from(x.recip()); }
+            else if comptime!(op == 28) { out[target] = O::cast_from(f32::cast_from(out[target]) + scalar * x * f32::cast_from(b[offset(b, pos)])); }
+            else if comptime!(op == 29) { out[target] = O::cast_from(f32::cast_from(out[target]) + scalar * x / f32::cast_from(b[offset(b, pos)])); }
+            else if comptime!(op == 35) { out[target] = O::cast_from(x.log1p()); }
+            else if comptime!(op == 36) { out[target] = O::cast_from(x.sinh()); }
+            else if comptime!(op == 37) { out[target] = O::cast_from(x.cosh()); }
+            else if comptime!(op == 38) { out[target] = O::cast_from(x.asinh()); }
+            else if comptime!(op == 39) { out[target] = O::cast_from(x.acosh()); }
+            else if comptime!(op == 40) { out[target] = O::cast_from(x.atanh()); }
             else if comptime!(op == 41) {
                 let mut result = x * scalar;
                 if x > 0.0 { result = x; }
-                out[target] = result;
+                out[target] = O::cast_from(result);
             }
             else if comptime!(op == 42) {
-                let input = b[offset(b, pos)];
+                let input = f32::cast_from(b[offset(b, pos)]);
                 let mut result = x * scalar;
                 if input > 0.0 { result = x; }
-                out[target] = result;
+                out[target] = O::cast_from(result);
             }
             else if comptime!(op == 43 || op == 45) {
                 let mut clipped = x + 3.0f32;
                 if clipped < 0.0 { clipped = 0.0; }
                 if clipped > 6.0 { clipped = 6.0; }
-                if comptime!(op == 43) { out[target] = clipped / 6.0f32; }
-                else { out[target] = x * clipped / 6.0f32; }
+                if comptime!(op == 43) { out[target] = O::cast_from(clipped / 6.0f32); }
+                else { out[target] = O::cast_from(x * clipped / 6.0f32); }
             }
             else if comptime!(op == 44) {
-                let input = b[offset(b, pos)];
+                let input = f32::cast_from(b[offset(b, pos)]);
                 let mut result = 0.0f32;
                 if input > -3.0 && input < 3.0 { result = x * (1.0f32 / 6.0f32); }
-                out[target] = result;
+                out[target] = O::cast_from(result);
             }
             else if comptime!(op == 46) {
-                let input = b[offset(b, pos)];
+                let input = f32::cast_from(b[offset(b, pos)]);
                 let mut result = x;
                 if input <= -3.0 { result = 0.0; }
                 else if input < 3.0 { result = x * (input / 3.0f32 + 0.5f32); }
-                out[target] = result;
+                out[target] = O::cast_from(result);
             }
             else if comptime!(op == 47) {
                 let mut minimum = x;
                 if x > 0.0 { minimum = 0.0; }
-                out[target] = minimum - (-x.abs()).exp().log1p();
+                out[target] = O::cast_from(minimum - (-x.abs()).exp().log1p());
             }
             else if comptime!(op == 48) {
-                let input = b[offset(b, pos)];
+                let input = f32::cast_from(b[offset(b, pos)]);
                 let z = (-input.abs()).exp();
                 let fraction = z / (1.0f32 + z);
                 let mut derivative = fraction;
                 if input < 0.0 { derivative = 1.0f32 - fraction; }
-                out[target] = x * derivative;
+                out[target] = O::cast_from(x * derivative);
             }
             else if comptime!(op == 49) {
-                let start = out[target];
-                let weight = b[offset(b, pos)];
+                let start = f32::cast_from(out[target]);
+                let weight = f32::cast_from(b[offset(b, pos)]);
                 let difference = x - start;
                 let mut coefficient = weight;
                 let mut base = start;
@@ -288,76 +289,76 @@ pub fn pointwise(a: &Tensor<f32>, b: &Tensor<f32>, out: &mut Tensor<f32>, scalar
                     coefficient = weight - 1.0f32;
                     base = x;
                 }
-                out[target] = coefficient * difference + base;
+                out[target] = O::cast_from(coefficient * difference + base);
             }
-            else if comptime!(op == 50) { out[target] = b[offset(b, pos)] - scalar * x; }
+            else if comptime!(op == 50) { out[target] = O::cast_from(f32::cast_from(b[offset(b, pos)]) - scalar * x); }
             else if comptime!(op == 51) {
-                let maximum = b[offset(b, pos)];
+                let maximum = f32::cast_from(b[offset(b, pos)]);
                 let mut result = x;
                 if result < scalar || scalar != scalar { result = scalar; }
                 if result > maximum || maximum != maximum { result = maximum; }
-                out[target] = result;
+                out[target] = O::cast_from(result);
             }
             else if comptime!(op == 52) {
                 let mut result = x;
-                if b[offset(b, pos)] >= scalar { result = 0.0; }
-                out[target] = result;
+                if f32::cast_from(b[offset(b, pos)]) >= scalar { result = 0.0; }
+                out[target] = O::cast_from(result);
             }
             else if comptime!(op == 53) {
                 let scaled = x * scalar;
-                let threshold = b[offset(b, pos)];
+                let threshold = f32::cast_from(b[offset(b, pos)]);
                 let mut result = x;
                 if !(scaled > threshold) { result = scaled.exp().log1p() / scalar; }
-                out[target] = result;
+                out[target] = O::cast_from(result);
             }
             else if comptime!(op == 54) {
                 let scaled = x * scalar;
-                let threshold = b[offset(b, pos)];
-                let gradient = out[target];
+                let threshold = f32::cast_from(b[offset(b, pos)]);
+                let gradient = f32::cast_from(out[target]);
                 let mut result = gradient;
                 if !(scaled > threshold) {
                     let z = scaled.exp();
                     result = gradient * z / (z + 1.0f32);
                 }
-                out[target] = result;
+                out[target] = O::cast_from(result);
             }
             else if comptime!(op == 55) {
-                let difference = x - b[offset(b, pos)];
-                out[target] = difference * difference;
+                let difference = x - f32::cast_from(b[offset(b, pos)]);
+                out[target] = O::cast_from(difference * difference);
             }
             else if comptime!(op == 56) {
-                let difference = x - b[offset(b, pos)];
-                out[target] = scalar * difference * out[target];
+                let difference = x - f32::cast_from(b[offset(b, pos)]);
+                out[target] = O::cast_from(scalar * difference * f32::cast_from(out[target]));
             }
-            else if comptime!(op == 57) { out[target] = (x / b[offset(b, pos)]).trunc(); }
+            else if comptime!(op == 57) { out[target] = O::cast_from((x / f32::cast_from(b[offset(b, pos)])).trunc()); }
             else if comptime!(op == 62) {
-                let mut result = b[offset(b, pos)] * x;
+                let mut result = f32::cast_from(b[offset(b, pos)]) * x;
                 if x > 0.0 { result = x; }
-                out[target] = result;
+                out[target] = O::cast_from(result);
             }
             else if comptime!(op == 63) {
-                let gradient = out[target];
-                let mut result = b[offset(b, pos)] * gradient;
+                let gradient = f32::cast_from(out[target]);
+                let mut result = f32::cast_from(b[offset(b, pos)]) * gradient;
                 if x > 0.0 { result = gradient; }
-                out[target] = result;
+                out[target] = O::cast_from(result);
             }
             else if comptime!(op == 64) {
-                let mut result = x * b[offset(b, pos)];
+                let mut result = x * f32::cast_from(b[offset(b, pos)]);
                 if x > 0.0 { result = 0.0; }
-                out[target] = result;
+                out[target] = O::cast_from(result);
             }
-            else if comptime!(op == 69) { out[target] = x * x.exp().log1p().tanh(); }
+            else if comptime!(op == 69) { out[target] = O::cast_from(x * x.exp().log1p().tanh()); }
             else if comptime!(op == 70) {
-                let input = b[offset(b, pos)];
+                let input = f32::cast_from(b[offset(b, pos)]);
                 let sigmoid = 1.0f32 / (1.0f32 + (-input).exp());
                 let activated = input.exp().log1p().tanh();
-                out[target] = x * (activated + input * sigmoid * (1.0f32 - activated * activated));
+                out[target] = O::cast_from(x * (activated + input * sigmoid * (1.0f32 - activated * activated)));
             }
             else if comptime!(op == 71 || op == 72) {
-                let gate = b[offset(b, pos)];
+                let gate = f32::cast_from(b[offset(b, pos)]);
                 let sigmoid = 1.0f32 / (1.0f32 + (-gate).exp());
-                if comptime!(op == 71) { out[target] = x * sigmoid; }
-                else { out[target] = (1.0f32 - sigmoid) * sigmoid * out[target] * x; }
+                if comptime!(op == 71) { out[target] = O::cast_from(x * sigmoid); }
+                else { out[target] = O::cast_from((1.0f32 - sigmoid) * sigmoid * f32::cast_from(out[target]) * x); }
             }
         }
     }
@@ -521,7 +522,7 @@ pub fn bmm(a: &Tensor<f32>, b: &Tensor<f32>, out: &mut Tensor<f32>) {
 }
 
 #[ruda]
-fn row_offset(tensor: &Tensor<f32>, row: usize, #[comptime] axis: usize) -> usize {
+fn row_offset<F: Numeric>(tensor: &Tensor<F>, row: usize, #[comptime] axis: usize) -> usize {
     let mut remaining = row;
     let mut base = 0usize;
     let mut dim = tensor.rank();
@@ -536,7 +537,8 @@ fn row_offset(tensor: &Tensor<f32>, row: usize, #[comptime] axis: usize) -> usiz
 }
 
 #[ruda(launch)]
-pub fn softmax(a: &Tensor<f32>, b: &Tensor<f32>, out: &mut Tensor<f32>,
+pub fn softmax<F: Float + RudaElement, O: Float + RudaElement>(
+    a: &Tensor<F>, b: &Tensor<F>, out: &mut Tensor<O>,
     #[comptime] axis: usize, #[comptime] backward: bool, #[comptime] logarithmic: bool) {
     let row = ABSOLUTE_POS as usize;
     let width = a.shape(axis);
@@ -547,28 +549,28 @@ pub fn softmax(a: &Tensor<f32>, b: &Tensor<f32>, out: &mut Tensor<f32>,
         if comptime!(backward) {
             let mut total = 0.0f32;
             for i in 0..width {
-                let grad = a[ab + i * a.stride(axis)];
+                let grad = f32::cast_from(a[ab + i * a.stride(axis)]);
                 if comptime!(logarithmic) { total += grad; }
-                else { total += grad * b[bb + i * b.stride(axis)]; }
+                else { total += grad * f32::cast_from(b[bb + i * b.stride(axis)]); }
             }
             for i in 0..width {
-                let grad = a[ab + i * a.stride(axis)];
-                let y = b[bb + i * b.stride(axis)];
-                if comptime!(logarithmic) { out[ob + i * out.stride(axis)] = grad - y.exp() * total; }
-                else { out[ob + i * out.stride(axis)] = y * (grad - total); }
+                let grad = f32::cast_from(a[ab + i * a.stride(axis)]);
+                let y = f32::cast_from(b[bb + i * b.stride(axis)]);
+                if comptime!(logarithmic) { out[ob + i * out.stride(axis)] = O::cast_from(grad - y.exp() * total); }
+                else { out[ob + i * out.stride(axis)] = O::cast_from(y * (grad - total)); }
             }
         } else {
-            let mut maximum = a[ab];
+            let mut maximum = f32::cast_from(a[ab]);
             for i in 1..width {
-                let value = a[ab + i * a.stride(axis)];
+                let value = f32::cast_from(a[ab + i * a.stride(axis)]);
                 if value != value || value > maximum { maximum = value; }
             }
             let mut total = 0.0f32;
-            for i in 0..width { total += (a[ab + i * a.stride(axis)] - maximum).exp(); }
+            for i in 0..width { total += (f32::cast_from(a[ab + i * a.stride(axis)]) - maximum).exp(); }
             for i in 0..width {
-                let shifted = a[ab + i * a.stride(axis)] - maximum;
-                if comptime!(logarithmic) { out[ob + i * out.stride(axis)] = shifted - total.ln(); }
-                else { out[ob + i * out.stride(axis)] = shifted.exp() / total; }
+                let shifted = f32::cast_from(a[ab + i * a.stride(axis)]) - maximum;
+                if comptime!(logarithmic) { out[ob + i * out.stride(axis)] = O::cast_from(shifted - total.ln()); }
+                else { out[ob + i * out.stride(axis)] = O::cast_from(shifted.exp() / total); }
             }
         }
     }
@@ -617,5 +619,281 @@ pub fn reduce(a: &Tensor<f32>, out: &mut Tensor<f32>) {
             value += a[source];
         }
         out[offset(out, pos)] = value;
+    }
+}
+
+// Storage stays in F16/BF16/F32. This compatibility kernel widens individual
+// loads, not the entire inputs; it is also the explicit diagnostic baseline.
+#[ruda(launch)]
+pub fn matmul_storage<F: Float + RudaElement, O: Float + RudaElement>(
+    a: &Tensor<F>, b: &Tensor<F>, out: &mut Tensor<O>, #[comptime] batched: bool,
+) {
+    let pos = ABSOLUTE_POS as usize;
+    if pos < out.len() {
+        let rank = out.rank();
+        let m_axis = rank - 2;
+        let n_axis = rank - 1;
+        let n = out.shape(n_axis);
+        let m = out.shape(m_axis);
+        let col = pos % n;
+        let row = (pos / n) % m;
+        let mut ab = row * a.stride(m_axis);
+        let mut bb = col * b.stride(n_axis);
+        let mut ob = row * out.stride(m_axis) + col * out.stride(n_axis);
+        if comptime!(batched) {
+            let batch = pos / (m * n);
+            ab += batch * a.stride(0);
+            bb += batch * b.stride(0);
+            ob += batch * out.stride(0);
+        }
+        let mut value = 0.0f32;
+        for k in 0..a.shape(n_axis) {
+            value += f32::cast_from(a[ab + k * a.stride(n_axis)])
+                * f32::cast_from(b[bb + k * b.stride(m_axis)]);
+        }
+        out[ob] = O::cast_from(value);
+    }
+}
+
+// The accumulator can alias the output only for F32. Each unit reads its own
+// accumulator before storing; the C++ entry rejects overlap with all inputs.
+#[ruda(launch)]
+pub fn addmm_epilogue<F: Float + RudaElement>(
+    acc: &Tensor<f32>, bias: &Tensor<F>, out: &mut Tensor<F>,
+    alpha: f32, beta: f32, #[comptime] use_product: bool, #[comptime] use_bias: bool,
+) {
+    let pos = ABSOLUTE_POS as usize;
+    if pos < out.len() {
+        let mut value = 0.0f32;
+        if comptime!(use_product) { value = alpha * acc[offset(acc, pos)]; }
+        if comptime!(use_bias) { value += beta * f32::cast_from(bias[offset(bias, pos)]); }
+        out[offset(out, pos)] = F::cast_from(value);
+    }
+}
+
+#[ruda(launch)]
+pub fn addmm_bias<F: Float + RudaElement>(
+    bias: &Tensor<F>, out: &mut Tensor<F>, beta: f32, #[comptime] use_bias: bool,
+) {
+    let pos = ABSOLUTE_POS as usize;
+    if pos < out.len() {
+        let mut value = 0.0f32;
+        if comptime!(use_bias) { value = beta * f32::cast_from(bias[offset(bias, pos)]); }
+        out[offset(out, pos)] = F::cast_from(value);
+    }
+}
+
+// Four complete 32-lane CUDA warps per block, one logical row per warp.
+// Every active lane takes part in both reductions, even past the row tail.
+#[ruda(launch)]
+pub fn softmax_warp<F: Float + RudaElement, O: Float + RudaElement>(
+    a: &Tensor<F>, b: &Tensor<F>, out: &mut Tensor<O>,
+    #[comptime] axis: usize, #[comptime] backward: bool, #[comptime] logarithmic: bool,
+) {
+    let row = (ABSOLUTE_POS / 32) as usize;
+    let lane = (ABSOLUTE_POS % 32) as usize;
+    let width = a.shape(axis);
+    if row < a.len() / width {
+        let ab = row_offset(a, row, axis);
+        let bb = row_offset(b, row, axis);
+        let ob = row_offset(out, row, axis);
+        if comptime!(backward) {
+            let mut local = 0.0f32;
+            let mut i = lane;
+            while i < width {
+                let grad = f32::cast_from(a[ab + i * a.stride(axis)]);
+                if comptime!(logarithmic) { local += grad; }
+                else { local += grad * f32::cast_from(b[bb + i * b.stride(axis)]); }
+                i += 32;
+            }
+            let total = plane_sum(local);
+            let mut i = lane;
+            while i < width {
+                let grad = f32::cast_from(a[ab + i * a.stride(axis)]);
+                let y = f32::cast_from(b[bb + i * b.stride(axis)]);
+                if comptime!(logarithmic) {
+                    out[ob + i * out.stride(axis)] = O::cast_from(grad - y.exp() * total);
+                } else {
+                    out[ob + i * out.stride(axis)] = O::cast_from(y * (grad - total));
+                }
+                i += 32;
+            }
+        } else {
+            let mut maximum = f32::NEG_INFINITY;
+            let mut has_nan = 0.0f32;
+            let mut i = lane;
+            while i < width {
+                let value = f32::cast_from(a[ab + i * a.stride(axis)]);
+                if value != value { has_nan = 1.0; }
+                if value > maximum { maximum = value; }
+                i += 32;
+            }
+            maximum = plane_max(maximum);
+            // Hardware max may ignore NaNs. Restore PyTorch's row-wide NaN
+            // propagation explicitly before the exponential/sum reduction.
+            let nan_count = plane_sum(has_nan);
+            if nan_count > 0.0 { maximum = f32::NAN; }
+            let mut local = 0.0f32;
+            let mut i = lane;
+            while i < width {
+                local += (f32::cast_from(a[ab + i * a.stride(axis)]) - maximum).exp();
+                i += 32;
+            }
+            let total = plane_sum(local);
+            let mut i = lane;
+            while i < width {
+                let shifted = f32::cast_from(a[ab + i * a.stride(axis)]) - maximum;
+                if comptime!(logarithmic) {
+                    out[ob + i * out.stride(axis)] = O::cast_from(shifted - total.ln());
+                } else {
+                    out[ob + i * out.stride(axis)] = O::cast_from(shifted.exp() / total);
+                }
+                i += 32;
+            }
+        }
+    }
+}
+
+// Fused last-axis LayerNorm used by the native PyTorch inference bridge.
+// One warp owns one logical row. Statistics are accumulated in F32 and only
+// the final outputs are cast back to storage precision. Weight/bias are
+// optional and, when present, have the same storage dtype as the input.
+#[ruda(launch)]
+pub fn layer_norm_warp<F: Float + RudaElement>(
+    input: &Tensor<F>, weight: &Tensor<F>, bias: &Tensor<F>,
+    out: &mut Tensor<F>, mean: &mut Tensor<F>, rstd: &mut Tensor<F>,
+    epsilon: f32, #[comptime] has_weight: bool, #[comptime] has_bias: bool,
+) {
+    let row = (ABSOLUTE_POS / 32) as usize;
+    let lane = (ABSOLUTE_POS % 32) as usize;
+    let width = input.shape(input.rank() - 1);
+    let rows = input.len() / width;
+    if row < rows {
+        let base = row * width;
+        let mut local_sum = 0.0f32;
+        let mut i = lane;
+        while i < width {
+            local_sum += f32::cast_from(input[base + i]);
+            i += 32;
+        }
+        let mu = plane_sum(local_sum) / width as f32;
+        // A second pass over the row is more stable than E[x^2]-E[x]^2 for
+        // transformer activations with a large offset. It still stays inside
+        // one kernel launch and never materializes a centered tensor.
+        let mut local_variance = 0.0f32;
+        let mut j = lane;
+        while j < width {
+            let delta = f32::cast_from(input[base + j]) - mu;
+            local_variance += delta * delta;
+            j += 32;
+        }
+        let variance = plane_sum(local_variance) / width as f32;
+        let inv = (variance + epsilon).inverse_sqrt();
+        if lane == 0 {
+            mean[row] = F::cast_from(mu);
+            rstd[row] = F::cast_from(inv);
+        }
+        let mut i = lane;
+        while i < width {
+            let mut value = (f32::cast_from(input[base + i]) - mu) * inv;
+            if comptime!(has_weight) { value *= f32::cast_from(weight[i]); }
+            if comptime!(has_bias) { value += f32::cast_from(bias[i]); }
+            out[base + i] = F::cast_from(value);
+            i += 32;
+        }
+    }
+}
+
+// Fused last-axis RMSNorm used by the native PyTorch inference bridge.
+// One warp owns one logical row. Squares and the reciprocal RMS are accumulated
+// in F32; storage is widened only in registers and the final value is cast once.
+#[ruda(launch)]
+pub fn rms_norm_warp<F: Float + RudaElement>(
+    input: &Tensor<F>, weight: &Tensor<F>, out: &mut Tensor<F>,
+    epsilon: f32, #[comptime] has_weight: bool,
+) {
+    let row = (ABSOLUTE_POS / 32) as usize;
+    let lane = (ABSOLUTE_POS % 32) as usize;
+    let width = input.shape(input.rank() - 1);
+    let rows = input.len() / width;
+    if row < rows {
+        let base = row * width;
+        let mut local_square = 0.0f32;
+        let mut i = lane;
+        while i < width {
+            let value = f32::cast_from(input[base + i]);
+            local_square += value * value;
+            i += 32;
+        }
+        let mean_square = plane_sum(local_square) / width as f32;
+        let inv = (mean_square + epsilon).inverse_sqrt();
+        let mut i = lane;
+        while i < width {
+            let mut value = f32::cast_from(input[base + i]) * inv;
+            if comptime!(has_weight) { value *= f32::cast_from(weight[i]); }
+            out[base + i] = F::cast_from(value);
+            i += 32;
+        }
+    }
+}
+
+// Storage-aware generic sum reduction. Loads are widened individually and the
+// accumulator remains F32, avoiding a tensor-wide promotion allocation.
+#[ruda(launch)]
+pub fn reduce_sum_storage<F: Float + RudaElement, O: Float + RudaElement>(
+    a: &Tensor<F>, out: &mut Tensor<O>,
+) {
+    let pos = ABSOLUTE_POS as usize;
+    if pos < out.len() {
+        let mut reduction_size = 1usize;
+        let mut source_base = 0usize;
+        let mut remaining = pos;
+        let mut dim = a.rank();
+        while dim > 0 {
+            dim -= 1;
+            if out.shape(dim) == 1 { reduction_size *= a.shape(dim); }
+            else {
+                source_base += (remaining % out.shape(dim)) * a.stride(dim);
+                remaining /= out.shape(dim);
+            }
+        }
+        let mut value = 0.0f32;
+        for index in 0..reduction_size {
+            let mut reduction_index = index;
+            let mut source = source_base;
+            let mut dim = a.rank();
+            while dim > 0 {
+                dim -= 1;
+                if out.shape(dim) == 1 {
+                    source += (reduction_index % a.shape(dim)) * a.stride(dim);
+                    reduction_index /= a.shape(dim);
+                }
+            }
+            value += f32::cast_from(a[source]);
+        }
+        out[offset(out, pos)] = O::cast_from(value);
+    }
+}
+
+// Fast path for the reduction shape used by transformer statistics:
+// contiguous [..., width] -> [..., 1]. One warp reduces one row in F32.
+#[ruda(launch)]
+pub fn reduce_sum_last_warp<F: Float + RudaElement, O: Float + RudaElement>(
+    a: &Tensor<F>, out: &mut Tensor<O>,
+) {
+    let row = (ABSOLUTE_POS / 32) as usize;
+    let lane = (ABSOLUTE_POS % 32) as usize;
+    let width = a.shape(a.rank() - 1);
+    let rows = a.len() / width;
+    if row < rows {
+        let base = row * width;
+        let mut local = 0.0f32;
+        let mut column = lane;
+        while column < width {
+            local += f32::cast_from(a[base + column]);
+            column += 32;
+        }
+        let total = plane_sum(local);
+        if lane == 0 { out[row] = O::cast_from(total); }
     }
 }

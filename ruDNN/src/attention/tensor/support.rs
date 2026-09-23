@@ -23,9 +23,72 @@ pub(super) fn unsupported_flash_reason(
     }
 }
 
+/// Canonicalize the bottom-right causal mask for a single query row.
+/// Every nonempty key position is visible in this case. Keep any separate mask,
+/// bias, scale and softcap untouched; their existing eligibility checks still run.
+pub(super) fn normalize_single_query_causal(
+    mut options: AttentionModuleOptions,
+    seq_q: usize,
+    seq_k: usize,
+) -> AttentionModuleOptions {
+    if options.is_causal && seq_q == 1 && seq_k > 0 {
+        options.is_causal = false;
+    }
+    options
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn single_query_causal_decode_is_noncausal_after_normalization() {
+        for length in [1, 2, 127, 128, 32768] {
+            let options = AttentionModuleOptions { is_causal: true, ..Default::default() };
+            let normalized = normalize_single_query_causal(options, 1, length);
+            assert!(!normalized.is_causal);
+            assert!(unsupported_flash_reason(&normalized, false, 1, length).is_none());
+        }
+    }
+
+    #[test]
+    fn multi_query_rectangles_and_empty_keys_are_not_unblocked() {
+        for (queries, keys) in [(1, 0), (2, 128), (32, 128), (128, 32)] {
+            let options = AttentionModuleOptions { is_causal: true, ..Default::default() };
+            let normalized = normalize_single_query_causal(options, queries, keys);
+            assert!(normalized.is_causal);
+            assert!(unsupported_flash_reason(&normalized, false, queries, keys).is_some());
+        }
+        let options = AttentionModuleOptions { is_causal: true, ..Default::default() };
+        assert!(normalize_single_query_causal(options, 32, 32).is_causal);
+    }
+
+    #[test]
+    fn decode_normalization_keeps_logit_transforms_and_bias_guards() {
+        for scale in [None, Some(0.125), Some(0.0), Some(f64::NAN)] {
+            for softcap in [None, Some(30.0), Some(f64::NAN)] {
+                for bias in [false, true] {
+                    let options = AttentionModuleOptions { scale, softcap, is_causal: true };
+                    let normalized = normalize_single_query_causal(options, 1, 128);
+                    assert_eq!(normalized.scale.map(f64::to_bits), scale.map(f64::to_bits));
+                    assert_eq!(normalized.softcap.map(f64::to_bits), softcap.map(f64::to_bits));
+                    assert_eq!(
+                        unsupported_flash_reason(&normalized, bias, 1, 128).is_some(),
+                        bias || scale.is_some() || softcap.is_some(),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn noncausal_options_and_repeated_normalization_remain_stable() {
+        for (queries, keys) in [(0, 0), (1, 0), (1, 128), (32, 128)] {
+            let options = normalize_single_query_causal(Default::default(), queries, keys);
+            assert!(!options.is_causal);
+            assert!(!normalize_single_query_causal(options, queries, keys).is_causal);
+        }
+    }
 
     #[test]
     fn default_and_square_causal_attention_remain_eligible() {

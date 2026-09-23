@@ -13,5 +13,6 @@ ruda = { path = "../ruda", features = ["runtime-default"] }
 ruda-core = { path = "../ruda-core", features = ["std"] }
 ruda-kernel = { path = "../ruda-kernel" }
 ruda-driver-cuda = { path = "../ruda-driver-cuda", features = ["direct-ptx"] }
+rublas = { path = "../ruBLAS", default-features = false, features = ["std", "tensor-matmul"] }
 ruPRIM = { path = "../ruPRIM", default-features = false, features = ["std", "indexing", "tensor-reduce", "tensor-scan"] }
-ruDNN = { path = "../ruDNN", default-features = false, features = ["std", "tensor-convolution", "pooling"] }
+ruDNN = { path = "../ruDNN", default-features = false, features = ["std", "tensor-convolution", "pooling", "tensor-paged-attention", "tensor-moe"] }

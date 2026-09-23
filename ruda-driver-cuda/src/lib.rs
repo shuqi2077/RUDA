@@ -82,3 +82,6 @@ mod tests {
 
 mod diagnostics;
 pub use diagnostics::{CudaDriverProbeError, query_driver_api_version};
+
+/// Checked stream/event integration using the native RUDA device service.
+pub mod interop;

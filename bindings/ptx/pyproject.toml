@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ruda-ptx-candidate"
+version = "0.10.0"
+description = "PTX-first static PyTorch inference compiler candidate, explicit runtime injection"
+requires-python = ">=3.10"
+dependencies = ["torch>=2.10", "numpy>=1.24"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+isa = ["llvmlite>=0.47,<0.48"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ruda_ptx*"]
+
+[tool.pytest.ini_options]
+markers = ["gpu: requires an actual NVIDIA driver and supported GPU", "amd_gpu: requires a selected AMD GPU and HIP runtime", "isa: requires optional LLVM AMDGPU compiler and LLD"]

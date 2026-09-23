@@ -37,3 +37,13 @@ pub mod backends;
 /// Shared whole-generation calibration, enabled explicitly for native targets.
 #[cfg(all(feature = "stack-autotune", any(target_os = "linux", target_os = "windows", target_os = "macos", target_os = "android")))]
 pub mod autotune;
+
+/// Shared device attention tensor transformations (candidate implementation).
+pub mod gpu_inference;
+
+/// Shared packed paged attention/MLA and local MoE building blocks.
+/// Model adapters must provide their own projections, routing policy and cache ownership.
+pub mod device_inference {
+    pub use rudnn::paged_attention::{DevicePlan, HostPlan, PagedAttentionError};
+    pub use rudnn::moe::{SwiGluExperts, RoutingOptions, GroupRoutingOptions, route_sigmoid_grouped, GroupedStrategy};
+}

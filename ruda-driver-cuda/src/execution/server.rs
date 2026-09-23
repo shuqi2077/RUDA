@@ -1,3 +1,5 @@
+mod interop;
+use interop::InteropState;
 use super::storage::gpu::{GpuResource, GpuStorage};
 use crate::{
     CudaCompiler,
@@ -50,6 +52,7 @@ pub(crate) const MB: usize = 1024 * 1024;
 #[derive(Debug)]
 pub struct CudaServer {
     ctx: CudaContext,
+    interop: InteropState,
     device_id: DeviceId,
     streams: MultiStream<CudaStreamBackend>,
     utilities: Arc<ServerUtilities<Self>>,
@@ -553,8 +556,10 @@ impl CudaServer {
         )
         .expect("Can create a new stream.");
 
+        let interop = InteropState::new(ctx.context as usize,max_streams);
         Self {
             ctx,
+            interop,
             device_id,
             streams: MultiStream::new(
                 utilities.logger.clone(),

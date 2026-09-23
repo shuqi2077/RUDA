@@ -95,6 +95,12 @@ pub fn flash_attention<R: Runtime>(
     options: AttentionModuleOptions,
     strategy: launch::Strategy,
 ) -> Result<RudaTensor<R>, AttentionSetupError> {
+    // A one-row bottom-right causal mask allows all nonempty key positions.
+    // Normalize before both eligibility checks and launch/tuning key creation.
+    let options = super::support::normalize_single_query_causal(
+        options, query.meta.shape[2], key.meta.shape[2],
+    );
+
     if let Some(reason) = super::support::unsupported_flash_reason(
         &options,
         attn_bias.is_some(),

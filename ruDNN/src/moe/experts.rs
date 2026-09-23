@@ -1,7 +1,7 @@
 use super::{
     DispatchedTokens, MoeError, RoutingOptions, elements, float_tensor, kernels, route, same_device,
 };
-use rublas::tensor_grouped::grouped_matmul_nt;
+use rublas::tensor_grouped::{grouped_matmul_nt_segmented, GroupedStrategy};
 use ruda_core::tensor::Shape;
 use ruda_kernel::{
     dsl::{Runtime, calculate_ruda_count_elemwise, prelude::RudaDim},
@@ -54,6 +54,13 @@ impl<R: Runtime> SwiGluExperts<R> {
         &self,
         dispatched: &DispatchedTokens<R>,
     ) -> Result<RudaTensor<R>, MoeError> {
+        self.forward_dispatched_with_strategy(dispatched, GroupedStrategy::Scalar)
+    }
+
+    /// Opt-in cooperative matrix path shared by all models using these experts.
+    pub fn forward_dispatched_with_strategy(
+        &self, dispatched: &DispatchedTokens<R>, strategy: GroupedStrategy,
+    ) -> Result<RudaTensor<R>, MoeError> {
         same_device(&self.gate, &dispatched.values)?;
         if dispatched.routing.experts != self.gate.meta.shape()[0]
             || dispatched.values.meta.shape()[1] != self.gate.meta.shape()[2]
@@ -61,15 +68,19 @@ impl<R: Runtime> SwiGluExperts<R> {
         {
             return Err(MoeError("MoE dispatch and expert weights do not match"));
         }
-        let gate = grouped_matmul_nt(
+        // SAFETY: DispatchedTokens fields are private and RoutingPlan::dispatch
+        // constructs complete, monotone expert segments without token dropping.
+        let product = |input, weights| unsafe {
+            grouped_matmul_nt_segmented(input, weights, dispatched.row_experts.clone(),
+                dispatched.offsets.clone(), strategy)
+        };
+        let gate = product(
             dispatched.values.clone(),
             self.gate.clone(),
-            dispatched.row_experts.clone(),
         )?;
-        let up = grouped_matmul_nt(
+        let up = product(
             dispatched.values.clone(),
             self.up.clone(),
-            dispatched.row_experts.clone(),
         )?;
         let size = gate.meta.num_elements();
         if size != 0 {
@@ -83,11 +94,20 @@ impl<R: Runtime> SwiGluExperts<R> {
                 gate.dtype.into(),
             );
         }
-        Ok(grouped_matmul_nt(
+        Ok(product(
             gate,
             self.down.clone(),
-            dispatched.row_experts.clone(),
         )?)
+    }
+
+    /// Shared sigmoid/group-limited route -> dispatch -> selected expert kernels -> combine.
+    /// Shared experts and model residual/scaling outside this routed branch remain caller-owned.
+    pub fn forward_sigmoid_grouped(&self, input:RudaTensor<R>,logits:RudaTensor<R>,
+        bias:Option<RudaTensor<R>>, options:super::GroupRoutingOptions,strategy:GroupedStrategy)
+        ->Result<RudaTensor<R>,MoeError> {
+        let dispatched=super::route_sigmoid_grouped(logits,bias,options)?.dispatch(input)?;
+        let output=self.forward_dispatched_with_strategy(&dispatched,strategy)?;
+        dispatched.combine(output)
     }
 
     /// Complete local softmax/top-k -> dispatch -> SwiGLU experts -> combine path.

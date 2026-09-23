@@ -3,9 +3,15 @@ use half::{bf16, f16};
 use ruda::runtime::server::Handle;
 use ruda_driver_cuda::{CudaDevice, CudaRuntime};
 use ruda_kernel::dsl::prelude::*;
-use std::{cell::RefCell, ffi::CString, panic::AssertUnwindSafe, sync::atomic::{AtomicU64, Ordering}};
+use std::{cell::RefCell, ffi::CString, panic::AssertUnwindSafe, sync::{OnceLock, atomic::{AtomicU64, Ordering}}};
 
+mod streams;
+mod paged;
 mod kernels;
+mod matmul;
+mod pointwise;
+mod softmax;
+mod normalization;
 mod primitives;
 mod spatial;
 
@@ -13,6 +19,21 @@ thread_local! { static ERROR: RefCell<CString> = RefCell::new(CString::default()
 static LAUNCHES: AtomicU64 = AtomicU64::new(0);
 static UPLOAD: AtomicU64 = AtomicU64::new(0);
 static DOWNLOAD: AtomicU64 = AtomicU64::new(0);
+// Cumulative dispatch/allocation counters, not peak memory or timing measurements.
+static RUBLAS_CALLS: AtomicU64 = AtomicU64::new(0);
+static SCALAR_MATMUL_CALLS: AtomicU64 = AtomicU64::new(0);
+static DIRECT_POINTWISE_CALLS: AtomicU64 = AtomicU64::new(0);
+static ADDMM_EPILOGUES: AtomicU64 = AtomicU64::new(0);
+static ADDMM_WORKSPACE_BYTES: AtomicU64 = AtomicU64::new(0);
+static LEGACY_FP32_TEMP_BYTES: AtomicU64 = AtomicU64::new(0);
+static WARP_SOFTMAX_CALLS: AtomicU64 = AtomicU64::new(0);
+static SCALAR_SOFTMAX_CALLS: AtomicU64 = AtomicU64::new(0);
+static FUSED_LAYER_NORM_CALLS: AtomicU64 = AtomicU64::new(0);
+static FUSED_RMS_NORM_CALLS: AtomicU64 = AtomicU64::new(0);
+static ASYNC_DISPATCHES: AtomicU64 = AtomicU64::new(0);
+static TRUSTED_INDEX_CALLS: AtomicU64 = AtomicU64::new(0);
+static STORAGE_REDUCTION_CALLS: AtomicU64 = AtomicU64::new(0);
+static WARP_REDUCTION_CALLS: AtomicU64 = AtomicU64::new(0);
 
 pub struct Allocation { handle: Handle, bytes: usize }
 
@@ -76,8 +97,15 @@ impl View {
     }
 }
 
-fn client() -> ComputeClient<CudaRuntime> { CudaRuntime::client(&CudaDevice::default()) }
+fn client() -> ComputeClient<CudaRuntime> { let mut c=CudaRuntime::client(&CudaDevice::default()); streams::bind(&mut c); c }
 fn sync(client: &ComputeClient<CudaRuntime>) { block_on(client.sync()).expect("RUDA CUDA synchronization failed"); }
+fn async_dispatch_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| matches!(std::env::var("RUDA_TORCH_ASYNC").as_deref(), Ok("1") | Ok("true") | Ok("yes")))
+}
+fn finish_dispatch(client: &ComputeClient<CudaRuntime>) {
+    if async_dispatch_enabled() { ASYNC_DISPATCHES.fetch_add(1, Ordering::Relaxed); } else { sync(client); }
+}
 fn checked(call: impl FnOnce()) -> i32 {
     match std::panic::catch_unwind(AssertUnwindSafe(call)) {
         Ok(()) => 0,
@@ -94,7 +122,7 @@ fn checked(call: impl FnOnce()) -> i32 {
 pub extern "C" fn ruda_torch_error() -> *const std::ffi::c_char { ERROR.with(|v| v.borrow().as_ptr()) }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ruda_torch_abi_version() -> u32 { 4 }
+pub extern "C" fn ruda_torch_abi_version() -> u32 { 9 }
 
 // All pointer arguments below are valid, aligned, and held alive by the in-process C++ adapter.
 #[unsafe(no_mangle)]
@@ -103,7 +131,11 @@ pub unsafe extern "C" fn ruda_torch_alloc(bytes: usize, allocation: *mut *mut Al
         let client = client();
         let handle = client.empty(bytes.max(4));
         let resource = client.get_resource(handle.clone()).expect("RUDA CUDA allocation failed");
-        sync(&client);
+        // get_resource runs on the owning device service and returns the
+        // stream-ordered allocation pointer. In opt-in async mode subsequent
+        // RUDA bindings/stream events protect its use; do not drain this queue
+        // for every freshly allocated PyTorch output tensor.
+        if !async_dispatch_enabled() { sync(&client); }
         unsafe { *ptr = resource.resource().ptr; *allocation = Box::into_raw(Box::new(Allocation { handle, bytes })); }
     })
 }
@@ -114,7 +146,7 @@ pub unsafe extern "C" fn ruda_torch_free(allocation: *mut Allocation) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ruda_torch_sync() -> i32 { checked(|| sync(&client())) }
+pub extern "C" fn ruda_torch_sync() -> i32 { checked(streams::device_sync) }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ruda_torch_fill(out: *const Descriptor, bits: u64) -> i32 {
@@ -128,7 +160,7 @@ pub unsafe extern "C" fn ruda_torch_fill(out: *const Descriptor, bits: u64) -> i
                 &client, RudaCount::Static(count, 1, 1), RudaDim::new_1d(128),
                 out.arg(), bits as u32, (bits >> 32) as u32);
         }
-        sync(&client);
+        finish_dispatch(&client);
         LAUNCHES.fetch_add(1, Ordering::Relaxed);
     })
 }
@@ -171,12 +203,65 @@ fn launch(op: u32, a: &View, b: &View, out: &View, scalar: f32) {
                 }
             }
         }
-        sync(&client);
+        finish_dispatch(&client);
         LAUNCHES.fetch_add(1, Ordering::Relaxed);
         return;
     }
     assert!(a.dtype <= 2 && b.dtype <= 2 && out.dtype <= 2,
         "this RUDA arithmetic kernel requires floating tensors");
+    // Dispatch before the legacy whole-tensor FP32 staging path.
+    if (31..=34).contains(&op) && a.dtype == b.dtype {
+        softmax::launch(op, a, b, out, scalar as usize);
+        return;
+    }
+    if op == 7 || op == 30 { matmul::launch(op, a, b, out); return; }
+    if op == 6 {
+        assert_eq!(a.dtype, out.dtype);
+        if out.len == 0 { return; }
+        let client = client();
+        let packed = |view: &View| {
+            let mut expected = 1usize;
+            for (&dim, &stride) in view.shape.iter().zip(&view.strides).rev() {
+                if dim > 1 && stride != expected { return false; }
+                expected = expected.checked_mul(dim).expect("reduction stride overflow");
+            }
+            true
+        };
+        let last_axis = !a.shape.is_empty() && a.shape.last().copied().unwrap_or(0) > 0
+            && a.shape.len() == out.shape.len()
+            && out.shape.last() == Some(&1)
+            && a.shape[..a.shape.len()-1] == out.shape[..out.shape.len()-1]
+            && packed(a) && packed(out);
+        macro_rules! launch {
+            ($kernel:ident, $dtype:ty, $count:expr) => { kernels::$kernel::launch::<$dtype, $dtype, CudaRuntime>(
+                &client, RudaCount::Static($count, 1, 1), RudaDim::new_1d(128), a.arg(), out.arg()) };
+        }
+        if last_axis {
+            let work = out.len.checked_mul(32).expect("reduction launch overflow");
+            let count = u32::try_from(work.div_ceil(128)).expect("reduction launch grid overflow");
+            unsafe { match a.dtype {
+                0 => launch!(reduce_sum_last_warp, f32, count),
+                1 => launch!(reduce_sum_last_warp, f16, count),
+                2 => launch!(reduce_sum_last_warp, bf16, count), _ => unreachable!()
+            } }
+            WARP_REDUCTION_CALLS.fetch_add(1, Ordering::Relaxed);
+        } else {
+            let count = u32::try_from(out.len.div_ceil(128)).expect("reduction launch grid overflow");
+            unsafe { match a.dtype {
+                0 => launch!(reduce_sum_storage, f32, count),
+                1 => launch!(reduce_sum_storage, f16, count),
+                2 => launch!(reduce_sum_storage, bf16, count), _ => unreachable!()
+            } }
+            STORAGE_REDUCTION_CALLS.fetch_add(1, Ordering::Relaxed);
+        }
+        finish_dispatch(&client);
+        LAUNCHES.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
+    if matches!(op, 1..=5 | 8..=29 | 35..=57 | 62..=64 | 69..=72) {
+        pointwise::launch(op, a, b, out, scalar);
+        return;
+    }
     if (74..=77).contains(&op) {
         assert_eq!(a.dtype, out.dtype);
         let client = client();
@@ -192,7 +277,7 @@ fn launch(op: u32, a: &View, b: &View, out: &View, scalar: f32) {
                 _ => panic!("unsupported RUDA pooling dtype"),
             }
         }
-        sync(&client);
+        finish_dispatch(&client);
         LAUNCHES.fetch_add(1, Ordering::Relaxed);
         return;
     }
@@ -212,12 +297,16 @@ fn launch(op: u32, a: &View, b: &View, out: &View, scalar: f32) {
                 _ => panic!("unsupported RUDA storage dtype"),
             }
         }
-        sync(&client);
+        finish_dispatch(&client);
         LAUNCHES.fetch_add(1, Ordering::Relaxed);
         return;
     }
     if a.dtype != 0 || b.dtype != 0 || out.dtype != 0 {
-        let allocate = |v: &View| View::packed(client().empty(v.len.checked_mul(4).expect("size overflow").max(4)), v.shape.clone(), 0);
+        let allocate = |v: &View| {
+            let bytes = v.len.checked_mul(4).expect("size overflow").max(4);
+            LEGACY_FP32_TEMP_BYTES.fetch_add(bytes as u64, Ordering::Relaxed);
+            View::packed(client().empty(bytes), v.shape.clone(), 0)
+        };
         let av = (a.dtype != 0).then(|| allocate(a));
         let bv = (b.dtype != 0).then(|| allocate(b));
         let ov = (out.dtype != 0).then(|| allocate(out));
@@ -237,7 +326,7 @@ fn launch(op: u32, a: &View, b: &View, out: &View, scalar: f32) {
     let count = u32::try_from(work.div_ceil(128)).expect("launch grid overflow");
     unsafe {
         match op {
-            0..=5 | 8..=29 | 35..=57 | 62..=64 | 69..=72 => kernels::pointwise::launch::<CudaRuntime>(
+            0..=5 | 8..=29 | 35..=57 | 62..=64 | 69..=72 => kernels::pointwise::launch::<f32, f32, f32, CudaRuntime>(
                 &client, RudaCount::Static(count, 1, 1), RudaDim::new_1d(128),
                 a.arg(), b.arg(), out.arg(), scalar, op),
             6 => kernels::reduce::launch::<CudaRuntime>(
@@ -246,13 +335,13 @@ fn launch(op: u32, a: &View, b: &View, out: &View, scalar: f32) {
                 &client, RudaCount::Static(count, 1, 1), RudaDim::new_1d(128), a.arg(), b.arg(), out.arg()),
             30 => kernels::bmm::launch::<CudaRuntime>(
                 &client, RudaCount::Static(count, 1, 1), RudaDim::new_1d(128), a.arg(), b.arg(), out.arg()),
-            31..=34 => kernels::softmax::launch::<CudaRuntime>(
+            31..=34 => kernels::softmax::launch::<f32, f32, CudaRuntime>(
                 &client, RudaCount::Static(count, 1, 1), RudaDim::new_1d(128), a.arg(), b.arg(), out.arg(),
                 scalar as usize, op == 32 || op == 34, op >= 33),
             _ => panic!("unsupported RUDA operation {op}"),
         }
     }
-    sync(&client);
+    finish_dispatch(&client);
     LAUNCHES.fetch_add(1, Ordering::Relaxed);
 }
 
@@ -312,7 +401,7 @@ fn convert(a: &View, out: &View) {
             _ => panic!("unsupported RUDA conversion dtype"),
         }
     }
-    sync(&client);
+    finish_dispatch(&client);
     LAUNCHES.fetch_add(1, Ordering::Relaxed);
 }
 
@@ -326,6 +415,36 @@ pub unsafe extern "C" fn ruda_torch_spatial(op: u32, a: *const Descriptor, b: *c
             (View::read(&*a), View::read(&*b), View::read(&*out), std::slice::from_raw_parts(params, count))
         };
         spatial::launch(op, &a, &b, &out, params);
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruda_torch_layer_norm(
+    input: *const Descriptor, weight: *const Descriptor, bias: *const Descriptor,
+    out: *const Descriptor, mean: *const Descriptor, rstd: *const Descriptor, epsilon: f32,
+) -> i32 {
+    checked(|| {
+        assert!(!input.is_null() && !out.is_null() && !mean.is_null() && !rstd.is_null());
+        let input = unsafe { View::read(&*input) };
+        let weight = (!weight.is_null()).then(|| unsafe { View::read(&*weight) });
+        let bias = (!bias.is_null()).then(|| unsafe { View::read(&*bias) });
+        let out = unsafe { View::read(&*out) };
+        let mean = unsafe { View::read(&*mean) };
+        let rstd = unsafe { View::read(&*rstd) };
+        normalization::layer_norm(&input, weight.as_ref(), bias.as_ref(), &out, &mean, &rstd, epsilon);
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruda_torch_rms_norm(
+    input: *const Descriptor, weight: *const Descriptor, out: *const Descriptor, epsilon: f32,
+) -> i32 {
+    checked(|| {
+        assert!(!input.is_null() && !out.is_null());
+        let input = unsafe { View::read(&*input) };
+        let weight = (!weight.is_null()).then(|| unsafe { View::read(&*weight) });
+        let out = unsafe { View::read(&*out) };
+        normalization::rms_norm(&input, weight.as_ref(), &out, epsilon);
     })
 }
 
@@ -401,6 +520,19 @@ pub unsafe extern "C" fn ruda_torch_execute(op: u32, a: *const Descriptor, b: *c
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruda_torch_addmm(
+    bias: *const Descriptor, a: *const Descriptor, b: *const Descriptor,
+    out: *const Descriptor, alpha: f32, beta: f32,
+) -> i32 {
+    checked(|| {
+        let (bias, a, b, out) = unsafe {
+            (View::read(&*bias), View::read(&*a), View::read(&*b), View::read(&*out))
+        };
+        matmul::addmm(&bias, &a, &b, &out, alpha, beta);
+    })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ruda_torch_transfer(desc: *const Descriptor, host: *mut u8, upload: bool) -> i32 {
     checked(|| {
         let view = unsafe { View::read(&*desc) };
@@ -425,5 +557,32 @@ pub unsafe extern "C" fn ruda_torch_transfer(desc: *const Descriptor, host: *mut
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ruda_torch_counter(index: u32) -> u64 {
-    match index { 0 => LAUNCHES.load(Ordering::Relaxed), 1 => UPLOAD.load(Ordering::Relaxed), 2 => DOWNLOAD.load(Ordering::Relaxed), _ => 0 }
+    match index {
+        0 => LAUNCHES.load(Ordering::Relaxed),
+        1 => UPLOAD.load(Ordering::Relaxed),
+        2 => DOWNLOAD.load(Ordering::Relaxed),
+        3 => RUBLAS_CALLS.load(Ordering::Relaxed),
+        4 => SCALAR_MATMUL_CALLS.load(Ordering::Relaxed),
+        5 => DIRECT_POINTWISE_CALLS.load(Ordering::Relaxed),
+        6 => ADDMM_EPILOGUES.load(Ordering::Relaxed),
+        7 => ADDMM_WORKSPACE_BYTES.load(Ordering::Relaxed),
+        8 => LEGACY_FP32_TEMP_BYTES.load(Ordering::Relaxed),
+        9 => WARP_SOFTMAX_CALLS.load(Ordering::Relaxed),
+        10 => SCALAR_SOFTMAX_CALLS.load(Ordering::Relaxed),
+        11 => FUSED_LAYER_NORM_CALLS.load(Ordering::Relaxed),
+        12 => TRUSTED_INDEX_CALLS.load(Ordering::Relaxed),
+        13 => STORAGE_REDUCTION_CALLS.load(Ordering::Relaxed),
+        14 => WARP_REDUCTION_CALLS.load(Ordering::Relaxed),
+        15 => FUSED_RMS_NORM_CALLS.load(Ordering::Relaxed),
+        16 => ASYNC_DISPATCHES.load(Ordering::Relaxed),
+        17 => paged::SPLIT_CALLS.load(Ordering::Relaxed),
+        18 => paged::WORKSPACE_ALLOCS.load(Ordering::Relaxed),
+        19 => paged::WORKSPACE_BYTES.load(Ordering::Relaxed),
+        _ => 0,
+    }
 }
+
+#[cfg(test)]
+mod v14_gpu_tests;
+#[cfg(test)]
+mod v15_gpu_tests;

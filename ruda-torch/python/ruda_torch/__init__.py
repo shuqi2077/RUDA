@@ -26,11 +26,11 @@ from . import _C
 if not hasattr(_native, "ruda_torch_abi_version"):
     raise RuntimeError("RUDA native library is outdated; rebuild Rust and C++ extensions")
 _native.ruda_torch_abi_version.restype = ctypes.c_uint32
-if _native.ruda_torch_abi_version() != 4 or getattr(_C, "abi_version", None) != 4:
+if _native.ruda_torch_abi_version() != 9 or getattr(_C, "abi_version", None) != 9:
     raise RuntimeError("RUDA native ABI mismatch; rebuild Rust and C++ extensions")
 
 _C.initialize([ctypes.cast(getattr(_native, "ruda_torch_" + name), ctypes.c_void_p).value
-               for name in ("alloc", "free", "error", "execute", "transfer", "sync", "fill", "spatial")])
+               for name in ("alloc", "free", "error", "execute", "transfer", "sync", "fill", "spatial", "addmm", "layer_norm", "rms_norm", "stream", "paged")])
 torch.utils.rename_privateuse1_backend("ruda")
 
 def is_available():
@@ -58,6 +58,15 @@ _native.ruda_torch_counter.restype = ctypes.c_uint64
 
 def execution_stats():
     return {name: _native.ruda_torch_counter(index) for index, name in enumerate(
-        ("kernel_launches", "host_to_device_bytes", "device_to_host_bytes"))}
+        ("kernel_launches", "host_to_device_bytes", "device_to_host_bytes",
+         "rublas_calls", "scalar_matmul_calls", "direct_pointwise_calls",
+         "addmm_epilogues", "addmm_workspace_bytes_total", "legacy_fp32_temp_bytes_total",
+         "warp_softmax_calls", "scalar_softmax_calls", "fused_layer_norm_calls",
+         "trusted_index_calls", "storage_reduction_calls", "warp_reduction_calls",
+         "fused_rms_norm_calls", "async_dispatches", "paged_split_calls",
+         "paged_workspace_allocations", "paged_workspace_bytes_total"))}
 
 from . import _ops
+
+from ._streams import Stream, Event, stream, current_stream, default_stream, record_stream
+from ._paged import PagedAttentionPlan
