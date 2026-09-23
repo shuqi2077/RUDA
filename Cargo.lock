@@ -5477,7 +5477,7 @@ dependencies = [
 
 [[package]]
 name = "ruda-communication"
-version = "0.21.6"
+version = "0.21.7"
 dependencies = [
  "axum",
  "bytes",
