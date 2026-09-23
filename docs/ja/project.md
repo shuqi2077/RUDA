@@ -16,6 +16,17 @@ Ruda は CUDA C++ のコンパイル経路を維持しつつ、PTX、HIP、独�
 
 Git、Rust/Cargo、リンカーツールチェーン、NVIDIA GPU とドライバ、CUDA Toolkit が必要です。インストールの詳細は[環境構築](getting-started.md)を参照してください。
 
+### 公開済みクレートの利用
+
+アプリケーションの `Cargo.toml` に [CUDA バックエンド](https://crates.io/crates/ruda-driver-cuda)を追加します。
+
+```toml
+[dependencies]
+ruda-driver-cuda = { version = "0.1", features = ["direct-ptx"] }
+```
+
+以下のサンプルはソースディレクトリから実行します。
+
 ### クローン
 
 ```sh
@@ -57,6 +68,27 @@ cargo run --release --locked -p ruda-llm --features nvidia-ptx --example qwen35_
 
 このサンプルは生成されたテキストとトークン ID を表示します。代わりに CUDA C++ / NVRTC 経路を使う場合は、いずれのサンプルも実行前に `RUDA_CUDA_COMPILER` を `nvrtc` に設定してください。
 
+### ネイティブ PyTorch バックエンドの利用
+
+`ruda-torch` は単一の NVIDIA GPU 上に PyTorch デバイス `ruda:0` を登録します。PyTorch、setuptools、C++20 コンパイラを用意し、上記の PTX 環境設定を使ってリポジトリのルートで次を実行してください。Windows では x64 MSVC 開発者シェルを使用します。
+
+```sh
+cargo build --locked -p ruda-torch-native
+python -m pip install --no-build-isolation --no-deps -e ./ruda-torch/python
+```
+
+既定のローダーはこの debug ビルドを自動検出します。release ビルドや別の場所のライブラリを使う場合は、そのパスを `RUDA_TORCH_LIBRARY` に設定してください。Rust ライブラリと C++ 拡張は両方とも **ABI 9** が必要で、同時に再ビルドします。
+
+```python
+import torch
+import ruda_torch
+
+x = torch.arange(4, dtype=torch.float32).to("ruda:0")
+print((x + x).cpu())
+```
+
+ビルド済み Windows wheel は、成功した [RUDA Torch Windows build](https://github.com/shuqi2077/RUDA/actions/workflows/ruda-torch-windows.yml) のアーティファクトから取得できます。wheel アーティファクトを展開し、中の `.whl` ファイルを `python -m pip install --no-deps` でインストールしてください。wheel はネイティブ DLL を含み、Windows x64、CPython 3.13、PyTorch `2.13.0+cu130` 向けです。対応する PyTorch を先にインストールしてください。アーティファクトの保存期間は 7 日です。`ruda-torch-native` はソースからビルドするコンポーネントで、crates.io パッケージではありません。
+
 ## スタックの構成
 
 1 つのリポジトリに、責務が明確な複数のクレートを収めています。分野別ライブラリから上位フレームワークまで、スタックを階層化し、一体として開発しています。
@@ -69,7 +101,17 @@ cargo run --release --locked -p ruda-llm --features nvidia-ptx --example qwen35_
 | 分野別ライブラリ | ruBLAS、ruDNN、ruPRIM、ruFFT、ruRAND、ruSPARSE |
 | 集合通信 | ruCCL、`ruda-communication` |
 | テンソルとフレームワーク | `ruda-tensor*`、`ruda-autodiff`、`ruda-fusion` |
+| PyTorch 統合 | `ruda-torch-native`（Rust）、`ruda_torch`（Python） |
 | モデルとデータ | `ruda-model`、`ruda-nn`、`ruda-optim`、`ruda-store`、`ruda-dataset` |
+
+## ネイティブ GPU 推論
+
+- **演算子:** ネイティブ PyTorch の行列演算は ruBLAS を使用します。FP16/BF16 ストレージを維持する計算経路、最終軸の融合 LayerNorm/RMSNorm、ワープ並列 Softmax/リダクションにより、中間テンソルと個別のカーネル投入を削減します。
+- **ページ化 GQA と MLA:** ruDNN の公開カーネルは物理 KV ページを直接読み、可変長の prefill/decode を処理します。`ruda_torch.PagedAttentionPlan` は `splits=1..32`、FP32 の部分結果の結合、ワークスペースの再利用に対応し、既定値は `splits=1` です。共有キャッシュへの書き込みではコピーオンライト保護を維持します。
+- **MoE:** グループ化 sigmoid ルーティングとセグメント化エキスパート行列積は、デバイス上のエキスパートオフセットを使用します。FP16/BF16 Tensor Core 経路は明示的な選択が必要で、既存のエキスパート API は既定でスカラー GPU 戦略を使います。
+- **ストリームとイベント:** `ruda_torch.Stream`、`Event`、`record_stream` はネイティブランタイムに接続します。投入は既定で同期的です。最初のネイティブ処理投入前に `RUDA_TORCH_ASYNC=1` を設定すると非同期投入を有効にできます。明示的な同期とホストへの読み戻しは引き続き完了を待ちます。
+
+ページ化 Attention には、同じデータ型・デバイス・実行キュー上の連続した FP32/FP16/BF16 テンソルが必要です。順伝播のみで、任意の外部マスクや量子化 KV キャッシュには対応しません。MLA/MoE は再利用可能なコンポーネントであり、完全なモデルアダプターには射影、位置エンコーディング、ルーティングパラメーター、キャッシュ所有権の管理が必要です。
 
 ## ハードウェアへの経路
 
