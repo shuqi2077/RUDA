@@ -227,3 +227,15 @@ To integrate your own batch executor, use `ContinuousBatchScheduler`:
 The scheduler manages requests and page-allocation metadata. The caller's executor owns device KV storage and model execution. Use `token_matrix()`, `context_lengths()`, and `flattened_block_table()` to construct batch inputs. Complete or cancel an outstanding batch before calling `schedule()` again.
 
 API reference: [ruLLM exports](../../ruLLM/src/lib.rs), [Generation options](../../ruLLM/src/generation.rs), [Scheduler](../../ruLLM/src/continuous_batch.rs).
+
+## Qwen3.5 fused paged attention
+
+`Qwen35BatchCache` selects its attention path when `new_batch_cache` creates it. Set `RUDA_PAGED_ATTENTION=fused` before cache creation to use ruDNN's fused paged attention in Qwen3.5 continuous batching. Unset or `legacy` retains the existing path; other values are rejected. Changing the variable does not switch an existing cache, and it is not a global switch for every generation entry point.
+
+The fused path keeps a physical KV arena per full-attention layer and uses the scheduler's page tables for prefill/decode without gathering historical KV into padded tensors. Arena dimensions use `num_pages`, `block_size`, KV heads and head dimension; reserve GPU memory for that capacity. Inputs follow ruDNN's contiguous F32/F16/BF16 contract. Shared-prefix writes require scheduler-level copy-on-write. After a failed device append, rebuild the cache rather than continuing from its previous position.
+
+## Reusable attention and MoE components
+
+`rullm::gpu_inference` exposes `TensorOps`, `gqa_scores`, `gqa_value_product`, `mla_absorb_query`, `mla_scores` and `mla_value_product`. These compose caller-supplied device tensor operations without repeating cached GQA heads or expanding historical MLA latent values. The caller supplies masking, softmax, positional encoding and model-specific scaling.
+
+`rullm::device_inference` re-exports ruDNN's `HostPlan`, `DevicePlan`, `PagedAttentionError`, `SwiGluExperts`, `RoutingOptions`, `GroupRoutingOptions`, `route_sigmoid_grouped` and `GroupedStrategy`. These are building blocks, not a complete MLA/MoE model loader; adapters still provide projections, routing configuration and cache ownership.

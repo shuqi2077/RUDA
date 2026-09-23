@@ -12,6 +12,7 @@ Neural network operators for Ruda.
 | Feature | Operations |
 | --- | --- |
 | `tensor-attention` | Attention |
+| `tensor-paged-attention` | Paged MHA/GQA/MLA |
 | `tensor-convolution` | Convolution |
 | `tensor-normalization` | LayerNorm, RMSNorm, and softmax |
 | `tensor-moe` | MoE routing, dispatch, and expert computation |
@@ -48,6 +49,7 @@ ruDNN provides neural network operations. The Cargo package is `ruDNN` and the R
 | Feature | Operations |
 | --- | --- |
 | `tensor-attention` | Tensor attention |
+| `tensor-paged-attention` | Paged MHA/GQA/MLA |
 | `tensor-convolution` | Tensor convolution |
 | `pooling`, `interpolation` | Pooling and interpolation |
 | `grid-sample`, `ctc` | Grid sampling and CTC |
@@ -227,3 +229,23 @@ The returned `output` has shape `[B, H, T, V]` and query dtype. `final_state` is
 `chunk_size` must be positive, and the triangular workspace of `4 × (chunk_size² + chunk_size)` bytes must fit the device's per-workgroup shared-memory limit. The entry point pads the final chunk; padding is excluded from the output. Invalid arguments return `GatedDeltaError`.
 
 For model-level text and image calls, see the [ruLLM inference guide](https://github.com/shuqi2077/RUDA/blob/main/docs/en/model-inference.md).
+
+### 9. Paged attention and MLA
+
+Enable `tensor-paged-attention` and use `rudnn::paged_attention`. `HostPlan::new(page_size, pages, tables, lengths, sequence_ids, positions)` validates host scheduling metadata; positions are absolute, zero-based positions within each sequence. `DevicePlan::upload(host, &q)` uploads that metadata to the query's device and execution queue. Reuse the plan only while its schedule is unchanged.
+
+`DevicePlan::attention(q, k, v, scale, causal)` reads physical cache pages directly for packed, variable-length prefill/decode. Q has shape `[queries, Hq, D]`, K `[pages, page_size, Hkv, D]`, V `[pages, page_size, Hkv, Dv]`, and the result `[queries, Hq, Dv]`; `Hq` must be divisible by `Hkv`. Inputs must be contiguous, unquantized F32/F16/BF16 with matching dtype, device and queue. Supply finite Q/K/V and a finite positive scale. `D` and `Dv` are in `1..=1024`; the device must support a 32- or 64-lane plane and the required launch grid. This forward-only interface has no arbitrary external mask or quantized KV-cache support.
+
+`DevicePlan::mla(q, qp, latent, kp, scale, causal)` takes absorbed queries `[queries, H, R]`, positional queries `[queries, H, P]`, a shared latent cache `[pages, page_size, 1, R]` and positional cache `[pages, page_size, 1, P]`. It returns compressed context `[queries, H, R]`; `P` is in `1..=256`. Apply positional encoding before the call and value/output projections afterward. Use the model's original QK scale, not a scale derived from the compressed rank.
+
+The methods above use the unsplit path. To split a history, create `SplitWorkspace::new(&q, queries, heads, value_dim, splits)` with `2..=32` splits and call `attention_with_workspace` or `mla_with_workspace`. Partial statistics and merging use FP32. A workspace is limited to 64 MiB and can be reused only with matching shape and the same ordered execution queue.
+
+`DevicePlan::append(k, v, key_cache, value_cache)` returns the cache tensors to retain for subsequent calls. Shared cache allocations are copied before mutation; shared-prefix physical pages additionally require scheduler-level copy-on-write. Duplicate physical writes are rejected.
+
+### 10. Group-limited sigmoid MoE routing
+
+With `tensor-moe`, `route_sigmoid_grouped(logits, bias, options)` returns a `RoutingPlan`. Logits are `[tokens, experts]` in F32/F16/BF16; optional correction bias is FP32 `[experts]` on the same device and queue. Bias affects selection only. Returned weights use the original sigmoid scores, optional renormalization and `scale`; exact ties favor lower IDs.
+
+`GroupRoutingOptions` contains `top_k`, `groups`, `selected_groups`, `group_top_two`, `renormalize` and `scale`. Expert count is `1..=1024`, groups `1..=128` and top-k `1..=64`; experts must divide evenly into groups, selected groups must be valid, and top-k cannot exceed their combined expert count. `group_top_two=true` sums the two largest corrected scores per group and requires at least two experts per group; otherwise the group score is its maximum. Scale must be finite and positive.
+
+`SwiGluExperts::forward_sigmoid_grouped(input, logits, bias, options, strategy)` runs routing, dispatch, expert computation and combination. `forward_dispatched_with_strategy` selects `GroupedStrategy::Scalar`, `Auto` or `TensorCore`; the existing `forward` and `forward_dispatched` methods retain `Scalar`. Tensor Core execution requires supported F16/BF16 hardware. `Auto` falls back only for unsupported setup, not compilation or execution failures. Model projections, shared experts and residual branches remain caller-owned.

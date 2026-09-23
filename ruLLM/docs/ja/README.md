@@ -257,3 +257,15 @@ fn generate_from_images(
 スケジューラはリクエストとページ割り当てメタデータを管理します。呼び出し元のエグゼキュータは、デバイス KV ストレージとモデルの実行を所有しています。 `token_matrix()`、`context_lengths()`、および `flattened_block_table()` を使用してバッチ入力を構築します。 `schedule()` を再度呼び出す前に、未処理のバッチを完了するかキャンセルしてください。
 
 API 参照: [ruLLM エクスポート](../../src/lib.rs)、[生成オプション](../../src/generation.rs)、[スケジューラー](../../src/continuous_batch.rs)。
+
+### Qwen3.5 の融合ページ化アテンション
+
+`Qwen35BatchCache` は `new_batch_cache` による作成時にアテンション経路を選択します。キャッシュ作成前に `RUDA_PAGED_ATTENTION=fused` を設定すると、Qwen3.5 の連続バッチ処理で ruDNN の融合ページ化アテンションを使用します。未設定または `legacy` は既存の経路を維持し、それ以外の値は拒否されます。変数の変更で既存のキャッシュは切り替わりません。また、すべての生成エントリポイントに対するグローバルな切り替えではありません。
+
+融合経路は各フルアテンション層に物理 KV arena を保持し、スケジューラーのページテーブルを使ってプリフィルとデコードを行います。履歴 KV をパディング付きテンソルに集約しません。arena の次元は `num_pages`、`block_size`、KV ヘッド数、ヘッド次元に従うため、その容量の GPU メモリを確保してください。入力は ruDNN の連続 F32/F16/BF16 契約に従います。共有プレフィックスへの書き込みにはスケジューラー側のコピーオンライトが必要です。デバイスへの追加が失敗した後は、以前の位置から続行せず、キャッシュを再構築してください。
+
+### 再利用可能なアテンションと MoE コンポーネント
+
+`rullm::gpu_inference` は `TensorOps`、`gqa_scores`、`gqa_value_product`、`mla_absorb_query`、`mla_scores`、`mla_value_product` を提供します。呼び出し側のデバイステンソル演算を組み合わせ、キャッシュされた GQA ヘッドの複製や履歴 MLA 潜在値の展開を避けます。マスク、softmax、位置エンコーディング、モデル固有のスケーリングは呼び出し側が提供します。
+
+`rullm::device_inference` は ruDNN の `HostPlan`、`DevicePlan`、`PagedAttentionError`、`SwiGluExperts`、`RoutingOptions`、`GroupRoutingOptions`、`route_sigmoid_grouped`、`GroupedStrategy` を再エクスポートします。これらは計算部品であり、完全な MLA/MoE モデルローダーではありません。アダプターは射影、ルーティング設定、キャッシュ所有権を提供する必要があります。

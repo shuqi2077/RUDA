@@ -132,4 +132,14 @@ K、N、および G はゼロ以外でなければなりません。 K は G で
 
 [ruDNN MoE](../../../docs/ja/libraries/rudnn.md) は、エキスパート投影にグループ化された乗算を使用します。量子化された重みは別の `tensor_int4` モジュールを使用します。通常の浮動小数点グループ乗算は、INT4 専門家による計算ではありません。
 
-グループ化されたカーネルはスカラー累積を使用します。 dtype、形状、バックエンドの行列乗算戦略を測定します。
+`grouped_matmul_nt` はスカラー累積を使用します。dtype、形状、バックエンドに応じて行列乗算戦略を測定してください。
+
+### 6. セグメント化エキスパート行列乗算
+
+`tensor-grouped` を有効にすると、`rublas::tensor_grouped::grouped_matmul_nt_segmented(input, weights, row_experts, offsets, strategy)` が既存のグループ化インターフェースにデバイス側のエキスパート区間を追加します。input は `[M, K]`、weights は `[E, N, K]`、row_experts は U32 `[M]`、offsets は U32 `[E + 1]` です。出力は入力と同じ dtype の `[M, N]` です。オペランドは非量子化で、同じデバイスと実行キュー上にある必要があります。
+
+これは `unsafe` Rust API です。offsets は 0 から始まり M で終わる単調非減少の排他的プレフィックスであり、`[offsets[e], offsets[e + 1])` の全行がエキスパート e に属する必要があります。`row_experts` は同一の不変なディスパッチを表す必要があります。形状チェックはこれらのデバイス上の値を検証しません。
+
+`GroupedStrategy::Scalar` は既存のスカラーカーネルを使用します。`TensorCore` は一致する F16/BF16 入力、対応する 16×16×16 協調行列演算、32 レーンの plane、十分な共有メモリ、有効な起動グリッドを明示的に要求し、非対応の設定では `GroupedMatmulError` を返します。カーネルは FP32 累積を使用し、端の不完全なタイルも処理します。`Auto` は対応していればこの経路、それ以外はスカラーカーネルを選択します。コンパイル、起動、数値計算の失敗はフォールバック条件ではありません。
+
+offsets を内部で構築する安全な MoE エントリポイントには、`rudnn::moe::SwiGluExperts::forward_dispatched_with_strategy` を使用します。既存の `forward_dispatched` はデフォルトでスカラー経路を維持します。

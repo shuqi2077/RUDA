@@ -132,4 +132,14 @@ Quelle: [gruppierte Schnittstelle](../../src/tensor_grouped/mod.rs) und [Kernel]
 
 [ruDNN MoE](../../../docs/de/libraries/rudnn.md) verwendet gruppierte Multiplikation für Expertenprojektionen. Quantisierte Gewichte verwenden das separate Modul `tensor_int4`; Die gewöhnliche gruppierte Gleitkommamultiplikation ist keine INT4-Expertenberechnung.
 
-Der gruppierte Kernel verwendet Skalarakkumulation. Messen Sie Matrixmultiplikationsstrategien für Ihr dtype, Ihre Form und Ihr Backend.
+`grouped_matmul_nt` verwendet Skalarakkumulation. Messen Sie Matrixmultiplikationsstrategien für Ihren dtype, Ihre Form und Ihr Backend.
+
+### 6. Segmentierte Experten-Matrixmultiplikation
+
+Mit `tensor-grouped` ergänzt `rublas::tensor_grouped::grouped_matmul_nt_segmented(input, weights, row_experts, offsets, strategy)` die bestehende gruppierte Schnittstelle um geräteseitige Expertensegmente. Input hat die Form `[M, K]`, weights `[E, N, K]`, row_experts U32 `[M]` und offsets U32 `[E + 1]`; das Ergebnis ist `[M, N]` im dtype der Eingabe. Operanden müssen nicht quantisiert sein und dasselbe Gerät und dieselbe Ausführungsqueue verwenden.
+
+Dies ist eine `unsafe`-Rust-API: offsets muss ein monoton nicht fallendes exklusives Präfix sein, das bei 0 beginnt und bei M endet. Alle Zeilen in `[offsets[e], offsets[e + 1])` müssen zum Experten e gehören. `row_experts` muss denselben unveränderlichen Dispatch beschreiben. Formprüfungen validieren diese geräteseitigen Werte nicht.
+
+`GroupedStrategy::Scalar` verwendet den bestehenden skalaren Kernel. `TensorCore` verlangt explizit übereinstimmende F16/BF16-Eingaben, unterstützte kooperative 16×16×16-Matrixoperationen, eine Plane mit 32 Lanes, ausreichend Shared Memory und ein gültiges Launch-Grid; eine nicht unterstützte Konfiguration liefert `GroupedMatmulError`. Der Kernel akkumuliert in FP32 und verarbeitet unvollständige Kacheln. `Auto` wählt diesen Pfad, wenn er unterstützt wird, sonst den skalaren Kernel. Kompilierungs-, Launch- oder numerische Fehler sind keine Fallback-Bedingungen.
+
+Für einen sicheren MoE-Einstieg mit intern erzeugten Offsets verwenden Sie `rudnn::moe::SwiGluExperts::forward_dispatched_with_strategy`. Der bestehende Einstieg `forward_dispatched` bleibt standardmäßig skalar.

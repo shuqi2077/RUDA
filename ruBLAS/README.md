@@ -130,4 +130,14 @@ Source: [grouped interface](https://github.com/shuqi2077/RUDA/blob/main/ruBLAS/s
 
 [ruDNN MoE](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/rudnn.md) uses grouped multiplication for expert projections. Quantized weights use the separate `tensor_int4` module; ordinary floating-point grouped multiplication is not INT4 expert computation.
 
-The grouped kernel uses scalar accumulation. Measure matrix multiplication strategies for your dtype, shape, and backend.
+`grouped_matmul_nt` uses scalar accumulation. Measure matrix multiplication strategies for your dtype, shape, and backend.
+
+### 6. Segmented expert matrix multiplication
+
+With `tensor-grouped`, `rublas::tensor_grouped::grouped_matmul_nt_segmented(input, weights, row_experts, offsets, strategy)` adds device-side expert segments to the existing grouped interface. Input is `[M, K]`, weights `[E, N, K]`, row experts U32 `[M]`, and offsets U32 `[E + 1]`; output is `[M, N]` in the input dtype. Operands must be unquantized and share a device and execution queue.
+
+This is an `unsafe` Rust API: offsets must be a nondecreasing exclusive prefix starting at 0 and ending at M, and every row in `[offsets[e], offsets[e + 1])` must belong to expert e. `row_experts` must describe the same immutable dispatch. Shape checks do not validate these device values.
+
+`GroupedStrategy::Scalar` uses the existing scalar kernel. `TensorCore` explicitly requires matching F16/BF16 inputs, supported 16×16×16 cooperative matrix operations, a 32-lane plane, sufficient shared memory and a legal launch grid; unsupported setup returns `GroupedMatmulError`. The kernel uses FP32 accumulation and handles partial tiles. `Auto` selects this path when supported and otherwise uses the scalar kernel; compilation, launch or numerical failures are not fallback conditions.
+
+For a safe MoE entry point with internally constructed offsets, use `rudnn::moe::SwiGluExperts::forward_dispatched_with_strategy`. Its existing `forward_dispatched` entry point remains scalar by default.

@@ -14,6 +14,7 @@ Neuronale Netzbetreiber für Ruda.
 | Feature |Operationen|
 | --- | --- |
 |`tensor-attention`| Attention |
+| `tensor-paged-attention` | Seitenbasierte MHA/GQA/MLA |
 |`tensor-convolution`|Faltung|
 |`tensor-normalization`|LayerNorm, RMSNorm und Softmax|
 |`tensor-moe`|MoE Routing, Dispatch und Expertenberechnung|
@@ -50,6 +51,7 @@ ruDNN bietet neuronale Netzwerkoperationen. Das Cargo-Paket ist `ruDNN` und die 
 | Feature |Operationen|
 | --- | --- |
 |`tensor-attention`|Tensor-Aufmerksamkeit|
+| `tensor-paged-attention` | Seitenbasierte MHA/GQA/MLA |
 |`tensor-convolution`|Tensorfaltung|
 |`pooling`, `interpolation`|Pooling und Interpolation|
 |`grid-sample`, `ctc`|Rasterstichprobe und CTC|
@@ -229,3 +231,23 @@ Das zurückgegebene `output` hat die Form `[B, H, T, V]` und denselben dtype wie
 `chunk_size` muss positiv sein. Der dreieckige Arbeitsbereich von `4 × (chunk_size² + chunk_size)` Bytes darf das Shared-Memory-Limit des Geräts pro Arbeitsgruppe nicht überschreiten. Der Einstiegspunkt füllt den letzten Chunk auf; das Padding wird aus der Ausgabe ausgeschlossen. Ungültige Argumente liefern `GatedDeltaError`.
 
 Informationen zu Text- und Bildaufrufen auf Modellebene finden Sie im [ruLLM-Inferenzleitfaden](../../../docs/de/model-inference.md).
+
+### 9. Seitenbasierte Attention und MLA
+
+Aktivieren Sie `tensor-paged-attention` und verwenden Sie `rudnn::paged_attention`. `HostPlan::new(page_size, pages, tables, lengths, sequence_ids, positions)` validiert die Scheduling-Metadaten auf dem Host; positions enthält absolute, bei null beginnende Positionen innerhalb jeder Sequenz. `DevicePlan::upload(host, &q)` überträgt diese Metadaten auf das Gerät und die Ausführungsqueue der Query. Der Plan darf nur bei unverändertem Schedule wiederverwendet werden.
+
+`DevicePlan::attention(q, k, v, scale, causal)` liest physische Cache-Seiten direkt für gepacktes Prefill/Decode variabler Länge. Q hat die Form `[queries, Hq, D]`, K `[pages, page_size, Hkv, D]`, V `[pages, page_size, Hkv, Dv]` und das Ergebnis `[queries, Hq, Dv]`; `Hq` muss durch `Hkv` teilbar sein. Eingaben müssen zusammenhängende, nicht quantisierte F32/F16/BF16-Tensoren mit gleichem dtype, Gerät und gleicher Queue sein. Q/K/V müssen endlich und scale endlich und positiv sein. `D` und `Dv` liegen in `1..=1024`; das Gerät muss eine Plane mit 32 oder 64 Lanes und das erforderliche Launch-Grid unterstützen. Diese reine Vorwärtsschnittstelle unterstützt weder beliebige externe Masken noch quantisierte KV-Caches.
+
+`DevicePlan::mla(q, qp, latent, kp, scale, causal)` nimmt Queries mit absorbierter Projektion `[queries, H, R]`, Positionsqueries `[queries, H, P]`, einen gemeinsamen latenten Cache `[pages, page_size, 1, R]` und einen Positionscache `[pages, page_size, 1, P]` entgegen. Das Ergebnis ist komprimierter Kontext `[queries, H, R]`; `P` liegt in `1..=256`. Positionskodierung erfolgt vor dem Aufruf, Value-/Output-Projektionen danach. Verwenden Sie die ursprüngliche QK-Skalierung des Modells, nicht eine aus dem komprimierten Rang abgeleitete Skalierung.
+
+Die obigen Methoden verwenden den ungeteilten Pfad. Zum Aufteilen einer Historie erstellen Sie `SplitWorkspace::new(&q, queries, heads, value_dim, splits)` mit `2..=32` Splits und rufen `attention_with_workspace` oder `mla_with_workspace` auf. Teilstatistiken und Zusammenführung verwenden FP32. Ein Workspace ist auf 64 MiB begrenzt und darf nur bei passender Form in derselben geordneten Ausführungsqueue wiederverwendet werden.
+
+`DevicePlan::append(k, v, key_cache, value_cache)` liefert die Cache-Tensoren, die für weitere Aufrufe aufzubewahren sind. Gemeinsam genutzte Cache-Allokationen werden vor Änderungen kopiert; gemeinsam genutzte physische Präfixseiten erfordern zusätzlich Copy-on-Write durch den Scheduler. Doppelte Schreibzugriffe auf dieselbe physische Position werden abgewiesen.
+
+### 10. Gruppenbeschränktes Sigmoid-MoE-Routing
+
+Mit `tensor-moe` liefert `route_sigmoid_grouped(logits, bias, options)` einen `RoutingPlan`. Logits haben die Form `[tokens, experts]` und den Typ F32/F16/BF16; der optionale Korrektur-Bias ist FP32 `[experts]` auf demselben Gerät und derselben Queue. Bias beeinflusst nur die Auswahl. Die zurückgegebenen Gewichte verwenden die ursprünglichen Sigmoid-Werte, optionale Renormalisierung und `scale`; bei Gleichstand werden kleinere IDs bevorzugt.
+
+`GroupRoutingOptions` enthält `top_k`, `groups`, `selected_groups`, `group_top_two`, `renormalize` und `scale`. Die Expertenzahl liegt in `1..=1024`, die Gruppenzahl in `1..=128` und top-k in `1..=64`. Die Expertenzahl muss durch die Gruppenzahl teilbar sein, die Zahl ausgewählter Gruppen muss gültig sein und top-k darf deren gesamte Expertenzahl nicht überschreiten. `group_top_two=true` summiert die beiden größten korrigierten Werte je Gruppe und erfordert mindestens zwei Experten pro Gruppe; andernfalls wird das Maximum verwendet. Scale muss endlich und positiv sein.
+
+`SwiGluExperts::forward_sigmoid_grouped(input, logits, bias, options, strategy)` führt Routing, Dispatch, Expertenberechnung und Kombination aus. `forward_dispatched_with_strategy` wählt `GroupedStrategy::Scalar`, `Auto` oder `TensorCore`; die bestehenden Methoden `forward` und `forward_dispatched` behalten `Scalar` bei. Tensor-Core-Ausführung erfordert geeignete F16/BF16-Hardware. `Auto` fällt nur bei nicht unterstützter Konfiguration zurück, nicht bei Kompilierungs- oder Ausführungsfehlern. Modellprojektionen, gemeinsame Experten und Residualzweige bleiben Aufgabe des Aufrufers.

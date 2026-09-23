@@ -47,3 +47,14 @@ Die Schnittstellen garantieren nicht die Übernahme beliebiger externer CUDA-Kon
 Ein Backend verwendet `Runtime`, um ein Gerät, einen Compiler und einen Rechenserver zuzuordnen. Höhere Schichten greifen über `ComputeClient` auf den Vertrag zu. Legen Sie die Speicher-, Kompilierungsfehler-, Synchronisierungs- und Fähigkeitsabfragesemantik fest, bevor Sie Rechenbibliotheken integrieren.
 
 Quelleneinstiegspunkte: [CUDA-Exporte](../../ruda-driver-cuda/src/lib.rs), [Gerätetyp](../../ruda-driver-cuda/src/device.rs), [Laufzeitimplementierung](../../ruda-driver-cuda/src/runtime.rs) und [Laufzeitmerkmal](../../ruda/src/runtime/backend.rs).
+
+## 6. CUDA-Stream- und Event-Interoperabilität
+
+`ruda_driver_cuda::interop::{command, StreamCommand, record_allocation}` verwendet denselben Gerätedienst und CUDA-Kontext wie RUDA-Kernel. Stream-/Event-IDs sind von RUDA verwaltete Kennungen, keine rohen CUDA-Handles; Stream 0 ist der Standardstream.
+
+- `command(device, StreamCommand::Create)` erzeugt eine Stream-ID. `Validate`, `Query` und `Synchronize` validieren, prüfen oder warten auf diesen Stream.
+- `Record { stream, event: 0, timing }` erzeugt und zeichnet ein Event auf; zur erneuten Aufzeichnung übergeben Sie die zurückgegebene ID. `Wait { stream, event }` fügt eine GPU-seitige Abhängigkeit ein, ohne auf dem Host auf GPU-Abschluss zu warten.
+- `EventQuery` prüft den Abschluss, `EventSynchronize` wartet und `EventDestroy` gibt das Event frei. `Elapsed { start, end }` verlangt zwei Events mit aktivierter Zeitmessung und liefert FP32-Millisekunden als Bits in einem `u64`; dekodieren Sie mit `f32::from_bits(value as u32)`.
+- `DeviceSynchronize` wartet auf den Kontext und meldet verzögerte RUDA-Launch-Fehler. Befehle liefern `Result<u64, ServerError>`; der Abschlussstatus wird als 0 oder 1 kodiert.
+
+`record_allocation(device, stream, handle)` hält eine Allokation bis zum Abschluss der bereits auf diesem Stream eingereichten Arbeit am Leben; es ersetzt keine Ausführungsabhängigkeit. Die Stream-Erstellung ist durch `streaming.max_streams` begrenzt und schlägt bei erschöpftem Pool fehl. Diese APIs importieren keine beliebigen externen CUDA-Streams oder -Kontexte.

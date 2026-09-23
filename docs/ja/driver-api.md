@@ -47,3 +47,14 @@ PTX を直接生成すると、カーネルの CUDA C++/NVRTC コンパイル �
 バックエンドは、`Runtime` を使用して、デバイス、コンパイラー、およびコンピューティング サーバーを関連付けます。上位層は、`ComputeClient` を通じてコントラクトにアクセスします。計算ライブラリを統合する前に、ストレージ、コンパイル エラー、同期、機能クエリのセマンティクスを確立します。
 
 ソース エントリ ポイント: [CUDA エクスポート](../../ruda-driver-cuda/src/lib.rs)、[デバイス タイプ](../../ruda-driver-cuda/src/device.rs)、[ランタイム実装](../../ruda-driver-cuda/src/runtime.rs)、および [ランタイム特性](../../ruda/src/runtime/backend.rs)。
+
+## 6. CUDA ストリームとイベントの相互運用
+
+`ruda_driver_cuda::interop::{command, StreamCommand, record_allocation}` は RUDA カーネルと同じデバイスサービスおよび CUDA コンテキストを使用します。ストリームとイベントの ID は RUDA が管理する識別子であり、生の CUDA ハンドルではありません。stream 0 はデフォルトストリームです。
+
+- `command(device, StreamCommand::Create)` はストリーム ID を作成します。`Validate`、`Query`、`Synchronize` はその検証、状態確認、待機を行います。
+- `Record { stream, event: 0, timing }` はイベントを作成して記録します。再記録には返された ID を指定します。`Wait { stream, event }` はホスト側で GPU 完了を待たず、GPU 側に依存関係を挿入します。
+- `EventQuery` は完了状態を確認し、`EventSynchronize` は待機し、`EventDestroy` はイベントを解放します。`Elapsed { start, end }` は計時を有効にした二つのイベントを必要とし、FP32 のミリ秒を `u64` に符号化して返します。`f32::from_bits(value as u32)` で復号します。
+- `DeviceSynchronize` はコンテキストの完了を待ち、遅延した RUDA 起動エラーを報告します。コマンドは `Result<u64, ServerError>` を返し、完了状態は 0 または 1 です。
+
+`record_allocation(device, stream, handle)` は、そのストリームに既に投入された処理が完了するまで割り当てを保持します。実行依存関係の代わりにはなりません。ストリーム作成数は `streaming.max_streams` に制限され、プールを使い切るとエラーになります。これらの API は任意の外部 CUDA ストリームやコンテキストを取り込みません。

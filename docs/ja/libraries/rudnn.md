@@ -11,6 +11,7 @@ ruDNN はニューラル ネットワーク操作を提供します。 Cargo パ
 | feature |操作|
 | --- | --- |
 |`tensor-attention`|テンソル アテンション|
+| `tensor-paged-attention` | ページ化 MHA/GQA/MLA |
 |`tensor-convolution`|テンソル畳み込み|
 |`pooling`、`interpolation`|プーリングと補間|
 |`grid-sample`、`ctc`|グリッド サンプリングと CTC|
@@ -190,3 +191,23 @@ fn delta_prefill<R: Runtime>(
 `chunk_size` は正でなければならず、三角形の作業領域 `4 × (chunk_size² + chunk_size)` バイトがデバイスのワークグループ当たりの共有メモリ上限を超えてはいけません。エントリポイントは最後のチャンクをパディングしますが、そのパディングは出力から除外します。無効な引数には `GatedDeltaError` を返します。
 
 モデルレベルのテキストおよび画像の呼び出しについては、[ruLLM 推論ガイド](../model-inference.md) を参照してください。
+
+## 9. ページ化アテンションと MLA
+
+`tensor-paged-attention` を有効にし、`rudnn::paged_attention` を使用します。`HostPlan::new(page_size, pages, tables, lengths, sequence_ids, positions)` はホスト側のスケジュールメタデータを検証します。positions は各シーケンス内のゼロ始まりの絶対位置です。`DevicePlan::upload(host, &q)` はクエリと同じデバイスおよび実行キューにメタデータを転送します。スケジュールが変わらない間のみプランを再利用できます。
+
+`DevicePlan::attention(q, k, v, scale, causal)` は物理キャッシュページを直接読み、パックされた可変長のプリフィルとデコードを処理します。Q は `[queries, Hq, D]`、K は `[pages, page_size, Hkv, D]`、V は `[pages, page_size, Hkv, Dv]`、出力は `[queries, Hq, Dv]` で、`Hq` は `Hkv` で割り切れる必要があります。入力は連続した非量子化 F32/F16/BF16 で、dtype、デバイス、キューが一致する必要があります。Q/K/V は有限値、scale は有限の正数を指定します。`D` と `Dv` は `1..=1024` です。デバイスは 32 または 64 レーンの plane と必要な起動グリッドをサポートする必要があります。この前向き専用インターフェースは任意の外部マスクや量子化 KV キャッシュをサポートしません。
+
+`DevicePlan::mla(q, qp, latent, kp, scale, causal)` は射影を吸収したクエリ `[queries, H, R]`、位置クエリ `[queries, H, P]`、共有潜在キャッシュ `[pages, page_size, 1, R]`、位置キャッシュ `[pages, page_size, 1, P]` を受け取ります。出力は圧縮コンテキスト `[queries, H, R]` で、`P` は `1..=256` です。位置エンコーディングは呼び出し前、value/output 射影は呼び出し後に適用します。scale は圧縮ランクから導出せず、元のモデルの QK スケールを使用します。
+
+上記メソッドは非分割経路を使用します。履歴を分割する場合は、splits を `2..=32` として `SplitWorkspace::new(&q, queries, heads, value_dim, splits)` を作成し、`attention_with_workspace` または `mla_with_workspace` を呼び出します。部分統計とマージは FP32 で処理します。ワークスペースの上限は 64 MiB で、形状が一致し、同じ順序付き実行キューを使用する場合にのみ再利用できます。
+
+`DevicePlan::append(k, v, key_cache, value_cache)` は、以後の呼び出しで保持するキャッシュテンソルを返します。共有されたキャッシュ割り当ては変更前にコピーされます。共有プレフィックスの物理ページには、さらにスケジューラー側のコピーオンライトが必要です。同じ物理位置への重複書き込みは拒否されます。
+
+## 10. グループ制限付き sigmoid MoE ルーティング
+
+`tensor-moe` を有効にすると、`route_sigmoid_grouped(logits, bias, options)` が `RoutingPlan` を返します。logits は F32/F16/BF16 の `[tokens, experts]`、オプションの補正 bias は同じデバイスとキュー上の FP32 `[experts]` です。bias は選択のみに影響します。返される重みは元の sigmoid スコア、任意の再正規化、`scale` を使用し、同点では小さい ID が優先されます。
+
+`GroupRoutingOptions` は `top_k`、`groups`、`selected_groups`、`group_top_two`、`renormalize`、`scale` を含みます。エキスパート数は `1..=1024`、グループ数は `1..=128`、top-k は `1..=64` です。エキスパート数はグループ数で割り切れ、選択グループ数は有効で、top-k は選択グループ内のエキスパート総数以下である必要があります。`group_top_two=true` は各グループの上位二つの補正スコアを合計し、グループごとに二つ以上のエキスパートを必要とします。それ以外では最大スコアを使用します。scale は有限の正数でなければなりません。
+
+`SwiGluExperts::forward_sigmoid_grouped(input, logits, bias, options, strategy)` はルーティング、ディスパッチ、エキスパート計算、結合を実行します。`forward_dispatched_with_strategy` は `GroupedStrategy::Scalar`、`Auto`、`TensorCore` を選択できます。既存の `forward` と `forward_dispatched` は `Scalar` を維持します。Tensor Core 経路には F16/BF16 に対応するハードウェアが必要です。`Auto` は設定が非対応の場合のみフォールバックし、コンパイルや実行の失敗では切り替えません。モデル射影、共有エキスパート、残差分岐は呼び出し側が担当します。

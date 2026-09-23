@@ -45,3 +45,14 @@ let client = CudaRuntime::client(&CudaDevice::default());
 后端实现通过 `Runtime` 关联设备、编译器和计算服务；上层通过 `ComputeClient` 使用公共契约。先确认后端的存储、编译错误、同步与能力查询语义，再接入领域库。
 
 源码入口：[CUDA 导出](../../ruda-driver-cuda/src/lib.rs)、[设备类型](../../ruda-driver-cuda/src/device.rs)、[运行时实现](../../ruda-driver-cuda/src/runtime.rs)、[Runtime trait](../../ruda/src/runtime/backend.rs)。
+
+## 6. CUDA Stream 与 Event 互操作
+
+`ruda_driver_cuda::interop::{command, StreamCommand, record_allocation}` 与 RUDA 内核使用相同的设备服务和 CUDA 上下文。Stream/Event ID 是 RUDA 管理的标识符，不是原始 CUDA 句柄；stream 0 为默认流。
+
+- `command(device, StreamCommand::Create)` 创建流 ID；`Validate`、`Query` 和 `Synchronize` 用于校验、查询或等待该流。
+- `Record { stream, event: 0, timing }` 创建并记录事件；再次记录时传入返回的 ID。`Wait { stream, event }` 插入 GPU 端依赖，不在主机端等待 GPU 完成。
+- `EventQuery` 查询是否完成，`EventSynchronize` 等待，`EventDestroy` 释放事件。`Elapsed { start, end }` 要求两个启用计时的事件，返回编码为 `u64` 的 FP32 毫秒数；使用 `f32::from_bits(value as u32)` 解码。
+- `DeviceSynchronize` 等待上下文并报告延迟出现的 RUDA 启动错误。命令返回 `Result<u64, ServerError>`；完成状态用 0 或 1 表示。
+
+`record_allocation(device, stream, handle)` 保持分配存活，直到该流上已提交的工作完成；它不能替代执行依赖。流创建受 `streaming.max_streams` 限制，池耗尽时返回错误。这些接口不导入任意外部 CUDA 流或上下文。

@@ -257,3 +257,15 @@ Um Ihren eigenen Batch-Executor zu integrieren, verwenden Sie `ContinuousBatchSc
 Der Scheduler verwaltet Anfragen und Seitenzuordnungsmetadaten. Der Ausführende des Aufrufers besitzt den Speicher und die Modellausführung des Geräts KV. Verwenden Sie `token_matrix()`, `context_lengths()` und `flattened_block_table()`, um Batch-Eingaben zu erstellen. Schließen Sie einen ausstehenden Stapel ab oder stornieren Sie ihn, bevor Sie `schedule()` erneut aufrufen.
 
 API-Referenz: [ruLLM-Exporte](../../src/lib.rs), [Generierungsoptionen](../../src/generation.rs), [Planer](../../src/continuous_batch.rs).
+
+### Qwen3.5: fusionierte seitenbasierte Attention
+
+`Qwen35BatchCache` wählt seinen Attention-Pfad bei der Erstellung durch `new_batch_cache`. Setzen Sie `RUDA_PAGED_ATTENTION=fused` vor der Cache-Erstellung, um ruDNNs fusionierte seitenbasierte Attention im kontinuierlichen Batching von Qwen3.5 zu verwenden. Ohne Variable oder mit `legacy` bleibt der bisherige Pfad erhalten; andere Werte werden abgewiesen. Eine Änderung schaltet einen bestehenden Cache nicht um und ist kein globaler Schalter für alle Generierungseinstiege.
+
+Der fusionierte Pfad hält pro Full-Attention-Schicht eine physische KV-Arena und verwendet die Seitentabellen des Schedulers für Prefill/Decode, ohne historische KV-Daten in aufgefüllte Tensoren zusammenzutragen. Die Arena-Dimensionen ergeben sich aus `num_pages`, `block_size`, KV-Kopfzahl und Kopfdimension; reservieren Sie GPU-Speicher für diese Kapazität. Eingaben folgen ruDNNs Vertrag für zusammenhängende F32/F16/BF16-Tensoren. Schreibzugriffe auf gemeinsame Präfixseiten erfordern Copy-on-Write durch den Scheduler. Nach einem fehlgeschlagenen geräteseitigen Append muss der Cache neu aufgebaut werden, statt an der vorherigen Position fortzufahren.
+
+### Wiederverwendbare Attention- und MoE-Komponenten
+
+`rullm::gpu_inference` stellt `TensorOps`, `gqa_scores`, `gqa_value_product`, `mla_absorb_query`, `mla_scores` und `mla_value_product` bereit. Sie kombinieren geräteseitige Tensoroperationen des Aufrufers, ohne gecachte GQA-Köpfe zu vervielfachen oder historische latente MLA-Werte zu expandieren. Maskierung, Softmax, Positionskodierung und modellspezifische Skalierung stellt der Aufrufer bereit.
+
+`rullm::device_inference` re-exportiert ruDNNs `HostPlan`, `DevicePlan`, `PagedAttentionError`, `SwiGluExperts`, `RoutingOptions`, `GroupRoutingOptions`, `route_sigmoid_grouped` und `GroupedStrategy`. Dies sind Bausteine, kein vollständiger MLA/MoE-Modelllader; Adapter müssen weiterhin Projektionen, Routing-Konfiguration und Cache-Eigentümerschaft bereitstellen.

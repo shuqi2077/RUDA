@@ -12,6 +12,7 @@ Ruda 神经网络算子库。
 | Feature | 算子 |
 | --- | --- |
 | `tensor-attention` | 注意力 |
+| `tensor-paged-attention` | 分页 MHA/GQA/MLA |
 | `tensor-convolution` | 卷积 |
 | `tensor-normalization` | LayerNorm、RMSNorm 与 softmax |
 | `tensor-moe` | MoE 路由、分发与专家计算 |
@@ -48,6 +49,7 @@ ruDNN 组织神经网络计算算子，Cargo package 为 `ruDNN`，Rust crate �
 | feature | 内容 |
 | --- | --- |
 | `tensor-attention` | 张量注意力路径 |
+| `tensor-paged-attention` | 分页 MHA/GQA/MLA |
 | `tensor-convolution` | 张量卷积路径 |
 | `pooling`、`interpolation` | 池化、插值 |
 | `grid-sample`、`ctc` | 网格采样、CTC |
@@ -227,3 +229,23 @@ fn delta_prefill<R: Runtime>(
 `chunk_size` 必须大于零，且三角工作区 `4 × (chunk_size² + chunk_size)` 字节不能超过设备的每工作组共享内存上限。尾块由入口补零，输出不包含 padding。参数不匹配时返回 `GatedDeltaError`。
 
 模型级文本和图片调用见 [ruLLM 推理指南](https://github.com/shuqi2077/RUDA/blob/main/docs/zh/model-inference.md)。
+
+### 9. 分页注意力与 MLA
+
+启用 `tensor-paged-attention`，使用 `rudnn::paged_attention`。`HostPlan::new(page_size, pages, tables, lengths, sequence_ids, positions)` 校验主机端调度元数据；positions 是各序列内从零开始的绝对位置。`DevicePlan::upload(host, &q)` 将元数据上传至查询所在设备及执行队列。只有调度不变时才能复用该计划。
+
+`DevicePlan::attention(q, k, v, scale, causal)` 直接读取物理缓存页，处理打包的变长预填充与解码。Q 为 `[queries, Hq, D]`，K 为 `[pages, page_size, Hkv, D]`，V 为 `[pages, page_size, Hkv, Dv]`，输出为 `[queries, Hq, Dv]`；`Hq` 必须能被 `Hkv` 整除。输入须连续、非量化，使用相同的 F32/F16/BF16 dtype、设备和队列。Q/K/V 须为有限值，scale 须有限且为正。`D`、`Dv` 范围为 `1..=1024`；设备需支持 32 或 64 lane 的 plane 及所需启动网格。该接口仅支持前向，不支持任意外部掩码或量化 KV 缓存。
+
+`DevicePlan::mla(q, qp, latent, kp, scale, causal)` 接收吸收投影后的查询 `[queries, H, R]`、位置查询 `[queries, H, P]`、共享潜在缓存 `[pages, page_size, 1, R]` 和位置缓存 `[pages, page_size, 1, P]`。输出压缩上下文 `[queries, H, R]`；`P` 范围为 `1..=256`。位置编码在调用前完成，value/output 投影在调用后完成。scale 使用原模型 QK 缩放，而非按压缩秩推算。
+
+以上方法使用不分段路径。需要分段时，以 `2..=32` 个 splits 创建 `SplitWorkspace::new(&q, queries, heads, value_dim, splits)`，调用 `attention_with_workspace` 或 `mla_with_workspace`。局部统计和归并使用 FP32。每个工作区上限为 64 MiB，仅能在形状匹配、同一有序执行队列内复用。
+
+`DevicePlan::append(k, v, key_cache, value_cache)` 返回后续调用应保留的缓存张量。共享缓存分配在修改前复制；共享前缀物理页还需要调度器执行写时复制。重复的物理位置写入会被拒绝。
+
+### 10. 分组受限 sigmoid MoE 路由
+
+启用 `tensor-moe` 后，`route_sigmoid_grouped(logits, bias, options)` 返回 `RoutingPlan`。logits 为 F32/F16/BF16 的 `[tokens, experts]`；可选校正 bias 为同设备、同队列的 FP32 `[experts]`。bias 只影响选择，返回权重使用原始 sigmoid 分数、可选归一化及 `scale`；分数相等时优先较小编号。
+
+`GroupRoutingOptions` 包含 `top_k`、`groups`、`selected_groups`、`group_top_two`、`renormalize` 和 `scale`。专家数范围为 `1..=1024`，组数为 `1..=128`，top-k 为 `1..=64`；专家数必须能被组数整除，选中组数须有效，top-k 不得超过选中组的专家总数。`group_top_two=true` 将每组最大的两个校正分数相加，要求每组至少两个专家；否则使用组内最大分数。scale 必须有限且为正。
+
+`SwiGluExperts::forward_sigmoid_grouped(input, logits, bias, options, strategy)` 完成路由、分发、专家计算与合并。`forward_dispatched_with_strategy` 可选择 `GroupedStrategy::Scalar`、`Auto` 或 `TensorCore`；现有 `forward`、`forward_dispatched` 仍使用 `Scalar`。Tensor Core 路径要求支持 F16/BF16 的相应硬件。`Auto` 仅在配置不受支持时回退，不会吞掉编译或执行失败。模型投影、共享专家和残差分支仍由调用方负责。

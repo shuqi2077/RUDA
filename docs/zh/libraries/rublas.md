@@ -95,4 +95,14 @@ K、N、G 非零，K 能被 G 整除，N 能被 8 整除。输入最后一维为
 
 [ruDNN MoE](rudnn.md) 使用分组矩阵乘计算专家投影。量化权重路径位于独立的 `tensor_int4` 模块；不能将普通浮点分组矩阵乘当作 INT4 专家计算。
 
-当前分组内核采用标量累计。矩阵乘策略应按实际 dtype、shape 和后端分别测量。
+`grouped_matmul_nt` 使用标量累计。矩阵乘策略应按实际 dtype、shape 和后端分别测量。
+
+## 6. 分段专家矩阵乘
+
+启用 `tensor-grouped` 后，`rublas::tensor_grouped::grouped_matmul_nt_segmented(input, weights, row_experts, offsets, strategy)` 在现有分组接口上增加设备端专家分段。input 为 `[M, K]`，weights 为 `[E, N, K]`，row_experts 为 U32 `[M]`，offsets 为 U32 `[E + 1]`；输出为与输入 dtype 相同的 `[M, N]`。操作数须非量化，并位于同一设备和执行队列。
+
+这是 `unsafe` Rust 接口：offsets 必须是从 0 开始、以 M 结束的非递减排他前缀，每个区间 `[offsets[e], offsets[e + 1])` 内的行都属于专家 e。`row_experts` 必须描述同一份不可变分发结果。形状检查不会验证这些设备端数值。
+
+`GroupedStrategy::Scalar` 使用现有标量内核。`TensorCore` 显式要求匹配的 F16/BF16 输入、受支持的 16×16×16 协作矩阵运算、32 lane 的 plane、足够共享内存和合法启动网格；配置不支持时返回 `GroupedMatmulError`。内核使用 FP32 累计并处理不足整块的尾部。`Auto` 在受支持时选择此路径，否则使用标量内核；编译、启动或数值失败不是回退条件。
+
+需要内部构造 offsets 的安全 MoE 入口时，使用 `rudnn::moe::SwiGluExperts::forward_dispatched_with_strategy`。现有 `forward_dispatched` 入口默认仍使用标量路径。

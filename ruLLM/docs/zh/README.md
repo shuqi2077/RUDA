@@ -257,3 +257,15 @@ fn generate_from_images(
 调度器管理请求和页分配元数据；设备 KV 存储与模型执行由调用方的执行器负责。`token_matrix()`、`context_lengths()`、`flattened_block_table()` 可用于构造批量输入。存在未完成批次时，先完成或撤销该批次，再调用 `schedule()`。
 
 接口参考：[ruLLM 导出](../../src/lib.rs)、[生成配置](../../src/generation.rs)、[调度器](../../src/continuous_batch.rs)。
+
+### Qwen3.5 融合分页注意力
+
+`Qwen35BatchCache` 在 `new_batch_cache` 创建时选择注意力路径。创建缓存前设置 `RUDA_PAGED_ATTENTION=fused`，即可在 Qwen3.5 连续批处理中使用 ruDNN 融合分页注意力。未设置或设为 `legacy` 时保留原路径；其他值会被拒绝。修改变量不会切换已有缓存，也不是所有生成入口的全局开关。
+
+融合路径为每个全注意力层保存物理 KV arena，预填充与解码使用调度器页表，不将历史 KV 收集为带 padding 的张量。arena 按 `num_pages`、`block_size`、KV 头数和头维度分配，应为该容量预留显存。输入遵循 ruDNN 的连续 F32/F16/BF16 契约。共享前缀写入需要调度器执行写时复制。设备追加失败后，应重建缓存，不能继续沿用先前位置。
+
+### 可复用的注意力与 MoE 组件
+
+`rullm::gpu_inference` 提供 `TensorOps`、`gqa_scores`、`gqa_value_product`、`mla_absorb_query`、`mla_scores` 和 `mla_value_product`。这些接口组合调用方提供的设备张量操作，不重复缓存的 GQA 头，也不展开历史 MLA 潜在值。掩码、softmax、位置编码与模型特定缩放由调用方提供。
+
+`rullm::device_inference` 重导出 ruDNN 的 `HostPlan`、`DevicePlan`、`PagedAttentionError`、`SwiGluExperts`、`RoutingOptions`、`GroupRoutingOptions`、`route_sigmoid_grouped` 和 `GroupedStrategy`。这些是计算组件，不是完整的 MLA/MoE 模型加载器；适配器仍需提供投影、路由配置与缓存所有权。
