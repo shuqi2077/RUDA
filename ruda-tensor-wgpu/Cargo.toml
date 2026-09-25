@@ -81,7 +81,7 @@ default-features = false
 
 [dependencies.ruda-test-runtime]
 path = "../ruda-test-runtime"
-version = "0.1.8"
+version = "0.1.9"
 default-features = false
 features = [ "wgpu",]
 
