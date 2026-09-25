@@ -1,0 +1,41 @@
+name: FFT exact-length and runtime v16
+on:
+  workflow_dispatch:
+    inputs:
+      run_gpu:
+        type: boolean
+        default: false
+        description: Run strict acceptance on a provisioned ruda-gpu runner
+      ptx_version:
+        type: string
+        default: '8.0'
+        description: PTX version supported by the actual runner driver
+  pull_request:
+    paths:
+      - 'ruFFT/src/**'
+      - 'ruFFT/tests/host/**'
+      - 'tools/gpu_validation/**'
+      - 'ruda-driver-cuda/src/execution/context/**'
+      - '.github/workflows/fft-runtime-v16.yml'
+permissions:
+  contents: read
+jobs:
+  mathematical-reference-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: |
+          python3 -m venv .v16-venv
+          .v16-venv/bin/python -m pip install numpy==2.3.5 pytest==9.0.2
+          .v16-venv/bin/python -m pytest -q ruFFT/tests/host tools/gpu_validation
+  real-gpu-acceptance:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_gpu
+    runs-on: [self-hosted, linux, x64, ruda-gpu]
+    timeout-minutes: 45
+    env:
+      RUDA_PTX_VERSION: ${{ inputs.ptx_version }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Compile real Rust and execute required PTX tests
+        run: python3 tools/gpu_validation/validate_v16.py --output v16-hardware-validation

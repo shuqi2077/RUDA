@@ -2,7 +2,7 @@ pub use crate::dsl::{
     RudaLaunch, RudaType, RuntimeArg,
     codegen::{KernelExpansion, KernelIntegrator, KernelSettings},
     comment, comptime, comptime_type,
-    compute::{KernelBuilder, KernelLauncher},
+    compute::{KernelBuilder, KernelLauncher, PreparedKernel},
     ruda, derive_ruda_comptime,
     frontend::*,
     pod::RudaElement,

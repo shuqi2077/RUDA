@@ -96,6 +96,9 @@ pub fn rfft_launch_padded<R: Runtime>(
     signal_len: usize,
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
+    assert_eq!(dtype, f32::as_type_native_unchecked().storage_type(),
+        "ruFFT device kernels require F32 storage; other dtypes must not be reinterpreted");
+
     assert!(
         spectrum_re.shape == spectrum_im.shape,
         "spectrum real and imaginary shapes must match"

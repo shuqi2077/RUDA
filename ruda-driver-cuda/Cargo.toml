@@ -173,3 +173,53 @@ path = "../ruda-compiler"
 version = "0.1.3"
 default-features = false
 features = [ "cpp",]
+
+[[test]]
+name = "graph-replay"
+path = "tests/graph_replay.rs"
+required-features = ["direct-ptx"]
+
+[[example]]
+name = "native-graph"
+path = "examples/native_graph.rs"
+required-features = ["direct-ptx"]
+
+[[test]]
+name = "graph-update"
+path = "tests/graph_update.rs"
+required-features = ["direct-ptx"]
+
+[[example]]
+name = "native-graph-update"
+path = "examples/native_graph_update.rs"
+required-features = ["direct-ptx"]
+
+[[test]]
+name = "graph-batch"
+path = "tests/graph_batch.rs"
+required-features = ["direct-ptx"]
+
+[[example]]
+name = "native-graph-batch"
+path = "examples/native_graph_batch.rs"
+required-features = ["direct-ptx"]
+
+[[test]]
+name = "graph-dag"
+path = "tests/graph_dag.rs"
+required-features = ["direct-ptx"]
+
+[[example]]
+name = "native-graph-dag"
+path = "examples/native_graph_dag.rs"
+required-features = ["direct-ptx"]
+
+[[test]]
+name = "graph-infer"
+path = "tests/graph_infer.rs"
+required-features = ["direct-ptx"]
+
+[[example]]
+name = "native-graph-infer"
+path = "examples/native_graph_infer.rs"
+required-features = ["direct-ptx"]

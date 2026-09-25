@@ -8,3 +8,6 @@ mod rfft_large;
 pub use fft_inner::*;
 pub use irfft::*;
 pub use rfft::*;
+
+mod exact;
+pub use exact::{RealFftPlan, exact_convolution_len};

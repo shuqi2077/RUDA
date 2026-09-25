@@ -34,6 +34,7 @@ use ruda_core::cache::CacheOption;
 #[derive(Debug)]
 pub(crate) struct CudaContext {
     backend: crate::compiler_backend::CompilerBackend,
+    launch_arguments: launch::LaunchArguments,
     pub context: *mut CUctx_st,
     pub module_names: HashMap<KernelId, CompiledKernel>,
     ptx_cache: Option<CompilationCache<StableHash, PtxCacheEntry>>,
@@ -48,6 +49,8 @@ pub struct CompiledKernel {
     ruda_dim: RudaDim,
     shared_mem_bytes: usize,
     func: *mut CUfunc_st,
+    // Retained with the function; unload only after shutdown synchronization.
+    module: cudarc::driver::sys::CUmodule,
     dynamic_metadata_index: Option<usize>,
 }
 
@@ -79,6 +82,7 @@ impl CudaContext {
         };
         Self {
             backend,
+            launch_arguments: launch::LaunchArguments::default(),
             context,
             module_names: HashMap::new(),
             ptx_cache: {
@@ -113,3 +117,40 @@ mod compilation;
 #[cfg(feature = "direct-ptx")]
 mod direct_ptx;
 mod launch;
+
+mod module_config;
+
+impl Drop for CudaContext {
+    fn drop(&mut self) {
+        if self.module_names.is_empty() { return; }
+        // This wait is ONLY at runtime destruction, never per operator.
+        // Do not unload executable code while queued kernels may still use it.
+        unsafe {
+            use cudarc::driver::sys::*;
+            let mut previous = std::ptr::null_mut();
+            if cuCtxGetCurrent(&mut previous) != CUresult::CUDA_SUCCESS {
+                log::warn!("Cannot obtain current context for RUDA module shutdown"); return;
+            }
+            if cuCtxSetCurrent(self.context) != CUresult::CUDA_SUCCESS {
+                log::warn!("Cannot select context for RUDA module shutdown"); return;
+            }
+            let synchronized = cuCtxSynchronize();
+            if synchronized == CUresult::CUDA_SUCCESS {
+                for (_, kernel) in self.module_names.drain() {
+                    let status = cuModuleUnload(kernel.module);
+                    if status != CUresult::CUDA_SUCCESS {
+                        log::warn!("RUDA module unload failed: {status:?}");
+                    }
+                }
+            } else {
+                // A failed wait does not prove that executable code is idle.
+                // Leave cleanup to context teardown rather than risk unloading
+                // code still in use, and make the exceptional leak visible.
+                log::warn!("RUDA shutdown synchronization failed; modules retained: {synchronized:?}");
+            }
+            if cuCtxSetCurrent(previous) != CUresult::CUDA_SUCCESS {
+                log::warn!("Cannot restore previous context after RUDA module shutdown");
+            }
+        }
+    }
+}

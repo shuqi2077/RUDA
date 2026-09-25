@@ -14,6 +14,7 @@ impl ToTokens for Launch {
 
         let name = &self.func.sig.name;
         let launch = self.launch();
+        let prepare = self.prepare();
         let launch_unchecked = self.launch_unchecked();
         let aliases = self.create_type_alias();
         let dummy = self.create_dummy_kernel();
@@ -34,6 +35,7 @@ impl ToTokens for Launch {
                 #kernel
                 #launch
                 #launch_unchecked
+                #prepare
                 #dummy
             }
         };
@@ -128,6 +130,39 @@ impl Launch {
             }
         } else {
             TokenStream::new()
+        }
+    }
+
+    fn prepare(&self) -> TokenStream {
+        if !self.args.launch.is_present() && !self.args.launch_unchecked.is_present() {
+            return TokenStream::new();
+        }
+        let compute_client = prelude_type("ComputeClient");
+        let prepared = prelude_type("PreparedKernel");
+        let ruda_count = prelude_type("RudaCount");
+        let ruda_dim = prelude_type("RudaDim");
+        let address_type = prelude_type("AddressType");
+        let generics = &self.launch_generics;
+        let args = self.launch_args();
+        let body = self.launch_body();
+        let address_type = match self.args.address_type {
+            AddressType::Dynamic => quote![__address_type: #address_type,],
+            _ => quote![],
+        };
+        quote! {
+            /// Register owned arguments for explicit graph construction.
+            /// No kernel is compiled or executed by this function.
+            #[allow(clippy::too_many_arguments)]
+            pub fn prepare #generics(
+                __client: &#compute_client<__R>,
+                __ruda_count: #ruda_count,
+                __ruda_dim: #ruda_dim,
+                #address_type
+                #(#args),*
+            ) -> #prepared<__R> {
+                #body
+                launcher.prepare(__ruda_count, __kernel, __client)
+            }
         }
     }
 

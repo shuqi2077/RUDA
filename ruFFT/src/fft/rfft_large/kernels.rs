@@ -26,13 +26,13 @@ pub(super) fn rfft_fused_kernel<F: Float>(
     while k < m {
         let even = 2 * k;
         let odd = even + 1;
-        let even_active = even < signal_len as usize;
-        let odd_active = odd < signal_len as usize;
-        let even = select(even_active, even, 0);
-        let odd = select(odd_active, odd, 0);
+        let mut even_value = F::new(0.0);
+        let mut odd_value = F::new(0.0);
+        if even < signal_len as usize { even_value = input[even]; }
+        if odd < signal_len as usize { odd_value = input[odd]; }
         let dst = bit_reverse(k, log2_m);
-        re[dst] = select(even_active, input[even], F::new(0.0));
-        im[dst] = select(odd_active, input[odd], F::new(0.0));
+        re[dst] = even_value;
+        im[dst] = odd_value;
         k += threads;
     }
     sync_ruda();
@@ -151,12 +151,12 @@ pub(super) fn rfft_pack_kernel<F: Float>(
     let mut packed_im_view = packed_im.view_mut(BatchSignalLayout::new(packed_im, window, dim));
     let even = 2 * k;
     let odd = even + 1;
-    let even_active = even < signal_len as usize;
-    let odd_active = odd < signal_len as usize;
-    let even = select(even_active, even, 0);
-    let odd = select(odd_active, odd, 0);
-    packed_re_view[k] = select(even_active, signal_view[even], F::new(0.0));
-    packed_im_view[k] = select(odd_active, signal_view[odd], F::new(0.0));
+    let mut even_value = F::new(0.0);
+    let mut odd_value = F::new(0.0);
+    if even < signal_len as usize { even_value = signal_view[even]; }
+    if odd < signal_len as usize { odd_value = signal_view[odd]; }
+    packed_re_view[k] = even_value;
+    packed_im_view[k] = odd_value;
 }
 
 #[ruda(launch)]

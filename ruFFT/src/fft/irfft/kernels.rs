@@ -34,7 +34,11 @@ pub(super) fn irfft_kernel<F: Float>(
         let src_bin = select(active, src_bin, 0);
         let im_sign = select(k < n_freq, F::new(1.0), F::new(-1.0));
         shared_re[dst] = select(active, spectrum_re_view[src_bin], F::new(0.0));
-        shared_im[dst] = select(active, spectrum_im_view[src_bin] * im_sign, F::new(0.0));
+        let mut imag = F::new(0.0);
+        if active && src_bin != 0 && src_bin != n_fft / 2 {
+            imag = spectrum_im_view[src_bin] * im_sign;
+        }
+        shared_im[dst] = imag;
         k += threads_per_ruda;
     }
     sync_ruda();

@@ -1,5 +1,38 @@
 # ruFFT User Guide
 
+## Exact-length device transforms (v16 candidate)
+
+`rufft::tensor::rfft_exact(signal, dim, n)` computes the actual requested
+N-point transform, with `floor(N/2)+1` output bins.
+`irfft_exact(real, imag, dim, Some(N))` computes its normalized inverse.
+Pass N explicitly for an odd original length: a half-spectrum alone cannot
+identify odd versus even N. Both currently require F32 device storage.
+
+For a six-point signal, `rfft_exact(..., None)` returns **four** bins, not five.
+The existing `rfft`/`irfft` APIs deliberately retain their documented
+next-power-of-two semantics for compatibility with the other tensor backends
+and autodiff. They now use virtual input padding rather than allocate/copy a
+padded signal or spectrum. One-point transforms are supported.
+
+Non-power-of-two exact lengths use Bluestein convolution through the existing
+RUDA complex FFT kernels; this is not a CPU fallback and does not call cuFFT.
+`RealFftPlan::new(client, N, FftMode::Forward/Inverse)` exposes reusable GPU
+chirp tables and scratch. Reuse the same plan to avoid reconstructing tables.
+`retained_bytes()` excludes input/output, driver data and initialization
+scratch; `clear_workspace()` releases batched scratch, not the chirp tables.
+Plans pin the client's current execution queue. They do not make the runtime
+graph-capture compatible or enable default asynchronous execution.
+
+Limits: single transform axis, batched positive-stride layouts, F32 only.
+Bluestein's `next_power_of_two(2*N-1)` must not exceed 4096*4096; the actual
+allocation must also fit the device and the U32 indexing bound. Bounds are
+implementation limits, **not** verified support or performance guarantees.
+Kernel correctness, driver compilation and speed still require real GPU
+acceptance with `tools/gpu_validation/validate_v16.py`.
+
+See `docs/zh/native-gpu-v16.md` for patch scope and validation boundaries.
+
+
 [Compute libraries](README.md) · [Tensor framework](../tensor-framework.md) · [中文](../../zh/libraries/rufft.md) | [日本語](../../ja/libraries/rufft.md) | [Deutsch](../../de/libraries/rufft.md) | [Русский](../../ru/libraries/rufft.md)
 
 ruFFT computes real-signal FFTs and inverse transforms on the device. The `rufft::tensor` interface allocates outputs; use `rfft_launch` and `irfft_launch` when managing device bindings directly.
@@ -68,7 +101,7 @@ For requested length n, the actual FFT length N is the smallest power of two gre
 - The forward output length along dim is `N / 2 + 1`; other dimensions are unchanged.
 - With `n = None`, `irfft` uses `2 × (bin count - 1)`. An explicit n specifies the returned length.
 - The inverse first truncates or zero-pads both spectrum components to `N / 2 + 1` bins, computes the N-point inverse, then crops to n.
-- Requested length must be at least 2; a one-point transform fails the device kernel's length check.
+- Requested length must be positive. The tensor interfaces now support one-point transforms; a one-bin inverse needs explicit `Some(1)`.
 
 | Input/call | Actual transform length | Output length along dim |
 | --- | --- | --- |
@@ -102,7 +135,7 @@ A single `rfft` call transforms only the selected axis, not an entire multidimen
 
 ## 5. Buffers and execution
 
-Tensor interfaces allocate outputs and perform padding and cropping as needed. Actual lengths above 4096 automatically use the staged path without changing the call. To manage output buffers yourself, the launch interfaces take a client, input/output `TensorBinding` values, dim, and `StorageType`, returning `Result<(), LaunchError>`. Allocate matching output layouts for the actual N.
+Tensor interfaces allocate outputs, use virtual input padding, and crop legacy inverse outputs when needed. Actual lengths above 4096 automatically use the staged path without changing the call. To manage output buffers yourself, the launch interfaces take a client, input/output `TensorBinding` values, dim, and `StorageType`, returning `Result<(), LaunchError>`. Allocate matching output layouts for the actual N.
 
 To avoid materializing zero-padded input when managing buffers, use these entry points:
 

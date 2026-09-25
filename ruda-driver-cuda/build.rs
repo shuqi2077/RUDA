@@ -1,6 +1,8 @@
 use cudarc::driver::sys::CUDA_VERSION;
 
 fn main() {
+    println!("cargo::rustc-check-cfg=cfg(cuda_12000)");
+    if CUDA_VERSION >= 12000 { println!("cargo:rustc-cfg=cuda_12000"); }
     println!("cargo::rustc-check-cfg=cfg(cuda_12050)");
     println!("cargo::rustc-check-cfg=cfg(cuda_12080)");
 

@@ -1,0 +1,47 @@
+name: Native graph scalar updates v18
+on:
+  workflow_dispatch:
+    inputs:
+      run_gpu:
+        type: boolean
+        default: false
+        description: Run strict acceptance on a trusted provisioned NVIDIA runner
+      ptx_version:
+        type: string
+        default: '8.0'
+        description: PTX version supported by the actual device and driver
+  pull_request:
+    paths:
+      - 'ruda-driver-cuda/**'
+      - 'ruda-kernel/src/dsl/compute/launcher.rs'
+      - 'ruda/src/runtime/memory_management/memory_pool/handle.rs'
+      - 'tools/gpu_validation/**'
+      - '.github/workflows/native-graph-v18.yml'
+permissions:
+  contents: read
+jobs:
+  host-checks-not-gpu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Python wiring and fail-closed validator tests (not GPU)
+        run: |
+          python3 -m venv .v18-venv
+          .v18-venv/bin/python -m pip install pytest==9.0.2
+          .v18-venv/bin/python -m pytest -q ruda-driver-cuda/tests/host tools/gpu_validation
+      - name: Compile native crate and run Rust-only layout tests
+        run: |
+          rustc --version
+          cargo test --locked -p ruda-driver-cuda --no-default-features --features std,direct-ptx --lib execution::graph_update::tests
+          cargo test --locked -p ruda-driver-cuda --no-default-features --features std,direct-ptx --test graph-update --no-run
+  hardware-acceptance:
+    # Never execute untrusted pull-request code on a self-hosted GPU runner.
+    if: github.event_name == 'workflow_dispatch' && inputs.run_gpu
+    runs-on: [self-hosted, linux, x64, ruda-gpu]
+    timeout-minutes: 60
+    env:
+      RUDA_PTX_VERSION: ${{ inputs.ptx_version }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: python3 tools/gpu_validation/validate_v18.py --output v18-hardware-validation

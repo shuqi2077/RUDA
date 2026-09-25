@@ -101,6 +101,16 @@ pub(crate) fn cfft_launch_any_size<R: Runtime>(
     dtype: StorageType,
     fft_mode: FftMode,
 ) -> Result<(), LaunchError> {
+    cfft_launch_with_scratch(client, bindings, dim, dtype, fft_mode, None)
+}
+
+/// As above, with reusable caller-owned four-step scratch. Private to ruFFT;
+/// supplied scratch must be contiguous, distinct from input/output and F32.
+pub(crate) fn cfft_launch_with_scratch<R: Runtime>(
+    client: &ComputeClient<R>, bindings: CfftBindings<R>, dim: usize,
+    dtype: StorageType, fft_mode: FftMode,
+    scratch: Option<(TensorHandle<R>, TensorHandle<R>)>,
+) -> Result<(), LaunchError> {
     let n_fft = bindings.input_re.shape[dim];
     assert!(n_fft.is_power_of_two(), "cfft needs power-of-two n_fft");
     assert!(n_fft >= 2);
@@ -125,7 +135,7 @@ pub(crate) fn cfft_launch_any_size<R: Runtime>(
     if n_fft <= MAX_SHARED_N_FFT {
         cfft_shared_launch::<R>(client, bindings, plan)
     } else {
-        cfft_four_step_launch::<R>(client, bindings, dtype, plan)
+        cfft_four_step_launch::<R>(client, bindings, dtype, plan, scratch)
     }
 }
 
@@ -172,23 +182,23 @@ fn cfft_four_step_launch<R: Runtime>(
     bindings: CfftBindings<R>,
     dtype: StorageType,
     plan: CfftPlan,
+    scratch: Option<(TensorHandle<R>, TensorHandle<R>)>,
 ) -> Result<(), LaunchError> {
     let (n1, n2) = factor_four_step(plan.n_fft);
 
     // Scratch buffer, same shape as input. Two passes ping-pong through
     // scratch and output; the transpose at the end lands in `output`.
-    let scratch_shape: Vec<usize> = bindings.input_re.shape.to_vec();
-    let elems: usize = scratch_shape.iter().product();
-    let scratch_re = TensorHandle::<R>::new_contiguous(
-        scratch_shape.clone(),
-        client.empty(elems * dtype.size()),
-        dtype,
-    );
-    let scratch_im = TensorHandle::<R>::new_contiguous(
-        scratch_shape.clone(),
-        client.empty(elems * dtype.size()),
-        dtype,
-    );
+    let (scratch_re, scratch_im) = if let Some((re, im)) = scratch {
+        assert_eq!(re.shape().as_slice(), bindings.input_re.shape.as_slice());
+        assert_eq!(im.shape().as_slice(), bindings.input_re.shape.as_slice());
+        assert_eq!(re.dtype, dtype); assert_eq!(im.dtype, dtype);
+        (re, im)
+    } else {
+        let shape: Vec<usize> = bindings.input_re.shape.to_vec();
+        let elems: usize = shape.iter().product();
+        (TensorHandle::<R>::new_contiguous(shape.clone(), client.empty(elems * dtype.size()), dtype),
+         TensorHandle::<R>::new_contiguous(shape, client.empty(elems * dtype.size()), dtype))
+    };
 
     // Step 1: strided FFT_{N1} along the n1 axis of (N1, N2). One ruda per
     // (window, n2). Reads from `input_*`, writes to `scratch_*` with fused

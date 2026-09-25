@@ -1,4 +1,5 @@
 mod interop;
+mod graph;
 use interop::InteropState;
 use super::storage::gpu::{GpuResource, GpuStorage};
 use crate::{
@@ -51,6 +52,8 @@ pub(crate) const MB: usize = 1024 * 1024;
 
 #[derive(Debug)]
 pub struct CudaServer {
+    // Graphs must release executables/buffer pins BEFORE the context unloads modules.
+    graphs: graph::GraphRegistry,
     ctx: CudaContext,
     interop: InteropState,
     device_id: DeviceId,
@@ -157,7 +160,7 @@ impl ComputeServer for CudaServer {
         mode: ExecutionMode,
         stream_id: StreamId,
     ) {
-        if let Err(err) = self.launch_checked(kernel, count, bindings, mode, stream_id) {
+        if let Err(err) = self.launch_checked(kernel, count, bindings, mode, stream_id, None) {
             let mut stream = match self.streams.resolve(stream_id, [].into_iter(), false) {
                 Ok(stream) => stream,
                 Err(err) => unreachable!("{err:?}"),
@@ -558,6 +561,7 @@ impl CudaServer {
 
         let interop = InteropState::new(ctx.context as usize,max_streams);
         Self {
+            graphs: graph::GraphRegistry::default(),
             ctx,
             interop,
             device_id,
@@ -641,7 +645,11 @@ impl CudaServer {
         bindings: KernelArguments,
         mode: ExecutionMode,
         stream_id: StreamId,
+        mut graph: Option<&mut crate::execution::graph::KernelGraph>,
     ) -> Result<(), ServerError> {
+        // Retain allocation/view handles before the invocation consumes them.
+        // Tensor maps and dynamic grids are rejected by explicit graph preflight.
+        let graph_bindings = graph.as_ref().map(|_| bindings.buffers.clone());
         let mut kernel_id = kernel.id();
         let logger = self.streams.logger.clone();
         kernel_id.mode(mode);
@@ -866,12 +874,26 @@ impl CudaServer {
             tensor_maps.push(binding);
         }
 
+        let info_pin = if graph.is_some() {
+            info_binding.as_ref().map(|handle| handle.clone().binding())
+        } else { None };
         resources.extend(
             info_binding
                 .into_iter()
                 .map(|s| command.resource(s.binding()).expect("Resource to exist")),
         );
 
+        if let Some(graph) = graph.as_deref_mut() {
+            graph.prepare_metadata(&bindings.info, info_pin.clone(), grid_constants)?;
+            let mut pins = graph_bindings.unwrap_or_default();
+            pins.extend(info_pin);
+            if pins.len() != resources.len() {
+                return Err(crate::execution::graph::error("graph buffer retention layout mismatch"));
+            }
+            for (binding, resource) in pins.into_iter().zip(resources.iter()) {
+                graph.retain(binding, resource.ptr)?;
+            }
+        }
         command.kernel(
             kernel_id,
             kernel,
@@ -881,6 +903,7 @@ impl CudaServer {
             &resources,
             info_const,
             logger,
+            graph,
         )?;
 
         Ok(())

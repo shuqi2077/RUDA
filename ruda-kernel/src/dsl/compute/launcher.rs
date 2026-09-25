@@ -10,6 +10,7 @@ use ruda_core::ir::{AddressType, Scope, StorageType, Type};
 use ruda::runtime::server::{Binding, RudaCount, TensorMapBinding};
 use ruda::runtime::{
     client::ComputeClient,
+    compiler::RudaTask,
     kernel::{RudaKernel, KernelTask},
     server::KernelArguments,
 };
@@ -19,6 +20,33 @@ std::thread_local! {
     static INFO: RefCell<InfoBuilder> = RefCell::new(InfoBuilder::default());
     // Only used for resolving types
     static SCOPE: RefCell<Scope> = RefCell::new(Scope::root(false));
+}
+
+/// A fully registered kernel invocation, not compiled or submitted yet.
+///
+/// Buffers, scalars and shape metadata are owned. The execution queue is fixed
+/// at preparation time. This is an opt-in building block for native graph
+/// backends, not stream capture or a CPU implementation of a GPU kernel.
+pub struct PreparedKernel<R: Runtime> {
+    task: Box<dyn RudaTask<R::Compiler>>,
+    count: RudaCount,
+    arguments: KernelArguments,
+    client: ComputeClient<R>,
+    scalar_words: usize,
+}
+
+impl<R: Runtime> PreparedKernel<R> {
+    /// Number of aligned u64 words in the packed scalar prefix. Backend graph
+    /// updates must keep the remaining (shape/stride/length) metadata unchanged.
+    pub fn scalar_words(&self) -> usize { self.scalar_words }
+
+    /// Consume the prepared invocation. Backends must honor the client's device
+    /// and queue, retain arguments, and validate any restrictions before launch.
+    pub fn into_parts(self) -> (
+        Box<dyn RudaTask<R::Compiler>>, RudaCount, KernelArguments, ComputeClient<R>,
+    ) {
+        (self.task, self.count, self.arguments, self.client)
+    }
 }
 
 /// Prepare a kernel for [launch](KernelLauncher::launch).
@@ -63,6 +91,22 @@ impl<R: Runtime> KernelLauncher<R> {
     /// Register a scalar to be launched from raw data.
     pub fn register_scalar_raw(&mut self, bytes: &[u8], dtype: StorageType) {
         self.with_info(|info| info.scalars.push_raw(bytes, dtype));
+    }
+
+    /// Finish argument registration without submitting any GPU computation.
+    /// Construct each launcher and consume it before preparing the next one:
+    /// scalar/metadata registration uses the existing thread-local builder.
+    pub fn prepare<K: RudaKernel>(
+        mut self, count: RudaCount, kernel: K, client: &ComputeClient<R>,
+    ) -> PreparedKernel<R> {
+        let scalar_words = self.with_info(|info| info.scalars.len_aligned());
+        PreparedKernel {
+            scalar_words,
+            arguments: self.into_bindings(),
+            task: Box::new(KernelTask::<R::Compiler, K>::new(kernel)),
+            count,
+            client: client.fixed_execution_queue(),
+        }
     }
 
     /// Launch the kernel.

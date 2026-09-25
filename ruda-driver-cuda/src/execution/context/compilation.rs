@@ -162,33 +162,58 @@ impl CudaContext {
         shared_mem_bytes: usize,
         dynamic_metadata_index: Option<usize>,
     ) -> Result<(), CompilationError> {
-        let func_name = CString::new(entrypoint_name).unwrap();
-        // SAFETY: `ptx` is null-terminated PTX from the selected backend. `func_name` is a
-        // null-terminated `CString` matching the kernel entry point in the compiled module.
-        let func = unsafe {
-            let module = cudarc::driver::result::module::load_data(ptx.as_ptr() as *const _)
+        let (func_name, shared_attribute) = super::module_config::validate_module(
+            &ptx, &entrypoint_name, shared_mem_bytes,
+            self.properties.hardware.max_shared_memory_size,
+        ).map_err(|reason| CompilationError::Generic {
+            reason, backtrace: BackTrace::capture(),
+        })?;
+        // Do not replace a live module (possibly still used by queued work).
+        // CudaServer serializes compilation and publication of each KernelId.
+        if self.module_names.contains_key(&kernel_id) { return Ok(()); }
+        // SAFETY: validation above guarantees a nonempty NUL-terminated
+        // buffer. The service thread has already selected this CUDA context.
+        let module = unsafe { cudarc::driver::result::module::load_data(ptx.as_ptr() as *const _) }
+            .map_err(|err| CompilationError::Generic {
+                reason: format!("Unable to load PTX entry {entrypoint_name}: {err:?}"),
+                backtrace: BackTrace::capture(),
+            })?;
+        // No kernel from this module has been submitted yet. On any setup
+        // failure it is safe to unload immediately, without a device wait.
+        let configured = (|| {
+            let func = unsafe { cudarc::driver::result::module::get_function(module, func_name) }
                 .map_err(|err| CompilationError::Generic {
-                    reason: format!("Unable to load the PTX: {err:?}"),
+                    reason: format!("Unable to fetch PTX entry {entrypoint_name}: {err:?}"),
                     backtrace: BackTrace::capture(),
                 })?;
-
-            cudarc::driver::result::module::get_function(module, func_name).map_err(|err| {
-                CompilationError::Generic {
-                    reason: format!("Unable to fetch the function from the module: {err:?}"),
+            if shared_attribute != 0 {
+                unsafe { cudarc::driver::result::function::set_function_attribute(
+                    func, CUfunction_attribute::CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+                    shared_attribute,
+                ) }.map_err(|err| CompilationError::Generic {
+                    reason: format!("Unable to configure {shared_mem_bytes} shared bytes for {entrypoint_name}: {err:?}"),
                     backtrace: BackTrace::capture(),
+                })?;
+            }
+            Ok::<_, CompilationError>(func)
+        })();
+        let func = match configured {
+            Ok(func) => func,
+            Err(error) => {
+                // Preserve the original error rather than hiding it behind
+                // a secondary cleanup failure.
+                unsafe {
+                    let status = cudarc::driver::sys::cuModuleUnload(module);
+                    if status != cudarc::driver::sys::CUresult::CUDA_SUCCESS {
+                        log::warn!("PTX setup failed; module cleanup also failed: {status:?}");
+                    }
                 }
-            })?
+                return Err(error);
+            }
         };
-
-        self.module_names.insert(
-            kernel_id.clone(),
-            CompiledKernel {
-                ruda_dim,
-                shared_mem_bytes,
-                func,
-                dynamic_metadata_index,
-            },
-        );
+        self.module_names.insert(kernel_id, CompiledKernel {
+            ruda_dim, shared_mem_bytes, func, module, dynamic_metadata_index,
+        });
 
         Ok(())
     }

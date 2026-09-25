@@ -1,0 +1,49 @@
+name: Native graph batch and completion v19
+on:
+  workflow_dispatch:
+    inputs:
+      run_gpu:
+        type: boolean
+        default: false
+        description: Run on a trusted, provisioned NVIDIA runner
+      ptx_version:
+        type: string
+        default: '8.0'
+        description: Match the actual GPU and driver; this is not auto-detection
+  pull_request:
+    paths:
+      - 'ruda-driver-cuda/**'
+      - 'tools/gpu_validation/**'
+      - '.github/workflows/native-graph-v19.yml'
+permissions:
+  contents: read
+jobs:
+  rust-and-host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Production planner (no GPU)
+        run: |
+          rustc --version
+          python3 tools/gpu_validation/rust_host_v19.py --output v19-rust-host
+      - name: Host integration guards (not GPU acceptance)
+        run: |
+          python3 -m venv .v19-venv
+          .v19-venv/bin/python -m pip install pytest==9.0.2
+          .v19-venv/bin/python -m pytest -q ruda-driver-cuda/tests/host tools/gpu_validation
+      - name: Full native crate and new real-device targets must compile
+        run: |
+          cargo test --locked -p ruda-driver-cuda --no-default-features --features std,direct-ptx --lib execution::graph_batch::tests
+          cargo test --locked -p ruda-driver-cuda --no-default-features --features std,direct-ptx --test graph-batch --no-run
+          cargo check --locked -p ruda-driver-cuda --no-default-features --features std,direct-ptx --example native-graph-batch
+  hardware-acceptance:
+    # No untrusted PR code on a self-hosted GPU machine.
+    if: github.event_name == 'workflow_dispatch' && inputs.run_gpu
+    runs-on: [self-hosted, linux, x64, ruda-gpu]
+    timeout-minutes: 60
+    env:
+      RUDA_PTX_VERSION: ${{ inputs.ptx_version }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: python3 tools/gpu_validation/validate_v19.py --output v19-hardware-validation

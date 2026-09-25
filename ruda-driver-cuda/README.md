@@ -43,3 +43,16 @@ Default features: `std`, `ruda/runtime-default`, `ruda-core/std`, `ruda-kernel/f
 - `DeviceSynchronize` waits for the context and reports deferred RUDA launch errors. Commands return `Result<u64, ServerError>`; readiness is encoded as 0 or 1.
 
 `record_allocation(device, stream, handle)` retains an allocation until already-submitted work on that stream completes; it does not replace an execution dependency. Stream creation is bounded by `streaming.max_streams` and fails when the pool is exhausted. These APIs do not import arbitrary external CUDA streams or contexts.
+
+### Explicit dependency graphs (v20 candidate)
+
+`CudaGraph::build_dag` / `build_dag_tracked` accept prepared kernels plus an
+explicit list of earlier parent indices for each node. Independent read-only
+branches may share inputs; overlapping write-capable views without a dependency
+path are rejected from the kernel IR and retained allocation identities.
+`build` / `build_tracked` keep the original serial-chain behavior. This is not
+stream capture, automatic model graph extraction, or a concurrency guarantee.
+
+`dependencies()`, `edge_count()`, and `to_dot()` expose the fixed structure without
+printing device addresses or scalar contents. See `examples/native_graph_dag.rs`
+and `docs/zh/native-gpu-v20.md` for contracts, limits, and strict acceptance commands.

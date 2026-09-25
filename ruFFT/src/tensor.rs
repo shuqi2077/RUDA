@@ -1,197 +1,104 @@
-use ruda_core::tensor::{DType, Shape, Slice, TensorMetadata};
+use ruda_core::tensor::{DType, Shape, TensorMetadata};
 use ruda_kernel::dsl::prelude::*;
-use ruda_kernel::tensor::{
-    RudaTensor,
-    allocation::empty_device_dtype,
-    initialization::zeros,
-    reshape::reshape,
-};
-use ruprim::indexing::slice;
-use crate::{irfft_launch, rfft_launch};
+use ruda_kernel::tensor::{RudaTensor, allocation::empty_device_dtype, reshape::reshape};
+use crate::{FftMode, RealFftPlan};
 
-// Materializes a padded tensor (allocate + copy) because rfft_launch/irfft_launch
-// in the kernel library don't support virtual padding via a length parameter.
-// See: https://github.com/shuqi2077/RUDA/blob/main/THIRD_PARTY_NOTICES.md
-fn pad_to_length<R: Runtime>(
-    tensor: RudaTensor<R>,
-    dim: usize,
-    target: usize,
-) -> RudaTensor<R> {
-    let shape = tensor.shape();
-    let current = shape[dim];
-    if current == target {
-        return tensor;
-    }
-    if current > target {
-        let ranges: Vec<_> = shape
-            .iter()
-            .enumerate()
-            .map(|(i, &s)| if i == dim { 0..target } else { 0..s })
-            .collect();
-        return slice(tensor, &ranges);
-    }
-    let mut padded_shape = shape.clone();
-    padded_shape[dim] = target;
-    let padded = zeros::<R>(tensor.device.clone(), padded_shape, tensor.dtype);
-    let slices: Vec<Slice> = shape.iter().map(|&s| Slice::from(0..s)).collect();
-    ruprim::indexing::slice_assign::<R>(padded, &slices, tensor)
+/// Legacy compatibility API: the requested signal length is rounded up to a
+/// power of two. Use `rfft_exact` for an actual N-point DFT. Virtual padding
+/// avoids allocating and copying a padded signal.
+pub fn rfft<R: Runtime>(signal: RudaTensor<R>, dim: usize, n: Option<usize>)
+    -> (RudaTensor<R>, RudaTensor<R>)
+{
+    forward(signal, dim, n, false)
 }
 
-/// Launch the rfft kernel with optional padding for non-power-of-two sizes.
-///
-/// Signal is first truncated or zero-padded to `n` (when provided), then internally
-/// padded to the next power of two so the kernel operates on a pow2 length.
-/// Output bin count is `fft_size / 2 + 1` where `fft_size = next_pow2(n)`.
-pub fn rfft<R: Runtime>(
-    signal: RudaTensor<R>,
-    dim: usize,
-    n: Option<usize>,
-) -> (RudaTensor<R>, RudaTensor<R>) {
-    let dtype = match signal.dtype {
-        DType::F64 => f64::as_type_native_unchecked().storage_type(),
-        DType::F32 => f32::as_type_native_unchecked().storage_type(),
-        _ => panic!("Unsupported type {:?}", signal.dtype),
-    };
+/// Exact N-point real FFT, returning floor(N/2)+1 F32 frequency bins. A supplied
+/// N truncates or virtually zero-pads the input, but does not change the DFT's
+/// length. Non-power-of-two N uses the device Bluestein path.
+pub fn rfft_exact<R: Runtime>(signal: RudaTensor<R>, dim: usize, n: Option<usize>)
+    -> (RudaTensor<R>, RudaTensor<R>)
+{
+    forward(signal, dim, n, true)
+}
 
-    let input_device = signal.device.clone();
-    let input_dtype = signal.dtype;
-    let input_shape = signal.shape();
-    let requested_n = n.unwrap_or(input_shape[dim]);
-    let fft_size = requested_n.next_power_of_two();
-    let rank_one = input_shape.len() == 1;
+fn forward<R: Runtime>(signal: RudaTensor<R>, dim: usize, n: Option<usize>, exact: bool)
+    -> (RudaTensor<R>, RudaTensor<R>)
+{
+    assert_eq!(signal.dtype, DType::F32, "ruFFT device kernels currently require F32 storage");
+    let shape = signal.shape();
+    assert!(dim < shape.len(), "rfft: dimension out of bounds");
+    let requested = n.unwrap_or(shape[dim]);
+    assert!(requested > 0, "rfft: transform length must be positive");
+    let length = if exact { requested } else {
+        requested.checked_next_power_of_two().expect("rfft length overflow")
+    };
+    let used = requested.min(shape[dim]);
+    let rank_one = shape.len() == 1;
     let (signal, dim) = if rank_one {
-        (reshape(signal, Shape::new([1, input_shape[0]])), 1)
-    } else {
-        (signal, dim)
-    };
-
-    // Truncate/pad to requested_n, THEN pad to fft_size; otherwise for
-    // requested_n < input_len < fft_size we would keep bogus samples in [n, fft_size).
-    let signal = pad_to_length(signal, dim, requested_n);
-    let signal = pad_to_length(signal, dim, fft_size);
-
-    let signal_shape = signal.shape();
-    let mut output_shape = signal_shape.clone();
-    output_shape[dim] = fft_size / 2 + 1;
-
-    let output_re = empty_device_dtype(
-        signal.client.clone(),
-        signal.device.clone(),
-        output_shape.clone(),
-        signal.dtype,
-    );
-    let output_im = empty_device_dtype(
-        signal.client.clone(),
-        signal.device.clone(),
-        output_shape.clone(),
-        signal.dtype,
-    );
-
-    rfft_launch(
-        &signal.client.clone(),
-        signal.binding(),
-        output_re.clone().binding(),
-        output_im.clone().binding(),
-        dim,
-        dtype,
-    )
-    .unwrap_or_else(|e| {
-        panic!(
-            "rfft kernel launch failed (device={input_device:?}, dtype={input_dtype:?}, \
-             dim={dim}, requested_n={requested_n}, fft_size={fft_size}): {e}"
-        )
-    });
-
+        (reshape(signal, Shape::new([1, shape[0]])), 1)
+    } else { (signal, dim) };
+    let mut plan = RealFftPlan::new(signal.client.clone(), length, FftMode::Forward)
+        .unwrap_or_else(|e| panic!("rfft plan failed (requested={requested}, actual={length}): {e}"));
+    let mut out_shape = signal.shape();
+    out_shape[dim] = length / 2 + 1;
+    let real = empty_device_dtype(signal.client.clone(), signal.device.clone(), out_shape.clone(), DType::F32);
+    let imag = empty_device_dtype(signal.client.clone(), signal.device.clone(), out_shape, DType::F32);
+    plan.forward(signal.binding(), real.clone().binding(), imag.clone().binding(), dim, used)
+        .unwrap_or_else(|e| panic!("rfft launch failed (requested={requested}, actual={length}): {e}"));
     if rank_one {
-        let output_shape = Shape::new([fft_size / 2 + 1]);
-        (
-            reshape(output_re, output_shape.clone()),
-            reshape(output_im, output_shape),
-        )
-    } else {
-        (output_re, output_im)
-    }
+        (reshape(real, Shape::new([length / 2 + 1])), reshape(imag, Shape::new([length / 2 + 1])))
+    } else { (real, imag) }
 }
 
-/// Launch the irfft kernel with optional padding for non-power-of-two sizes.
-pub fn irfft<R: Runtime>(
-    spectrum_re: RudaTensor<R>,
-    spectrum_im: RudaTensor<R>,
-    dim: usize,
-    n: Option<usize>,
-) -> RudaTensor<R> {
-    assert!(
-        spectrum_re.shape() == spectrum_im.shape(),
-        "irfft: spectrum_re and spectrum_im shapes must match"
-    );
-    assert!(
-        spectrum_re.shape()[dim] >= 1,
-        "irfft: spectrum dimension cannot be empty"
-    );
-    assert!(
-        !matches!(n, Some(0)),
-        "irfft: n must be >= 1 when specified, got Some(0)"
-    );
+/// Legacy inverse: compute the next-power-of-two inverse, then crop to N.
+/// Prefer `irfft_exact` when the spectrum describes an actual N-point DFT.
+pub fn irfft<R: Runtime>(real: RudaTensor<R>, imag: RudaTensor<R>, dim: usize, n: Option<usize>)
+    -> RudaTensor<R>
+{
+    inverse(real, imag, dim, n, false)
+}
 
-    let dtype = match spectrum_re.dtype {
-        DType::F64 => f64::as_type_native_unchecked().storage_type(),
-        DType::F32 => f32::as_type_native_unchecked().storage_type(),
-        _ => panic!("Unsupported type {:?}", spectrum_re.dtype),
+/// Exact normalized N-point inverse real FFT. For odd N, pass Some(N): the
+/// half-spectrum alone cannot distinguish an odd from an even original length.
+pub fn irfft_exact<R: Runtime>(real: RudaTensor<R>, imag: RudaTensor<R>, dim: usize, n: Option<usize>)
+    -> RudaTensor<R>
+{
+    inverse(real, imag, dim, n, true)
+}
+
+fn inverse<R: Runtime>(real: RudaTensor<R>, imag: RudaTensor<R>, dim: usize, n: Option<usize>, exact: bool)
+    -> RudaTensor<R>
+{
+    assert_eq!(real.dtype, DType::F32, "ruFFT device kernels currently require F32 storage");
+    assert_eq!(imag.dtype, real.dtype, "irfft: real and imaginary dtypes differ");
+    assert_eq!(real.client.device_id(), imag.client.device_id(), "irfft: input devices differ");
+    let shape = real.shape();
+    assert_eq!(shape, imag.shape(), "irfft: real and imaginary shapes differ");
+    assert!(dim < shape.len(), "irfft: dimension out of bounds");
+    assert!(shape[dim] > 0, "irfft: spectrum must contain at least one bin");
+    let inferred = (shape[dim] - 1).checked_mul(2).expect("irfft inferred length overflow");
+    let requested = n.unwrap_or(inferred);
+    assert!(requested > 0, "irfft: positive N is required (use Some(1) for one bin)");
+    let length = if exact { requested } else {
+        requested.checked_next_power_of_two().expect("irfft length overflow")
     };
-
-    let input_device = spectrum_re.device.clone();
-    let input_dtype = spectrum_re.dtype;
-    let requested_n = n.unwrap_or((spectrum_re.shape()[dim] - 1) * 2);
-    let fft_size = requested_n.next_power_of_two().max(1);
-    let half_fft = fft_size / 2 + 1;
-    let input_shape = spectrum_re.shape();
-    let rank_one = input_shape.len() == 1;
-    let (spectrum_re, spectrum_im, dim) = if rank_one {
-        (
-            reshape(spectrum_re, Shape::new([1, input_shape[0]])),
-            reshape(spectrum_im, Shape::new([1, input_shape[0]])),
-            1,
-        )
-    } else {
-        (spectrum_re, spectrum_im, dim)
-    };
-
-    let spectrum_re = pad_to_length(spectrum_re, dim, half_fft);
-    let spectrum_im = pad_to_length(spectrum_im, dim, half_fft);
-
-    let mut signal_shape = spectrum_re.shape().clone();
-    signal_shape[dim] = fft_size;
-
-    let signal = empty_device_dtype(
-        spectrum_re.client.clone(),
-        spectrum_re.device.clone(),
-        signal_shape,
-        spectrum_re.dtype,
-    );
-
-    irfft_launch(
-        &spectrum_re.client.clone(),
-        spectrum_re.binding(),
-        spectrum_im.binding(),
-        signal.clone().binding(),
-        dim,
-        dtype,
-    )
-    .unwrap_or_else(|e| {
-        panic!(
-            "irfft kernel launch failed (device={input_device:?}, dtype={input_dtype:?}, \
-             dim={dim}, requested_n={requested_n}, fft_size={fft_size}): {e}"
-        )
-    });
-
-    let signal = if fft_size > requested_n {
-        pad_to_length(signal, dim, requested_n)
-    } else {
-        signal
-    };
-    if rank_one {
-        reshape(signal, Shape::new([requested_n]))
-    } else {
-        signal
-    }
+    let used = shape[dim].min(length / 2 + 1);
+    let rank_one = shape.len() == 1;
+    let (real, imag, dim) = if rank_one {
+        (reshape(real, Shape::new([1, shape[0]])), reshape(imag, Shape::new([1, shape[0]])), 1)
+    } else { (real, imag, dim) };
+    let mut plan = RealFftPlan::new(real.client.clone(), length, FftMode::Inverse)
+        .unwrap_or_else(|e| panic!("irfft plan failed (requested={requested}, actual={length}): {e}"));
+    let mut out_shape = real.shape();
+    out_shape[dim] = length;
+    let output = empty_device_dtype(real.client.clone(), real.device.clone(), out_shape.clone(), DType::F32);
+    plan.inverse(real.binding(), imag.binding(), output.clone().binding(), dim, used)
+        .unwrap_or_else(|e| panic!("irfft launch failed (requested={requested}, actual={length}): {e}"));
+    // Cropping is part of the old API only. Neither path pads/copies spectra.
+    let output = if length != requested {
+        let ranges: Vec<_> = out_shape.iter().enumerate()
+            .map(|(axis, &size)| 0..if axis == dim { requested } else { size }).collect();
+        ruprim::indexing::slice(output, &ranges)
+    } else { output };
+    if rank_one { reshape(output, Shape::new([requested])) } else { output }
 }

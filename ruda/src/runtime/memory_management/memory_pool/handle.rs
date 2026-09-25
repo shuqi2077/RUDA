@@ -170,6 +170,10 @@ impl ManagedMemoryHandle {
 }
 
 impl ManagedMemoryBinding {
+    /// Stable allocation identity, independent of the device address or view.
+    /// This is an identity token, not a pointer or proof that a resource is ready.
+    pub fn id(&self) -> ManagedMemoryId { self.descriptor.id }
+
     /// Retrieves the descriptor for the current binding.
     pub(crate) fn descriptor(&self) -> &ManagedMemoryDescriptor {
         &self.descriptor

@@ -398,6 +398,28 @@ impl<'a> Command<'a> {
         Ok(())
     }
 
+    /// Copy to an existing device allocation with managed page-locked staging.
+    /// The staging owner is handed to write_to_gpu's stream drop queue, not
+    /// dropped when the asynchronous driver call returns. Never allocates a
+    /// replacement DEVICE buffer; host pinned staging can still allocate.
+    pub(crate) fn write_pinned_to_existing(
+        &mut self, descriptor: CopyDescriptor, data: &[u8],
+    ) -> Result<(), IoError> {
+        let mut staging = self.reserve_pinned(data.len(), None).ok_or_else(|| IoError::Unknown {
+            description: "Unable to reserve pinned staging for graph scalar update".into(),
+            backtrace: BackTrace::capture(),
+        })?;
+        staging.copy_from_slice(data);
+        self.write_to_gpu(descriptor, staging)?;
+        // Graph updates bypass Command::kernel, which normally drains this queue.
+        // Bound staging retention during long runs with no host synchronization.
+        let current = self.streams.current();
+        if current.drop_queue.should_flush() {
+            current.drop_queue.flush(|| Fence::new(current.sys));
+        }
+        Ok(())
+    }
+
     /// Allocates a new GPU memory buffer and immediately copies contiguous host data into it.
     ///
     /// # Parameters
@@ -471,6 +493,7 @@ impl<'a> Command<'a> {
         resources: &[GpuResource],
         const_info: Option<*mut c_void>,
         logger: Arc<ServerLogger>,
+        graph: Option<&mut crate::execution::graph::KernelGraph>,
     ) -> Result<(), LaunchError> {
         if !self.ctx.module_names.contains_key(&kernel_id) {
             self.ctx.compile_kernel(&kernel_id, kernel, mode, logger)?;
@@ -485,6 +508,7 @@ impl<'a> Command<'a> {
             tensor_maps,
             resources,
             const_info,
+            graph,
         );
 
         if stream.drop_queue.should_flush() {

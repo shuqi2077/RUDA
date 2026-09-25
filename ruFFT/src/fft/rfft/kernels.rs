@@ -29,9 +29,11 @@ pub(super) fn rfft_kernel<F: Float>(
     let mut i = UNIT_POS as usize;
     while i < n_fft {
         let j = bit_reverse(i, log2_n);
-        let active = i < signal_len as usize;
-        let src = select(active, i, 0);
-        shared_re[j] = select(active, signal_view[src], F::new(0.0));
+        // Branch before reading: an empty source with virtual padding has
+        // no valid element zero, even if a later select discards that load.
+        let mut value = F::new(0.0);
+        if i < signal_len as usize { value = signal_view[i]; }
+        shared_re[j] = value;
         shared_im[j] = F::new(0.0);
         i += threads_per_ruda;
     }

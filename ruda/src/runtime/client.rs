@@ -95,10 +95,24 @@ impl<R: Runtime> ComputeClient<R> {
         }
     }
 
+    /// Resolve the logical execution stream on the calling thread.
+    /// A reusable execution plan must also hold `fixed_execution_queue()`;
+    /// an implicit thread-local stream must not change between plan operations.
+    pub fn execution_stream(&self) -> StreamId { self.stream_id() }
+
     /// Whether both clients currently submit to the same server and stream.
     /// Implicit streams are resolved on the calling thread at the time of this check.
     pub fn same_execution_queue(&self, other: &Self) -> bool {
         self.device.device_id() == other.device.device_id() && self.stream_id() == other.stream_id()
+    }
+
+    /// Clone this client with its currently resolved execution queue fixed.
+    /// Useful for reusable device plans whose scratch must not silently move
+    /// between thread-local streams. Does not create a stream or synchronize.
+    pub fn fixed_execution_queue(&self) -> Self {
+        let mut client = self.clone();
+        client.stream_id = Some(self.stream_id());
+        client
     }
 
     /// Set the stream in which the current client is operating on.

@@ -85,3 +85,6 @@ pub use diagnostics::{CudaDriverProbeError, query_driver_api_version};
 
 /// Checked stream/event integration using the native RUDA device service.
 pub mod interop;
+
+/// Explicit fixed-buffer native kernel graphs (not arbitrary stream capture).
+pub mod graph;

@@ -1,0 +1,41 @@
+name: Native fixed-buffer graphs v17
+on:
+  workflow_dispatch:
+    inputs:
+      run_gpu:
+        type: boolean
+        default: false
+        description: Run strict acceptance on a provisioned NVIDIA runner
+      ptx_version:
+        type: string
+        default: '8.0'
+        description: PTX version supported by the actual device and driver
+  pull_request:
+    paths:
+      - 'ruda-driver-cuda/**'
+      - 'ruda-kernel/src/dsl/compute/**'
+      - 'ruda-kernel-macros/src/ir/generate/launch.rs'
+      - 'tools/gpu_validation/**'
+      - '.github/workflows/native-graph-v17.yml'
+permissions:
+  contents: read
+jobs:
+  host-contracts-not-gpu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: |
+          python3 -m venv .v17-venv
+          .v17-venv/bin/python -m pip install pytest==9.0.2
+          .v17-venv/bin/python -m pytest -q ruda-driver-cuda/tests/host tools/gpu_validation
+  real-native-graph-acceptance:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_gpu
+    runs-on: [self-hosted, linux, x64, ruda-gpu]
+    timeout-minutes: 45
+    env:
+      RUDA_PTX_VERSION: ${{ inputs.ptx_version }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Real Rust compile and direct-PTX GPU execution
+        run: python3 tools/gpu_validation/validate_v17.py --output v17-hardware-validation
