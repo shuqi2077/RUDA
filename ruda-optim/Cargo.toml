@@ -121,7 +121,7 @@ version = "0.21.8"
 optional = true
 default-features = false
 path = "../ruda-tensor-device"
-version = "0.21.8"
+version = "0.21.9"
 features = [ "cuda",]
 
 [dependencies.ruda-fusion]
