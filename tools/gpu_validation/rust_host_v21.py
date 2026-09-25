@@ -41,7 +41,9 @@ def main() -> int:
             result=subprocess.run(command,capture_output=True,text=True,timeout=args.timeout,check=False)
             text=result.stdout+result.stderr;(out/f'{label}.log').write_text(text)
             report['commands'].append({'command':command,'returncode':result.returncode})
-            if result.returncode: raise RuntimeError(label+' failed')
+            if result.returncode:
+                print(text, file=sys.stderr)
+                raise RuntimeError(label+' failed')
             if label=='compile': report['production_rust_compiled']=True
             if label=='test': report['tests_passed']=require_complete(text)
             save()

@@ -325,9 +325,14 @@ mod tests {
         let a=access(0,0,32,true); assert!(roots().validate_accesses(&[vec![a,a],vec![]]).is_ok());
     }
     #[test] fn alias_work_is_bounded() {
-        let g=GraphTopology::new(3,vec![vec![],vec![0],vec![]]).unwrap();
+        let n=1450;
+        let mut parents:Vec<_>=(0..n).map(|i|if i==0 {vec![]} else {vec![i-1]}).collect();
+        parents.push(vec![]);
+        let g=GraphTopology::new(n+1,parents).unwrap();
         let a=access(0,0,32,true);
-        assert_eq!(g.validate_accesses(&[vec![a;1500],vec![a;1500],vec![]]),Err(TopologyError::AliasCheckBudget));
+        let mut nodes=vec![vec![a];n];
+        nodes.push(vec![]);
+        assert_eq!(g.validate_accesses(&nodes),Err(TopologyError::AliasCheckBudget));
     }
     #[test] fn readonly_input_two_outputs_and_join() {
         let g=GraphTopology::new(3,vec![vec![],vec![],vec![0,1]]).unwrap();
