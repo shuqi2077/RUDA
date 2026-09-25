@@ -442,11 +442,11 @@ mod tests {
     }
     #[test] fn v21_coalescing_never_bridges_a_gap() {
         let nodes=[vec![access(0,0,8,true),access(0,16,24,true)],vec![access(0,8,16,true)]];
-        assert_eq!(GraphTopology::infer(&nodes).unwrap().parents(),&[vec![],vec![]]);
+        assert_eq!(GraphTopology::infer(&nodes).unwrap().parents(),&[Vec::<usize>::new(),vec![]]);
     }
     #[test] fn v21_inference_distinct_allocations_and_empty_views() {
         let nodes=[vec![access(0,0,8,true),access(1,4,4,true)],vec![access(1,0,8,true)]];
-        assert_eq!(GraphTopology::infer(&nodes).unwrap().parents(),&[vec![],vec![]]);
+        assert_eq!(GraphTopology::infer(&nodes).unwrap().parents(),&[Vec::<usize>::new(),vec![]]);
     }
     #[test] fn v21_real_overlap_work_limit_still_fails_closed() {
         let nodes=vec![vec![access(0,0,8,true)];4];

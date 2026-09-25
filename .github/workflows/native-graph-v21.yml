@@ -35,8 +35,8 @@ jobs:
       - name: Full native crate and new real-device targets must compile
         run: |
           cargo test --locked -p ruda-driver-cuda --no-default-features --features std,direct-ptx --lib execution::graph_topology::tests
-          cargo test --locked -p ruda-driver-cuda --no-default-features --features std,direct-ptx --test graph-infer --no-run
-          cargo check --locked -p ruda-driver-cuda --no-default-features --features std,direct-ptx --example native-graph-infer
+          cargo test --locked -p ruda-driver-cuda --no-default-features --features std,direct-ptx --test graph-replay --test graph-update --test graph-batch --test graph-dag --test graph-infer --no-run
+          cargo check --locked -p ruda-driver-cuda --no-default-features --features std,direct-ptx --example native-graph --example native-graph-update --example native-graph-batch --example native-graph-dag --example native-graph-infer
   hardware-acceptance:
     # No untrusted PR code on a self-hosted GPU machine.
     if: github.event_name == 'workflow_dispatch' && inputs.run_gpu
