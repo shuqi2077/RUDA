@@ -173,7 +173,7 @@ optional = true
 
 [dependencies.ruda-driver-hip]
 path = "../ruda-driver-hip"
-version = "0.1.2"
+version = "0.1.8"
 default-features = false
 optional = true
 
