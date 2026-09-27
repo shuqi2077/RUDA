@@ -17,6 +17,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--output',type=Path,default=Path('cpp-bridge-validation'))
     p.add_argument('--compiler',default=os.environ.get('CXX','clang++'))
+    p.add_argument('--static-graph',action='store_true',help='also test extension API 2 in a fresh process')
     args=p.parse_args();out=args.output.resolve();out.mkdir(parents=True,exist_ok=True)
     root=Path(__file__).resolve().parents[2]
     report={'cpp_compiled':False,'cpp_loaded_and_protocol_tested':False,'gpu_validated':False,'rust_compiled':False,'commands':[]}
@@ -46,6 +47,17 @@ def main():
         if len(cases)<8 or any(c.find(tag) is not None for c in cases for tag in ['failure','error','skipped']):
             raise RuntimeError('missing or skipped C++ test cases')
         report['cpp_loaded_and_protocol_tested']=True;report['host_protocol_tests_passed']=len(cases)
+        if args.static_graph:
+            xml=out/'static-graph-cpp-tests.xml'
+            cmd=[sys.executable,'-m','pytest','-q',str(root/'ruda-torch/python/tests/test_static_graph_cpp.py'),f'--junitxml={xml}']
+            with (out/'static-graph-tests.log').open('w') as log:
+                result=subprocess.run(cmd,cwd=root,env=dict(os.environ,RUDA_CPP_TEST_LIBRARY=str(library)),stdout=log,stderr=subprocess.STDOUT)
+            report['commands'].append({'command':cmd,'returncode':result.returncode})
+            if result.returncode:raise RuntimeError('static graph C++ protocol test failed')
+            graph_cases=list(ET.parse(xml).getroot().iter('testcase'))
+            if len(graph_cases)!=49 or any(c.find(tag) is not None for c in graph_cases for tag in ['failure','error','skipped']):
+                raise RuntimeError('missing or skipped static graph protocol tests')
+            report['static_graph_cpp_host_protocol_tests_passed']=len(graph_cases)
         code=0
     except (RuntimeError,OSError,ImportError,ET.ParseError) as error:
         report['error']=str(error);code=2

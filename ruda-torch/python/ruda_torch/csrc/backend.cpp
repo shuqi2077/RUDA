@@ -9,8 +9,13 @@
 #include <torch/csrc/utils/pybind.h> // Tensor caster without the full C++ frontend
 #include <torch/library.h>
 #include <cstdio>
+#include <algorithm>
 #include <cstring>
 #include <memory>
+#include <mutex>
+#include <cmath>
+#include <limits>
+#include <c10/core/InferenceMode.h>
 
 namespace {
 struct Descriptor {
@@ -199,6 +204,8 @@ class PagedPlanBridge {
     return out;
   }
 };
+
+#include "static_graph.inc"
 
 at::Tensor empty(c10::IntArrayRef size, std::optional<c10::ScalarType> dtype,
   std::optional<c10::Layout> layout, std::optional<c10::Device> device,
@@ -396,6 +403,22 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     synchronize();
     at::RegisterPrivateUse1HooksInterface(new Hooks());
   });
+  m.attr("graph_api_version") = 2;
+  m.def("initialize_graph", [](uintptr_t address) {
+    TORCH_CHECK(allocate_native && address && !static_graph_native, "invalid or repeated static graph initialization");
+    static_graph_native = reinterpret_cast<StaticGraphCommand>(address);
+  });
+  pybind11::class_<StaticGraphBridge,std::shared_ptr<StaticGraphBridge>>(m,"NativeStaticGraph")
+    .def(pybind11::init<const std::vector<at::Tensor>&,size_t,const std::vector<uint32_t>&,
+         const std::vector<float>&,bool,bool>())
+    .def("run",&StaticGraphBridge::run,pybind11::arg("eager")=false,pybind11::call_guard<pybind11::gil_scoped_release>())
+    .def("synchronize",&StaticGraphBridge::synchronize,pybind11::call_guard<pybind11::gil_scoped_release>())
+    .def("query",&StaticGraphBridge::query,pybind11::call_guard<pybind11::gil_scoped_release>())
+    .def("query_completion",&StaticGraphBridge::query_completion,pybind11::call_guard<pybind11::gil_scoped_release>())
+    .def("wait_completion",&StaticGraphBridge::wait_completion,pybind11::call_guard<pybind11::gil_scoped_release>())
+    .def("close",&StaticGraphBridge::close,pybind11::call_guard<pybind11::gil_scoped_release>())
+    .def_property_readonly("edge_count",&StaticGraphBridge::edge_count)
+    .def_property_readonly("stream_id",&StaticGraphBridge::stream_id);
   m.def("stream_command",stream_command,pybind11::arg("op"),pybind11::arg("stream")=0,
         pybind11::arg("object")=0,pybind11::arg("flags")=0);
   m.def("record_stream",[](const at::Tensor& t,uint64_t id){Argument a(t);stream_command(12,id,reinterpret_cast<uintptr_t>(a.desc.allocation));});

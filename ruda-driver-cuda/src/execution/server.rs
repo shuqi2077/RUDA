@@ -589,10 +589,14 @@ impl CudaServer {
         self.command(stream_id, [].into_iter(), mode)
     }
 
-    fn unsafe_set_current(&self) {
-        // TODO: Should check if on the same thread before calling it, since now we don't switch
-        // thread except for device memory transfer.
-        self.ctx.unsafe_set_current().unwrap();
+    fn set_current_checked(&self) -> Result<(), ServerError> {
+        // Set once per service command, rather than assuming a cached current
+        // context survives external calls or device-service thread migration.
+        // Report a driver failure to the caller instead of unwinding the service.
+        self.ctx.unsafe_set_current().map_err(|e| ServerError::Generic {
+            reason: format!("CUDA command context: {e:?}"),
+            backtrace: BackTrace::capture(),
+        })
     }
 
     fn command<'a>(
@@ -601,7 +605,7 @@ impl CudaServer {
         handles: impl Iterator<Item = &'a Binding>,
         mode: StreamErrorMode,
     ) -> Result<Command<'_>, ServerError> {
-        self.unsafe_set_current();
+        self.set_current_checked()?;
 
         if mode.flush {
             let errors = self.flush_errors(stream_id);

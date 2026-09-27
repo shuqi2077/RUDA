@@ -6,6 +6,8 @@ use ruda_kernel::dsl::prelude::*;
 use std::{cell::RefCell, ffi::CString, panic::AssertUnwindSafe, sync::{OnceLock, atomic::{AtomicU64, Ordering}}};
 
 mod streams;
+mod graph_contract;
+mod static_graph;
 mod paged;
 mod kernels;
 mod matmul;
@@ -578,6 +580,9 @@ pub extern "C" fn ruda_torch_counter(index: u32) -> u64 {
         17 => paged::SPLIT_CALLS.load(Ordering::Relaxed),
         18 => paged::WORKSPACE_ALLOCS.load(Ordering::Relaxed),
         19 => paged::WORKSPACE_BYTES.load(Ordering::Relaxed),
+        20 => static_graph::BUILDS.load(Ordering::Relaxed),
+        21 => static_graph::REPLAYS.load(Ordering::Relaxed),
+        22 => static_graph::EAGER_RUNS.load(Ordering::Relaxed),
         _ => 0,
     }
 }

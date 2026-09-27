@@ -106,3 +106,26 @@ Inputs must be contiguous FP32/FP16/BF16 tensors with the same dtype on the nati
 `plan.mla(absorbed_query, position_query, latent_cache, position_cache, scale=..., causal=True)` returns compressed context `[queries, heads, rank]`. The latent cache is `[pages, page_size, 1, rank]`, the positional cache `[pages, page_size, 1, position_dim]`, and the query tensors are `[queries, heads, rank]` and `[queries, heads, position_dim]`; position dimension is limited to 256. Apply positional encoding first and value/output projections afterward. Use the model's original QK scale, not `1/sqrt(rank)`. The caller prepares cache contents and owns cache updates.
 
 See the [ruDNN guide](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/rudnn.md) for the underlying Rust paged-attention and MoE interfaces, and the [ruLLM guide](https://github.com/shuqi2077/RUDA/blob/main/docs/en/model-inference.md) for model integration.
+
+## Optional fixed-address inference graphs (v24)
+
+`ruda_torch.StaticGraph` connects selected native PyTorch tensor operations to
+RUDA's existing `CudaGraph`, rather than a separate CUDA extension/runtime.
+The new optional graph interface is version 2; base tensor ABI remains 9.
+Rebuild both Rust and C++ for this feature. Defaults and eager dispatch stay unchanged.
+
+Supported explicit nodes: copy, same-shape add/mul, SiLU, last-axis RMSNorm and storage-rounded SiLU-mul.
+Opt-in `optimize=True` removes unused nodes and fuses single-use left SiLU/mul;
+`reuse_workspace=True` reuses only equal-spec scratch storage after its last read.
+Returned outputs remain dedicated. Both options default to False pending GPU validation.
+This is not arbitrary model/stream capture, an autograd implementation or a
+replacement for `torch.cuda.graph`. See `docs/zh/static-pytorch-graphs.md` in the
+repository root for fixed-pointer, output-reuse and synchronization contracts.
+
+```sh
+python ruda-torch/python/examples/static_residual_norm.py
+python ruda-torch/tools/validate_static_graph.py --build --output ./v24-gpu
+```
+
+The validator requires direct PTX configuration and real GPU execution; absent
+hardware or skipped tests do not count as success.

@@ -172,3 +172,41 @@ fn graph_replay_benchmark() {
         println!("RUDA_GRAPH_TIMING,n={n},nodes={nodes},repeats={repetitions},build_s={build_seconds},ordinary_s={ordinary},graph_s={replay}");
     }
 }
+
+#[test]
+#[ignore = "balanced repeated same-device benchmark; not a model throughput claim"]
+fn graph_replay_balanced_benchmark() {
+    use std::time::Instant;
+    let client = client();
+    for (n,nodes) in [(256usize,2usize),(256,16),(4096,16)] {
+        let value = client.create_from_slice(f32::as_bytes(&vec![0.0;n]));
+        let prepare = || unsafe { increment::prepare(&client,count(n),RudaDim::new_1d(64),
+            ArrayArg::from_raw_parts(value.clone(),n),1.0) };
+        let build_start=Instant::now();
+        let mut graph=unsafe { CudaGraph::build(&client,(0..nodes).map(|_|prepare()).collect()) }.unwrap();
+        graph.synchronize().unwrap();
+        println!("RUDA_GRAPH_BALANCED_BUILD,n={n},nodes={nodes},seconds={}",build_start.elapsed().as_secs_f64());
+        let ordinary = || { for _ in 0..nodes { unsafe {
+            increment::launch(&client,count(n),RudaDim::new_1d(64),
+                ArrayArg::from_raw_parts(value.clone(),n),1.0);
+        } } };
+        // Equal warmup and alternating order reduce one-sided warmup/order bias.
+        for _ in 0..10 { ordinary(); graph.replay().unwrap(); }
+        graph.synchronize().unwrap();
+        let repeats=1000;
+        let mut expected=(20*nodes) as f32;
+        for trial in 0..7 {
+            for graph_mode in if trial%2==0 {[false,true]} else {[true,false]} {
+                let start=Instant::now();
+                for _ in 0..repeats {
+                    if graph_mode {graph.replay().unwrap();} else {ordinary();}
+                }
+                graph.synchronize().unwrap();
+                println!("RUDA_GRAPH_BALANCED_TIMING,n={n},nodes={nodes},trial={trial},graph={graph_mode},repeats={repeats},elapsed_s={}",start.elapsed().as_secs_f64());
+                expected+=(repeats*nodes) as f32;
+            }
+            assert_eq!(read(&client,&value),vec![expected;n]);
+        }
+        graph.close().unwrap();
+    }
+}

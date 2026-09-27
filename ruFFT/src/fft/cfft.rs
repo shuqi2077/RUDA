@@ -135,7 +135,44 @@ pub(crate) fn cfft_launch_with_scratch<R: Runtime>(
     if n_fft <= MAX_SHARED_N_FFT {
         cfft_shared_launch::<R>(client, bindings, plan)
     } else {
-        cfft_four_step_launch::<R>(client, bindings, dtype, plan, scratch)
+        cfft_four_step_launch::<R>(client, bindings, dtype, plan, scratch, None)
+    }
+}
+
+/// Inverse complex FFT of input * spectrum without materializing the product.
+/// Private ruFFT contract: F32 contiguous inputs, distinct spectrum of shape
+/// [1, N], and scratch as in `cfft_launch_with_scratch`. The table is broadcast
+/// over all windows, not over the transform axis. Existing inverse FFT scaling
+/// is unchanged (unnormalized); the exact-plan finish kernel normalizes it.
+pub(crate) fn cfft_inverse_product_with_scratch<R: Runtime>(
+    client: &ComputeClient<R>, bindings: CfftBindings<R>, dim: usize,
+    dtype: StorageType, spectrum: (TensorBinding<R>, TensorBinding<R>),
+    scratch: Option<(TensorHandle<R>, TensorHandle<R>)>,
+) -> Result<(), LaunchError> {
+    let n_fft = bindings.input_re.shape[dim];
+    assert!(n_fft >= 2 && n_fft.is_power_of_two());
+    assert_eq!(spectrum.0.shape.as_slice(), &[1, n_fft]);
+    assert_eq!(spectrum.1.shape.as_slice(), &[1, n_fft]);
+    assert_eq!(spectrum.0.strides.as_slice(), &[n_fft, 1]);
+    assert_eq!(spectrum.1.strides.as_slice(), &[n_fft, 1]);
+    let count = bindings.input_re.shape.iter().enumerate()
+        .filter(|(i, _)| *i != dim).map(|(_, n)| *n).product();
+    if count == 0 { return Ok(()); }
+    let plan = CfftPlan { dim, count, n_fft, fft_mode: FftMode::Inverse };
+    if n_fft <= MAX_SHARED_N_FFT {
+        let threads = (n_fft / 2).clamp(1, MAX_UNITS_PER_RUDA);
+        let grid = ruda_kernel::dsl::calculate_ruda_count_elemwise(
+            client, count, RudaDim::new_single());
+        cfft_product_shared_kernel::launch::<f32, R>(
+            client, grid, RudaDim::new_1d(threads as u32),
+            bindings.input_re.into_tensor_arg(), bindings.input_im.into_tensor_arg(),
+            spectrum.0.into_tensor_arg(), spectrum.1.into_tensor_arg(),
+            bindings.output_re.into_tensor_arg(), bindings.output_im.into_tensor_arg(),
+            count as u32, n_fft, n_fft.trailing_zeros() as usize, threads, dim,
+            FftMode::Inverse);
+        Ok(())
+    } else {
+        cfft_four_step_launch(client, bindings, dtype, plan, scratch, Some(spectrum))
     }
 }
 
@@ -183,6 +220,7 @@ fn cfft_four_step_launch<R: Runtime>(
     dtype: StorageType,
     plan: CfftPlan,
     scratch: Option<(TensorHandle<R>, TensorHandle<R>)>,
+    spectrum: Option<(TensorBinding<R>, TensorBinding<R>)>,
 ) -> Result<(), LaunchError> {
     let (n1, n2) = factor_four_step(plan.n_fft);
 
@@ -210,6 +248,26 @@ fn cfft_four_step_launch<R: Runtime>(
         let ruda_count =
             ruda_kernel::dsl::calculate_ruda_count_elemwise(client, plan.count * n2, RudaDim::new_single());
 
+        if let Some((spectrum_re, spectrum_im)) = spectrum {
+        cfft_product_radix1_kernel::launch::<f32, R>(
+            client,
+            ruda_count,
+            ruda_dim,
+            bindings.input_re.into_tensor_arg(),
+            bindings.input_im.into_tensor_arg(),
+            spectrum_re.into_tensor_arg(),
+            spectrum_im.into_tensor_arg(),
+            scratch_re.clone().binding().into_tensor_arg(),
+            scratch_im.clone().binding().into_tensor_arg(),
+            (plan.count * n2) as u32,
+            n1,
+            n2,
+            log2_n1,
+            threads_per_ruda,
+            plan.dim,
+            plan.fft_mode,
+        );
+        } else {
         cfft_four_step_radix1_kernel::launch::<f32, R>(
             client,
             ruda_count,
@@ -226,6 +284,7 @@ fn cfft_four_step_launch<R: Runtime>(
             plan.dim,
             plan.fft_mode,
         );
+        }
     }
 
     // Step 2: contiguous FFT_{N2} along the n2 axis of (N1, N2). One ruda

@@ -64,9 +64,20 @@ def execution_stats():
          "warp_softmax_calls", "scalar_softmax_calls", "fused_layer_norm_calls",
          "trusted_index_calls", "storage_reduction_calls", "warp_reduction_calls",
          "fused_rms_norm_calls", "async_dispatches", "paged_split_calls",
-         "paged_workspace_allocations", "paged_workspace_bytes_total"))}
+         "paged_workspace_allocations", "paged_workspace_bytes_total",
+         "static_graph_builds", "static_graph_replays", "static_graph_eager_runs"))}
 
 from . import _ops
 
 from ._streams import Stream, Event, stream, current_stream, default_stream, record_stream
 from ._paged import PagedAttentionPlan
+
+# Additive extension API: the old eager tensor ABI still loads without it.
+_graph_available = False
+if hasattr(_native, "ruda_torch_graph_api_version") and hasattr(_C, "initialize_graph"):
+    _native.ruda_torch_graph_api_version.restype = ctypes.c_uint32
+    if _native.ruda_torch_graph_api_version() != 2 or getattr(_C,"graph_api_version",None) != 2:
+        raise RuntimeError("RUDA static graph API mismatch; rebuild Rust and C++ extensions")
+    _C.initialize_graph(ctypes.cast(_native.ruda_torch_graph,ctypes.c_void_p).value)
+    _graph_available = True
+from ._graph import StaticGraph, GraphOp

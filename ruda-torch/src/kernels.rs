@@ -897,3 +897,20 @@ pub fn reduce_sum_last_warp<F: Float + RudaElement, O: Float + RudaElement>(
         if lane == 0 { out[row] = O::cast_from(total); }
     }
 }
+
+
+/// Static-graph-only contiguous fusion: round the activation to F exactly where
+/// the unfused SiLU kernel stores it, then promote that rounded value for mul.
+/// No fast-math substitution or FP32-only hidden intermediate tensor is used.
+#[ruda(launch)]
+pub fn static_silu_mul<F: Float + RudaElement>(
+    gate: &Tensor<F>, up: &Tensor<F>, out: &mut Tensor<F>,
+) {
+    let pos = ABSOLUTE_POS as usize;
+    if pos < out.len() {
+        let x = f32::cast_from(gate[pos]);
+        let activation = F::cast_from(x / (1.0f32 + (-x).exp()));
+        let value = f32::cast_from(activation) * f32::cast_from(up[pos]);
+        out[pos] = F::cast_from(value);
+    }
+}

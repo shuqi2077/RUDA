@@ -129,7 +129,7 @@ impl CudaServer {
         // of the server. On every error the entry is reinserted for explicit close.
         let mut entry = self.graphs.entries.remove(&id).ok_or_else(|| error("unknown/closed RUDA graph"))?;
         let result = (|| {
-            self.ctx.unsafe_set_current().map_err(|e| error(format!("graph context: {e:?}")))?;
+            // Each command path below establishes its context exactly once.
             match operation {
                 GraphCommand::Replay => {
                     let pins = &entry.native.pins;
@@ -164,7 +164,11 @@ impl CudaServer {
                         entry.native.wait_completion().map(|_| true)
                     } else { entry.native.query_completion() }
                 },
-                GraphCommand::Close => entry.native.close().map(|_| true),
+                GraphCommand::Close => {
+                    // Close bypasses command(), so it must establish the context itself.
+                    self.set_current_checked()?;
+                    entry.native.close().map(|_| true)
+                },
             }
         })();
         let closed = matches!(operation, GraphCommand::Close | GraphCommand::TryClose)
@@ -210,7 +214,7 @@ impl CudaServer {
             // A pure no-op still validated the complete batch, but requires no
             // device context switch, resource walk, upload or native call.
             if prepared.is_empty() && !replay { return Ok(()); }
-            self.ctx.unsafe_set_current().map_err(|e| error(format!("graph update context: {e:?}")))?;
+            // command() binds the context with error propagation; do not bind twice.
             let mut command = self.command(entry.stream_id, entry.native.pins.iter().map(|p| &p.binding),
                 StreamErrorMode { ignore: false, flush: true })?;
             // Once per BATCH, not once per changed node.

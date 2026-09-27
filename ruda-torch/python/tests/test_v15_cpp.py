@@ -19,14 +19,18 @@ def bridge():
     path=os.environ.get('RUDA_CPP_TEST_LIBRARY')
     if not path:pytest.skip('explicit compiled C++ test module required')
     spec=importlib.util.spec_from_file_location('_C',path);cpp=importlib.util.module_from_spec(spec);spec.loader.exec_module(cpp)
-    state=types.SimpleNamespace(allocations={},plans={},calls=[],next=1,fail=False)
+    state=types.SimpleNamespace(allocations={},plans={},calls=[],next=1,fail=False,stream=0)
     error=ct.create_string_buffer(b'explicit ABI test failure')
     def callback(args,function):return ct.CFUNCTYPE(ct.c_int,*args)(function)
     def alloc(size,handle,address):
         key=state.next;state.next+=1;buffer=ct.create_string_buffer(max(1,size))
         state.allocations[key]=buffer;handle[0]=key;address[0]=ct.addressof(buffer);return 0
     def free(handle):state.allocations.pop(handle,None);return 0
-    def stream(op,stream,obj,flags,result):result[0]=1 if op in (3,7) else 0;return 0
+    def stream(op,stream,obj,flags,result):
+        if op==0:result[0]=state.stream
+        elif op==2:result[0]=state.stream;state.stream=stream
+        else:result[0]=1 if op in (3,7) else 0
+        return 0
     def paged(op,plan,q,k,v,qp,kp,out,words,nwords,spec,scale,causal):
         state.calls.append(op)
         if state.fail:return 19

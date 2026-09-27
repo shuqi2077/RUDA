@@ -1,0 +1,143 @@
+{
+  "graph-replay": {
+    "target": "graph-replay",
+    "package": "ruda-driver-cuda",
+    "features": "std,direct-ptx",
+    "prefix": "graph_replay_",
+    "marker": "RUDA_GRAPH_RUNTIME,CudaRuntime,direct-ptx",
+    "required": [
+      "graph_replay_arguments_survive_later_host_scratch_reuse",
+      "graph_replay_close_is_idempotent_and_replay_after_close_fails",
+      "graph_replay_dynamic_grid_is_not_read_back",
+      "graph_replay_empty_and_zero_grids_are_rejected",
+      "graph_replay_in_place_updates_and_queue_ordering",
+      "graph_replay_retains_input_and_intermediate_handles",
+      "graph_replay_two_nodes_and_tail_guards",
+      "graph_replay_wrong_queue_rejected_before_graph_build"
+    ]
+  },
+  "graph-update": {
+    "target": "graph-update",
+    "package": "ruda-driver-cuda",
+    "features": "std,direct-ptx",
+    "prefix": "graph_update_",
+    "marker": "RUDA_GRAPH_UPDATE_RUNTIME,CudaRuntime,direct-ptx",
+    "required": [
+      "graph_update_inflight_launches_keep_old_scalars",
+      "graph_update_mixed_scalar_types_preserve_packing",
+      "graph_update_noop_still_replays_once",
+      "graph_update_only_selected_node_changes",
+      "graph_update_query_try_close_and_closed_errors",
+      "graph_update_rejects_grid_and_kernel_changes",
+      "graph_update_rejects_pointer_rebinding_then_remains_usable",
+      "graph_update_rejects_shape_metadata_then_remains_usable",
+      "graph_update_rejects_wrong_queue_and_node_index",
+      "graph_update_repeated_buffers_are_retained",
+      "graph_update_scalars_without_execution"
+    ]
+  },
+  "graph-batch": {
+    "target": "graph-batch",
+    "package": "ruda-driver-cuda",
+    "features": "std,direct-ptx",
+    "prefix": "graph_batch_",
+    "marker": "RUDA_GRAPH_BATCH_RUNTIME,CudaRuntime,direct-ptx",
+    "required": [
+      "graph_batch_duplicate_and_invalid_index_are_rejected",
+      "graph_batch_empty_is_not_implicit_replay",
+      "graph_batch_inflight_versions_are_ordered",
+      "graph_batch_late_invalid_shape_changes_nothing",
+      "graph_batch_late_pointer_rebind_changes_nothing",
+      "graph_batch_tracked_close_is_idempotent_and_queries_fail_after_close",
+      "graph_batch_tracked_completion_covers_latest_launch",
+      "graph_batch_tracked_update_only_does_not_execute_or_release",
+      "graph_batch_tracking_is_opt_in_without_breaking_legacy_graph",
+      "graph_batch_unchanged_values_replay_exactly_once",
+      "graph_batch_unsorted_partial_updates_preserve_node_order",
+      "graph_batch_update_without_replay_does_not_execute",
+      "graph_batch_updates_all_nodes_before_one_replay",
+      "graph_batch_wrong_queue_in_late_node_leaves_graph_unchanged"
+    ]
+  },
+  "graph-dag": {
+    "target": "graph-dag",
+    "package": "ruda-driver-cuda",
+    "features": "std,direct-ptx",
+    "prefix": "graph_dag_",
+    "marker": "RUDA_GRAPH_DAG_RUNTIME,CudaRuntime,direct-ptx",
+    "required": [
+      "graph_dag_bad_update_does_not_invalidate_existing_topology",
+      "graph_dag_batch_update_keeps_topology",
+      "graph_dag_disjoint_views_can_be_independent",
+      "graph_dag_dot_is_only_topology",
+      "graph_dag_invalid_topologies_are_refused",
+      "graph_dag_legacy_build_still_orders_writes",
+      "graph_dag_missing_join_edge_refused_before_execution",
+      "graph_dag_overlapping_views_refused",
+      "graph_dag_shared_input_branches_join_correctly",
+      "graph_dag_tracked_completion_and_close",
+      "graph_dag_transitive_dependency_allows_shared_writes",
+      "graph_dag_unordered_read_write_refused",
+      "graph_dag_unordered_writes_refused",
+      "graph_dag_wrong_queue_refused"
+    ]
+  },
+  "graph-infer": {
+    "target": "graph-infer",
+    "package": "ruda-driver-cuda",
+    "features": "std,direct-ptx",
+    "prefix": "graph_infer_",
+    "marker": "RUDA_GRAPH_INFER_RUNTIME,CudaRuntime,direct-ptx",
+    "required": [
+      "graph_infer_build_does_not_execute_kernels",
+      "graph_infer_disjoint_views_stay_independent",
+      "graph_infer_does_not_weaken_explicit_dag_rejection",
+      "graph_infer_empty_is_refused",
+      "graph_infer_fork_join_correct",
+      "graph_infer_partial_overlap_preserves_order",
+      "graph_infer_read_before_overwrite",
+      "graph_infer_retains_inputs_after_caller_drop",
+      "graph_infer_scalar_update_preserves_dependencies",
+      "graph_infer_tracked_completion",
+      "graph_infer_writes_reduce_to_chain",
+      "graph_infer_wrong_queue_is_refused"
+    ]
+  },
+  "fft-exact": {
+    "target": "lib",
+    "package": "ruda-fft",
+    "features": "std,tensor,cpu-reference,ruda-test-runtime/cuda",
+    "prefix": "suite::exact::",
+    "marker": "EXACT_FFT_RUNTIME,ruda_driver_cuda::runtime::CudaRuntime",
+    "required": [
+      "suite::exact::exact_fft_empty_single_sample",
+      "suite::exact::exact_fft_empty_source",
+      "suite::exact::exact_fft_four_step_convolution",
+      "suite::exact::exact_fft_fused_batched_prime",
+      "suite::exact::exact_fft_fused_empty_source",
+      "suite::exact::exact_fft_fused_four_step_batched",
+      "suite::exact::exact_fft_fused_four_step_boundary",
+      "suite::exact::exact_fft_fused_four_step_middle",
+      "suite::exact::exact_fft_fused_middle_dimension",
+      "suite::exact::exact_fft_fused_radix2_unchanged",
+      "suite::exact::exact_fft_fused_shared_boundary",
+      "suite::exact::exact_fft_fused_single_unchanged",
+      "suite::exact::exact_fft_fused_six_points",
+      "suite::exact::exact_fft_fused_truncation",
+      "suite::exact::exact_fft_fused_virtual_padding",
+      "suite::exact::exact_fft_irfft_real_only_bins",
+      "suite::exact::exact_fft_large_prime",
+      "suite::exact::exact_fft_middle_dimension",
+      "suite::exact::exact_fft_odd_prime",
+      "suite::exact::exact_fft_radix2_empty",
+      "suite::exact::exact_fft_radix2_four_step_empty",
+      "suite::exact::exact_fft_radix2_packed_empty",
+      "suite::exact::exact_fft_radix2_padding",
+      "suite::exact::exact_fft_single_sample",
+      "suite::exact::exact_fft_six_points",
+      "suite::exact::exact_fft_tensor_api_preserves_legacy_shape",
+      "suite::exact::exact_fft_truncation",
+      "suite::exact::exact_fft_virtual_padding"
+    ]
+  }
+}

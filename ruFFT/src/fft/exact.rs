@@ -10,7 +10,7 @@ use ruda_kernel::dsl::backtrace::BackTrace;
 use ruda_kernel::library::tensor::TensorHandle;
 use super::{FftMode, rfft_launch_padded, irfft_launch_padded};
 use super::cfft::{CfftBindings, MAX_SHARED_N_FFT, cfft_launch_any_size,
-    cfft_launch_with_scratch};
+    cfft_launch_with_scratch, cfft_inverse_product_with_scratch};
 
 mod kernels;
 use kernels::*;
@@ -71,6 +71,7 @@ pub struct RealFftPlan<R: Runtime> {
     mode: FftMode,
     tables: Option<Tables<R>>,
     workspace: Option<Workspace<R>>,
+    fuse_spectrum: bool,
 }
 impl<R: Runtime> RealFftPlan<R> {
     pub fn new(client: ComputeClient<R>, n: usize, mode: FftMode) -> Result<Self, LaunchError> {
@@ -94,7 +95,18 @@ impl<R: Runtime> RealFftPlan<R> {
             }, 1, f32::as_type_native_unchecked().storage_type(), FftMode::Forward)?;
             Some(Tables { m, chirp_re, chirp_im, spectrum_re, spectrum_im })
         } else { None };
-        Ok(Self { client, n, mode, tables, workspace: None })
+        Ok(Self { client, n, mode, tables, workspace: None, fuse_spectrum: false })
+    }
+
+    /// Opt into the candidate v22 fused spectrum/inverse-FFT input stage.
+    /// False keeps the separately launched product validated on the v21 T4 run.
+    /// No effect on N=1 or power-of-two transforms; no additional GPU allocation.
+    /// Call between submissions on this plan's fixed execution queue.
+    pub fn set_spectrum_fusion(&mut self, enabled: bool) { self.fuse_spectrum = enabled; }
+
+    /// Whether this plan will use the fused product (only Bluestein lengths).
+    pub fn spectrum_fusion_enabled(&self) -> bool {
+        self.fuse_spectrum && self.tables.is_some()
     }
 
     pub fn len(&self) -> usize { self.n }
@@ -138,6 +150,11 @@ impl<R: Runtime> RealFftPlan<R> {
         };
         cfft_launch_with_scratch(&self.client, bindings(), 1, dtype, FftMode::Forward,
             w.four_step.clone())?;
+        if self.fuse_spectrum {
+            return cfft_inverse_product_with_scratch(&self.client, bindings(), 1, dtype,
+                (t.spectrum_re.clone().binding(), t.spectrum_im.clone().binding()),
+                w.four_step.clone());
+        }
         let total = w.rows * t.m;
         let block = RudaDim::new_1d(256);
         let grid = ruda_kernel::dsl::calculate_ruda_count_elemwise(&self.client, total, block);
