@@ -153,8 +153,8 @@ pub(crate) fn cfft_inverse_product_with_scratch<R: Runtime>(
     assert!(n_fft >= 2 && n_fft.is_power_of_two());
     assert_eq!(spectrum.0.shape.as_slice(), &[1, n_fft]);
     assert_eq!(spectrum.1.shape.as_slice(), &[1, n_fft]);
-    assert_eq!(spectrum.0.strides.as_slice(), &[n_fft, 1]);
-    assert_eq!(spectrum.1.strides.as_slice(), &[n_fft, 1]);
+    assert_eq!(&spectrum.0.strides[..], &[n_fft, 1]);
+    assert_eq!(&spectrum.1.strides[..], &[n_fft, 1]);
     let count = bindings.input_re.shape.iter().enumerate()
         .filter(|(i, _)| *i != dim).map(|(_, n)| *n).product();
     if count == 0 { return Ok(()); }
