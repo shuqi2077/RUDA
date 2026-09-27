@@ -7,6 +7,7 @@
 #include <c10/core/impl/DeviceGuardImplInterface.h>
 #include <ATen/ops/empty.h>
 #include <torch/csrc/utils/pybind.h> // Tensor caster without the full C++ frontend
+#include <torch/csrc/utils/python_arg_parser.h>
 #include <torch/library.h>
 #include <cstdio>
 #include <algorithm>
@@ -439,6 +440,12 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     at::assert_no_overlap(out, source);
     at::assert_no_overlap(out, index);
   });
-  m.def("fill", fill);
+  m.def("fill", [](at::Tensor out, pybind11::object value) {
+    static torch::PythonArgParser parser({"fill(Scalar value)"});
+    torch::ParsedArgs<1> parsed;
+    auto args = pybind11::make_tuple(value);
+    auto scalar = parser.parse(args.ptr(), nullptr, parsed).scalar(0);
+    ::fill(out, scalar);
+  });
   m.def("synchronize", synchronize);
 }

@@ -7,6 +7,6 @@ setup(
     package_data={"ruda_torch": ["ruda_torch_native.dll", "csrc/*.cpp", "csrc/*.inc"]},
     ext_modules=[CppExtension("ruda_torch._C", ["ruda_torch/csrc/backend.cpp"],
         depends=["ruda_torch/csrc/static_graph.inc"],
-        extra_compile_args=["/std:c++20", "/O2", "/EHsc"] if sys.platform == "win32" else ["-std=c++20", "-O2"])],
+        extra_compile_args=["/std:c++20", "/O2", "/EHsc", "/utf-8"] if sys.platform == "win32" else ["-std=c++20", "-O2"])],
     cmdclass={"build_ext": BuildExtension.with_options(use_ninja=False)},
 )
