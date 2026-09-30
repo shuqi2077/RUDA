@@ -21,7 +21,7 @@ fn softmax_stats<F: Float>(logits: &Array<F>, row: usize, lane: usize,
     let mut maximum = 0.0f32; let mut total = 1.0f32;
     if comptime!(softmax) {
         let mut local_max = f32::cast_from(f32::NEG_INFINITY);
-        let mut nan = 0.0f32;
+        let mut nan = f32::cast_from(0.0f32);
         let mut j = lane;
         while j < experts {
             let x = f32::cast_from(logits[row * experts + j]);
@@ -45,7 +45,7 @@ pub(crate) fn weights<F: Float, I: Int>(logits: &Array<F>, ids: &Array<I>, outpu
 {
     let row = RUDA_POS_X as usize; let lane = UNIT_POS_X as usize;
     let (maximum, total) = softmax_stats(logits, row, lane, experts, lanes, softmax);
-    let mut sum = 0.0f32; let mut invalid = 0.0f32; let mut slot = lane;
+    let mut sum = 0.0f32; let mut invalid = f32::cast_from(0.0f32); let mut slot = lane;
     while slot < k {
         // Bounds are checked in 64 bits BEFORE narrowing or address arithmetic.
         let expert = i64::cast_from(ids[row * k + slot]);
@@ -75,7 +75,7 @@ pub(crate) fn backward<F: Float, I: Int>(logits: &Array<F>, ids: &Array<I>, grad
 {
     let row = RUDA_POS_X as usize; let lane = UNIT_POS_X as usize;
     let (maximum, total) = softmax_stats(logits, row, lane, experts, lanes, softmax);
-    let mut sum = 0.0f32; let mut dot = 0.0f32; let mut invalid = 0.0f32; let mut slot = lane;
+    let mut sum = 0.0f32; let mut dot = 0.0f32; let mut invalid = f32::cast_from(0.0f32); let mut slot = lane;
     while slot < k {
         let expert = i64::cast_from(ids[row * k + slot]);
         if expert < 0i64 || expert >= experts as i64 { invalid = 1.0; }

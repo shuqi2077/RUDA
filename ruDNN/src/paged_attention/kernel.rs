@@ -365,7 +365,7 @@ pub(super) fn backward<F: Float>(
                 }
             }
             let score = plane_sum(partial) * scale;
-            let probability = if denominator == 0.0 { 0.0 } else { (score - maximum).exp() / denominator };
+            let probability = if denominator == 0.0 { f32::cast_from(0.0f32) } else { (score - maximum).exp() / denominator };
             let mut dp_local = 0.0f32;
             let mut dp = 0.0f32;
             if comptime!(need_dq || need_dk || need_dqp || need_dkp || statistics_need_dp) {
