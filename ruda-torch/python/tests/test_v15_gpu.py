@@ -9,7 +9,7 @@ def r():
         pytest.skip('explicit hardware run required: RUDA_REQUIRE_GPU=1')
     assert os.environ.get('RUDA_CUDA_COMPILER')=='ptx'
     import ruda_torch
-    assert ruda_torch._C.abi_version==9
+    assert ruda_torch._C.abi_version==10
     return ruda_torch
 
 

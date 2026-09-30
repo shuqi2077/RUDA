@@ -10,6 +10,9 @@ mod graph_contract;
 mod static_graph;
 mod paged;
 mod kernels;
+mod training;
+mod router;
+mod training_kernels;
 mod matmul;
 mod pointwise;
 mod softmax;
@@ -124,7 +127,7 @@ fn checked(call: impl FnOnce()) -> i32 {
 pub extern "C" fn ruda_torch_error() -> *const std::ffi::c_char { ERROR.with(|v| v.borrow().as_ptr()) }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ruda_torch_abi_version() -> u32 { 9 }
+pub extern "C" fn ruda_torch_abi_version() -> u32 { 10 }
 
 // All pointer arguments below are valid, aligned, and held alive by the in-process C++ adapter.
 #[unsafe(no_mangle)]
@@ -217,7 +220,7 @@ fn launch(op: u32, a: &View, b: &View, out: &View, scalar: f32) {
         return;
     }
     if op == 7 || op == 30 { matmul::launch(op, a, b, out); return; }
-    if op == 6 {
+    if op == 6 || op == 107 {
         assert_eq!(a.dtype, out.dtype);
         if out.len == 0 { return; }
         let client = client();
@@ -236,7 +239,7 @@ fn launch(op: u32, a: &View, b: &View, out: &View, scalar: f32) {
             && packed(a) && packed(out);
         macro_rules! launch {
             ($kernel:ident, $dtype:ty, $count:expr) => { kernels::$kernel::launch::<$dtype, $dtype, CudaRuntime>(
-                &client, RudaCount::Static($count, 1, 1), RudaDim::new_1d(128), a.arg(), out.arg()) };
+                &client, RudaCount::Static($count, 1, 1), RudaDim::new_1d(128), a.arg(), out.arg(), op == 107) };
         }
         if last_axis {
             let work = out.len.checked_mul(32).expect("reduction launch overflow");
@@ -583,6 +586,12 @@ pub extern "C" fn ruda_torch_counter(index: u32) -> u64 {
         20 => static_graph::BUILDS.load(Ordering::Relaxed),
         21 => static_graph::REPLAYS.load(Ordering::Relaxed),
         22 => static_graph::EAGER_RUNS.load(Ordering::Relaxed),
+        23 => paged::BACKWARD_CALLS.load(Ordering::Relaxed),
+        24 => paged::BACKWARD_HISTORY_BYTES.load(Ordering::Relaxed),
+        25 => paged::BACKWARD_PLACEHOLDER_BYTES.load(Ordering::Relaxed),
+        26 => paged::ORDERED_CALLS.load(Ordering::Relaxed),
+        27 => paged::ORDERED_ALLOCS.load(Ordering::Relaxed),
+        28 => paged::ORDERED_BYTES.load(Ordering::Relaxed),
         _ => 0,
     }
 }

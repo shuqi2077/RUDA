@@ -139,11 +139,11 @@ def test_abi_nine_is_consistent():
     rust = (ROOT / 'ruda-torch/src/lib.rs').read_text()
     cpp = (ROOT / 'ruda-torch/python/ruda_torch/csrc/backend.cpp').read_text()
     py = (ROOT / 'ruda-torch/python/ruda_torch/__init__.py').read_text()
-    assert 'fn ruda_torch_abi_version() -> u32 { 9 }' in rust
-    assert 'm.attr("abi_version") = 9' in cpp and 'addresses.size() == 13' in cpp
+    assert 'fn ruda_torch_abi_version() -> u32 { 10 }' in rust
+    assert 'm.attr("abi_version") = 10' in cpp and 'addresses.size() == 13' in cpp
     assert 'addmm_native = reinterpret_cast<Addmm>(addresses[8])' in cpp
     assert 'rms_norm_native = reinterpret_cast<RMSNorm>(addresses[10])' in cpp
-    assert 'ruda_torch_abi_version() != 9' in py and 'getattr(_C, "abi_version", None) != 9' in py
+    assert 'ruda_torch_abi_version() != 10' in py and 'getattr(_C, "abi_version", None) != 10' in py
     assert '"layer_norm", "rms_norm", "stream", "paged")' in py
 
 def test_v13_rms_norm_async_and_paged_decode_sources_present():

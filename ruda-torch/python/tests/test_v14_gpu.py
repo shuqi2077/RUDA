@@ -14,7 +14,7 @@ def backend():
     # Do not turn failed import, absent driver or backend failure into a skip.
     import ruda_torch
     assert ruda_torch.is_available()
-    assert ruda_torch._C.abi_version==9
+    assert ruda_torch._C.abi_version==10
     assert os.environ.get('RUDA_CUDA_COMPILER')=='ptx'
     assert os.environ.get('RUDA_PTX_VERSION'), 'choose a driver-compatible explicit PTX version'
     torch.zeros(1).to('ruda').cpu()

@@ -26,7 +26,7 @@ from . import _C
 if not hasattr(_native, "ruda_torch_abi_version"):
     raise RuntimeError("RUDA native library is outdated; rebuild Rust and C++ extensions")
 _native.ruda_torch_abi_version.restype = ctypes.c_uint32
-if _native.ruda_torch_abi_version() != 9 or getattr(_C, "abi_version", None) != 9:
+if _native.ruda_torch_abi_version() != 10 or getattr(_C, "abi_version", None) != 10:
     raise RuntimeError("RUDA native ABI mismatch; rebuild Rust and C++ extensions")
 
 _C.initialize([ctypes.cast(getattr(_native, "ruda_torch_" + name), ctypes.c_void_p).value
@@ -44,6 +44,10 @@ def current_device():
 
 def _is_in_bad_fork():
     return False
+
+def get_amp_supported_dtype():
+    """Dtypes accepted by torch.autocast(device_type="ruda")."""
+    return [torch.float16, torch.bfloat16]
 
 def synchronize(device=None):
     if device not in (None, 0, "ruda", "ruda:0", torch.device("ruda:0")):
@@ -65,7 +69,10 @@ def execution_stats():
          "trusted_index_calls", "storage_reduction_calls", "warp_reduction_calls",
          "fused_rms_norm_calls", "async_dispatches", "paged_split_calls",
          "paged_workspace_allocations", "paged_workspace_bytes_total",
-         "static_graph_builds", "static_graph_replays", "static_graph_eager_runs"))}
+         "static_graph_builds", "static_graph_replays", "static_graph_eager_runs",
+         "paged_backward_calls", "paged_backward_history_workspace_bytes_total",
+         "paged_backward_placeholder_bytes_total", "paged_backward_ordered_calls",
+         "paged_backward_ordered_workspace_allocations", "paged_backward_ordered_workspace_bytes_total"))}
 
 from . import _ops
 
@@ -81,3 +88,39 @@ if hasattr(_native, "ruda_torch_graph_api_version") and hasattr(_C, "initialize_
     _C.initialize_graph(ctypes.cast(_native.ruda_torch_graph,ctypes.c_void_p).value)
     _graph_available = True
 from ._graph import StaticGraph, GraphOp
+
+# Training is a separately negotiated extension, not removal of StaticGraph's
+# inference-only safeguards. No CPU fallback is installed.
+_training_available = False
+_C.storage_mean_api = 0
+if hasattr(_native, "ruda_torch_training_api_version") and hasattr(_C, "initialize_training"):
+    _native.ruda_torch_training_api_version.restype = ctypes.c_uint32
+    if _native.ruda_torch_training_api_version() != 4 or getattr(_C, "training_api_version", None) != 4:
+        raise RuntimeError("RUDA training API mismatch; rebuild Rust and C++ extensions")
+    _C.initialize_training(ctypes.cast(_native.ruda_torch_training, ctypes.c_void_p).value)
+    _training_available = True
+    _C.storage_mean_api = 1
+from .training import LayerNorm, layer_norm, RMSNorm, rms_norm, silu_mul, AdamW, GradScaler
+
+# Optional router-weight extension. Existing base ABI 10/training API 4 remain
+# loadable without it; a router operation fails clearly instead of falling back.
+_router_available = False
+if hasattr(_native, "ruda_torch_router_api_version") and hasattr(_C, "initialize_router"):
+    _native.ruda_torch_router_api_version.restype = ctypes.c_uint32
+    if _native.ruda_torch_router_api_version() != 1 or getattr(_C, "router_api_version", None) != 1:
+        raise RuntimeError("RUDA router API mismatch; rebuild Rust and C++ extensions")
+    _C.initialize_router(ctypes.cast(_native.ruda_torch_router, ctypes.c_void_p).value)
+    _router_available = True
+from ._router import selected_router_weights
+
+# Selected paged backward has an additive capability check. Old eager tensor
+# ABI 10 remains loadable, but the new autograd path never silently falls back
+# to materializing all gradients with an older runtime.
+_paged_backward_available = False
+if hasattr(_native, "ruda_torch_paged_backward_api_version") and hasattr(_C, "initialize_paged_backward"):
+    _native.ruda_torch_paged_backward_api_version.restype=ctypes.c_uint32
+    version=_native.ruda_torch_paged_backward_api_version()
+    if version not in (1,2) or getattr(_C,"paged_backward_api_version",0)<version:
+        raise RuntimeError("RUDA paged backward API mismatch; rebuild Rust and C++ extensions")
+    _C.initialize_paged_backward(version)
+    _paged_backward_available=True

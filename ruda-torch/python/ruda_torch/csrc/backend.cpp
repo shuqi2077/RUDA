@@ -1,4 +1,6 @@
 #include <ATen/EmptyTensor.h>
+#include <ATen/Context.h>
+#include <ATen/autocast_mode.h>
 #include <ATen/MemoryOverlap.h>
 #include <ATen/detail/PrivateUse1HooksInterface.h>
 #include <ATen/ops/as_strided_native.h>
@@ -17,6 +19,7 @@
 #include <cmath>
 #include <limits>
 #include <c10/core/InferenceMode.h>
+#include <c10/core/GradMode.h>
 
 namespace {
 struct Descriptor {
@@ -40,7 +43,9 @@ using Transfer = int (*)(const Descriptor*, void*, bool);
 using Sync = int (*)();
 using StreamInterop = int (*)(uint32_t,uint64_t,uint64_t,uint32_t,uint64_t*);
 using Paged = int (*)(uint32_t,void**,const Descriptor*,const Descriptor*,const Descriptor*,
-                     const Descriptor*,const Descriptor*,const Descriptor*,const uint32_t*,size_t,const uint32_t*,float,bool);
+                     const Descriptor*,const Descriptor*,const Descriptor*,
+                     const Descriptor*,const Descriptor*,const Descriptor*,const Descriptor*,const Descriptor*,const Descriptor*,
+                     const uint32_t*,size_t,const uint32_t*,float,bool);
 Alloc allocate_native = nullptr;
 Free free_native = nullptr;
 Error error_native = nullptr;
@@ -54,6 +59,8 @@ Transfer transfer_native = nullptr;
 Sync sync_native = nullptr;
 StreamInterop stream_native = nullptr;
 Paged paged_native = nullptr;
+bool paged_backward_selected_ready = false;
+uint32_t paged_backward_api = 0;
 
 void check(int code) { TORCH_CHECK(code == 0, error_native ? error_native() : "RUDA bridge is not initialized"); }
 void synchronize() { TORCH_CHECK(sync_native, "RUDA bridge is not initialized"); check(sync_native()); }
@@ -173,6 +180,9 @@ struct Argument {
   }
 };
 
+#include "training.inc"
+#include "router.inc"
+
 class PagedPlanBridge {
   void* plan_=nullptr;
  public:
@@ -180,12 +190,14 @@ class PagedPlanBridge {
     TORCH_CHECK(paged_native && spec.size()==6,"invalid native paged plan header");
     Argument q(like);
     check(paged_native(0,&plan_,&q.desc,nullptr,nullptr,nullptr,nullptr,nullptr,
+                       nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,
                        words.data(),words.size(),spec.data(),1.0f,true));
   }
   PagedPlanBridge(const PagedPlanBridge&)=delete;
   PagedPlanBridge& operator=(const PagedPlanBridge&)=delete;
   ~PagedPlanBridge() {
-    if(plan_ && paged_native(2,&plan_,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,0,nullptr,1.0f,true))
+    if(plan_ && paged_native(2,&plan_,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,
+        nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,0,nullptr,1.0f,true))
       std::fprintf(stderr,"RUDA paged plan release: %s\n",error_native());
   }
   at::Tensor run(const at::Tensor& q,const at::Tensor& k,const at::Tensor& v,
@@ -193,17 +205,90 @@ class PagedPlanBridge {
                  double scale,bool causal) {
     TORCH_CHECK(q.dim()==3 && k.dim()==4 && v.dim()==4,"paged Q/cache ranks must be 3/4/4");
     TORCH_CHECK(qp.has_value()==kp.has_value(),"MLA requires both positional tensors");
-    for(const auto& t: {q,k,v})TORCH_CHECK(!t.requires_grad(),"paged attention is inference-only");
-    if(qp)TORCH_CHECK(!qp->requires_grad() && !kp->requires_grad(),"MLA is inference-only");
     auto out=at::empty({q.size(0),q.size(1),v.size(3)},q.options());
     for(const auto& t: {q,k,v})at::assert_no_overlap(out,t);
     Argument aq(q),ak(k),av(v),ao(out);
     auto ap=qp?std::make_unique<Argument>(*qp):nullptr;
     auto akp=kp?std::make_unique<Argument>(*kp):nullptr;
     check(paged_native(1,&plan_,&aq.desc,&ak.desc,&av.desc,ap?&ap->desc:nullptr,akp?&akp->desc:nullptr,
-                       &ao.desc,nullptr,0,nullptr,static_cast<float>(scale),causal));
+                       &ao.desc,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,
+                       nullptr,0,nullptr,static_cast<float>(scale),causal));
     return out;
   }
+  std::vector<at::Tensor> backward(const at::Tensor& q,const at::Tensor& k,const at::Tensor& v,
+                 const std::optional<at::Tensor>& qp,const std::optional<at::Tensor>& kp,
+                 const at::Tensor& grad,double scale,bool causal) {
+    TORCH_CHECK(qp.has_value()==kp.has_value(),"MLA requires both positional tensors");
+    TORCH_CHECK(grad.sizes()==at::IntArrayRef({q.size(0),q.size(1),v.size(3)}),
+                "paged backward gradient shape mismatch");
+    if (q.numel()!=0) at::globalContext().alertNotDeterministic("ruda::paged_history_backward");
+    auto dq=at::empty_like(q); auto dk=at::empty_like(k);
+    at::assert_no_overlap(dq,q);at::assert_no_overlap(dk,k);
+    Argument aq(q),ak(k),av(v),ag(grad),adq(dq),adk(dk);
+    auto ap=qp?std::make_unique<Argument>(*qp):nullptr;
+    auto akp=kp?std::make_unique<Argument>(*kp):nullptr;
+    if(!qp) {
+      auto dv=at::empty_like(v);at::assert_no_overlap(dv,v);Argument adv(dv);
+      check(paged_native(3,&plan_,&aq.desc,&ak.desc,&av.desc,nullptr,nullptr,nullptr,
+                         &ag.desc,&adq.desc,&adk.desc,&adv.desc,nullptr,nullptr,
+                         nullptr,0,nullptr,static_cast<float>(scale),causal));
+      return {dq,dk,dv};
+    }
+    auto dqp=at::empty_like(*qp);auto dkp=at::empty_like(*kp);
+    at::assert_no_overlap(dqp,*qp);at::assert_no_overlap(dkp,*kp);
+    Argument adqp(dqp),adkp(dkp);
+    check(paged_native(3,&plan_,&aq.desc,&ak.desc,&av.desc,&ap->desc,&akp->desc,nullptr,
+                       &ag.desc,&adq.desc,&adk.desc,nullptr,&adqp.desc,&adkp.desc,
+                       nullptr,0,nullptr,static_cast<float>(scale),causal));
+    return {dq,dqp,dk,dkp};
+  }
+  std::vector<std::optional<at::Tensor>> backward_selected(
+      const at::Tensor& q,const at::Tensor& k,const at::Tensor& v,
+      const std::optional<at::Tensor>& qp,const std::optional<at::Tensor>& kp,
+      const at::Tensor& grad,double scale,bool causal,const std::vector<bool>& needs,bool ordered=false) {
+    TORCH_CHECK(paged_backward_selected_ready,
+                "RUDA paged backward API 1 unavailable; rebuild Rust and C++ extensions");
+    TORCH_CHECK(!ordered || paged_backward_api>=2,"RUDA ordered history backward requires paged API 2; rebuild Rust and C++");
+    TORCH_CHECK(qp.has_value()==kp.has_value(),"MLA requires both positional tensors");
+    TORCH_CHECK(q.dim()==3 && k.dim()==4 && v.dim()==4,"paged backward ranks must be 3/4/4");
+    const bool mla=qp.has_value();
+    TORCH_CHECK(needs.size()==(mla?4:3),"invalid paged gradient request length");
+    TORCH_CHECK(std::isfinite(scale) && scale>0,"paged scale must be finite and positive");
+    TORCH_CHECK(grad.sizes()==at::IntArrayRef({q.size(0),q.size(1),v.size(3)}),
+                "paged backward gradient shape mismatch");
+    std::vector<at::Tensor> inputs{q,k,v,grad};
+    if(mla) { inputs.push_back(*qp); inputs.push_back(*kp); }
+    for(const auto& t:inputs) {
+      validate(t.device());
+      TORCH_CHECK(t.is_contiguous() && t.scalar_type()==q.scalar_type(),
+                  "paged backward operands must be contiguous and same dtype");
+    }
+    TORCH_CHECK(q.scalar_type()==at::kFloat || q.scalar_type()==at::kHalf || q.scalar_type()==at::kBFloat16,
+                "paged backward requires floating storage");
+    // Determinism is a property of the requested derivative, not of requires_grad
+    // on every input. Query-only derivatives have no shared-history atomics.
+    const bool atomic=mla?(needs[2] || needs[3]):(needs[1] || needs[2]);
+    if(atomic && !ordered && q.numel()!=0) at::globalContext().alertNotDeterministic("ruda::paged_history_backward");
+    const std::vector<at::Tensor> sources=mla?std::vector<at::Tensor>{q,*qp,k,*kp}:std::vector<at::Tensor>{q,k,v};
+    std::vector<std::optional<at::Tensor>> result(sources.size());
+    std::vector<std::unique_ptr<Argument>> args(sources.size());
+    for(size_t i=0;i<sources.size();++i) if(needs[i]) {
+      result[i]=at::empty_like(sources[i]);
+      for(const auto& input:inputs) at::assert_no_overlap(*result[i],input);
+      for(size_t j=0;j<i;++j) if(result[j]) at::assert_no_overlap(*result[i],*result[j]);
+      args[i]=std::make_unique<Argument>(*result[i]);
+    }
+    if(std::none_of(needs.begin(),needs.end(),[](bool value){return value;})) return result;
+    Argument aq(q),ak(k),av(v),ag(grad);
+    auto ap=qp?std::make_unique<Argument>(*qp):nullptr;
+    auto akp=kp?std::make_unique<Argument>(*kp):nullptr;
+    auto desc=[&](size_t i)->const Descriptor* {return args[i]?&args[i]->desc:nullptr;};
+    check(paged_native(ordered?5:4,&plan_,&aq.desc,&ak.desc,&av.desc,ap?&ap->desc:nullptr,akp?&akp->desc:nullptr,nullptr,
+        &ag.desc,desc(0),desc(mla?2:1),mla?nullptr:desc(2),mla?desc(1):nullptr,mla?desc(3):nullptr,
+        nullptr,0,nullptr,static_cast<float>(scale),causal));
+    return result;
+  }
+
 };
 
 #include "static_graph.inc"
@@ -381,10 +466,21 @@ TORCH_LIBRARY_IMPL(aten, PrivateUse1, m) {
 TORCH_LIBRARY_IMPL(_, PrivateUse1, m) {
   m.fallback(torch::CppFunction::makeFromBoxedFunction<&unsupported>());
 }
+// AMP for the compute-heavy dense projections. The wrapper redispatches below
+// AutocastPrivateUse1, so the existing RUDA kernels remain the execution path.
+// Normalization is intentionally not force-cast here: RUDA's native training
+// kernels already keep their statistics/accumulation in FP32 while allowing
+// low-precision activation storage.
+TORCH_LIBRARY_IMPL(aten, AutocastPrivateUse1, m) {
+  KERNEL_PRIVATEUSEONE(mm, lower_precision_fp)
+  KERNEL_PRIVATEUSEONE(bmm, lower_precision_fp)
+  KERNEL_PRIVATEUSEONE(addmm, lower_precision_fp)
+  KERNEL_PRIVATEUSEONE(linear, lower_precision_fp)
+}
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  m.attr("abi_version") = 9;
+  m.attr("abi_version") = 10;
   m.def("initialize", [](std::vector<uintptr_t> addresses) {
     TORCH_CHECK(addresses.size() == 13 && !allocate_native, "invalid or repeated RUDA initialization");
     for (auto address : addresses) TORCH_CHECK(address != 0, "null RUDA ABI function");
@@ -404,6 +500,35 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     synchronize();
     at::RegisterPrivateUse1HooksInterface(new Hooks());
   });
+  m.attr("paged_backward_api_version") = 2;
+  m.def("initialize_paged_backward", [](uint32_t version) {
+    TORCH_CHECK(allocate_native && (version==1 || version==2) && !paged_backward_selected_ready,
+                "invalid or repeated paged backward initialization");
+    paged_backward_selected_ready=true; paged_backward_api=version;
+  });
+  m.attr("router_api_version") = 1;
+  m.def("initialize_router", [](uintptr_t address) {
+    TORCH_CHECK(allocate_native && address && !router_native, "invalid or repeated router initialization");
+    router_native = reinterpret_cast<RouterCommand>(address);
+  });
+  m.def("router_weights_forward", router_weights_forward);
+  m.def("router_weights_backward", router_weights_backward);
+  m.attr("training_api_version") = 4;
+  m.def("initialize_training", [](uintptr_t address) {
+    TORCH_CHECK(allocate_native && address && !training_native, "invalid or repeated training initialization");
+    training_native=reinterpret_cast<TrainingCommand>(address);
+  });
+  m.def("training_rms_forward", training_rms_forward);
+  m.def("training_rms_backward", training_rms_backward);
+  m.def("training_layer_forward", training_layer_forward);
+  m.def("training_layer_backward", training_layer_backward);
+  m.def("training_silu_forward", training_silu_forward);
+  m.def("training_silu_backward", training_silu_backward);
+  m.def("training_unscale_", training_unscale);
+  m.def("training_adamw_", training_adamw);
+  m.def("training_analyze", training_analyze);
+  m.def("training_analyze_hierarchical", training_analyze_hierarchical);
+  m.def("training_adamw_batch_", training_adamw_batch);
   m.attr("graph_api_version") = 2;
   m.def("initialize_graph", [](uintptr_t address) {
     TORCH_CHECK(allocate_native && address && !static_graph_native, "invalid or repeated static graph initialization");
@@ -425,7 +550,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("record_stream",[](const at::Tensor& t,uint64_t id){Argument a(t);stream_command(12,id,reinterpret_cast<uintptr_t>(a.desc.allocation));});
   pybind11::class_<PagedPlanBridge,std::shared_ptr<PagedPlanBridge>>(m,"NativePagedPlan")
     .def(pybind11::init<const at::Tensor&,const std::vector<uint32_t>&,const std::vector<uint32_t>&>())
-    .def("run",&PagedPlanBridge::run);
+    .def("run",&PagedPlanBridge::run)
+    .def("backward",&PagedPlanBridge::backward)
+    .def("backward_selected",&PagedPlanBridge::backward_selected,
+        pybind11::arg("q"),pybind11::arg("k"),pybind11::arg("v"),pybind11::arg("qp"),pybind11::arg("kp"),
+        pybind11::arg("grad"),pybind11::arg("scale"),pybind11::arg("causal"),pybind11::arg("needs"),pybind11::arg("ordered")=false);
   m.def("execute", execute);
   m.def("addmm", addmm);
   m.def("layer_norm", layer_norm);

@@ -841,7 +841,7 @@ pub fn rms_norm_warp<F: Float + RudaElement>(
 // accumulator remains F32, avoiding a tensor-wide promotion allocation.
 #[ruda(launch)]
 pub fn reduce_sum_storage<F: Float + RudaElement, O: Float + RudaElement>(
-    a: &Tensor<F>, out: &mut Tensor<O>,
+    a: &Tensor<F>, out: &mut Tensor<O>, #[comptime] mean: bool,
 ) {
     let pos = ABSOLUTE_POS as usize;
     if pos < out.len() {
@@ -871,6 +871,8 @@ pub fn reduce_sum_storage<F: Float + RudaElement, O: Float + RudaElement>(
             }
             value += f32::cast_from(a[source]);
         }
+        // Empty means are NaN (0/0); empty sums keep the additive identity.
+        if comptime!(mean) { value /= reduction_size as f32; }
         out[offset(out, pos)] = O::cast_from(value);
     }
 }
@@ -879,7 +881,7 @@ pub fn reduce_sum_storage<F: Float + RudaElement, O: Float + RudaElement>(
 // contiguous [..., width] -> [..., 1]. One warp reduces one row in F32.
 #[ruda(launch)]
 pub fn reduce_sum_last_warp<F: Float + RudaElement, O: Float + RudaElement>(
-    a: &Tensor<F>, out: &mut Tensor<O>,
+    a: &Tensor<F>, out: &mut Tensor<O>, #[comptime] mean: bool,
 ) {
     let row = (ABSOLUTE_POS / 32) as usize;
     let lane = (ABSOLUTE_POS % 32) as usize;
@@ -893,7 +895,8 @@ pub fn reduce_sum_last_warp<F: Float + RudaElement, O: Float + RudaElement>(
             local += f32::cast_from(a[base + column]);
             column += 32;
         }
-        let total = plane_sum(local);
+        let mut total = plane_sum(local);
+        if comptime!(mean) { total /= width as f32; }
         if lane == 0 { out[row] = O::cast_from(total); }
     }
 }

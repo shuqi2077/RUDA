@@ -19,6 +19,11 @@ pub mod reference;
 mod kernel;
 #[cfg(feature = "fused-adamw-device")]
 mod device;
+/// Unsafe preallocated-storage kernels for native framework adapters.
+#[cfg(feature = "fused-adamw-device")]
+pub mod storage;
+/// Bounded hierarchical gradient-statistics workspace layout.
+pub mod stats_plan;
 #[cfg(feature = "fused-adamw-device")]
 pub use device::{AdamWState, AdamWUpdate, adamw_step};
 

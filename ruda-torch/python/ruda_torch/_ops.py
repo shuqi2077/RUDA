@@ -159,16 +159,27 @@ def sum_dim(a, dim=None, keepdim=False, *, dtype=None):
     return out if keepdim else out.view(tuple(d for i, d in enumerate(a.shape) if i not in dimensions))
 
 def mean_dim(a, dim=None, keepdim=False, *, dtype=None):
+    if getattr(_C, "storage_mean_api", 0) != 1:
+        raise RuntimeError("RUDA storage-mean API requires the v25 native library; rebuild both sides")
     if dtype is not None:
         if dtype not in _dtypes:
             raise NotImplementedError("RUDA mean supports float32, float16 and bfloat16")
         a = a.to(dtype)
-    # Native reduction widens individual FP16/BF16 loads to FP32 for the
-    # accumulator, so a full tensor-wide FP32 staging copy is unnecessary.
-    result = sum_dim(a, dim, keepdim, dtype=dtype)
-    dimensions = tuple(range(a.ndim)) if dim is None or len(dim) == 0 else tuple(_dimension(d, a.ndim) for d in dim)
-    count = math.prod(a.shape[d] for d in dimensions) if a.ndim else 1
-    return div(result, count)
+    if a.dtype not in _dtypes:
+        raise RuntimeError("RUDA mean requires a floating input or floating dtype")
+    rank = a.ndim
+    if dim is None or len(dim) == 0:
+        dimensions = tuple(range(rank))
+    else:
+        dimensions = tuple(_dimension(d, rank) for d in dim)
+        if len(set(dimensions)) != len(dimensions):
+            raise RuntimeError("duplicate mean dimension")
+    shape = tuple(1 if i in dimensions else d for i, d in enumerate(a.shape))
+    out = _out(shape, a)
+    # Divide the FP32 accumulator BEFORE narrowing the result. Storing a half
+    # sum first can overflow even when the true mean is representable.
+    _C.execute(107, a, a, out, 0.0)
+    return out if keepdim else out.view(tuple(d for i, d in enumerate(a.shape) if i not in dimensions))
 
 def _norm_axes(a, normalized_shape, weight, bias):
     normalized_shape = tuple(normalized_shape)
@@ -186,9 +197,19 @@ def layer_norm(a, normalized_shape, weight=None, bias=None, eps=1e-5):
     # composition for multi-axis normalization and non-contiguous last axes.
     if (len(axes) == 1 and axes[0] == a.ndim - 1 and a.is_contiguous() and a.shape[-1] > 0
             and (weight is None or weight.is_contiguous()) and (bias is None or bias.is_contiguous())):
-        result = torch.empty_like(a)
         stats_shape = list(a.shape)
         stats_shape[-1] = 1
+        # Training needs FP32 saved statistics: keeping low-precision mean/rstd
+        # would lose information and the old backward materialized full FP32
+        # copies. The separately negotiated training API supplies those stats
+        # and fused first-order backward without changing inference behavior.
+        needs_grad = a.requires_grad or (weight is not None and weight.requires_grad) or (bias is not None and bias.requires_grad)
+        if needs_grad:
+            from . import _training_available
+            if _training_available:
+                result, mean, rstd = _C.training_layer_forward(a, weight, bias, eps)
+                return result, mean.view(stats_shape), rstd.view(stats_shape)
+        result = torch.empty_like(a)
         mean = torch.empty(stats_shape, device=a.device, dtype=a.dtype)
         rstd = torch.empty(stats_shape, device=a.device, dtype=a.dtype)
         _C.layer_norm(a, weight, bias, result, mean, rstd, eps)
@@ -229,8 +250,16 @@ def rms_norm(a, normalized_shape, weight=None, eps=None):
 
 def layer_norm_backward(grad, a, normalized_shape, mean, rstd, weight, bias, output_mask):
     axes = _norm_axes(a, normalized_shape, weight, bias)
+    if (len(axes) == 1 and axes[0] == a.ndim - 1 and a.is_contiguous() and grad.is_contiguous()
+            and a.shape[-1] > 0 and mean.dtype == torch.float32 and rstd.dtype == torch.float32
+            and mean.is_contiguous() and rstd.is_contiguous()
+            and (weight is None or weight.is_contiguous()) and (bias is None or bias.is_contiguous())):
+        from . import _training_available
+        if _training_available:
+            return _C.training_layer_backward(a, weight, bias, grad, mean.reshape(-1), rstd.reshape(-1),
+                bool(output_mask[0]), bool(output_mask[1]), bool(output_mask[2]))
     if a.dtype != torch.float32:
-        results = layer_norm_backward(grad.float(), a.float(), normalized_shape, mean, rstd,
+        results = layer_norm_backward(grad.float(), a.float(), normalized_shape, mean.float(), rstd.float(),
             weight.float() if weight is not None else None, bias.float() if bias is not None else None, output_mask)
         return tuple(value.to(a.dtype) if value is not None else None for value in results)
     leading = tuple(range(a.ndim - len(axes)))

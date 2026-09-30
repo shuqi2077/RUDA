@@ -166,7 +166,7 @@ def test_abi_nine_six_word_plan_header():
     cpp=(ROOT/'ruda-torch/python/ruda_torch/csrc/backend.cpp').read_text()
     native=(ROOT/'ruda-torch/src/paged.rs').read_text()
     assert 'spec.size()==6' in cpp and 'std::slice::from_raw_parts(spec,6)' in native
-    assert 'm.attr("abi_version") = 9' in cpp
+    assert 'm.attr("abi_version") = 10' in cpp
 
 
 def load_gate():

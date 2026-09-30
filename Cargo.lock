@@ -6257,6 +6257,7 @@ dependencies = [
  "ruda-core",
  "ruda-driver-cuda",
  "ruda-kernel",
+ "ruda-optim",
 ]
 
 [[package]]

@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 /// Immutable metadata for packed queries and a paged device cache.
 /// Cache layout is [physical_pages, page_size, KV_heads, feature].
 /// Metadata is packed as [sequence_ids, query_positions, kv_lengths, block_table].
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostPlan {
     pub(crate) words: Vec<u32>,
     pub(crate) queries: usize,

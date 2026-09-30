@@ -32,7 +32,7 @@ def bridge():
         elif op==2:result[0]=state.stream;state.stream=stream
         else:result[0]=1 if op in (3,7) else 0
         return 0
-    def paged(op,plan,q,k,v,qp,kp,out,words,nwords,spec,scale,causal):
+    def paged(op,plan,q,k,v,qp,kp,out,grad,dq,dk,dv,dqp,dkp,words,nwords,spec,scale,causal):
         state.calls.append(op)
         if state.fail:return 19
         if op==0:
@@ -42,6 +42,8 @@ def bridge():
         elif op==1:
             assert plan[0] in state.plans
             # Protocol only. The allocated output is not claimed to contain attention.
+        elif op in (3,4,5):
+            state.last_gradient_descriptors=(bool(dq),bool(dk),bool(dv),bool(dqp),bool(dkp))
         elif op==2:state.plans.pop(plan[0]);plan[0]=None
         return 0
     vp=ct.c_void_p;u32=ct.c_uint32;u64=ct.c_uint64;sz=ct.c_size_t
@@ -58,7 +60,7 @@ def bridge():
         callback([vp,vp,vp,vp,vp,vp,ct.c_float],lambda *a:19),
         callback([vp,vp,vp,ct.c_float],lambda *a:19),
         callback([u32,u64,u64,u32,ct.POINTER(u64)],stream),
-        callback([u32,ct.POINTER(vp),vp,vp,vp,vp,vp,vp,ct.POINTER(u32),sz,ct.POINTER(u32),ct.c_float,ct.c_bool],paged),
+        callback([u32,ct.POINTER(vp),*([vp]*12),ct.POINTER(u32),sz,ct.POINTER(u32),ct.c_float,ct.c_bool],paged),
     ]
     _KEEP_ALIVE.extend(callbacks+[error,state,cpp])
     addresses=[ct.cast(x,vp).value for x in callbacks]
@@ -74,7 +76,7 @@ def tensors():
 
 
 def test_cpp_module_loads_current_abi_and_registrations(bridge):
-    cpp,_,_=bridge;assert cpp.abi_version==9
+    cpp,_,_=bridge;assert cpp.abi_version==10
     assert torch._C._dispatch_has_kernel_for_dispatch_key('aten::record_stream','PrivateUse1')
 
 @pytest.mark.parametrize('count',[0,5,7])

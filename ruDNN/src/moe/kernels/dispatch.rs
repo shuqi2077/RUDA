@@ -122,3 +122,76 @@ pub(crate) fn combine<F: Float, W: Float>(
     }
     output[position] = sum;
 }
+
+/// Gradient from combined token output back to expert-row outputs. `sorted_slots`
+/// maps each contiguous expert row back to its original token/top-k assignment.
+#[ruda(launch)]
+pub(crate) fn combine_backward_values<F: Float, W: Float>(
+    grad: &Array<F>, weights: &Array<W>, sorted_slots: &Array<u32>, out: &mut Array<F>,
+    width:u32, top_k:u32, #[define(F)] _dtype:StorageType, #[define(W)] _weight_dtype:StorageType,
+) {
+    let i=ABSOLUTE_POS;
+    if i>=out.len(){terminate!();}
+    let row=i/width as usize; let col=i%width as usize;
+    let assignment=sorted_slots[row] as usize;
+    let token=assignment/top_k as usize;
+    out[i]=F::cast_from(f32::cast_from(grad[token*width as usize+col])*f32::cast_from(weights[assignment]));
+}
+
+/// FP32 gradient of selected routing weights. One assignment owns one reduction,
+/// so no atomics are required and the result can feed a later router backward.
+#[ruda(launch)]
+pub(crate) fn combine_backward_weights<F: Float>(
+    grad:&Array<F>, expert_output:&Array<F>, slot_rows:&Array<u32>, out:&mut Array<f32>,
+    width:u32, top_k:u32, #[define(F)] _dtype:StorageType,
+) {
+    let assignment=ABSOLUTE_POS;
+    if assignment>=out.len(){terminate!();}
+    let token=assignment/top_k as usize;
+    let row=slot_rows[assignment] as usize;
+    let mut sum=0.0f32; let mut col=0usize;
+    while col<width as usize {
+        sum=fma(f32::cast_from(grad[token*width as usize+col]),
+                f32::cast_from(expert_output[row*width as usize+col]),sum);
+        col+=1;
+    }
+    out[assignment]=sum;
+}
+
+/// Copy-dispatch backward: sum expert-row input gradients back to each token.
+/// Each output element has one owner; fixed slot order and FP32 accumulation.
+/// Routing weights do NOT enter this derivative of the unweighted copy.
+#[ruda(launch)]
+pub(crate) fn dispatch_backward<F: Float>(grad_rows: &Array<F>, slot_rows: &Array<u32>,
+    out: &mut Array<F>, width: u32, top_k: u32, #[define(F)] _dtype: StorageType)
+{
+    let pos = ABSOLUTE_POS;
+    if pos >= out.len() { terminate!(); }
+    let token = pos / width as usize; let col = pos % width as usize;
+    let mut sum = 0.0f32;
+    for slot in 0..top_k as usize {
+        let row = slot_rows[token * top_k as usize + slot] as usize;
+        sum += f32::cast_from(grad_rows[row * width as usize + col]);
+    }
+    out[pos] = F::cast_from(sum);
+}
+
+/// One hardware plane per selected routing weight instead of one serial thread.
+/// Explicit opt-in: reduction order differs; small widths may not benefit.
+#[ruda(launch)]
+pub(crate) fn combine_backward_weights_plane<F: Float>(
+    grad: &Array<F>, expert_output: &Array<F>, slot_rows: &Array<u32>, out: &mut Array<f32>,
+    width: u32, top_k: u32, #[comptime] lanes: usize, #[define(F)] _dtype: StorageType)
+{
+    let assignment = RUDA_POS_X as usize; let lane = UNIT_POS_X as usize;
+    let token = assignment / top_k as usize;
+    let row = slot_rows[assignment] as usize;
+    let mut sum = 0.0f32; let mut col = lane;
+    while col < width as usize {
+        sum = fma(f32::cast_from(grad[token * width as usize + col]),
+                  f32::cast_from(expert_output[row * width as usize + col]), sum);
+        col += lanes;
+    }
+    let result = plane_sum(sum);
+    if lane == 0 { out[assignment] = result; }
+}

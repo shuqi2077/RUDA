@@ -1,5 +1,5 @@
 // Included inside backend.cpp's anonymous namespace, after Argument.
-// Optional extension API 2; deliberately does not change base tensor ABI 9.
+// Optional extension API 2; deliberately does not change base tensor ABI 10.
 struct StaticNode { uint32_t op, a, b; float scalar; };
 static_assert(sizeof(StaticNode)==16 && alignof(StaticNode)==4, "static graph ABI layout");
 using StaticGraphCommand = int (*)(uint32_t,void**,const Descriptor*,size_t,

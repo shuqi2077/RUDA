@@ -3,8 +3,8 @@ mod experts;
 mod kernels;
 mod routing;
 
-pub use dispatch::DispatchedTokens;
-pub use experts::SwiGluExperts;
+pub use dispatch::{DispatchedTokens,CombineBackward,CombineGradientStrategy};
+pub use experts::{SwiGluExperts, ExpertTrainingCache, ExpertTrainingOutput, ExpertBackward};
 pub use routing::{RoutingOptions, RoutingPlan, route};
 
 use ruda_core::{
@@ -78,3 +78,11 @@ pub use rublas::tensor_grouped::GroupedStrategy;
 
 mod grouped_routing;
 pub use grouped_routing::{GroupRoutingOptions,route_sigmoid_grouped};
+
+mod router_training;
+pub use router_training::{RouterScoring, RouterWeightOptions, RouterTrainingPlan,
+    selected_router_weights, selected_router_weights_into,
+    selected_router_backward, selected_router_backward_into};
+
+#[cfg(test)]
+mod tests_v31;

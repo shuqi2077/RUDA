@@ -14,7 +14,7 @@ def r():
         pytest.skip('explicit native GPU execution required')
     assert os.environ.get('RUDA_CUDA_COMPILER')=='ptx'
     import ruda_torch as r
-    assert r._C.abi_version==9 and r._graph_available and r._C.graph_api_version==2
+    assert r._C.abi_version==10 and r._graph_available and r._C.graph_api_version==2
     # Runtime marker is emitted only AFTER a real native graph result was read.
     x=torch.tensor([1.,2.]).to('ruda')
     with r.StaticGraph({'x':x},[r.GraphOp.copy('y','x')]) as g:

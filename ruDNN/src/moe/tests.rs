@@ -436,3 +436,134 @@ fn mixed_router_dtype_and_noncontiguous_logits_preserve_combine() {
         0.016,
     );
 }
+
+// v30 device tests. Run with ruda-test-runtime/cuda, not a CPU reference runtime.
+fn v30_options(scoring: RouterScoring, renormalize: bool, scale: f32) -> RouterWeightOptions {
+    RouterWeightOptions { scoring, renormalize, scale }
+}
+
+#[test]
+fn v30_runtime_marker() {
+    let runtime = std::any::type_name::<TestRuntime>();
+    assert!(runtime.contains("CudaRuntime"), "v30 GPU acceptance must use CudaRuntime, got {runtime}");
+    close(&floats(tensor(&[1.0], [1,1], DType::F32)), &[1.0], 0.0);
+    println!("RUDA_V30_MOE_GPU_EXECUTED={runtime}");
+}
+
+#[test]
+fn v30_unselected_softmax_gradients() {
+    let x = tensor(&[0., 2f32.ln(), 4f32.ln(), 8f32.ln()], [1,4], DType::F32);
+    let ids = from_data(TensorData::new(vec![3i64,2], [1,2]), &Default::default());
+    let g = tensor(&[1.,-2.], [1,2], DType::F32);
+    let opts = v30_options(RouterScoring::Softmax, false, 2.5);
+    close(&floats(selected_router_weights(&x,&ids,opts).unwrap()), &[2.5*8./15.,2.5*4./15.], 2e-6);
+    let dx = floats(selected_router_backward(&x,&ids,&g,opts).unwrap());
+    // Weighted dot is zero for [1,-2] with probabilities [8/15,4/15].
+    close(&dx, &[0.,0.,-2.5*8./15.,2.5*8./15.], 3e-6);
+    let g = tensor(&[1.,1.], [1,2], DType::F32);
+    let dx = floats(selected_router_backward(&x,&ids,&g,opts).unwrap());
+    assert!(dx[0] < 0.0 && dx[1] < 0.0);
+}
+
+#[test]
+fn v30_normalized_single_selection_has_zero_gradient() {
+    for scoring in [RouterScoring::Softmax, RouterScoring::Sigmoid] {
+        let x=tensor(&[1.,2.,3.,4.],[1,4],DType::F32);
+        let ids=from_data(TensorData::new(vec![2u32],[1,1]),&Default::default());
+        let opts=v30_options(scoring,true,2.5);
+        close(&floats(selected_router_weights(&x,&ids,opts).unwrap()),&[2.5],2e-6);
+        close(&floats(selected_router_backward(&x,&ids,&tensor(&[7.],[1,1],DType::F32),opts).unwrap()),&[0.;4],3e-6);
+    }
+}
+
+#[test]
+fn v30_repeated_sigmoid_indices_accumulate() {
+    let x=tensor(&[0.,0.,0.],[1,3],DType::F32);
+    let ids=from_data(TensorData::new(vec![1i32,1,2],[1,3]),&Default::default());
+    let g=tensor(&[1.,2.,4.],[1,3],DType::F32);
+    let opts=v30_options(RouterScoring::Sigmoid,false,2.0);
+    close(&floats(selected_router_weights(&x,&ids,opts).unwrap()),&[1.,1.,1.],0.0);
+    close(&floats(selected_router_backward(&x,&ids,&g,opts).unwrap()),&[0.,1.5,2.],2e-6);
+}
+
+#[test]
+fn v30_low_precision_storage_keeps_weights_fp32() {
+    for dtype in [DType::F32,DType::F16,DType::BF16] {
+        let x=tensor(&[0.,0.,0.,0.],[1,4],dtype);
+        let ids=from_data(TensorData::new(vec![0i64,2],[1,2]),&Default::default());
+        let opts=v30_options(RouterScoring::Softmax,false,1.0);
+        let w=selected_router_weights(&x,&ids,opts).unwrap(); assert_eq!(w.dtype,DType::F32);
+        close(&floats(w),&[0.25,0.25],0.0);
+        let dx=selected_router_backward(&x,&ids,&tensor(&[1.,1.],[1,2],DType::F32),opts).unwrap();
+        assert_eq!(dx.dtype,dtype);close(&floats(dx),&[0.125,-0.125,0.125,-0.125],0.0);
+    }
+}
+
+#[test]
+fn v30_invalid_i64_selection_never_truncates_before_bounds() {
+    let x=tensor(&[0.;12],[3,4],DType::F32);
+    let ids=from_data(TensorData::new(vec![-1i64,0,4,0,1i64<<40,0],[3,2]),&Default::default());
+    let opts=v30_options(RouterScoring::Softmax,true,1.0);
+    assert!(floats(selected_router_weights(&x,&ids,opts).unwrap()).iter().all(|x|x.is_nan()));
+    let grad=tensor(&[1.;6],[3,2],DType::F32);
+    assert!(floats(selected_router_backward(&x,&ids,&grad,opts).unwrap()).iter().all(|x|x.is_nan()));
+}
+
+#[test]
+fn v30_empty_router_and_shape_validation() {
+    let x=tensor(&[],[0,7],DType::F32);
+    let ids=from_data(TensorData::new(Vec::<i64>::new(),[0,2]),&Default::default());
+    let opts=v30_options(RouterScoring::Sigmoid,true,1.0);
+    assert_eq!(selected_router_weights(&x,&ids,opts).unwrap().meta.num_elements(),0);
+    let grad=tensor(&[],[0,2],DType::F32);
+    assert_eq!(selected_router_backward(&x,&ids,&grad,opts).unwrap().meta.num_elements(),0);
+    let bad=from_data(TensorData::new(Vec::<i64>::new(),[0,0]),&Default::default());
+    assert!(selected_router_weights(&x,&bad,opts).is_err());
+}
+
+#[test]
+fn v30_routing_training_tape_retains_existing_selection() {
+    let x=tensor(&[0.,1.,2.,3.],[1,4],DType::F16);
+    let plan=route(x.clone(),RoutingOptions{top_k:2,renormalize:false}).unwrap();
+    let ids=integers(plan.expert_indices().clone());
+    let tape=plan.into_training(x,v30_options(RouterScoring::Softmax,true,2.5)).unwrap();
+    assert_eq!(integers(tape.routing().expert_indices().clone()),ids);
+    assert_eq!(tape.routing().weights().dtype,DType::F32);
+    let dx=tape.backward(&tensor(&[1.,1.],[1,2],DType::F32)).unwrap();
+    close(&floats(dx),&[0.;4],0.002);
+}
+
+#[test]
+fn v30_dispatch_backward_is_unweighted_slot_sum() {
+    let input=tensor(&[1.,2.,3.,4.,5.,6.],[3,2],DType::F32);
+    let logits=tensor(&[3.,2.,1., 1.,3.,2., 2.,1.,3.],[3,3],DType::F32);
+    let packed=route(logits,RoutingOptions{top_k:2,renormalize:false}).unwrap().dispatch(input).unwrap();
+    let dx=packed.dispatch_backward(packed.values().clone()).unwrap();
+    close(&floats(dx),&[2.,4.,6.,8.,10.,12.],0.0);
+}
+
+#[test]
+fn v30_parallel_combine_gradient_matches_serial() {
+    let data:Vec<_>=(0..3*65).map(|i|(i as f32-90.0)/128.0).collect();
+    let x=tensor(&data,[3,65],DType::F32);
+    let logits=tensor(&[3.,2.,1., 1.,3.,2., 2.,1.,3.],[3,3],DType::F32);
+    let packed=route(logits,RoutingOptions{top_k:2,renormalize:false}).unwrap().dispatch(x.clone()).unwrap();
+    let serial=packed.combine_backward(packed.values(),x.clone()).unwrap();
+    let plane=packed.combine_backward_with_strategy(packed.values(),x,CombineGradientStrategy::Plane).unwrap();
+    close(&floats(plane.dweights),&floats(serial.dweights),3e-5);
+    close(&floats(plane.dexpert),&floats(serial.dexpert),0.0);
+}
+
+#[test]
+fn v30_zero_width_combine_backward_is_rejected() {
+    let plan=route(tensor(&[1.,2.],[1,2],DType::F32),RoutingOptions{top_k:1,renormalize:false}).unwrap();
+    let packed=plan.dispatch(tensor(&[1.],[1,1],DType::F32)).unwrap();
+    assert!(packed.combine_backward(&tensor(&[],[1,0],DType::F32),tensor(&[],[1,0],DType::F32)).is_err());
+}
+
+#[test]
+fn v30_router_options_reject_invalid_scale() {
+    for scale in [0.0,-1.0,f32::NAN,f32::INFINITY] {
+        assert!(v30_options(RouterScoring::Softmax,false,scale).validate().is_err());
+    }
+}

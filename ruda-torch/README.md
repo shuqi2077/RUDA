@@ -129,3 +129,65 @@ python ruda-torch/tools/validate_static_graph.py --build --output ./v24-gpu
 
 The validator requires direct PTX configuration and real GPU execution; absent
 hardware or skipped tests do not count as success.
+
+
+## v27: opt-in hierarchical optimizer statistics (training API 4)
+
+`AdamW(..., fused_step=True, hierarchical_stats=True, max_grad_norm=1.0)`
+reduces gradient-statistics rows in bounded GPU stages. This does not change
+AdamW's update kernel, gradient storage, the global clipping policy, or the
+explicit 12-byte readback before any update. `hierarchical_stats` defaults to
+`False`. Each merge warp processes at most 1024 rows; at most two additional
+kernels and 49,200 bytes of reusable scratch are used for 4096 parameters.
+Small workloads (<=1024 rows) need no extra merge kernel. Different reduction
+order can change FP32 rounding; bitwise equality is not promised.
+
+Rebuild both Rust and C++ (base ABI 9 / graph API 2 unchanged, training API 4).
+Do not load a v26 training library into this bridge. Checkpoints without the
+hierarchical option restore with that option disabled; opt-in checkpoints carry
+step-options version 2 and are rejected by older v26 readers.
+
+Run `python ruda-torch/tools/rust_host_gradient_stats.py --output ./stats-host`
+for the production Rust planner. Run `python ruda-torch/tools/validate_training.py
+--build --dtypes float32,float16 --output ./v27-training-results` for real GPU
+acceptance (103 cases per execution mode; no successful skips). Configure
+`RUDA_CUDA_COMPILER=ptx` and a driver-supported `RUDA_PTX_VERSION` first.
+The source includes a paired `python/examples/benchmark_gradient_stats.py`
+benchmark: it measures gradient analysis, not whole-model training speed.
+
+
+## v28: native LayerNorm training (training API 4)
+
+The common last-axis training path now keeps LayerNorm mean/rstd in FP32 and
+runs first-order `dx`, `dweight` and `dbias` with native RUDA kernels. Standard
+`torch.nn.LayerNorm` automatically selects this path when gradients are needed,
+tensors are contiguous, and the native training extension is available; inference
+continues to use the existing single-kernel inference path. The explicit
+`ruda_torch.LayerNorm`/`ruda_torch.layer_norm` entry points also support FP32
+affine parameters with FP16/BF16 activations.
+
+The backward path does not materialize full-size FP32 copies of activation and
+gradient tensors. FP32 saved statistics and bounded FP32 affine-gradient partials
+are used instead. This remains first-order only and does not claim higher-order
+autograd, multi-axis LayerNorm fusion, or training graph capture.
+
+Rebuild both Rust and C++ components because the additive training API is now 4.
+Run `python ruda-torch/tools/validate_training.py --build --dtypes float32,float16
+--output ./v28-training-results` for strict device validation.
+
+## Optional router-weight training extension (v30)
+
+`ruda_torch.selected_router_weights(logits, indices, scoring="softmax", renormalize=False, scale=1.0)`
+uses public ruDNN GPU kernels and first-order autograd. Logits are contiguous
+FP32/FP16/BF16 `[tokens,experts]`; indices are contiguous int32/int64
+`[tokens,top_k]`, with `1 <= top_k <= min(experts,64)`. Weights are FP32.
+Selection/grouping/correction bias remain model-owned. Invalid device indices
+produce bounded NaN rows, not an index exception or a CPU fallback. Repeated
+indices have gather semantics. No higher-order derivatives or auxiliary router
+loss are implemented. New optional Router API 1 requires rebuilding both sides;
+base tensor ABI 10, training API 4 and graph API 2 are unchanged.
+
+Run `python ruda-torch/tools/validate_router.py --build --output ./v30-results`
+from the repository root for strict Rust/public-operator and native-PyTorch GPU
+acceptance. This candidate's Rust/PTX kernels were not compiled or run during
+host-only preparation; the package's validation records describe this limit.
