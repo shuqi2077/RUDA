@@ -30,6 +30,12 @@ jobs:
       max-parallel: 2
       matrix:
         include:
+          - name: v36 native and CUDA test compilation
+            key: v36-native
+            command: |
+              python3 tools/gpu_validation/rust_host_v36.py --output "$RUNNER_TEMP/v36-rust-host"
+              cargo test --locked --release -p ruDNN --lib --features tensor-paged-attention,ruda-test-runtime/cuda --no-run
+              cargo build --locked --release -p ruda-torch-native
           - name: CPU libraries
             key: host
             command: |
