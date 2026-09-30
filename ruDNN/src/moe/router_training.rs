@@ -144,7 +144,7 @@ impl<R: Runtime> RoutingPlan<R> {
     pub fn into_training(mut self, logits: RudaTensor<R>, options: RouterWeightOptions)
         -> Result<RouterTrainingPlan<R>, MoeError>
     {
-        if *logits.meta.shape() != [self.tokens, self.experts] {
+        if logits.meta.shape().as_slice() != [self.tokens, self.experts] {
             return Err(MoeError("router training logits do not match routing plan"));
         }
         self.weights = selected_router_weights(&logits, &self.indices, options)?;
