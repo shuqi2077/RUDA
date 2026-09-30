@@ -60,7 +60,7 @@ default-features = false
 
 [dependencies.ruda-tensor-remote]
 path = "../ruda-tensor-remote"
-version = "0.21.10"
+version = "0.21.11"
 optional = true
 default-features = false
 
