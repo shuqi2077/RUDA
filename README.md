@@ -20,6 +20,10 @@ Requires Git, Rust/Cargo, a linker toolchain, an NVIDIA GPU and driver, and the 
 
 ### Use a published crate
 
+```sh
+cargo add ruda --features cuda
+```
+
 Add the [CUDA backend](https://crates.io/crates/ruda-driver-cuda) to your application's `Cargo.toml`:
 
 ```toml
