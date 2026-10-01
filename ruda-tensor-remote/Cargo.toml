@@ -118,7 +118,7 @@ features = [ "default",]
 
 [dependencies.ruda-communication]
 path = "../ruda-communication"
-version = "0.21.14"
+version = "0.21.15"
 default-features = false
 features = [ "data-service", "websocket",]
 
