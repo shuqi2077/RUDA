@@ -6104,7 +6104,7 @@ dependencies = [
 
 [[package]]
 name = "ruda-tensor-host"
-version = "0.21.13"
+version = "0.21.14"
 dependencies = [
  "aligned-vec",
  "bytemuck",
