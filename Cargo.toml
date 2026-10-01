@@ -4,7 +4,7 @@ members = ["ruda/tests/consumer", "ruda-torch", "ruda-hip-sys", "ruTENSOR", "ruL
 resolver = "3"
 
 [workspace.package]
-version = "0.1.14"
+version = "0.1.15"
 edition = "2024"
 
 [workspace.lints.rust]
