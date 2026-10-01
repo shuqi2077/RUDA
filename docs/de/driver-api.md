@@ -46,7 +46,7 @@ Die Schnittstellen garantieren nicht die Übernahme beliebiger externer CUDA-Kon
 
 Ein Backend verwendet `Runtime`, um ein Gerät, einen Compiler und einen Rechenserver zuzuordnen. Höhere Schichten greifen über `ComputeClient` auf den Vertrag zu. Legen Sie die Speicher-, Kompilierungsfehler-, Synchronisierungs- und Fähigkeitsabfragesemantik fest, bevor Sie Rechenbibliotheken integrieren.
 
-Quelleneinstiegspunkte: [CUDA-Exporte](../../ruda-driver-cuda/src/lib.rs), [Gerätetyp](../../ruda-driver-cuda/src/device.rs), [Laufzeitimplementierung](../../ruda-driver-cuda/src/runtime.rs) und [Laufzeitmerkmal](../../ruda/src/runtime/backend.rs).
+Quelleneinstiegspunkte: [CUDA-Exporte](../../ruda-driver-cuda/src/lib.rs), [Gerätetyp](../../ruda-driver-cuda/src/device.rs), [Laufzeitimplementierung](../../ruda-driver-cuda/src/runtime.rs) und [Laufzeitmerkmal](../../ruda-runtime/src/runtime/backend.rs).
 
 ## 6. CUDA-Stream- und Event-Interoperabilität
 

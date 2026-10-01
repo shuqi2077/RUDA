@@ -44,7 +44,7 @@ The interfaces do not guarantee adoption of arbitrary external CUDA contexts, st
 
 A backend uses `Runtime` to associate a device, compiler, and compute server. Higher layers access the contract through `ComputeClient`. Establish storage, compilation error, synchronization, and capability-query semantics before integrating compute libraries.
 
-Source entry points: [CUDA exports](../../ruda-driver-cuda/src/lib.rs), [device type](../../ruda-driver-cuda/src/device.rs), [runtime implementation](../../ruda-driver-cuda/src/runtime.rs), and [Runtime trait](../../ruda/src/runtime/backend.rs).
+Source entry points: [CUDA exports](../../ruda-driver-cuda/src/lib.rs), [device type](../../ruda-driver-cuda/src/device.rs), [runtime implementation](../../ruda-driver-cuda/src/runtime.rs), and [Runtime trait](../../ruda-runtime/src/runtime/backend.rs).
 
 ## 6. CUDA stream and event interop
 

@@ -12,7 +12,7 @@
 
 | 层级 | 接入位置 | 比较对象 |
 |---|---|---|
-| 公共运行时 | `ruda/src/runtime/tune/stack/`、原 `LocalTuner` | 校验、预算、配对计时、缓存、并发控制、失效和报告 |
+| 公共运行时 | `ruda-runtime/src/runtime/tune/stack/`、原 `LocalTuner` | 校验、预算、配对计时、缓存、并发控制、失效和报告 |
 | 矩阵乘 | `ruBLAS/src/tensor_matmul/tune/base.rs` | 所有符合原选择条件的候选组；包含精度策略和真实布局 |
 | 注意力 | `ruDNN/src/attention/tensor/tune.rs` | 整个注意力算子；区分掩码、偏置和算子选项 |
 | 前向卷积 | `ruDNN/src/convolution/tensor/forward/tune.rs` | 整个前向卷积；以显式参考实现为基线 |

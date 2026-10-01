@@ -30,6 +30,21 @@ jobs:
       max-parallel: 2
       matrix:
         include:
+          - name: Unified facade and runtime tests
+            key: facade-runtime
+            command: |
+              cargo test --locked -p ruda-runtime --lib
+              cargo test --locked -p ruda --tests
+              cargo test --locked -p ruda-kernel-macros --lib --features kernel-ir
+              cargo check --locked -p ruda --no-default-features --lib
+              cargo check --locked -p ruda --no-default-features --features runtime,runtime-storage-bytes --lib
+          - name: Unified facade backend compilation
+            key: facade-backends
+            command: |
+              for features in cuda hip wgpu direct-ptx cuda,hip,wgpu; do
+                cargo check --locked -p ruda --no-default-features --features "$features" --lib --test facade --example vector-add
+                cargo check --locked -p ruda-facade-consumer --features "$features"
+              done
           - name: v36 native and CUDA test compilation
             key: v36-native
             command: |

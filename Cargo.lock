@@ -5430,30 +5430,17 @@ dependencies = [
 name = "ruda"
 version = "0.1.5"
 dependencies = [
- "async-channel",
  "bytemuck",
- "cfg-if",
- "cfg_aliases",
  "derive-new",
- "derive_more",
- "dirs",
- "enumset",
- "hashbrown 0.16.1",
- "log",
- "md5",
  "rand 0.10.2",
  "ruda-core",
- "serde",
- "serde_json",
+ "ruda-driver-cuda",
+ "ruda-driver-hip",
+ "ruda-driver-wgpu",
+ "ruda-kernel",
+ "ruda-runtime",
  "serial_test",
- "spin",
  "test-log",
- "thiserror 2.0.20",
- "toml",
- "tracing",
- "tracy-client",
- "wasm-bindgen-futures",
- "web-time",
 ]
 
 [[package]]
@@ -5637,10 +5624,10 @@ dependencies = [
  "log",
  "paste",
  "pretty_assertions",
- "ruda",
  "ruda-compiler",
  "ruda-core",
  "ruda-kernel",
+ "ruda-runtime",
  "serde",
  "sysinfo",
  "test-log",
@@ -5658,10 +5645,10 @@ dependencies = [
  "log",
  "paste",
  "pretty_assertions",
- "ruda",
  "ruda-compiler",
  "ruda-core",
  "ruda-kernel",
+ "ruda-runtime",
  "serde",
  "test-log",
  "tracing",
@@ -5677,11 +5664,11 @@ dependencies = [
  "log",
  "paste",
  "pretty_assertions",
- "ruda",
  "ruda-compiler",
  "ruda-core",
  "ruda-hip-sys",
  "ruda-kernel",
+ "ruda-runtime",
  "serde",
  "test-log",
  "tracing",
@@ -5703,10 +5690,10 @@ dependencies = [
  "log",
  "paste",
  "pretty_assertions",
- "ruda",
  "ruda-compiler",
  "ruda-core",
  "ruda-kernel",
+ "ruda-runtime",
  "sanitize-filename",
  "test-log",
  "tracel-ash",
@@ -5714,6 +5701,13 @@ dependencies = [
  "tracy-client",
  "wasm-bindgen-futures",
  "wgpu",
+]
+
+[[package]]
+name = "ruda-facade-consumer"
+version = "0.0.0"
+dependencies = [
+ "ruda",
 ]
 
 [[package]]
@@ -5794,10 +5788,10 @@ dependencies = [
  "num-traits",
  "paste",
  "pretty_assertions",
- "ruda",
  "ruda-compiler",
  "ruda-core",
  "ruda-kernel-macros",
+ "ruda-runtime",
  "ruda-test-runtime",
  "ruda-test-utils",
  "serde",
@@ -5963,6 +5957,36 @@ dependencies = [
  "ruda-tensor-wgpu",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "ruda-runtime"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "bytemuck",
+ "cfg-if",
+ "cfg_aliases",
+ "derive-new",
+ "derive_more",
+ "dirs",
+ "enumset",
+ "hashbrown 0.16.1",
+ "log",
+ "md5",
+ "rand 0.10.2",
+ "ruda-core",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "spin",
+ "test-log",
+ "thiserror 2.0.20",
+ "toml",
+ "tracing",
+ "tracy-client",
+ "wasm-bindgen-futures",
+ "web-time",
 ]
 
 [[package]]

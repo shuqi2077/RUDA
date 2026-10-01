@@ -17,6 +17,14 @@ fn resolve_core_path(mut lookup: impl FnMut(&str) -> Option<FoundCrate>) -> Path
         let ident = format_ident!("{name}");
         return syn::parse_quote!(::#ident::dsl);
     }
+    if let Some(found) = lookup("ruda") {
+        let name = match found {
+            FoundCrate::Itself => "ruda".into(),
+            FoundCrate::Name(name) => name,
+        };
+        let ident = format_ident!("{name}");
+        return syn::parse_quote!(::#ident::dsl);
+    }
     syn::parse_quote!(kernel_dsl)
 }
 #[allow(clippy::declare_interior_mutable_const)]
@@ -120,6 +128,27 @@ mod tests {
     #[test]
     fn existing_local_alias_remains_a_fallback() {
         assert_eq!(resolve_core_path(|_| None), syn::parse_quote!(kernel_dsl));
+    }
+
+    #[test]
+    fn facade_dependency_is_resolved() {
+        let path = resolve_core_path(|name| (name == "ruda")
+            .then(|| FoundCrate::Name("ruda".into())));
+        assert_eq!(path, syn::parse_quote!(::ruda::dsl));
+    }
+
+    #[test]
+    fn renamed_facade_dependency_is_resolved() {
+        let path = resolve_core_path(|name| (name == "ruda")
+            .then(|| FoundCrate::Name("gpu".into())));
+        assert_eq!(path, syn::parse_quote!(::gpu::dsl));
+    }
+
+    #[test]
+    fn facade_itself_uses_self_alias() {
+        let path = resolve_core_path(|name| (name == "ruda")
+            .then_some(FoundCrate::Itself));
+        assert_eq!(path, syn::parse_quote!(::ruda::dsl));
     }
 
 }

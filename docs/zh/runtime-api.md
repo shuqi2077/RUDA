@@ -8,9 +8,9 @@
 
 | 类型 | 职责 | 定义 |
 | --- | --- | --- |
-| `Runtime` | 关联 Compiler、Server、Device，获取设备客户端 | [backend.rs](../../ruda/src/runtime/backend.rs) |
-| `ComputeClient<R>` | 内存分配、Kernel 提交、回读、同步及能力查询 | [client.rs](../../ruda/src/runtime/client.rs) |
-| `ComputeServer` | 设备后端执行契约 | [server 模块](../../ruda/src/runtime/server/mod.rs) |
+| `Runtime` | 关联 Compiler、Server、Device，获取设备客户端 | [backend.rs](../../ruda-runtime/src/runtime/backend.rs) |
+| `ComputeClient<R>` | 内存分配、Kernel 提交、回读、同步及能力查询 | [client.rs](../../ruda-runtime/src/runtime/client.rs) |
+| `ComputeServer` | 设备后端执行契约 | [server 模块](../../ruda-runtime/src/runtime/server/mod.rs) |
 | `RudaTensor<R>` | 设备存储与张量元数据 | [张量定义](../../ruda-kernel/src/tensor/base.rs) |
 
 `R::client(&device)` 获取对应运行时的客户端。`R::Device` 决定设备类型；同一个泛型参数并不意味着不同物理设备的存储可以直接互用。

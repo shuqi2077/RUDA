@@ -8,9 +8,9 @@ The general-purpose runtime is in `ruda::runtime`, enabled by the `ruda/runtime`
 
 | Type | Responsibility | Definition |
 | --- | --- | --- |
-| `Runtime` | Associates Compiler, Server, and Device; provides device clients | [backend.rs](../../ruda/src/runtime/backend.rs) |
-| `ComputeClient<R>` | Allocation, kernel submission, readback, synchronization, and capability queries | [client.rs](../../ruda/src/runtime/client.rs) |
-| `ComputeServer` | Backend execution contract | [server module](../../ruda/src/runtime/server/mod.rs) |
+| `Runtime` | Associates Compiler, Server, and Device; provides device clients | [backend.rs](../../ruda-runtime/src/runtime/backend.rs) |
+| `ComputeClient<R>` | Allocation, kernel submission, readback, synchronization, and capability queries | [client.rs](../../ruda-runtime/src/runtime/client.rs) |
+| `ComputeServer` | Backend execution contract | [server module](../../ruda-runtime/src/runtime/server/mod.rs) |
 | `RudaTensor<R>` | Device storage and tensor metadata | [Tensor definition](../../ruda-kernel/src/tensor/base.rs) |
 
 `R::client(&device)` obtains the runtime's client. `R::Device` determines the device type; sharing a runtime type does not make storage on different physical devices interchangeable.

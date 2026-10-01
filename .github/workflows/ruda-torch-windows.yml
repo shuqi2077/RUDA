@@ -6,6 +6,7 @@ on:
     paths:
       - 'ruda-torch/**'
       - 'ruda/**'
+      - 'ruda-runtime/**'
       - 'ruda-core/**'
       - 'ruda-kernel/**'
       - 'ruda-kernel-macros/**'

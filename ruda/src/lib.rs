@@ -1,25 +1,21 @@
 #![no_std]
-//! Ruda portable host runtime.
-
-#[cfg(feature = "runtime-std")]
-extern crate std;
-
-#[cfg(feature = "runtime")]
-extern crate alloc;
-
-#[cfg(feature = "runtime")]
-#[macro_use]
-extern crate derive_new;
+//! Ruda GPU kernel API and portable runtime.
 
 extern crate self as ruda;
 
+pub use ruda_runtime::*;
 
+#[cfg(feature = "kernel")]
+pub use ruda_kernel::dsl;
+#[cfg(feature = "kernel")]
+pub use ruda_kernel::dsl::prelude;
 
-
-#[cfg(feature = "runtime")]
-#[allow(unsafe_code)]
-pub mod runtime;
-
+#[cfg(feature = "cuda")]
+pub use ruda_driver_cuda as cuda;
+#[cfg(feature = "hip")]
+pub use ruda_driver_hip as hip;
+#[cfg(feature = "wgpu")]
+pub use ruda_driver_wgpu as wgpu;
 
 
 

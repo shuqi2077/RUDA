@@ -10,9 +10,9 @@ Die allgemeine Laufzeit befindet sich in `ruda::runtime` und wird durch die Funk
 
 |Typ|Verantwortung|Definition|
 | --- | --- | --- |
-|`Runtime`|verbindet Compiler, Server und Gerät; stellt Geräte-Clients bereit|[backend.rs](../../ruda/src/runtime/backend.rs)|
-|`ComputeClient<R>`|Zuweisung, Kernel-Übermittlung, Rücklesung, Synchronisierung und Funktionsabfragen|[client.rs](../../ruda/src/runtime/client.rs)|
-|`ComputeServer`|Backend-Ausführungsvertrag|[Servermodul](../../ruda/src/runtime/server/mod.rs)|
+|`Runtime`|verbindet Compiler, Server und Gerät; stellt Geräte-Clients bereit|[backend.rs](../../ruda-runtime/src/runtime/backend.rs)|
+|`ComputeClient<R>`|Zuweisung, Kernel-Übermittlung, Rücklesung, Synchronisierung und Funktionsabfragen|[client.rs](../../ruda-runtime/src/runtime/client.rs)|
+|`ComputeServer`|Backend-Ausführungsvertrag|[Servermodul](../../ruda-runtime/src/runtime/server/mod.rs)|
 |`RudaTensor<R>`|Gerätespeicher und Tensor-Metadaten|[Tensordefinition](../../ruda-kernel/src/tensor/base.rs)|
 
 `R::client(&device)` ruft den Client der Laufzeit ab. `R::Device` bestimmt den Gerätetyp; Durch die gemeinsame Nutzung eines Laufzeittyps wird der Speicher auf verschiedenen physischen Geräten nicht austauschbar.

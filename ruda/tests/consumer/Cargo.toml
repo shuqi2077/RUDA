@@ -1,0 +1,15 @@
+[package]
+name = "ruda-facade-consumer"
+version = "0.0.0"
+edition.workspace = true
+publish = false
+
+[features]
+default = []
+cuda = ["gpu/cuda"]
+hip = ["gpu/hip"]
+wgpu = ["gpu/wgpu"]
+direct-ptx = ["gpu/direct-ptx"]
+
+[dependencies]
+gpu = { package = "ruda", path = "../..", default-features = false, features = ["kernel"] }

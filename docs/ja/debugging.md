@@ -25,7 +25,7 @@
 
 `ptx-runtime` の例では、コンパイルと PTX のディスク キャッシュ ヒットをカウントします。 `RUDA_PTX_TEST_CACHE` は、すべてのアプリケーションによって自動的に読み取られるわけではなく、その例によってのみ読み取られます。
 
-[compilation.rs](../../ruda/src/runtime/config/compilation.rs) および [ptx_runtime.rs](../../ruda-driver-cuda/examples/ptx_runtime.rs) を参照してください。
+[compilation.rs](../../ruda-runtime/src/runtime/config/compilation.rs) および [ptx_runtime.rs](../../ruda-driver-cuda/examples/ptx_runtime.rs) を参照してください。
 
 ## 3. 境界チェック
 

@@ -14,7 +14,7 @@ on:
     paths:
       - 'ruda-driver-cuda/**'
       - 'ruda-kernel/src/dsl/compute/launcher.rs'
-      - 'ruda/src/runtime/memory_management/memory_pool/handle.rs'
+      - 'ruda-runtime/src/runtime/memory_management/memory_pool/handle.rs'
       - 'tools/gpu_validation/**'
       - '.github/workflows/native-graph-v18.yml'
 permissions:

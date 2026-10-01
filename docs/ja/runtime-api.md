@@ -10,9 +10,9 @@
 
 |タイプ|責任|定義|
 | --- | --- | --- |
-|`Runtime`|アソシエイト コンパイラー、サーバー、およびデバイス。デバイスクライアントを提供します|[バックエンド.rs](../../ruda/src/runtime/backend.rs)|
-|`ComputeClient<R>`|割り当て、カーネルの送信、リードバック、同期、および機能のクエリ|[client.rs](../../ruda/src/runtime/client.rs)|
-|`ComputeServer`|バックエンド実行コントラクト|[サーバーモジュール](../../ruda/src/runtime/server/mod.rs)|
+|`Runtime`|アソシエイト コンパイラー、サーバー、およびデバイス。デバイスクライアントを提供します|[バックエンド.rs](../../ruda-runtime/src/runtime/backend.rs)|
+|`ComputeClient<R>`|割り当て、カーネルの送信、リードバック、同期、および機能のクエリ|[client.rs](../../ruda-runtime/src/runtime/client.rs)|
+|`ComputeServer`|バックエンド実行コントラクト|[サーバーモジュール](../../ruda-runtime/src/runtime/server/mod.rs)|
 |`RudaTensor<R>`|デバイス ストレージとテンソル メタデータ|[テンソル定義](../../ruda-kernel/src/tensor/base.rs)|
 
 `R::client(&device)` はランタイムのクライアントを取得します。 `R::Device` はデバイスのタイプを決定します。ランタイム タイプを共有しても、異なる物理デバイス上のストレージが交換可能になるわけではありません。

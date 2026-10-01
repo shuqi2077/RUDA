@@ -127,7 +127,7 @@ class References(unittest.TestCase):
                 _, winner=min(choices)
                 self.assertTrue(winner==0 or valid[winner-1])
     def test_05_cache_golden_and_corruption(self):
-        raw=encode(); fixture=ROOT/'ruda/src/runtime/tune/stack/testdata/cache_v1.fixture'
+        raw=encode(); fixture=ROOT/'ruda-runtime/src/runtime/tune/stack/testdata/cache_v1.fixture'
         self.assertEqual(fixture.read_bytes(),raw); self.assertEqual(decode(raw)['key'],'known/测试')
         for i in range(len(raw)):
             with self.assertRaises((ValueError,UnicodeDecodeError)): decode(raw[:i])
@@ -153,14 +153,14 @@ class References(unittest.TestCase):
         for file in ('ruBLAS/src/tensor_matmul/tune/base.rs','ruDNN/src/attention/tensor/tune.rs',
                      'ruDNN/src/convolution/tensor/forward/tune.rs','ruda-fusion/src/device/optim/matmul/tune.rs'):
             self.assertIn('.with_stack_tuning(', (ROOT/file).read_text())
-        adapter=(ROOT/'ruda/src/runtime/tune/stack/runtime_adapter.rs').read_text()
+        adapter=(ROOT/'ruda-runtime/src/runtime/tune/stack/runtime_adapter.rs').read_text()
         self.assertIn('let batch = plan.next(None)',adapter); self.assertIn('expected.validate_for_tuning(',adapter)
         self.assertIn('super::engine::DepthGuard::enter()',adapter)
         model=(ROOT/'ruLLM/src/autotune.rs').read_text()
         self.assertIn('Scope::Pipeline',model); self.assertIn('generate_greedy_packed_with_mode(',model)
         self.assertIn('tuner.lower_level_fingerprint()',model)
     def test_09_cache_hits_do_not_force_gpu_synchronization(self):
-        src=(ROOT/'ruda/src/runtime/tune/stack/runtime_adapter.rs').read_text().split('pub fn try_execute_stack',1)[1]
+        src=(ROOT/'ruda-runtime/src/runtime/tune/stack/runtime_adapter.rs').read_text().split('pub fn try_execute_stack',1)[1]
         src=src.split('fn autotune_error',1)[0]
         self.assertNotIn('complete(client)',src); self.assertNotIn('client.sync(',src); self.assertNotIn('client.profile(',src)
         self.assertIn('.execute(input)',src); self.assertIn('tuner.invalidate(&decision, true)',src)
@@ -182,29 +182,29 @@ class References(unittest.TestCase):
         for example in llm['example']:
             self.assertTrue((ROOT/'ruLLM'/example.get('path',f"examples/{example['name']}.rs")).exists())
     def test_12_legacy_dispatch_and_default_methods(self):
-        local=(ROOT/'ruda/src/runtime/tune/local.rs').read_text()
+        local=(ROOT/'ruda-runtime/src/runtime/tune/local.rs').read_text()
         self.assertIn('operations.stack_reference().is_some()',local); self.assertIn('tuner.check_tune',local)
-        operation=(ROOT/'ruda/src/runtime/tune/operation.rs').read_text()
+        operation=(ROOT/'ruda-runtime/src/runtime/tune/operation.rs').read_text()
         legacy=operation.split('pub fn compute_checksum',1)[1].split('pub fn stack_checksum',1)[0]
         self.assertIn('checksum += &tune.function.name',legacy)
-        self.assertIn('{ Ok(false) }',(ROOT/'ruda/src/runtime/tune/tune_benchmark.rs').read_text())
-        backend=(ROOT/'ruda/src/runtime/backend.rs').read_text()
+        self.assertIn('{ Ok(false) }',(ROOT/'ruda-runtime/src/runtime/tune/tune_benchmark.rs').read_text())
+        backend=(ROOT/'ruda-runtime/src/runtime/backend.rs').read_text()
         self.assertRegex(backend,r'fn autotune_driver_fingerprint[\s\S]*?\{\s*None\s*\}')
     def test_13_new_rust_delimiters_and_no_unsafe_core(self):
-        paths=list((ROOT/'ruda/src/runtime/tune/stack').glob('*.rs'))+[
-            ROOT/'ruLLM/src/autotune.rs',ROOT/'ruda/src/runtime/tune/validation.rs',ROOT/'ruda/tests/runtime/stack_autotune.rs',
+        paths=list((ROOT/'ruda-runtime/src/runtime/tune/stack').glob('*.rs'))+[
+            ROOT/'ruLLM/src/autotune.rs',ROOT/'ruda-runtime/src/runtime/tune/validation.rs',ROOT/'ruda/tests/runtime/stack_autotune.rs',
             ROOT/'ruLLM/tests/stack_autotune_gpu.rs',ROOT/'ruLLM/examples/support/qwen2_autotune.rs']
         for p in paths:
             with self.subTest(path=str(p.relative_to(ROOT))): balanced_rust(p.read_text())
-        for p in (ROOT/'ruda/src/runtime/tune/stack').glob('*.rs'):
+        for p in (ROOT/'ruda-runtime/src/runtime/tune/stack').glob('*.rs'):
             self.assertNotRegex(p.read_text(),r'\bunsafe\s*\{')
     def test_14_persistent_identity_is_conservative(self):
-        source=(ROOT/'ruda/src/runtime/tune/stack/runtime_adapter.rs').read_text()
+        source=(ROOT/'ruda-runtime/src/runtime/tune/stack/runtime_adapter.rs').read_text()
         self.assertIn('driver.is_some() && env!("RUDA_STACK_BUILD_ID") != "unavailable"',source)
         self.assertIn('Some(fields(&[&probed, &extra]))',source)
         for key in ('RUDA_AUTOTUNE_DRIVER_TAG','RUDA_AUTOTUNE_BUILD_TAG','RUDA_AUTOTUNE_CONTEXT_TAG','runtime_options'):
             self.assertIn(key,source)
-        engine=(ROOT/'ruda/src/runtime/tune/stack/engine.rs').read_text()
+        engine=(ROOT/'ruda-runtime/src/runtime/tune/stack/engine.rs').read_text()
         self.assertIn('if *scope != Scope::Pipeline',engine); self.assertIn('record.is_fresh(now_seconds()',engine)
 
 if __name__=='__main__':

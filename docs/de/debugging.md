@@ -25,7 +25,7 @@ Die Laufzeitkonfiguration liegt in `ruda::runtime::config`. `CompilationConfig` 
 
 Das Beispiel `ptx-runtime` zählt Kompilierungen und PTX Festplatten-Cache-Treffer. `RUDA_PTX_TEST_CACHE` wird nur von diesem Beispiel gelesen, nicht automatisch von jeder Anwendung.
 
-Siehe [compilation.rs](../../ruda/src/runtime/config/compilation.rs) und [ptx_runtime.rs](../../ruda-driver-cuda/examples/ptx_runtime.rs).
+Siehe [compilation.rs](../../ruda-runtime/src/runtime/config/compilation.rs) und [ptx_runtime.rs](../../ruda-driver-cuda/examples/ptx_runtime.rs).
 
 ## 3. Grenzenprüfung
 

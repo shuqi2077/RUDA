@@ -152,8 +152,9 @@ default-features = false
 features = [ "compilation-cache", "hash",]
 
 [dependencies.ruda]
-path = "../ruda"
-version = "0.1.5"
+package = "ruda-runtime"
+path = "../ruda-runtime"
+version = "0.1.0"
 default-features = false
 features = [ "runtime", "runtime-channel-mutex", "runtime-std",]
 

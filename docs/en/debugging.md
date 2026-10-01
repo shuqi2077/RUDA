@@ -23,7 +23,7 @@ Runtime configuration is in `ruda::runtime::config`. `CompilationConfig` provide
 
 The `ptx-runtime` example counts compilations and PTX disk cache hits. `RUDA_PTX_TEST_CACHE` is read only by that example, not automatically by every application.
 
-See [compilation.rs](../../ruda/src/runtime/config/compilation.rs) and [ptx_runtime.rs](../../ruda-driver-cuda/examples/ptx_runtime.rs).
+See [compilation.rs](../../ruda-runtime/src/runtime/config/compilation.rs) and [ptx_runtime.rs](../../ruda-driver-cuda/examples/ptx_runtime.rs).
 
 ## 3. Bounds checking
 

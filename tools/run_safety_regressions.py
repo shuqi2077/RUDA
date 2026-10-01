@@ -22,10 +22,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def suites() -> dict[str, list[list[str]]]:
-    ruda = ["cargo", "test", "--locked", "-p", "ruda", "--lib"]
+    ruda = ["cargo", "test", "--locked", "-p", "ruda-runtime", "--lib"]
     core = ["cargo", "test", "--locked", "-p", "ruda-core", "--lib", "--no-default-features"]
     cuda = ["cargo", "test", "--locked", "-p", "ruda-driver-cuda", "--lib"]
-    miri_ruda = ["cargo", "+nightly", "miri", "test", "--locked", "-p", "ruda", "--lib"]
+    miri_ruda = ["cargo", "+nightly", "miri", "test", "--locked", "-p", "ruda-runtime", "--lib"]
     miri_core = ["cargo", "+nightly", "miri", "test", "--locked", "-p", "ruda-core", "--lib", "--no-default-features"]
     return {
         "cpu": [

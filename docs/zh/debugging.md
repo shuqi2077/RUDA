@@ -23,7 +23,7 @@
 
 `ptx-runtime` 示例自带日志计数器，统计编译与 PTX 磁盘缓存命中。`RUDA_PTX_TEST_CACHE` 仅由该示例读取，不是所有应用自动支持的全局环境变量。
 
-配置定义见 [compilation.rs](../../ruda/src/runtime/config/compilation.rs)，示例见 [ptx_runtime.rs](../../ruda-driver-cuda/examples/ptx_runtime.rs)。
+配置定义见 [compilation.rs](../../ruda-runtime/src/runtime/config/compilation.rs)，示例见 [ptx_runtime.rs](../../ruda-driver-cuda/examples/ptx_runtime.rs)。
 
 ## 3. 边界检查
 

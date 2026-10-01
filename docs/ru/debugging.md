@@ -25,7 +25,7 @@
 
 В примере `ptx-runtime` подсчитываются компиляции и попадания в дисковый кэш PTX. `RUDA_PTX_TEST_CACHE` читается только в этом примере, а не автоматически каждым приложением.
 
-См. [compilation.rs](../../ruda/src/runtime/config/compilation.rs) и [ptx_runtime.rs](../../ruda-driver-cuda/examples/ptx_runtime.rs).
+См. [compilation.rs](../../ruda-runtime/src/runtime/config/compilation.rs) и [ptx_runtime.rs](../../ruda-driver-cuda/examples/ptx_runtime.rs).
 
 ## 3. Проверка границ
 
