@@ -2,7 +2,7 @@
 
 **English** | [简体中文](../zh/fused-adamw.md) | [日本語](../ja/fused-adamw.md) | [Deutsch](../de/fused-adamw.md) | [Русский](../ru/fused-adamw.md)
 
-This is an **opt-in implementation awaiting RUDA Rust/GPU execution validation**.
+This is an **opt-in implementation**.
 It extends `ruda-optim`; it does not create another optimizer library or change the
 existing `AdamW`, model optimizer adaptor, autograd graph, or checkpoint format.
 
@@ -117,8 +117,8 @@ This first implementation chooses out-of-place updates to preserve aliases and
 avoid adding new unsafe ownership rules. Each active step allocates three FP32
 outputs (four with AMSGrad). There is no intermediate delta tensor, but **no claim
 of a zero-allocation step**. Old and new buffers can overlap in lifetime. Large
-models therefore require a memory budget; in-place or arena/bucket reuse is future
-work, not silently enabled here.
+models therefore require a memory budget. This API does not enable in-place or
+arena/bucket reuse; the separate native storage interface is described below.
 
 The benchmark-only staged baseline explicitly submits 4 kernels, or 5 with
 AMSGrad. The fused path submits 1. For a *steady-state* FP32-gradient step:
@@ -187,3 +187,11 @@ model. Do not enable a new default dispatcher until the comparison is complete.
 
 
 See [experimental gradient checks and group clipping](gradient-guard.md) for an opt-in extension.
+
+## Native PyTorch storage and hierarchical statistics
+
+The out-of-place `adamw_step` contract above is unchanged. With `fused-adamw-device`, `ruda_optim::fused_adamw::storage` also supplies kernels for preallocated framework-owned storage: `analyze_gradient`, `merge_gradient_stats`, `merge_gradient_stats_chunks` and `adamw_scaled`. These are kernel building blocks, not a replacement safe optimizer API. The adapter owns shape, aliasing, lifetime and queue validation.
+
+`stats_plan::StatsPlan::new(rows)` accepts `1..=4_194_304` statistics rows and plans reductions with fan-in 1024. Its `scratch_elements` counts FP32 elements, excluding initial statistics and the final report; the maximum extra scratch is 49,200 bytes.
+
+The native PyTorch `ruda_torch.AdamW` exposes these through explicit `fused_step=True` and optional `hierarchical_stats=True`. Gradient storage stays unchanged; a 12-byte report is read before any update. Global clipping is optional via `max_grad_norm` and uses all active parameter groups. This is distinct from the out-of-place Rust API and from changing the default Rust `AdamW`. See [native training and checkpoint options](training.md).

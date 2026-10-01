@@ -236,7 +236,7 @@ fn delta_prefill<R: Runtime>(
 
 `tensor-paged-attention` を有効にし、`rudnn::paged_attention` を使用します。`HostPlan::new(page_size, pages, tables, lengths, sequence_ids, positions)` はホスト側のスケジュールメタデータを検証します。positions は各シーケンス内のゼロ始まりの絶対位置です。`DevicePlan::upload(host, &q)` はクエリと同じデバイスおよび実行キューにメタデータを転送します。スケジュールが変わらない間のみプランを再利用できます。
 
-`DevicePlan::attention(q, k, v, scale, causal)` は物理キャッシュページを直接読み、パックされた可変長のプリフィルとデコードを処理します。Q は `[queries, Hq, D]`、K は `[pages, page_size, Hkv, D]`、V は `[pages, page_size, Hkv, Dv]`、出力は `[queries, Hq, Dv]` で、`Hq` は `Hkv` で割り切れる必要があります。入力は連続した非量子化 F32/F16/BF16 で、dtype、デバイス、キューが一致する必要があります。Q/K/V は有限値、scale は有限の正数を指定します。`D` と `Dv` は `1..=1024` です。デバイスは 32 または 64 レーンの plane と必要な起動グリッドをサポートする必要があります。この前向き専用インターフェースは任意の外部マスクや量子化 KV キャッシュをサポートしません。
+`DevicePlan::attention(q, k, v, scale, causal)` は物理キャッシュページを直接読み、パックされた可変長のプリフィルとデコードを処理します。Q は `[queries, Hq, D]`、K は `[pages, page_size, Hkv, D]`、V は `[pages, page_size, Hkv, Dv]`、出力は `[queries, Hq, Dv]` で、`Hq` は `Hkv` で割り切れる必要があります。入力は連続した非量子化 F32/F16/BF16 で、dtype、デバイス、キューが一致する必要があります。Q/K/V は有限値、scale は有限の正数を指定します。`D` と `Dv` は `1..=1024` です。デバイスは 32 または 64 レーンの plane と必要な起動グリッドをサポートする必要があります。順伝播と一階の逆伝播に対応します。任意の外部マスクや量子化 KV キャッシュには対応しません。
 
 `DevicePlan::mla(q, qp, latent, kp, scale, causal)` は射影を吸収したクエリ `[queries, H, R]`、位置クエリ `[queries, H, P]`、共有潜在キャッシュ `[pages, page_size, 1, R]`、位置キャッシュ `[pages, page_size, 1, P]` を受け取ります。出力は圧縮コンテキスト `[queries, H, R]` で、`P` は `1..=256` です。位置エンコーディングは呼び出し前、value/output 射影は呼び出し後に適用します。scale は圧縮ランクから導出せず、元のモデルの QK スケールを使用します。
 
@@ -251,3 +251,36 @@ fn delta_prefill<R: Runtime>(
 `GroupRoutingOptions` は `top_k`、`groups`、`selected_groups`、`group_top_two`、`renormalize`、`scale` を含みます。エキスパート数は `1..=1024`、グループ数は `1..=128`、top-k は `1..=64` です。エキスパート数はグループ数で割り切れ、選択グループ数は有効で、top-k は選択グループ内のエキスパート総数以下である必要があります。`group_top_two=true` は各グループの上位二つの補正スコアを合計し、グループごとに二つ以上のエキスパートを必要とします。それ以外では最大スコアを使用します。scale は有限の正数でなければなりません。
 
 `SwiGluExperts::forward_sigmoid_grouped(input, logits, bias, options, strategy)` はルーティング、ディスパッチ、エキスパート計算、結合を実行します。`forward_dispatched_with_strategy` は `GroupedStrategy::Scalar`、`Auto`、`TensorCore` を選択できます。既存の `forward` と `forward_dispatched` は `Scalar` を維持します。Tensor Core 経路には F16/BF16 に対応するハードウェアが必要です。`Auto` は設定が非対応の場合のみフォールバックし、コンパイルや実行の失敗では切り替えません。モデル射影、共有エキスパート、残差分岐は呼び出し側が担当します。
+
+### 11. ページ化 Attention の逆伝播と順序付き履歴勾配
+
+`DevicePlan::attention_backward(q, k, v, grad_out, scale, causal)` は `AttentionBackward { dq, dk, dv }`、`mla_backward(q, qp, latent, kp, grad_out, scale, causal)` は `MlaBackward { dq, dqp, dlatent, dkp }` を返します。`dlatent` は key と value 両方の寄与を含みます。完全なスコア行列を保存せず、逆伝播時に確率を再計算します。
+
+unsafe API の `attention_backward_selected_into` と `mla_backward_selected_into` は、各勾配バッファを個別に省略できます。`None` の出力とその分岐専用の履歴領域は確保しませんが、他の導関数には元の入力値が必要な場合があります。出力は入力や他の出力と重複してはならず、アクセスは計画と同じ順序付きキューで行います。この経路の履歴勾配は FP32 アトミック加算を使用し、ビット単位の決定性は保証しません。
+
+アトミック演算を使わない履歴帰約には `OrderedBackwardWorkspace::new(&plan, &q)?` を作り、可変参照で `attention_backward_ordered_into` または `mla_backward_ordered_into` に渡します。バッファ非重複条件はワークスペースにも適用されます。不変のスケジュール、クエリ数・ヘッド数、デバイス、キューが互換の場合のみ再利用します。統計量と逆引き情報の合計上限は 64 MiB です。固定加算順序でも、異なるデバイス間やアトミック経路とのビット一致は保証しません。
+
+| ワークスペース設定 | 既定値 | 効果 |
+| --- | --- | --- |
+| `set_query_pruning(bool)` | `true` | 因果的に不可視と証明できるクエリを除外し、残りの加算順序を維持。 |
+| `set_history_row_cache(bool)` | `false` | 履歴行をスレッドローカルに再利用。追加デバイステンソルは不要ですが、レジスター負荷が増える場合があります。 |
+| `set_history_compaction(bool)?` | `false` | 有効な物理ページのみで履歴勾配を計算し、無効ページは明示的にゼロ化。 |
+
+`RUDA_PAGED_ORDERED_CACHE_ROWS=1` と `RUDA_PAGED_ORDERED_COMPACT_HISTORY=1` は構築時に後者二つを有効にします。未設定または `0` は無効、それ以外はエラーです。環境変更は既存ワークスペースには反映されません。
+
+ページ分類は、クエリのあるシーケンスの有効 KV 長で到達可能なページに基づき、テーブル容量や非ゼロ勾配数ではありません。初回有効化で `physical_pages * 4` バイトの索引を同じ予算内にアップロードし、以降の切り替えでは再利用します。無効化後も保持します。`history_compaction_pages()` は `Option<(active_pages, inactive_pages)>` を返し、`bytes()` は保持領域も含みます。予算エラー時は元のモードを保持します。PyTorch の既定のアトミック逆伝播は変更せず、高速化も保証しません。
+
+### 12. MoE の一階学習
+
+`selected_router_weights(&logits, &indices, options)` は FP32 の `[T, top_k]`、`selected_router_backward(&logits, &indices, &grad_weights, options)` は logits と同じ dtype の `[T, E]` 勾配を返します。logits は連続 F32/F16/BF16、indices は連続 U32/I32/I64、`1 <= top_k <= min(E, 64)` で、同一デバイス・キューが必要です。`RouterWeightOptions` は `RouterScoring::Softmax` または `Sigmoid`、選択重みの再正規化、最後に有限かつ正の `scale` を指定します。`grad_weights` は FP32 です。
+
+重複索引は gather の意味を持ち、不正索引は範囲外アクセスやホスト同期なしで行全体を NaN にします。固定選択の連続重みのみを微分し、top-k・グループ選択・補正 bias は微分しません。`RoutingPlan::into_training(logits, options)` は選択を保持して重みを再計算します。`RouterTrainingPlan::routing()` で分配し、`backward(&grad_weights)` で logits 勾配を得ます。保存入力を逆伝播前に変更しないでください。
+
+`SwiGluExperts::forward_dispatched_training(&dispatched, strategy)` の `output` と `cache` を保持し、次の順に逆伝播します。
+
+1. `dispatched.combine_backward(&expert_output, grad_output)` は `dexpert` と FP32 の `dweights` を返します。
+2. `cache.backward(dexpert)` は分配行の `dinput` と FP32 の `dgate`、`dup`、`ddown` を返します。
+3. `dispatched.dispatch_backward(dinput)` は選択行を元の token に加算し、ルーティング重みを再度掛けません。
+4. `dweights` をルーター逆伝播へ渡して logits 勾配を得ます。
+
+`combine_backward` の既定値は `CombineGradientStrategy::Serial`、`combine_backward_with_strategy` では `Plane` も選べます。専門家の `backward` は順伝播と独立に scalar が既定で、`backward_with_strategy` は `GroupedStrategy::Scalar`、`Auto`、`TensorCore` を受け付けます。Tensor Core には対応 F16/BF16 ハードウェアが必要です。`Auto` は能力不足のみでフォールバックし、コンパイル・実行エラーを隠しません。

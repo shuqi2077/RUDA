@@ -48,3 +48,4 @@
 
 - [トレーニングと状態の保存](training.md): autodiff バックエンドを構成し、パラメーターを更新し、勾配を蓄積し、トレーニング状態を保存または復元します。
 - [モデルの読み込みと推論](model-inference.md): ローカルの重みを読み込み、チャット プロンプトを構築し、サンプリングを使用して生成し、画像入力を処理します。
+- [ネイティブ PyTorch](../../ruda-torch/README.md): `ruda:0` の一階正規化・ページ化 Attention・選択ルーター autograd、明示的 AdamW/GradScaler と順序付き履歴勾配。StaticGraph は推論専用です。

@@ -145,3 +145,17 @@ Wiederherstellung mit derselben Modellstruktur, derselben Adam-Konfiguration und
 `ruda_optim` bietet außerdem `SgdConfig`, `AdamWConfig`, `AdaGradConfig`, `RmsPropConfig`, `AdanConfig`, `MuonConfig` und `LBFGSConfig`. Ändern Sie beim Wechseln des Optimierers sowohl die Konfiguration als auch den Statustyp. Informationen zur kollektiven Schulungsintegration finden Sie unter [ruCCL](libraries/ruccl.md).
 
 API Referenz: [Optimierer](../../ruda-optim/src/optim/mod.rs), [Trainingsaufzeichnungen](../../ruda-optim/src/training.rs).
+
+## Natives PyTorch-Training auf `ruda:0`
+
+Dieser Pfad ist getrennt von den obigen Rust-Beispielen mit `Autodiff<Cuda<...>>`. Bauen Sie Rust-Bibliothek und C++-Erweiterung aus demselben Quellstand: Basis-ABI 10, Training-API 4, Router-API 1, Paged-Backward-API 2 und Graph-API 2. Siehe [PyTorch-Anleitung](../../ruda-torch/README.md).
+
+`ruda_torch.RMSNorm`/`rms_norm`, `LayerNorm`/`layer_norm` und `silu_mul` unterstützen natives Training erster Ordnung. Normalisierung erfolgt auf der letzten Achse, Statistik in FP32, Ausgabe im Aktivierungs-dtype; affine Parameter dürfen den Eingabetyp oder FP32 verwenden. Standard-`torch.nn.LayerNorm` wählt den nativen Trainingspfad für unterstützte zusammenhängende Eingaben auf der letzten Achse. Höhere Ableitungen und Trainingsgraph-Capture werden nicht unterstützt.
+
+`ruda_torch.AdamW(params, fused_step=True, max_grad_norm=1.0, hierarchical_stats=True)` aktiviert explizit schreibgeschützte Gradientenanalyse, globales L2-Clipping nach Unscale und hierarchische Statistik. Beide booleschen Optionen sind standardmäßig `False`, Clipping ist `None` und benötigt `fused_step=True`. Vor Updates wird ein 12-Byte-Bericht gelesen; nichtendliche Gradienten überspringen den gesamten Schritt. `.grad` bleibt unverändert, Masterparameter und Momente sind FP32. Pro aktivem Parameter wird weiterhin ein Update-Kernel gestartet, nicht ein einziger Kernel für das ganze Modell. Vor dem nächsten Akkumulationsfenster Gradienten löschen. Verwenden Sie auf derselben `ruda_torch.GradScaler`-Instanz nacheinander `scaler.scale(loss).backward()`, `scaler.step(optimizer)`, `scaler.update()`.
+
+Die Hierarchie verwendet Fan-in 1024, höchstens zwei zusätzliche Merge-Kernels und 49.200 Bytes wiederverwendbaren Reduktionsspeicher; die anfängliche Statistik ist darin nicht enthalten. Bis 1024 Zeilen ist kein zusätzlicher Merge nötig. Die Reduktionsreihenfolge ändert sich, nicht die Clipping-Regel.
+
+`PagedAttentionPlan(..., backward_strategy="ordered")` aktiviert Historiengradienten ohne Atomics; `"atomic"` bleibt Standard. Autograd reserviert nur angeforderte Gradienten. Historienkompaktierung sowie Router-/Expertentraining mit fester Auswahl beschreibt [ruDNN](libraries/rudnn.md), gruppierten Rückwärtslauf [ruBLAS](libraries/rublas.md).
+
+Speichern Sie `state_dict()` von Modell, Optimizer und Scaler zusammen mit Datenposition/RNG-Zustand. Optimizer-Checkpoints speichern `fused_step` und `max_grad_norm`; hierarchische Checkpoints verwenden Step-Options-Version 2. Fehlen Optionen, werden fused/hierarchical deaktiviert wiederhergestellt. StaticGraph bleibt auf Inferenz mit festen Adressen beschränkt.

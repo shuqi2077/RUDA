@@ -143,3 +143,17 @@ Restore with the same model structure, Adam configuration, and scheduler configu
 `ruda_optim` also provides `SgdConfig`, `AdamWConfig`, `AdaGradConfig`, `RmsPropConfig`, `AdanConfig`, `MuonConfig`, and `LBFGSConfig`. When switching optimizers, change both the configuration and state type. See [ruCCL](libraries/ruccl.md) for collective training integration.
 
 API reference: [Optimizers](../../ruda-optim/src/optim/mod.rs), [Training records](../../ruda-optim/src/training.rs).
+
+## Native PyTorch training on `ruda:0`
+
+This is separate from the Rust `Autodiff<Cuda<...>>` examples above. Build the Rust library and C++ extension from the same source: base ABI 10, training API 4, router API 1, paged-backward API 2 and graph API 2. See the [native PyTorch guide](../../ruda-torch/README.md).
+
+`ruda_torch.RMSNorm`/`rms_norm`, `LayerNorm`/`layer_norm` and `silu_mul` provide native first-order training. Normalization is last-axis only; statistics are FP32, outputs retain the activation dtype, and affine parameters may use the input dtype or FP32. Standard `torch.nn.LayerNorm` selects the native training path for supported contiguous last-axis inputs. Higher-order gradients and training graph capture are not supported by these fused interfaces.
+
+`ruda_torch.AdamW(params, fused_step=True, max_grad_norm=1.0, hierarchical_stats=True)` explicitly enables read-only gradient analysis, global unscaled L2 clipping and hierarchical statistics. Both boolean options default to `False`; clipping defaults to `None` and requires `fused_step=True`. The fused path reads one 12-byte report before updates and skips the whole step on nonfinite gradients. It preserves `.grad`, keeps FP32 master parameters/moments, and still launches one update kernel per active parameter, not one GPU kernel for the whole model. Clear gradients before the next accumulation window. On one `ruda_torch.GradScaler` instance, call `scaler.scale(loss).backward()`, `scaler.step(optimizer)` and `scaler.update()` in that order.
+
+Hierarchical statistics use fan-in 1024, at most two extra merge kernels and 49,200 bytes of reusable reduction scratch; this excludes the initial statistics workspace. With at most 1024 rows, no extra merge kernel is needed. This changes reduction order, not the clipping policy.
+
+`PagedAttentionPlan(..., backward_strategy="ordered")` enables atomic-free history gradients; `"atomic"` remains the default. Autograd allocates only requested gradients. See the [ruDNN guide](libraries/rudnn.md) for history compaction and fixed-selection router/expert training, and the [ruBLAS guide](libraries/rublas.md) for grouped backward.
+
+Save model, optimizer and scaler `state_dict()` values plus data position/RNG state together. Optimizer checkpoints preserve `fused_step` and `max_grad_norm`; hierarchical checkpoints carry step-options version 2. Missing options restore with fused/hierarchical modes disabled. StaticGraph remains fixed-address inference-only.

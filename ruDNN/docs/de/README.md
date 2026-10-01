@@ -236,7 +236,7 @@ Informationen zu Text- und Bildaufrufen auf Modellebene finden Sie im [ruLLM-Inf
 
 Aktivieren Sie `tensor-paged-attention` und verwenden Sie `rudnn::paged_attention`. `HostPlan::new(page_size, pages, tables, lengths, sequence_ids, positions)` validiert die Scheduling-Metadaten auf dem Host; positions enthält absolute, bei null beginnende Positionen innerhalb jeder Sequenz. `DevicePlan::upload(host, &q)` überträgt diese Metadaten auf das Gerät und die Ausführungsqueue der Query. Der Plan darf nur bei unverändertem Schedule wiederverwendet werden.
 
-`DevicePlan::attention(q, k, v, scale, causal)` liest physische Cache-Seiten direkt für gepacktes Prefill/Decode variabler Länge. Q hat die Form `[queries, Hq, D]`, K `[pages, page_size, Hkv, D]`, V `[pages, page_size, Hkv, Dv]` und das Ergebnis `[queries, Hq, Dv]`; `Hq` muss durch `Hkv` teilbar sein. Eingaben müssen zusammenhängende, nicht quantisierte F32/F16/BF16-Tensoren mit gleichem dtype, Gerät und gleicher Queue sein. Q/K/V müssen endlich und scale endlich und positiv sein. `D` und `Dv` liegen in `1..=1024`; das Gerät muss eine Plane mit 32 oder 64 Lanes und das erforderliche Launch-Grid unterstützen. Diese reine Vorwärtsschnittstelle unterstützt weder beliebige externe Masken noch quantisierte KV-Caches.
+`DevicePlan::attention(q, k, v, scale, causal)` liest physische Cache-Seiten direkt für gepacktes Prefill/Decode variabler Länge. Q hat die Form `[queries, Hq, D]`, K `[pages, page_size, Hkv, D]`, V `[pages, page_size, Hkv, Dv]` und das Ergebnis `[queries, Hq, Dv]`; `Hq` muss durch `Hkv` teilbar sein. Eingaben müssen zusammenhängende, nicht quantisierte F32/F16/BF16-Tensoren mit gleichem dtype, Gerät und gleicher Queue sein. Q/K/V müssen endlich und scale endlich und positiv sein. `D` und `Dv` liegen in `1..=1024`; das Gerät muss eine Plane mit 32 oder 64 Lanes und das erforderliche Launch-Grid unterstützen. Vorwärtslauf und Rückwärtslauf erster Ordnung sind verfügbar; beliebige externe Masken und quantisierte KV-Caches werden nicht unterstützt.
 
 `DevicePlan::mla(q, qp, latent, kp, scale, causal)` nimmt Queries mit absorbierter Projektion `[queries, H, R]`, Positionsqueries `[queries, H, P]`, einen gemeinsamen latenten Cache `[pages, page_size, 1, R]` und einen Positionscache `[pages, page_size, 1, P]` entgegen. Das Ergebnis ist komprimierter Kontext `[queries, H, R]`; `P` liegt in `1..=256`. Positionskodierung erfolgt vor dem Aufruf, Value-/Output-Projektionen danach. Verwenden Sie die ursprüngliche QK-Skalierung des Modells, nicht eine aus dem komprimierten Rang abgeleitete Skalierung.
 
@@ -251,3 +251,36 @@ Mit `tensor-moe` liefert `route_sigmoid_grouped(logits, bias, options)` einen `R
 `GroupRoutingOptions` enthält `top_k`, `groups`, `selected_groups`, `group_top_two`, `renormalize` und `scale`. Die Expertenzahl liegt in `1..=1024`, die Gruppenzahl in `1..=128` und top-k in `1..=64`. Die Expertenzahl muss durch die Gruppenzahl teilbar sein, die Zahl ausgewählter Gruppen muss gültig sein und top-k darf deren gesamte Expertenzahl nicht überschreiten. `group_top_two=true` summiert die beiden größten korrigierten Werte je Gruppe und erfordert mindestens zwei Experten pro Gruppe; andernfalls wird das Maximum verwendet. Scale muss endlich und positiv sein.
 
 `SwiGluExperts::forward_sigmoid_grouped(input, logits, bias, options, strategy)` führt Routing, Dispatch, Expertenberechnung und Kombination aus. `forward_dispatched_with_strategy` wählt `GroupedStrategy::Scalar`, `Auto` oder `TensorCore`; die bestehenden Methoden `forward` und `forward_dispatched` behalten `Scalar` bei. Tensor-Core-Ausführung erfordert geeignete F16/BF16-Hardware. `Auto` fällt nur bei nicht unterstützter Konfiguration zurück, nicht bei Kompilierungs- oder Ausführungsfehlern. Modellprojektionen, gemeinsame Experten und Residualzweige bleiben Aufgabe des Aufrufers.
+
+### 11. Rückwärtslauf für paged Attention und geordnete Historiengradienten
+
+`DevicePlan::attention_backward(q, k, v, grad_out, scale, causal)` liefert `AttentionBackward { dq, dk, dv }`; `mla_backward(q, qp, latent, kp, grad_out, scale, causal)` liefert `MlaBackward { dq, dqp, dlatent, dkp }`. `dlatent` enthält Key- und Value-Beiträge. Wahrscheinlichkeiten werden im Rückwärtslauf neu berechnet, statt eine vollständige Score-Matrix zu speichern.
+
+Die unsicheren APIs `attention_backward_selected_into` und `mla_backward_selected_into` akzeptieren unabhängig optionale Gradientenpuffer. `None` lässt die jeweilige Ausgabe und ihren zweigspezifischen Historienpuffer weg; andere Ableitungen können den Eingang weiterhin benötigen. Ausgaben dürfen weder Eingaben noch einander überlappen. Alle Zugriffe erfolgen auf der geordneten Queue des Plans. Historiengradienten verwenden hier FP32-Atomics und sind nicht bitweise deterministisch.
+
+Für eine Historienreduktion ohne Atomics erstellen Sie `OrderedBackwardWorkspace::new(&plan, &q)?` und übergeben ihn veränderbar an `attention_backward_ordered_into` oder `mla_backward_ordered_into`. Die Überlappungsverbote gelten auch für Workspace-Puffer. Wiederverwendung erfordert kompatible unveränderliche Zeitplanmetadaten, Query-/Head-Anzahl, Gerät und Queue. Statistik und inverse Metadaten teilen ein Budget von 64 MiB. Eine feste Summationsreihenfolge garantiert keine Bitgleichheit zwischen Geräten oder mit dem atomaren Pfad.
+
+| Workspace-Option | Standard | Wirkung |
+| --- | --- | --- |
+| `set_query_pruning(bool)` | `true` | Überspringt nachweislich kausal unsichtbare Queries, ohne die übrige Summationsreihenfolge zu ändern. |
+| `set_history_row_cache(bool)` | `false` | Nutzt Historienzeilen threadlokal wieder; kein zusätzlicher Gerätetensor, aber möglicherweise höherer Registerdruck. |
+| `set_history_compaction(bool)?` | `false` | Berechnet Historiengradienten nur für aktive physische Seiten und schreibt inaktive Seiten explizit mit Null. |
+
+`RUDA_PAGED_ORDERED_CACHE_ROWS=1` und `RUDA_PAGED_ORDERED_COMPACT_HISTORY=1` aktivieren die letzten beiden Optionen beim Erstellen des Workspace. Nicht gesetzt oder `0` deaktiviert sie; andere Werte sind Fehler. Änderungen der Umgebung ändern bestehende Workspaces nicht.
+
+Aktive Seiten sind über effektive KV-Längen von Sequenzen mit Queries erreichbar; Tabellenkapazität oder die Anzahl von Nichtnullgradienten sind nicht maßgeblich. Erstmaliges Aktivieren lädt einen Index von `physical_pages * 4` Bytes innerhalb desselben Budgets hoch. Späteres Umschalten verwendet ihn erneut; Deaktivieren behält den Speicher. `history_compaction_pages()` liefert `Option<(active_pages, inactive_pages)>`, `bytes()` zählt behaltenen Speicher mit. Budgetfehler lassen den bisherigen Modus unverändert. Der atomare PyTorch-Standard bleibt erhalten; eine Beschleunigung ist nicht garantiert.
+
+### 12. MoE-Training erster Ordnung
+
+`selected_router_weights(&logits, &indices, options)` liefert FP32-Gewichte `[T, top_k]`; `selected_router_backward(&logits, &indices, &grad_weights, options)` liefert `[T, E]`-Gradienten im Logits-dtype. Logits sind zusammenhängende F32/F16/BF16-Tensoren, Indizes zusammenhängend in U32/I32/I64; es gilt `1 <= top_k <= min(E, 64)` auf demselben Gerät und derselben Queue. `RouterWeightOptions` wählt `RouterScoring::Softmax` oder `Sigmoid`, optionale Renormalisierung ausgewählter Gewichte und anschließend einen endlichen positiven `scale`. `grad_weights` ist FP32.
+
+Wiederholte Indizes haben Gather-Semantik. Ungültige Indizes erzeugen NaN für die ganze Zeile ohne ungültigen Speicherzugriff oder Host-Synchronisierung. Differenziert werden kontinuierliche Gewichte einer festen Auswahl, nicht Top-k-/Gruppenentscheidungen oder Korrektur-Bias. `RoutingPlan::into_training(logits, options)` behält die Auswahl und berechnet Gewichte neu. Verwenden Sie `RouterTrainingPlan::routing()` zur Verteilung und `backward(&grad_weights)` für Logits-Gradienten. Gespeicherte Eingaben müssen unverändert bleiben.
+
+Behalten Sie `output` und `cache` aus `SwiGluExperts::forward_dispatched_training(&dispatched, strategy)`. Die Rückwärtskette ist:
+
+1. `dispatched.combine_backward(&expert_output, grad_output)` liefert `dexpert` und FP32-`dweights`.
+2. `cache.backward(dexpert)` liefert `dinput` für verteilte Zeilen sowie FP32-`dgate`, `dup`, `ddown`.
+3. `dispatched.dispatch_backward(dinput)` summiert ausgewählte Zeilen zum ursprünglichen Token, ohne Routinggewichte erneut anzuwenden.
+4. Router-Backward erhält `dweights` und liefert Logits-Gradienten.
+
+`combine_backward` verwendet standardmäßig `CombineGradientStrategy::Serial`; `combine_backward_with_strategy` erlaubt `Plane`. Experten-`backward` ist unabhängig von der Vorwärtsstrategie standardmäßig skalar; `backward_with_strategy` akzeptiert `GroupedStrategy::Scalar`, `Auto` oder `TensorCore`. Tensor Core benötigt unterstützte F16/BF16-Hardware. `Auto` fällt nur bei fehlenden Fähigkeiten zurück, nicht bei Kompilierungs- oder Ausführungsfehlern.

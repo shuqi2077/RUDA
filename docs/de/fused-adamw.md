@@ -2,8 +2,7 @@
 
 [English](../en/fused-adamw.md) | [简体中文](../zh/fused-adamw.md) | [日本語](../ja/fused-adamw.md) | **Deutsch** | [Русский](../ru/fused-adamw.md)
 
-Dies ist eine **Opt-in-Implementierung, die auf die Ausführungsvalidierung von RUDA Rust/GPU
-wartet**. Es erweitert `ruda-optim` ; Es wird keine weitere Optimierungsbibliothek erstellt oder
+Dies ist eine **Opt-in-Implementierung**. Es erweitert `ruda-optim` ; Es wird keine weitere Optimierungsbibliothek erstellt oder
 das vorhandene `AdamW` , der Modelloptimierungsadapter, das Autograd-Diagramm oder das Prüfpunktformat geändert.
 
 ## Warum dieser Operator?
@@ -117,8 +116,8 @@ Diese erste Implementierung wählt out-of-Place-Updates, um Aliase beizubehalten
 unsicherer Eigentumsregeln zu vermeiden. Jeder aktive Schritt weist drei FP32-Ausgänge zu (vier
 mit AMSGrad). Es gibt keinen dazwischenliegenden Delta-Tensor, aber **keinen Anspruch auf einen
 Null-Zuteilungsschritt**. Alte und neue Puffer können sich im Laufe ihrer Lebensdauer überschneiden.
-Große Modelle erfordern daher ein Speicherbudget; Die Wiederverwendung vor Ort oder in
-der Arena/im Eimer ist zukünftige Arbeit und wird hier nicht stillschweigend aktiviert.
+Große Modelle erfordern daher ein Speicherbudget; Diese API aktiviert weder In-place-Updates noch
+Arena-/Pufferwiederverwendung; der separate native Speicherpfad ist unten beschrieben.
 
 Die nur auf Benchmarks basierende gestaffelte Baseline übermittelt explizit 4 Kernel oder
 5 mit AMSGrad. Der verschmolzene Pfad übermittelt 1. Für einen *stationären* FP32-Gradientenschritt:
@@ -187,3 +186,11 @@ Aktivieren Sie keinen neuen Standard-Dispatcher, bis der Vergleich abgeschlossen
 
 
 Eine Opt-in-Erweiterung finden Sie unter [experimentelle Verlaufsprüfungen und Gruppenbeschneidung](gradient-guard.md).
+
+## Nativer PyTorch-Speicher und hierarchische Statistik
+
+Der obige Out-of-place-Vertrag von `adamw_step` bleibt bestehen. Mit `fused-adamw-device` liefert `ruda_optim::fused_adamw::storage` zusätzlich Kernels für vorab reservierten Framework-Speicher: `analyze_gradient`, `merge_gradient_stats`, `merge_gradient_stats_chunks` und `adamw_scaled`. Dies sind Kernel-Bausteine, keine ersetzende sichere Optimizer-API. Form-, Alias-, Lebensdauer- und Queue-Prüfung liegen beim Adapter.
+
+`stats_plan::StatsPlan::new(rows)` akzeptiert `1..=4_194_304` Statistikzeilen und plant Reduktionen mit Fan-in 1024. `scratch_elements` zählt FP32-Elemente ohne anfängliche Statistik und Abschlussbericht; der zusätzliche Speicher beträgt höchstens 49.200 Bytes.
+
+`ruda_torch.AdamW` nutzt diese Kernels mit explizitem `fused_step=True` und optionalem `hierarchical_stats=True`. Gradientenspeicher bleibt unverändert; vor jedem Update wird ein 12-Byte-Bericht gelesen. `max_grad_norm` erlaubt globales Clipping über alle aktiven Parametergruppen. Dies ist getrennt von der Out-of-place-Rust-API und ändert den Standard-Rust-`AdamW` nicht. Siehe [Training und Checkpoint-Optionen](training.md).

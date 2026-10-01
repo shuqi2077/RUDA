@@ -77,7 +77,7 @@ cargo build --locked -p ruda-torch-native
 python -m pip install --no-build-isolation --no-deps -e ./ruda-torch/python
 ```
 
-The default loader finds this debug build automatically. Set `RUDA_TORCH_LIBRARY` to the library path when using a release build or another location. The Rust library and C++ extension must both use **ABI 9**; rebuild them together.
+The default loader finds this debug build automatically. Set `RUDA_TORCH_LIBRARY` to the library path when using a release build or another location. The Rust library and C++ extension must both use **ABI 10**; rebuild them together.
 
 ```python
 import torch
@@ -109,10 +109,10 @@ One repository, multiple crates with clearly defined responsibilities. From doma
 
 - **Operators:** Native PyTorch matrix operations use ruBLAS. Storage-aware FP16/BF16 paths, fused last-axis LayerNorm/RMSNorm, and warp-parallel Softmax/reductions reduce intermediate tensors and separate kernel submissions.
 - **Paged GQA and MLA:** Public ruDNN kernels read physical KV pages directly for variable-length prefill/decode. `ruda_torch.PagedAttentionPlan` supports `splits=1..32`, FP32 partial-result merging and workspace reuse; the default is `splits=1`. Shared cache writes retain copy-on-write protection.
-- **MoE:** Grouped sigmoid routing and segmented expert matrix multiplication use device-side expert offsets. FP16/BF16 Tensor Core execution is opt-in; the existing expert entry point keeps the scalar GPU strategy by default.
+- **MoE:** Grouped sigmoid routing and segmented expert matrix multiplication use device-side expert offsets. FP16/BF16 Tensor Core execution is opt-in; the existing expert entry point keeps the scalar GPU strategy by default. Fixed-selection router weights and expert projections also expose first-order training, with FP32 router-weight and expert-weight gradients; see the [ruDNN guide](docs/en/libraries/rudnn.md) and [grouped backward](docs/en/libraries/rublas.md).
 - **Streams and events:** `ruda_torch.Stream`, `Event` and `record_stream` integrate with the native runtime. Dispatch is synchronous by default; set `RUDA_TORCH_ASYNC=1` before the first native submission to opt in to asynchronous dispatch. Explicit synchronization and host readback still wait for completion.
 
-Paged attention requires contiguous FP32/FP16/BF16 tensors of the same dtype on the same device and execution queue. It is forward-only, without arbitrary external masks or quantized KV caches. MLA/MoE are reusable components; complete model adapters must supply projections, positional encoding, routing parameters and cache ownership.
+Paged attention requires contiguous FP32/FP16/BF16 tensors of the same dtype on the same device and execution queue. Forward and first-order backward are available, without arbitrary external masks or quantized KV caches. PyTorch defaults to atomic history gradients; `backward_strategy="ordered"` selects the atomic-free path. Ordered history-row caching and physical-page compaction are opt-in. MLA/MoE are reusable components; complete model adapters must supply projections, positional encoding, routing parameters and cache ownership.
 
 ## Experimental Numerical Science
 

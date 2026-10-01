@@ -77,7 +77,7 @@ cargo build --locked -p ruda-torch-native
 python -m pip install --no-build-isolation --no-deps -e ./ruda-torch/python
 ```
 
-Der Standardlader findet diesen Debug-Build automatisch. Für einen Release-Build oder einen anderen Speicherort setzen Sie `RUDA_TORCH_LIBRARY` auf den Bibliothekspfad. Rust-Bibliothek und C++-Erweiterung müssen beide **ABI 9** verwenden und gemeinsam neu erstellt werden.
+Der Standardlader findet diesen Debug-Build automatisch. Für einen Release-Build oder einen anderen Speicherort setzen Sie `RUDA_TORCH_LIBRARY` auf den Bibliothekspfad. Rust-Bibliothek und C++-Erweiterung müssen beide **ABI 10** verwenden und gemeinsam neu erstellt werden.
 
 ```python
 import torch
@@ -108,10 +108,10 @@ Ein Repository, mehrere Crates mit klar abgegrenzten Zuständigkeiten. Von Fachb
 
 - **Operatoren:** Native PyTorch-Matrixoperationen verwenden ruBLAS. Rechenpfade mit FP16/BF16-Speicherung, fusionierte LayerNorm/RMSNorm auf der letzten Achse und warp-parallele Softmax/Reduktionen verringern Zwischentensoren und separate Kernel-Aufrufe.
 - **Seitenbasierte GQA und MLA:** Öffentliche ruDNN-Kernels lesen physische KV-Seiten direkt für Prefill/Decode mit variablen Längen. `ruda_torch.PagedAttentionPlan` unterstützt `splits=1..32`, das Zusammenführen von Teilergebnissen in FP32 und die Wiederverwendung des Arbeitsbereichs; Standard ist `splits=1`. Schreibzugriffe auf gemeinsam genutzte Caches behalten den Copy-on-Write-Schutz.
-- **MoE:** Gruppiertes Sigmoid-Routing und segmentierte Experten-Matrixmultiplikation verwenden Experten-Offsets auf dem Gerät. Der FP16/BF16-Tensor-Core-Pfad muss ausdrücklich gewählt werden; der bestehende Experten-Einstieg verwendet standardmäßig die skalare GPU-Strategie.
+- **MoE:** Gruppiertes Sigmoid-Routing und segmentierte Experten-Matrixmultiplikation verwenden Experten-Offsets auf dem Gerät. Der FP16/BF16-Tensor-Core-Pfad muss ausdrücklich gewählt werden; der bestehende Experten-Einstieg verwendet standardmäßig die skalare GPU-Strategie. Routergewichte bei fester Auswahl und Expertenprojektionen bieten auch Training erster Ordnung mit FP32-Gradienten für Router- und Expertengewichte; siehe [ruDNN](libraries/rudnn.md) und [gruppierten Rückwärtslauf](libraries/rublas.md).
 - **Streams und Ereignisse:** `ruda_torch.Stream`, `Event` und `record_stream` sind in die native Laufzeit integriert. Die Ausführung ist standardmäßig synchron; setzen Sie vor dem ersten nativen Aufruf `RUDA_TORCH_ASYNC=1`, um asynchrone Aufrufe zu aktivieren. Explizite Synchronisation und Rückübertragung zum Host warten weiterhin auf den Abschluss.
 
-Seitenbasierte Attention benötigt zusammenhängende FP32/FP16/BF16-Tensoren gleichen Datentyps auf demselben Gerät und derselben Ausführungsqueue. Sie unterstützt nur den Vorwärtslauf, keine beliebigen externen Masken und keine quantisierten KV-Caches. MLA/MoE sind wiederverwendbare Komponenten; vollständige Modelladapter müssen Projektionen, Positionskodierung, Routingparameter und die Verwaltung des Cache-Eigentums bereitstellen.
+Seitenbasierte Attention benötigt zusammenhängende FP32/FP16/BF16-Tensoren gleichen Datentyps auf demselben Gerät und derselben Ausführungsqueue. Sie unterstützt Vorwärtslauf und Rückwärtslauf erster Ordnung, aber keine beliebigen externen Masken oder quantisierten KV-Caches. PyTorch verwendet standardmäßig atomare Historiengradienten; `backward_strategy="ordered"` wählt den atomikfreien Pfad. Historienzeilen-Cache und physische Seitenkompaktierung sind opt-in. MLA/MoE sind wiederverwendbare Komponenten; vollständige Modelladapter müssen Projektionen, Positionskodierung, Routingparameter und die Verwaltung des Cache-Eigentums bereitstellen.
 
 ## Wege zur Hardware
 

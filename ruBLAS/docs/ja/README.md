@@ -143,3 +143,11 @@ K、N、および G はゼロ以外でなければなりません。 K は G で
 `GroupedStrategy::Scalar` は既存のスカラーカーネルを使用します。`TensorCore` は一致する F16/BF16 入力、対応する 16×16×16 協調行列演算、32 レーンの plane、十分な共有メモリ、有効な起動グリッドを明示的に要求し、非対応の設定では `GroupedMatmulError` を返します。カーネルは FP32 累積を使用し、端の不完全なタイルも処理します。`Auto` は対応していればこの経路、それ以外はスカラーカーネルを選択します。コンパイル、起動、数値計算の失敗はフォールバック条件ではありません。
 
 offsets を内部で構築する安全な MoE エントリポイントには、`rudnn::moe::SwiGluExperts::forward_dispatched_with_strategy` を使用します。既存の `forward_dispatched` はデフォルトでスカラー経路を維持します。
+
+### 7. セグメント化逆伝播
+
+`grouped_matmul_nt_backward_segmented(input, weights, grad_output, row_experts, offsets)` は `GroupedBackward { dinput, dweights }` を返します。input は `[M, K]`、weights は `[E, N, K]`、grad_output は `[M, N]` で、F32/F16/BF16 の dtype、デバイス、キューが一致する必要があります。`dinput` は入力 dtype、`dweights` は FP32 の `[E, N, K]` です。空のエキスパート区間の重み勾配はゼロです。行 ID と offsets は順伝播と同じ U32 レイアウト・不変の prefix 条件に従います。デバイスメタデータをホストへ読み戻さない unsafe API です。
+
+既定の入口は `GroupedStrategy::Scalar` です。`grouped_matmul_nt_backward_segmented_with_strategy(..., strategy)` は順伝播と独立に `Scalar`、`Auto`、`TensorCore` を選択します。協調経路は 16×16×16 タイル、FP32 累積・重み勾配を使い、対応 F16/BF16 ハードウェアと起動制約を満たす必要があります。`TensorCore` は非対応時にエラー、`Auto` は能力不足のみでフォールバックします。コンパイル・実行エラーは隠しません。入力の連続化でコピーが必要な場合があります。異なる帰約順序のビット一致は保証しません。
+
+安全なエキスパート学習入口には `rudnn::moe::SwiGluExperts::forward_dispatched_training` と `ExpertTrainingCache::backward_with_strategy` を使用します。

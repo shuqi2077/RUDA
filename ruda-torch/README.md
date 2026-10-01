@@ -4,7 +4,7 @@ Native PyTorch integration for RUDA on a single NVIDIA GPU, exposed as `ruda:0` 
 
 - Rust package: `ruda-torch-native` (`cdylib`, not published to crates.io).
 - Python package: `ruda-torch`; import: `ruda_torch`.
-- Rust/C++ bridge: **ABI 9**. Rebuild both components together after an ABI change.
+- Rust/C++ bridge: **ABI 10**. Rebuild both components together after an ABI change.
 
 ## Build and install
 
@@ -99,11 +99,28 @@ out = plan.attention(q, k, v, scale=8 ** -0.5, causal=True)
 print(out.cpu())
 ```
 
-Inputs must be contiguous FP32/FP16/BF16 tensors with the same dtype on the native `ruda` device and matching execution queue, without gradients. Query-head count must be divisible by KV-head count. Supply finite Q/K/V and a finite positive scale; key/value feature dimensions are limited to 1024. This is forward-only, without arbitrary external masks or quantized KV caches.
+Inputs must be contiguous FP32/FP16/BF16 tensors with the same dtype on the native `ruda` device and matching execution queue. Query-head count must be divisible by KV-head count. Supply finite Q/K/V and a finite positive scale; key/value feature dimensions are limited to 1024. Forward and first-order autograd are supported; arbitrary external masks, quantized KV caches and higher-order derivatives are not.
 
 `splits=1` is the default unsplit path; `2..32` uses partial attention followed by FP32 merging. `plan.workspace_bytes(query_heads, value_dim)` reports planned scratch bytes, capped at 64 MiB per workspace, not total device memory. Workspaces are cached per native plan/stream and shape, not in a global pool. Splitting is explicit and does not guarantee a speedup.
 
 `plan.mla(absorbed_query, position_query, latent_cache, position_cache, scale=..., causal=True)` returns compressed context `[queries, heads, rank]`. The latent cache is `[pages, page_size, 1, rank]`, the positional cache `[pages, page_size, 1, position_dim]`, and the query tensors are `[queries, heads, rank]` and `[queries, heads, position_dim]`; position dimension is limited to 256. Apply positional encoding first and value/output projections afterward. Use the model's original QK scale, not `1/sqrt(rank)`. The caller prepares cache contents and owns cache updates.
+
+### First-order gradients and ordered history
+
+Set `requires_grad=True` on the inputs to differentiate. Forward keeps the fused/split inference path. Backward recomputes probabilities and allocates only the requested Q/K/V gradients, or Q/Q-position/latent/K-position gradients for MLA. The latent derivative contains both key and value contributions. Frozen inputs remain saved when other derivatives need their values; do not modify saved tensors before backward.
+
+`PagedAttentionPlan(..., backward_strategy="atomic")` is the default. Its requested history gradients use FP32 atomics and respect PyTorch's deterministic-algorithm error/warning policy. Choose `backward_strategy="ordered"` explicitly for single-writer, atomic-free history reduction; it is not automatic tuning or a promise of faster execution or cross-device bitwise equality. This requires paged-backward API 2 in both native components.
+
+Ordered backward caches FP32 row statistics and inverse page metadata per native plan/stream and compatible shape. Query pruning is enabled and skips only causally invisible contributions while retaining summation order. Two further options are disabled by default:
+
+| Environment variable | Effect when set to `1` |
+| --- | --- |
+| `RUDA_PAGED_ORDERED_CACHE_ROWS` | Reuse history-row values in thread-local storage; may increase register pressure. |
+| `RUDA_PAGED_ORDERED_COMPACT_HISTORY` | Reduce only active physical pages and explicitly zero inactive history-gradient pages. |
+
+Unset or `0` disables these options; other values are errors. They are read when an ordered workspace is constructed, so set them before the first ordered backward on a plan/stream, or create a fresh plan after changing them. They do not affect the atomic path. Rust callers can also use the workspace setters described in the ruDNN guide.
+
+Compaction uses effective KV lengths of sequences with queries, not all allocated pages or table capacity. Its retained page index costs `num_pages * 4` bytes inside the 64 MiB ordered-workspace budget. Disabling an already-created index in Rust keeps its allocation for reuse. This is not KV-cache compression and does not shrink gradient tensor shapes. `plan.workspace_bytes(...)` reports only forward split scratch, not ordered-backward storage or peak VRAM.
 
 See the [ruDNN guide](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/rudnn.md) for the underlying Rust paged-attention and MoE interfaces, and the [ruLLM guide](https://github.com/shuqi2077/RUDA/blob/main/docs/en/model-inference.md) for model integration.
 
@@ -111,7 +128,7 @@ See the [ruDNN guide](https://github.com/shuqi2077/RUDA/blob/main/docs/en/librar
 
 `ruda_torch.StaticGraph` connects selected native PyTorch tensor operations to
 RUDA's existing `CudaGraph`, rather than a separate CUDA extension/runtime.
-The new optional graph interface is version 2; base tensor ABI remains 9.
+The optional graph interface is version 2; the current base tensor ABI is 10.
 Rebuild both Rust and C++ for this feature. Defaults and eager dispatch stay unchanged.
 
 Supported explicit nodes: copy, same-shape add/mul, SiLU, last-axis RMSNorm and storage-rounded SiLU-mul.
@@ -142,7 +159,7 @@ kernels and 49,200 bytes of reusable scratch are used for 4096 parameters.
 Small workloads (<=1024 rows) need no extra merge kernel. Different reduction
 order can change FP32 rounding; bitwise equality is not promised.
 
-Rebuild both Rust and C++ (base ABI 9 / graph API 2 unchanged, training API 4).
+Rebuild both Rust and C++ (base ABI 10 / graph API 2 / training API 4).
 Do not load a v26 training library into this bridge. Checkpoints without the
 hierarchical option restore with that option disabled; opt-in checkpoints carry
 step-options version 2 and are rejected by older v26 readers.
@@ -150,7 +167,7 @@ step-options version 2 and are rejected by older v26 readers.
 Run `python ruda-torch/tools/rust_host_gradient_stats.py --output ./stats-host`
 for the production Rust planner. Run `python ruda-torch/tools/validate_training.py
 --build --dtypes float32,float16 --output ./v27-training-results` for real GPU
-acceptance (103 cases per execution mode; no successful skips). Configure
+acceptance (no successful skips). Configure
 `RUDA_CUDA_COMPILER=ptx` and a driver-supported `RUDA_PTX_VERSION` first.
 The source includes a paired `python/examples/benchmark_gradient_stats.py`
 benchmark: it measures gradient analysis, not whole-model training speed.
@@ -189,5 +206,12 @@ base tensor ABI 10, training API 4 and graph API 2 are unchanged.
 
 Run `python ruda-torch/tools/validate_router.py --build --output ./v30-results`
 from the repository root for strict Rust/public-operator and native-PyTorch GPU
-acceptance. This candidate's Rust/PTX kernels were not compiled or run during
-host-only preparation; the package's validation records describe this limit.
+validation.
+
+## Native training and optimizer use
+
+`ruda_torch.RMSNorm`, `LayerNorm`, `rms_norm`, `layer_norm` and `silu_mul` expose first-order training on native `ruda:0` storage. Normalization is last-axis only, with FP32 saved statistics; the explicit normalization APIs allow FP32 affine parameters with FP16/BF16 activations. Native `mean` reduces from storage in FP32 without first rounding a low-precision sum.
+
+`ruda_torch.AdamW` uses FP32 master parameters and moments. Its default path unscales gradients in place and reads a 4-byte finite flag before updates. Explicit `fused_step=True` instead keeps gradient storage unchanged and reads a 12-byte statistics report; it still launches one update kernel per active parameter. `max_grad_norm` is optional global clipping across all active parameter groups and requires the fused path. `hierarchical_stats=True` also requires that path. Both boolean options default to `False`. Clear gradients before accumulating the next step.
+
+On one `ruda_torch.GradScaler` instance, use `scaler.scale(loss).backward()`, `scaler.step(optimizer)`, then `scaler.update()`. Save model, optimizer and scaler states together with data position and RNG state. See the [training guide](https://github.com/shuqi2077/RUDA/blob/main/docs/en/training.md) for checkpoint options and the examples [train_native.py](python/examples/train_native.py), [train_paged_block.py](python/examples/train_paged_block.py) and [train_router.py](python/examples/train_router.py). These training paths do not add training support to StaticGraph.

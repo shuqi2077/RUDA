@@ -143,3 +143,11 @@ Dies ist eine `unsafe`-Rust-API: offsets muss ein monoton nicht fallendes exklus
 `GroupedStrategy::Scalar` verwendet den bestehenden skalaren Kernel. `TensorCore` verlangt explizit übereinstimmende F16/BF16-Eingaben, unterstützte kooperative 16×16×16-Matrixoperationen, eine Plane mit 32 Lanes, ausreichend Shared Memory und ein gültiges Launch-Grid; eine nicht unterstützte Konfiguration liefert `GroupedMatmulError`. Der Kernel akkumuliert in FP32 und verarbeitet unvollständige Kacheln. `Auto` wählt diesen Pfad, wenn er unterstützt wird, sonst den skalaren Kernel. Kompilierungs-, Launch- oder numerische Fehler sind keine Fallback-Bedingungen.
 
 Für einen sicheren MoE-Einstieg mit intern erzeugten Offsets verwenden Sie `rudnn::moe::SwiGluExperts::forward_dispatched_with_strategy`. Der bestehende Einstieg `forward_dispatched` bleibt standardmäßig skalar.
+
+### 7. Segmentierter Rückwärtslauf
+
+`grouped_matmul_nt_backward_segmented(input, weights, grad_output, row_experts, offsets)` liefert `GroupedBackward { dinput, dweights }`. Input hat Form `[M, K]`, weights `[E, N, K]`, grad_output `[M, N]`, jeweils mit gleichem F32/F16/BF16-dtype, Gerät und Queue. `dinput` behält den Eingabetyp; `dweights` ist FP32 mit Form `[E, N, K]`. Leere Expertensegmente erhalten Null als Gewichtsgradienten. Zeilen-IDs und Offsets erfüllen dieselben U32-Layouts und unveränderlichen Präfixbedingungen wie im Vorwärtslauf. Die API bleibt unsicher; Gerätemetadaten werden nicht zur Prüfung auf den Host übertragen.
+
+Der Standard-Wrapper wählt `GroupedStrategy::Scalar`. `grouped_matmul_nt_backward_segmented_with_strategy(..., strategy)` wählt unabhängig vom Vorwärtslauf `Scalar`, `Auto` oder `TensorCore`. Der kooperative Pfad verwendet 16×16×16-Kacheln, FP32-Akkumulation und FP32-Gewichtsgradienten und benötigt unterstützte F16/BF16-Hardware sowie zulässige Launch-Größen. `TensorCore` meldet fehlende Unterstützung als Fehler; `Auto` fällt nur bei fehlenden Fähigkeiten zurück, nicht bei Kompilierungs- oder Ausführungsfehlern. Eingaben können zusammenhängend kopiert werden. Unterschiedliche Reduktionsreihenfolgen müssen nicht bitgleich sein.
+
+Für sicheres Training auf Expertenebene verwenden Sie `rudnn::moe::SwiGluExperts::forward_dispatched_training` und anschließend `ExpertTrainingCache::backward_with_strategy`.

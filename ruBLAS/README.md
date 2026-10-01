@@ -141,3 +141,11 @@ This is an `unsafe` Rust API: offsets must be a nondecreasing exclusive prefix s
 `GroupedStrategy::Scalar` uses the existing scalar kernel. `TensorCore` explicitly requires matching F16/BF16 inputs, supported 16×16×16 cooperative matrix operations, a 32-lane plane, sufficient shared memory and a legal launch grid; unsupported setup returns `GroupedMatmulError`. The kernel uses FP32 accumulation and handles partial tiles. `Auto` selects this path when supported and otherwise uses the scalar kernel; compilation, launch or numerical failures are not fallback conditions.
 
 For a safe MoE entry point with internally constructed offsets, use `rudnn::moe::SwiGluExperts::forward_dispatched_with_strategy`. Its existing `forward_dispatched` entry point remains scalar by default.
+
+### 7. Segmented backward
+
+`grouped_matmul_nt_backward_segmented(input, weights, grad_output, row_experts, offsets)` returns `GroupedBackward { dinput, dweights }`. Input is `[M, K]`, weights `[E, N, K]`, and grad_output `[M, N]`, all with matching F32/F16/BF16 dtype, device and queue. `dinput` retains the input dtype; `dweights` is FP32 with shape `[E, N, K]`. Empty expert segments produce zero weight gradients. Row IDs and offsets use the same U32 layouts and immutable prefix invariants as segmented forward; this remains an unsafe API without host readback of device metadata.
+
+The default wrapper selects `GroupedStrategy::Scalar`. `grouped_matmul_nt_backward_segmented_with_strategy(..., strategy)` explicitly selects `Scalar`, `Auto` or `TensorCore`, independently of forward. The cooperative path uses 16×16×16 tiles, FP32 accumulation and FP32 weight gradients, and requires supported F16/BF16 hardware and launch limits. `TensorCore` errors if unsupported; `Auto` falls back only for unsupported capabilities, not compilation or execution errors. Inputs may be made contiguous. Different reduction orders need not be bitwise identical.
+
+For a safe expert-level training path, use `rudnn::moe::SwiGluExperts::forward_dispatched_training` followed by `ExpertTrainingCache::backward_with_strategy`.

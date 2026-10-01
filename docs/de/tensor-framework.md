@@ -48,3 +48,4 @@ Batch-Readback organisiert Deskriptoren nach tatsächlichem Gerät und Stream. S
 
 - [Trainings- und Speicherstatus](training.md): Konfigurieren Sie ein Autodiff-Backend, aktualisieren Sie Parameter, sammeln Sie Gradienten und speichern Sie den Trainingsstatus oder stellen Sie ihn wieder her.
 - [Modellladen und Inferenz](model-inference.md): Laden Sie lokale Gewichte, erstellen Sie Chat-Eingabeaufforderungen, generieren Sie mit Stichproben und verarbeiten Sie Bildeingaben.
+- [Natives PyTorch](../../ruda-torch/README.md): `ruda:0`-Autograd erster Ordnung für Normalisierung, paged Attention und ausgewählte Routergewichte; explizite AdamW/GradScaler- und geordnete Historienoptionen. StaticGraph bleibt Inferenz vorbehalten.

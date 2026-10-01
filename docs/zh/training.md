@@ -143,3 +143,17 @@ fn restore_training(
 `ruda_optim` 还提供 `SgdConfig`、`AdamWConfig`、`AdaGradConfig`、`RmsPropConfig`、`AdanConfig`、`MuonConfig` 和 `LBFGSConfig`。更换优化器时同时更换配置和状态类型。集合通信训练的接入见 [ruCCL](libraries/ruccl.md)。
 
 接口参考：[优化器](../../ruda-optim/src/optim/mod.rs)、[训练记录](../../ruda-optim/src/training.rs)。
+
+## 在 `ruda:0` 上进行原生 PyTorch 训练
+
+这条路径与上面的 Rust `Autodiff<Cuda<...>>` 示例分开。Rust 动态库与 C++ 扩展须从同一源码构建：基础 ABI 10、training API 4、router API 1、paged-backward API 2、graph API 2。安装见[原生 PyTorch 指南](../../ruda-torch/README.md)。
+
+`ruda_torch.RMSNorm`／`rms_norm`、`LayerNorm`／`layer_norm` 及 `silu_mul` 支持原生一阶训练。归一化仅沿最后一轴，统计量使用 FP32，输出保留激活 dtype，仿射参数可为输入 dtype 或 FP32。受支持的连续末轴输入可通过标准 `torch.nn.LayerNorm` 进入原生训练路径。这些融合接口不支持高阶梯度或训练图捕获。
+
+`ruda_torch.AdamW(params, fused_step=True, max_grad_norm=1.0, hierarchical_stats=True)` 显式启用只读梯度分析、反缩放后的全局 L2 裁剪及分层统计。两个布尔选项默认均为 `False`，裁剪默认 `None`，裁剪要求 `fused_step=True`。融合路径先回读一份 12 字节报告，再更新参数；遇到非有限梯度跳过整个 step。保留 `.grad`，主参数和动量为 FP32；每个活跃参数仍启动一次更新内核，并非整个模型只用一个 GPU 内核。下个累积窗口前清除梯度。对同一 scaler 实例依次调用 `scaler.scale(loss).backward()`、`scaler.step(optimizer)`、`scaler.update()` 使用 `ruda_torch.GradScaler`。
+
+分层统计 fan-in 为 1024，最多增加两个归并内核及 49,200 字节可复用归约空间，不包含初始统计工作区。不超过 1024 行时无需额外归并内核。改变的是归约顺序，不是裁剪策略。
+
+`PagedAttentionPlan(..., backward_strategy="ordered")` 启用无原子的历史梯度；默认仍是 `"atomic"`。Autograd 只分配请求的梯度。历史页压缩、固定选择的路由与专家训练见 [ruDNN 指南](libraries/rudnn.md)，分组反向见 [ruBLAS 指南](libraries/rublas.md)。
+
+模型、优化器、scaler 的 `state_dict()` 与数据位置／随机数状态应一起保存。优化器存档保留 `fused_step`、`max_grad_norm`；启用分层统计的存档使用 step-options 版本 2。缺少相关选项的旧存档恢复时关闭融合／分层模式。StaticGraph 仍仅用于固定地址推理。

@@ -145,3 +145,17 @@ fn restore_training(
 `ruda_optim` は、`SgdConfig`、`AdamWConfig`、`AdaGradConfig`、`RmsPropConfig`、`AdanConfig`、`MuonConfig`、および `LBFGSConfig` も提供します。オプティマイザーを切り替えるときは、構成と状態タイプの両方を変更します。集合的なトレーニングの統合については、[ruCCL](libraries/ruccl.md) を参照してください。
 
 API 参照: [オプティマイザー](../../ruda-optim/src/optim/mod.rs)、[トレーニング レコード](../../ruda-optim/src/training.rs)。
+
+## `ruda:0` 上のネイティブ PyTorch 学習
+
+上記の Rust `Autodiff<Cuda<...>>` とは別の経路です。Rust ライブラリと C++ 拡張を同じソースから構築します。基本 ABI 10、training API 4、router API 1、paged-backward API 2、graph API 2 を使用します。[ネイティブ PyTorch ガイド](../../ruda-torch/README.md)を参照してください。
+
+`ruda_torch.RMSNorm`/`rms_norm`、`LayerNorm`/`layer_norm`、`silu_mul` は一階学習に対応します。正規化は最終軸のみで、統計量は FP32、出力は活性値と同じ dtype、アフィンパラメーターは入力 dtype または FP32 です。標準の `torch.nn.LayerNorm` も対応する連続最終軸入力でネイティブ学習経路を選びます。高階勾配と学習グラフ capture は対象外です。
+
+`ruda_torch.AdamW(params, fused_step=True, max_grad_norm=1.0, hierarchical_stats=True)` は読み取り専用の勾配分析、unscale 後のグローバル L2 クリッピング、階層統計を明示的に有効化します。両 boolean の既定値は `False`、クリッピングは `None` で、クリッピングには `fused_step=True` が必要です。更新前に 12 バイトのレポートを読み戻し、非有限勾配では step 全体をスキップします。`.grad` を保持し、マスターパラメーターとモーメントは FP32 です。更新は有効パラメーターごとに 1 カーネルであり、モデル全体の単一カーネルではありません。次の累積期間前に勾配を消去します。`ruda_torch.GradScaler` の同じインスタンスで `scaler.scale(loss).backward()`、`scaler.step(optimizer)`、`scaler.update()` を順に呼びます。
+
+階層統計は fan-in 1024、追加結合カーネルは最大 2、再利用する帰約領域は最大 49,200 バイトです。初期統計領域は別です。1024 行以下では追加結合は不要です。帰約順序は変わりますが、クリッピング方針は変わりません。
+
+`PagedAttentionPlan(..., backward_strategy="ordered")` はアトミックを使わない履歴勾配を選びます。既定値は `"atomic"` で、autograd は要求された勾配のみ確保します。履歴圧縮と固定選択のルーター・エキスパート学習は [ruDNN](libraries/rudnn.md)、グループ逆伝播は [ruBLAS](libraries/rublas.md) を参照してください。
+
+モデル・optimizer・scaler の `state_dict()`、データ位置と RNG 状態を一緒に保存します。optimizer は `fused_step` と `max_grad_norm` を保存し、階層統計では step-options バージョン 2 を使用します。設定のない旧保存状態では fused/hierarchical は無効で復元します。StaticGraph は固定アドレス推論専用のままです。

@@ -194,7 +194,7 @@ fn delta_prefill<R: Runtime>(
 
 启用 `tensor-paged-attention`，使用 `rudnn::paged_attention`。`HostPlan::new(page_size, pages, tables, lengths, sequence_ids, positions)` 校验主机端调度元数据；positions 是各序列内从零开始的绝对位置。`DevicePlan::upload(host, &q)` 将元数据上传至查询所在设备及执行队列。只有调度不变时才能复用该计划。
 
-`DevicePlan::attention(q, k, v, scale, causal)` 直接读取物理缓存页，处理打包的变长预填充与解码。Q 为 `[queries, Hq, D]`，K 为 `[pages, page_size, Hkv, D]`，V 为 `[pages, page_size, Hkv, Dv]`，输出为 `[queries, Hq, Dv]`；`Hq` 必须能被 `Hkv` 整除。输入须连续、非量化，使用相同的 F32/F16/BF16 dtype、设备和队列。Q/K/V 须为有限值，scale 须有限且为正。`D`、`Dv` 范围为 `1..=1024`；设备需支持 32 或 64 lane 的 plane 及所需启动网格。该接口仅支持前向，不支持任意外部掩码或量化 KV 缓存。
+`DevicePlan::attention(q, k, v, scale, causal)` 直接读取物理缓存页，处理打包的变长预填充与解码。Q 为 `[queries, Hq, D]`，K 为 `[pages, page_size, Hkv, D]`，V 为 `[pages, page_size, Hkv, Dv]`，输出为 `[queries, Hq, Dv]`；`Hq` 必须能被 `Hkv` 整除。输入须连续、非量化，使用相同的 F32/F16/BF16 dtype、设备和队列。Q/K/V 须为有限值，scale 须有限且为正。`D`、`Dv` 范围为 `1..=1024`；设备需支持 32 或 64 lane 的 plane 及所需启动网格。支持前向与一阶反向，不支持任意外部掩码或量化 KV 缓存。
 
 `DevicePlan::mla(q, qp, latent, kp, scale, causal)` 接收吸收投影后的查询 `[queries, H, R]`、位置查询 `[queries, H, P]`、共享潜在缓存 `[pages, page_size, 1, R]` 和位置缓存 `[pages, page_size, 1, P]`。输出压缩上下文 `[queries, H, R]`；`P` 范围为 `1..=256`。位置编码在调用前完成，value/output 投影在调用后完成。scale 使用原模型 QK 缩放，而非按压缩秩推算。
 
@@ -209,3 +209,36 @@ fn delta_prefill<R: Runtime>(
 `GroupRoutingOptions` 包含 `top_k`、`groups`、`selected_groups`、`group_top_two`、`renormalize` 和 `scale`。专家数范围为 `1..=1024`，组数为 `1..=128`，top-k 为 `1..=64`；专家数必须能被组数整除，选中组数须有效，top-k 不得超过选中组的专家总数。`group_top_two=true` 将每组最大的两个校正分数相加，要求每组至少两个专家；否则使用组内最大分数。scale 必须有限且为正。
 
 `SwiGluExperts::forward_sigmoid_grouped(input, logits, bias, options, strategy)` 完成路由、分发、专家计算与合并。`forward_dispatched_with_strategy` 可选择 `GroupedStrategy::Scalar`、`Auto` 或 `TensorCore`；现有 `forward`、`forward_dispatched` 仍使用 `Scalar`。Tensor Core 路径要求支持 F16/BF16 的相应硬件。`Auto` 仅在配置不受支持时回退，不会吞掉编译或执行失败。模型投影、共享专家和残差分支仍由调用方负责。
+
+## 11. 分页注意力反向与有序历史梯度
+
+`DevicePlan::attention_backward(q, k, v, grad_out, scale, causal)` 返回 `AttentionBackward { dq, dk, dv }`；`mla_backward(q, qp, latent, kp, grad_out, scale, causal)` 返回 `MlaBackward { dq, dqp, dlatent, dkp }`，其中 `dlatent` 同时包含 key 和 value 的贡献。反向重新计算概率，不保留完整分数矩阵。
+
+不安全接口 `attention_backward_selected_into`、`mla_backward_selected_into` 接收分别可选的梯度缓冲。传入 `None` 不分配该输出及该分支专用的历史临时空间，但其他导数仍可能需要该输入值。输出不能与输入或彼此重叠，所有访问须在计划的同一有序队列中执行。这条路径的历史梯度采用 FP32 原子累加，不保证逐位确定性。
+
+需要无浮点原子的历史归约时，创建 `OrderedBackwardWorkspace::new(&plan, &q)?`，以可变引用传给 `attention_backward_ordered_into` 或 `mla_backward_ordered_into`。同样适用输出不重叠约束，也不能与工作区存储重叠。只有不可变调度元数据、查询数／头数、设备及队列兼容时才能复用。统计量和反向索引共同受 64 MiB 工作区预算限制。固定累加顺序不保证跨设备或与原子路径逐位相同。
+
+| 有序工作区选项 | 默认值 | 作用 |
+| --- | --- | --- |
+| `set_query_pruning(bool)` | `true` | 跳过可证明因果不可见的查询，保留其余项的累加顺序。 |
+| `set_history_row_cache(bool)` | `false` | 在线程局部存储复用历史行，不增加设备张量，但可能增加寄存器压力。 |
+| `set_history_compaction(bool)?` | `false` | 只对活跃物理页计算历史梯度，对非活跃页显式写零。 |
+
+`RUDA_PAGED_ORDERED_CACHE_ROWS=1`、`RUDA_PAGED_ORDERED_COMPACT_HISTORY=1` 在工作区构造时分别启用后两项；未设置或 `0` 表示关闭，其他值报错。修改环境变量不会改变已有工作区。
+
+压缩按“有查询的序列在有效 KV 长度内可达的页”划分，不使用页表容量，也不表示非零梯度数量。首次启用上传 `physical_pages * 4` 字节索引，计入同一预算；之后切换复用索引，关闭后仍保留分配。`history_compaction_pages()` 返回 `Option<(active_pages, inactive_pages)>`，`bytes()` 包含保留空间。预算不足时保留原工作区模式。这些选项不改变 PyTorch 适配器的原子反向默认值，也不保证提速。
+
+## 12. MoE 一阶训练
+
+`selected_router_weights(&logits, &indices, options)` 返回 FP32 的 `[T, top_k]` 权重；`selected_router_backward(&logits, &indices, &grad_weights, options)` 返回与 logits 同 dtype 的 `[T, E]` 梯度。logits 为连续 F32/F16/BF16，indices 为连续 U32/I32/I64，要求 `1 <= top_k <= min(E, 64)`，操作数同设备、同队列。`RouterWeightOptions` 选择 `RouterScoring::Softmax` 或 `Sigmoid`、可选的选中权重归一化，最后应用有限正数 `scale`。`grad_weights` 为 FP32。
+
+重复索引按 gather 语义处理；非法索引使整行结果为 NaN，不越界读取，也不插入主机同步。这里只对固定选择下的连续权重求导，不对 top-k／分组决策或校正 bias 求导。`RoutingPlan::into_training(logits, options)` 保留选择并重新计算权重；通过返回的 `RouterTrainingPlan::routing()` 分发，通过 `backward(&grad_weights)` 取得 logits 梯度。反向前不得修改保存的输入值。
+
+专家训练调用 `SwiGluExperts::forward_dispatched_training(&dispatched, strategy)`，保留其 `output`、`cache`，按以下顺序反向：
+
+1. `dispatched.combine_backward(&expert_output, grad_output)` 返回 `dexpert` 和 FP32 的 `dweights`。
+2. `cache.backward(dexpert)` 返回分发后行的 `dinput` 及 FP32 的 `dgate`、`dup`、`ddown`。
+3. `dispatched.dispatch_backward(dinput)` 将选中行求和回原 token，不再次乘路由权重。
+4. 将 `dweights` 传入路由训练反向，得到 logits 梯度。
+
+`combine_backward` 默认使用 `CombineGradientStrategy::Serial`，`combine_backward_with_strategy` 可选择 `Plane`。专家 `backward` 独立于前向策略，默认 scalar；`backward_with_strategy` 接收 `GroupedStrategy::Scalar`、`Auto` 或 `TensorCore`。Tensor Core 反向要求受支持的 F16/BF16 硬件；`Auto` 只针对能力不支持回退，不吞掉编译或执行错误。

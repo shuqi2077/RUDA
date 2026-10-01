@@ -141,3 +141,11 @@ K、N、G 非零，K 能被 G 整除，N 能被 8 整除。输入最后一维为
 `GroupedStrategy::Scalar` 使用现有标量内核。`TensorCore` 显式要求匹配的 F16/BF16 输入、受支持的 16×16×16 协作矩阵运算、32 lane 的 plane、足够共享内存和合法启动网格；配置不支持时返回 `GroupedMatmulError`。内核使用 FP32 累计并处理不足整块的尾部。`Auto` 在受支持时选择此路径，否则使用标量内核；编译、启动或数值失败不是回退条件。
 
 需要内部构造 offsets 的安全 MoE 入口时，使用 `rudnn::moe::SwiGluExperts::forward_dispatched_with_strategy`。现有 `forward_dispatched` 入口默认仍使用标量路径。
+
+### 7. 分段反向
+
+`grouped_matmul_nt_backward_segmented(input, weights, grad_output, row_experts, offsets)` 返回 `GroupedBackward { dinput, dweights }`。input 为 `[M, K]`，weights 为 `[E, N, K]`，grad_output 为 `[M, N]`，使用相同 F32/F16/BF16 dtype、设备及队列。`dinput` 保留输入 dtype；`dweights` 为 FP32 的 `[E, N, K]`。空专家段的权重梯度为零。行编号和 offsets 沿用分段前向的 U32 布局及不可变前缀约束；该接口仍为 unsafe，不回读设备元数据进行校验。
+
+默认入口选择 `GroupedStrategy::Scalar`。`grouped_matmul_nt_backward_segmented_with_strategy(..., strategy)` 可显式选择 `Scalar`、`Auto` 或 `TensorCore`，独立于前向策略。协作路径采用 16×16×16 tile、FP32 累加及 FP32 权重梯度，要求受支持的 F16/BF16 硬件和启动规模。`TensorCore` 在不支持时返回错误；`Auto` 仅针对能力不支持回退，不吞掉编译或执行错误。输入可能转换为连续布局。不同归约顺序不保证逐位相同。
+
+需要安全的专家级训练入口时，使用 `rudnn::moe::SwiGluExperts::forward_dispatched_training`，再调用 `ExpertTrainingCache::backward_with_strategy`。

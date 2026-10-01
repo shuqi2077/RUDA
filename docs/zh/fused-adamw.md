@@ -3,7 +3,7 @@
 [English](../en/fused-adamw.md) | **简体中文** | [日本語](../ja/fused-adamw.md) | [Deutsch](../de/fused-adamw.md) | [Русский](../ru/fused-adamw.md)
 
 本次在现有 `ruda-optim` 中增加可选路径，不新建重复的优化器库，也不改原来的
-`AdamW`、模型优化器适配器和 checkpoint 格式。**新 Rust/GPU 路径尚未编译运行验收。**
+`AdamW`、模型优化器适配器和 checkpoint 格式。
 
 ## 增加的实际能力
 
@@ -77,3 +77,11 @@ CUDA 测试分别运行 NVRTC 和直接 PTX，并检验参数、动量、精度�
 
 
 可选扩展见：[梯度检测与全组裁剪](gradient-guard.md)，不替换默认优化器。
+
+## 原生 PyTorch 存储接口与分层统计
+
+上文的非原地 `adamw_step` 契约不变。启用 `fused-adamw-device` 后，`ruda_optim::fused_adamw::storage` 还提供操作框架预分配存储的内核：`analyze_gradient`、`merge_gradient_stats`、`merge_gradient_stats_chunks`、`adamw_scaled`。它们是内核构件，不是替代性的安全优化器 API；适配器负责形状、别名、生命周期和队列校验。
+
+`stats_plan::StatsPlan::new(rows)` 接收 `1..=4_194_304` 行统计量，以 fan-in 1024 规划归约。`scratch_elements` 的单位是 FP32 元素，不包含初始统计量和最终报告；额外空间最多 49,200 字节。
+
+原生 PyTorch 的 `ruda_torch.AdamW` 通过显式 `fused_step=True` 及可选 `hierarchical_stats=True` 使用这些内核。梯度存储保持不变，任何更新前先回读 12 字节报告。`max_grad_norm` 可选地对全部活跃参数组做全局裁剪。这与非原地 Rust 接口分开，也不改变 Rust 默认 `AdamW`。详见[原生训练与存档选项](training.md)。

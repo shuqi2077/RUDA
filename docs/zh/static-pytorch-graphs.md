@@ -60,7 +60,7 @@ C++ 每次重放不再构造 Descriptor 的 shape/stride 向量，也不再把�
 
 ## 构建与验证
 
-基础张量 ABI 仍为 9；**附加图接口由 1 升至 2**，Rust 和 C++ 两侧必须一起重建。接口不匹配会报错，防止把新 opcode 传给旧实现。
+当前基础张量 ABI 为 10；**附加图接口为 2**，Rust 和 C++ 两侧必须一起重建。接口不匹配会报错，防止把新 opcode 传给旧实现。
 
 ```bash
 cargo build --locked --release -p ruda-torch-native

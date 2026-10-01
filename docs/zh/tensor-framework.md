@@ -46,3 +46,4 @@
 
 - [训练与状态保存](training.md)：配置自动微分 Backend、更新参数、累积梯度及保存恢复训练状态。
 - [模型加载与推理](model-inference.md)：加载本地权重、构造对话提示、采样生成及图片输入。
+- [原生 PyTorch](../../ruda-torch/README.md)：`ruda:0` 的一阶归一化、分页注意力及选中路由权重 autograd，显式 AdamW／GradScaler 与有序历史梯度选项；StaticGraph 仍仅支持推理。

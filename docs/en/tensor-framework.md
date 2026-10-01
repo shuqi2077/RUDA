@@ -46,3 +46,4 @@ Batched readback organizes descriptors by actual device and stream. See [tensor 
 
 - [Training and saving state](training.md): configure an autodiff Backend, update parameters, accumulate gradients, and save or restore training state.
 - [Model loading and inference](model-inference.md): load local weights, construct chat prompts, generate with sampling, and process image inputs.
+- [Native PyTorch](../../ruda-torch/README.md): `ruda:0` first-order normalization, paged attention and selected-router autograd; explicit AdamW/GradScaler and ordered history options. StaticGraph remains inference-only.
