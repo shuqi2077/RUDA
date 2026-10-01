@@ -14,7 +14,7 @@
 |[ruDNN](rudnn.md)|`ruDNN`|`rudnn`|Внимание, свертка, объединение и MoE|
 |[ruTENSOR](rutensor.md)|`ruTENSOR`|`rutensor`|Общие тензорные сокращения, einsum, сокращения, перестановки и поэлементные операции.|
 |[ruPRIM](ruprim.md)|`ruPRIM`|`ruprim`|Сокращение, сканирование, поэлементные операции и индексирование|
-|[ruFFT](rufft.md)|`ruFFT`|`rufft`|Действительное FFT и обратные преобразования|
+|[ruFFT](rufft.md)|`ruda-fft`|`rufft`|Действительное FFT и обратные преобразования|
 |[ruRAND](rurand.md)|`ruRAND`|`rurand`|Равномерное, нормальное распределение и распределение Бернулли|
 |[ruSPARSE](rusparse.md)|`ruSPARSE`|`rusparse`|Форматы и операции с разреженными матрицами|
 |[ruCCL](ruccl.md)|`ruCCL`|`ruccl`|Коллективное общение и оркестровка|

@@ -8,11 +8,11 @@ ruFFT вычисляет БПФ и обратные преобразования
 
 ## 1. Настройте зависимости
 
-Пакет Cargo — `ruFFT`; его имя для импорта в Rust — `rufft`. Функция `tensor` включает тензорные интерфейсы устройств. В этой конфигурации каталог приложения размещается рядом с исходным каталогом `RUDA`. См. раздел [Начало работы](../getting-started.md) для настройки NVIDIA.
+Пакет Cargo — `ruda-fft`; его имя для импорта в Rust — `rufft`. Функция `tensor` включает тензорные интерфейсы устройств. В этой конфигурации каталог приложения размещается рядом с исходным каталогом `RUDA`. См. раздел [Начало работы](../getting-started.md) для настройки NVIDIA.
 
 ```toml
 [dependencies]
-rufft = { package = "ruFFT", path = "../RUDA/ruFFT", default-features = false, features = ["std", "tensor"] }
+rufft = { package = "ruda-fft", path = "../RUDA/ruFFT", default-features = false, features = ["std", "tensor"] }
 ruda-core = { path = "../RUDA/ruda-core", default-features = false, features = ["std", "tensor-host-data"] }
 ruda-kernel = { path = "../RUDA/ruda-kernel", default-features = false, features = ["frontend-std", "device-tensor"] }
 ruda-driver-cuda = { path = "../RUDA/ruda-driver-cuda", default-features = false, features = ["std"] }

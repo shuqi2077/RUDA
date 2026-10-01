@@ -8,11 +8,11 @@ ruFFT は、デバイス上で実信号 FFT と逆変換を計算します。 `r
 
 ## 1. 依存関係を構成する
 
-Cargo パッケージは `ruFFT` です。 Rust インポート名は `rufft` です。機能 `tensor` により、デバイス テンソル インターフェイスが有効になります。この構成では、アプリケーション ディレクトリが `RUDA` ソース ディレクトリの横に配置されます。 NVIDIA のセットアップについては、[はじめに](../getting-started.md) を参照してください。
+Cargo パッケージは `ruda-fft` です。 Rust インポート名は `rufft` です。機能 `tensor` により、デバイス テンソル インターフェイスが有効になります。この構成では、アプリケーション ディレクトリが `RUDA` ソース ディレクトリの横に配置されます。 NVIDIA のセットアップについては、[はじめに](../getting-started.md) を参照してください。
 
 ```toml
 [dependencies]
-rufft = { package = "ruFFT", path = "../RUDA/ruFFT", default-features = false, features = ["std", "tensor"] }
+rufft = { package = "ruda-fft", path = "../RUDA/ruFFT", default-features = false, features = ["std", "tensor"] }
 ruda-core = { path = "../RUDA/ruda-core", default-features = false, features = ["std", "tensor-host-data"] }
 ruda-kernel = { path = "../RUDA/ruda-kernel", default-features = false, features = ["frontend-std", "device-tensor"] }
 ruda-driver-cuda = { path = "../RUDA/ruda-driver-cuda", default-features = false, features = ["std"] }

@@ -6,11 +6,11 @@ ruFFT 在设备上计算实数信号的 FFT 和逆变换。使用 `rufft::tensor
 
 ## 1. 配置依赖
 
-Cargo package 名为 `ruFFT`，Rust 导入名为 `rufft`。`tensor` feature 启用设备张量接口。以下应用目录与 `RUDA` 源码目录同级；NVIDIA 环境配置见[快速开始](../getting-started.md)。
+Cargo package 名为 `ruda-fft`，Rust 导入名为 `rufft`。`tensor` feature 启用设备张量接口。以下应用目录与 `RUDA` 源码目录同级；NVIDIA 环境配置见[快速开始](../getting-started.md)。
 
 ```toml
 [dependencies]
-rufft = { package = "ruFFT", path = "../RUDA/ruFFT", default-features = false, features = ["std", "tensor"] }
+rufft = { package = "ruda-fft", path = "../RUDA/ruFFT", default-features = false, features = ["std", "tensor"] }
 ruda-core = { path = "../RUDA/ruda-core", default-features = false, features = ["std", "tensor-host-data"] }
 ruda-kernel = { path = "../RUDA/ruda-kernel", default-features = false, features = ["frontend-std", "device-tensor"] }
 ruda-driver-cuda = { path = "../RUDA/ruda-driver-cuda", default-features = false, features = ["std"] }

@@ -8,11 +8,11 @@ ruFFT berechnet Realsignal-FFTs und inverse Transformationen auf dem Gerät. Die
 
 ## 1. Abhängigkeiten konfigurieren
 
-Das Cargo-Paket ist `ruFFT`; Sein Rust-Importname ist `rufft`. Die Funktion `tensor` ermöglicht Geräte-Tensor-Schnittstellen. Diese Konfiguration platziert das Anwendungsverzeichnis neben dem `RUDA`-Quellverzeichnis. Informationen zum NVIDIA-Setup finden Sie unter [Erste Schritte](../getting-started.md).
+Das Cargo-Paket ist `ruda-fft`; Sein Rust-Importname ist `rufft`. Die Funktion `tensor` ermöglicht Geräte-Tensor-Schnittstellen. Diese Konfiguration platziert das Anwendungsverzeichnis neben dem `RUDA`-Quellverzeichnis. Informationen zum NVIDIA-Setup finden Sie unter [Erste Schritte](../getting-started.md).
 
 ```toml
 [dependencies]
-rufft = { package = "ruFFT", path = "../RUDA/ruFFT", default-features = false, features = ["std", "tensor"] }
+rufft = { package = "ruda-fft", path = "../RUDA/ruFFT", default-features = false, features = ["std", "tensor"] }
 ruda-core = { path = "../RUDA/ruda-core", default-features = false, features = ["std", "tensor-host-data"] }
 ruda-kernel = { path = "../RUDA/ruda-kernel", default-features = false, features = ["frontend-std", "device-tensor"] }
 ruda-driver-cuda = { path = "../RUDA/ruda-driver-cuda", default-features = false, features = ["std"] }

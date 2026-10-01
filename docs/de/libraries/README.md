@@ -14,7 +14,7 @@ Compute-Bibliotheken implementieren Vorgänge, die Laufzeit führt sie auf Gerä
 |[ruDNN](rudnn.md)|`ruDNN`|`rudnn`|Achtung, Faltung, Pooling und MoE|
 |[ruTENSOR](rutensor.md)|`ruTENSOR`|`rutensor`|Allgemeine Tensorkontraktionen, einsum, Reduktionen, Permutationen und elementweise Operationen|
 |[ruPRIM](ruprim.md)|`ruPRIM`|`ruprim`|Reduzierungen, Scans, elementweise Operationen und Indizierung|
-|[ruFFT](rufft.md)|`ruFFT`|`rufft`|Real FFT und inverse Transformationen|
+|[ruFFT](rufft.md)|`ruda-fft`|`rufft`|Real FFT und inverse Transformationen|
 |[ruRAND](rurand.md)|`ruRAND`|`rurand`|Gleichmäßige, normale und Bernoulli-Verteilungen|
 |[ruSPARSE](rusparse.md)|`ruSPARSE`|`rusparse`|Sparse-Matrix-Formate und -Operationen|
 |[ruCCL](ruccl.md)|`ruCCL`|`ruccl`|Kollektive Kommunikation und Orchestrierung|

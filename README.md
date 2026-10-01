@@ -8,6 +8,8 @@
 
 **[Website](https://shuqi2077.github.io/RUDA/) · [Documentation](https://shuqi2077.github.io/RUDA/en/docs/index/)**
 
+[Full-stack API index](docs/en/api-reference.md) · [Tensor recipes](docs/en/tensor-recipes.md) · [Backend composition](docs/en/backend-composition.md) · [Data and storage](docs/en/data-and-storage.md) · [中文文档](docs/zh/README.md)
+
 **English** | [简体中文](https://github.com/shuqi2077/RUDA/blob/main/docs/zh/project.md) | [日本語](https://github.com/shuqi2077/RUDA/blob/main/docs/ja/project.md) | [Deutsch](https://github.com/shuqi2077/RUDA/blob/main/docs/de/project.md) | [Русский](https://github.com/shuqi2077/RUDA/blob/main/docs/ru/project.md)
 
 Ruda is a Rust high-performance computing library, building a complete software stack from GPU kernels, compilers, and runtimes to mathematical computing, tensors, and models.

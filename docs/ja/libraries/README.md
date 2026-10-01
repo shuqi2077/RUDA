@@ -14,7 +14,7 @@
 |[ruDNN](rudnn.md)|`ruDNN`|`rudnn`|アテンション、畳み込み、プーリング、および MoE|
 |[ruTENSOR](rutensor.md)|`ruTENSOR`|`rutensor`|一般的なテンソル短縮、einsum、リダクション、順列、および要素ごとの演算|
 |[ruPRIM](ruprim.md)|`ruPRIM`|`ruprim`|リダクション、スキャン、要素ごとの操作、およびインデックス付け|
-|[ruFFT](rufft.md)|`ruFFT`|`rufft`|実数 FFT と逆変換|
+|[ruFFT](rufft.md)|`ruda-fft`|`rufft`|実数 FFT と逆変換|
 |[ruRAND](rurand.md)|`ruRAND`|`rurand`|一様分布、正規分布、およびベルヌーイ分布|
 |[ruSPARSE](rusparse.md)|`ruSPARSE`|`rusparse`|スパース行列の形式と演算|
 |[ruCCL](ruccl.md)|`ruCCL`|`ruccl`|集団的なコミュニケーションとオーケストレーション|

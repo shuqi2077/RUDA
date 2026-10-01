@@ -12,11 +12,11 @@
 | [ruDNN](rudnn.md) | `ruDNN` | `rudnn` | 注意力、卷积、池化、MoE |
 | [ruTENSOR](rutensor.md) | `ruTENSOR` | `rutensor` | 通用张量收缩、einsum、归约、置换与逐元素运算 |
 | [ruPRIM](ruprim.md) | `ruPRIM` | `ruprim` | 归约、扫描、逐元素与索引 |
-| [ruFFT](rufft.md) | `ruFFT` | `rufft` | 实数 FFT 与逆变换 |
+| [ruFFT](rufft.md) | `ruda-fft` | `rufft` | 实数 FFT 与逆变换 |
 | [ruRAND](rurand.md) | `ruRAND` | `rurand` | 均匀、正态、伯努利分布 |
 | [ruSPARSE](rusparse.md) | `ruSPARSE` | `rusparse` | 稀疏矩阵格式与运算 |
 | [ruCCL](ruccl.md) | `ruCCL` | `ruccl` | 集合通信与编排 |
-| [ruSOLVER](rusolver.md) | `rusolver` | `rusolver` | 实验性 FP64 方程求解/分解、CG；可选 FP32 小矩阵设备求解 |
+| [ruSOLVER](rusolver.md) | `ruda-solver` | `rusolver` | 实验性 FP64 方程求解/分解、CG；可选 FP32 小矩阵设备求解 |
 | [ruINTEGRATE](ruintegrate.md) | `ruintegrate` | `ruintegrate` | 实验性 CPU 数值积分与非刚性 ODE |
 
 ## 接口层级

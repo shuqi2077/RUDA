@@ -22,6 +22,9 @@
 
 - [Ruda 编程指南](programming-guide.md)：主机与设备、执行层级、内存、同步及安全边界。
 - [张量与框架指南](tensor-framework.md)：设备张量、领域库分发、融合与自动微分。
+- [张量实用示例](tensor-recipes.md)：矩阵乘、布局、dtype 选择与梯度的完整 CPU 示例。
+- [后端选择与组合](backend-composition.md)：CUDA／ROCm／WGPU 选择、本地路由与远程执行。
+- [数据管线与模型存储](data-and-storage.md)：样本组批、权重保存与检查点格式导入。
 - [训练与状态保存](training.md)：训练步、梯度累积、学习率调度、保存与恢复。
 - [模型加载与推理](model-inference.md)：ruLLM、文本与图片输入、采样、AWQ 和连续批处理。
 
@@ -32,6 +35,7 @@
 
 ## API 参考
 
+- [全栈 Crate 与 API 索引](api-reference.md)：整个 workspace 的包名、Rust 导入名、职责与源码入口。
 - [Runtime API](runtime-api.md)：设备客户端、内存、提交、回读与同步。
 - [Driver API 与后端](driver-api.md)：后端类型、设备选择和运行时接入。
 - [计算库参考](libraries/README.md)：按领域选择库、Cargo feature 与接口入口。

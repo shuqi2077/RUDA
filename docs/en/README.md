@@ -22,6 +22,9 @@ From your first GPU kernel to compute libraries, tensor training, and local mode
 
 - [Ruda programming guide](programming-guide.md): host and device code, execution hierarchy, memory, synchronization, and safety.
 - [Tensors and frameworks](tensor-framework.md): device tensors, library dispatch, fusion, and automatic differentiation.
+- [Tensor recipes](tensor-recipes.md): complete CPU examples for matrix multiplication, layouts, dtype selection, and gradients.
+- [Backend selection and composition](backend-composition.md): CUDA/ROCm/WGPU selection, local routing, and remote execution.
+- [Data pipelines and model storage](data-and-storage.md): batching samples, saving weights, and importing checkpoint formats.
 - [Training and saving state](training.md): training steps, gradient accumulation, learning-rate scheduling, saving, and restoring.
 - [Model loading and inference](model-inference.md): ruLLM, text and image inputs, sampling, AWQ, and continuous batching.
 
@@ -32,6 +35,7 @@ From your first GPU kernel to compute libraries, tensor training, and local mode
 
 ## API references
 
+- [Full-stack crate and API index](api-reference.md): package names, Rust imports, responsibilities, and source entry points across the workspace.
 - [Runtime API](runtime-api.md): device clients, memory, submission, readback, and synchronization.
 - [Driver API and backends](driver-api.md): backend types, device selection, and runtime integration.
 - [Compute library reference](libraries/README.md): library selection, Cargo features, and entry points.
