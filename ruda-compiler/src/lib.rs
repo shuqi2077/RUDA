@@ -31,3 +31,7 @@ pub mod mlir;
 #[cfg(feature = "spirv")]
 #[allow(unsafe_code)]
 pub mod spirv;
+
+/// Rust-authored common Kernel IR to Ascend CCE vector lowering.
+#[cfg(feature = "ascend")]
+pub mod ascend;

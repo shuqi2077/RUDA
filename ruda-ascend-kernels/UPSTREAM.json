@@ -1,0 +1,19 @@
+{
+  "source_archive": "DeepGEMM-Ascend-main.zip",
+  "archive_sha256": "142b4aaec0767e5be2e8221b840ddceb08157fdf50fe28155528a2b5b72471fd",
+  "url": "https://github.com/deepseek-ai/DeepGEMM-Ascend",
+  "license": "MIT",
+  "files": {
+    "include/deep_gemm/ascend/copy.hpp": "9796820113aa3efbb5dc2079436d21105341046df1c72d52491c6d8e6025768f",
+    "include/deep_gemm/ascend/sync.hpp": "4076d98cd1f406950c3185cf6a6ce24647b449aa1ed687b0747458e533604c86",
+    "include/deep_gemm/ascend/tile_ptr.hpp": "c161d41dc84356c24f9aad2da77f826d2833245255025389ebf59d2d7a039a4f",
+    "include/deep_gemm/ascend.hpp": "3044ca8c0186d61a18e408c754f411eb88ae6e5c3081eba6b96d3a85c8fe27b1",
+    "include/deep_gemm/bf16_gemm.hpp": "b56df1c84cbc2242bbcb6234c5a377b9c1ffdbfda4c57f045b14230fc56ab044",
+    "include/deep_gemm/common.hpp": "eaa1f5488f6b252e50b30bf2b3ca31601f2eb81939c3d852a9e07e6949c42729",
+    "include/deep_gemm/epilogue/operators.hpp": "8b81c965d0497d7d9d6942f2b31d69c68801abad1388b43635e351c4cbf8ed82",
+    "include/deep_gemm/epilogue.hpp": "203c09b220a6691b74a3cd06977a7b894ba1d4e95c7ac67a7db6ecb6f19a9659",
+    "include/deep_gemm/scheduler.hpp": "c895f58f7f47679cd9ca7d186fbf350b9dc1a5a72efe99b7253bfa9114f9a5e2"
+  },
+  "archive_commit_comment": "8491bbb4b8c02a094a2318965f50c70438a3e73c",
+  "port": "Rust structured device IR; direct-store BF16 subset. These are provenance hashes, not shipped device headers."
+}

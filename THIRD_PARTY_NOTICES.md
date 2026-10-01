@@ -544,3 +544,18 @@ Method/behavior references:
 numerical oracles and generates small independent fixtures. These packages are
 not host solver runtime dependencies and their source is not distributed here.
 The FP32 recurrence model is Python arithmetic, not execution of a RUDA kernel.
+
+
+## DeepGEMM-Ascend Rust device-program port (v38 correction)
+
+The direct-store BF16 algorithm, persistent scheduler, tile offsets and pipeline
+protocol are translated/adapted from DeepGEMM-Ascend, copyright 2026 DeepSeek,
+MIT license. Source commit: 8491bbb4b8c02a094a2318965f50c70438a3e73c.
+The Rust port retains MIT licensing, the upstream notice and source digests in
+`ruda-ascend-kernels/LICENSE` and `ruda-ascend-kernels/UPSTREAM.json`.
+
+The nine original C++ device headers shipped by v37 are removed. They are not
+compiled, linked, included, or redistributed by the new source tree. The Rust
+program is lowered to generated CANN intrinsic CCE source. That generated target
+source still requires Bisheng; this is not direct rustc-to-Ascend ISA support.
+CANN/DeepJIT/torch_npu binaries and toolchains are not redistributed.

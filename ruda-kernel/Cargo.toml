@@ -8,6 +8,7 @@ license-file = "../LICENSE"
 repository = "https://github.com/shuqi2077/RUDA"
 
 [features]
+lowering-ascend = ["frontend", "dep:ruda-compiler", "ruda-compiler/ascend"]
 source-template = ["frontend", "dep:text_placeholder"]
 device-tensor-quantize = ["device-tensor", "quantization-kernels"]
 device-tensor-dequantize = ["device-tensor", "quantization-kernels"]

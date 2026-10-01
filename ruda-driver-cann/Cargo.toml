@@ -6,5 +6,36 @@ license = "Apache-2.0"
 description = "Dynamically loaded CANN AscendCL runtime interfaces"
 repository = "https://github.com/shuqi2077/RUDA"
 
+[features]
+default = []
+common-ir = ["dep:ruda-compiler", "dep:ruda-core"]
+
 [dependencies]
 libloading = "=0.8.9"
+
+# Artifact integrity, already present in the workspace lockfile.
+sha2 = "=0.10.9"
+
+[dependencies.ruda-compiler]
+path = "../ruda-compiler"
+version = "0.1.3"
+default-features = false
+features = ["ascend"]
+optional = true
+
+[dependencies.ruda-core]
+path = "../ruda-core"
+version = "0.1.3"
+default-features = false
+features = ["compiler-std"]
+optional = true
+
+[[example]]
+name = "common_ir_validate"
+path = "examples/common_ir_validate.rs"
+required-features = ["common-ir"]
+
+[[example]]
+name = "common_rows_validate"
+path = "examples/common_rows_validate.rs"
+required-features = ["common-ir"]

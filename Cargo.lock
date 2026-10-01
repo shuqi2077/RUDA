@@ -5444,6 +5444,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruda-ascend-kernels"
+version = "0.1.0"
+
+[[package]]
 name = "ruda-autodiff"
 version = "0.21.14"
 dependencies = [
@@ -5612,6 +5616,9 @@ name = "ruda-driver-cann"
 version = "0.1.15"
 dependencies = [
  "libloading 0.8.9",
+ "ruda-compiler",
+ "ruda-core",
+ "sha2 0.10.9",
 ]
 
 [[package]]

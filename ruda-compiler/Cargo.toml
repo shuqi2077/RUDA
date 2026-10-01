@@ -8,6 +8,7 @@ license-file = "../LICENSE"
 repository = "https://github.com/shuqi2077/RUDA"
 
 [features]
+ascend = ["dep:ruda-core", "ruda-core/ir", "ruda-core/compiler-std"]
 ptx = ["optimizer-std", "ruda-core/argument-layout", "ruda-core/ir", "ruda-core/compiler-std", "dep:half"]
 spirv = ["optimizer-default", "ruda-core/argument-layout", "ruda-core/ir-default", "dep:half", "dep:serde", "dep:hashbrown", "dep:bitflags", "dep:rspirv"]
 mlir = ["optimizer-std", "ruda-core/argument-layout", "dep:tracel-llvm", "dep:tracel-llvm-bundler"]
@@ -118,3 +119,8 @@ version = "1.0.204"
 features = ["derive", "alloc"]
 default-features = false
 optional = true
+
+[[example]]
+name = "ascend_ir"
+path = "examples/ascend_ir.rs"
+required-features = ["ascend"]

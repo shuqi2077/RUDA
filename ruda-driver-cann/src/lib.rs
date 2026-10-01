@@ -1,6 +1,8 @@
 //! Dynamically loaded AscendCL interfaces; no SDK is needed at build time.
-//! The caller owns initialization, context selection, synchronization and release.
-//! This is not a Ruda tensor backend or an implementation of accelerator kernels.
+//! Borrowed attach() leaves lifecycle with the caller; open_exclusive() owns it.
+//! Explicit ACLNN tensors and DeepGEMM-Ascend kernels are available in `tensor`.
+//! Feature `common-ir` executes the checked FP32 map subset produced by
+//! ruda-compiler/ascend. This is still not a complete generic Runtime/Backend.
 #![deny(unsafe_op_in_unsafe_fn)]
 
 mod api;

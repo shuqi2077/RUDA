@@ -76,6 +76,15 @@ jobs:
             command: |
               cargo test --locked -p ruFFT-host --no-default-features --features std --lib --tests
               cargo check --locked -p ruFFT-host --no-default-features --lib
+          - name: Ascend compiler and CANN host tests
+            key: ascend-v40
+            command: |
+              cargo test --locked -p ruda-ascend-kernels
+              cargo test --locked -p ruda-compiler --no-default-features --features ascend,ptx --lib ascend::
+              cargo test --locked -p ruda-driver-cann --no-default-features --features common-ir --lib
+              cargo check --locked -p ruda-compiler --no-default-features --features ascend --example ascend_ir
+              cargo check --locked -p ruda-driver-cann --features common-ir --examples
+              cargo check --locked -p ruda-kernel --no-default-features --features lowering-ascend --lib
           - name: Core and compiler tests
             key: compiler
             command: cargo test --locked -p ruda-core -p ruda-compiler --lib --features ruda-core/tensor-host-storage,ruda-core/compilation-cache

@@ -1,0 +1,15 @@
+[package]
+name = "ruda-ascend-kernels"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Rust-authored Ascend BF16 device programs and instruction lowering"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "ruda-ascend-emit"
+path = "src/main.rs"
+
+[dependencies]

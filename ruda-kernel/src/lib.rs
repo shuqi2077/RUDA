@@ -42,3 +42,9 @@ pub mod tensor;
 /// Host source templates and compiled Kernel task integration.
 #[cfg(feature = "source-template")]
 pub mod template;
+
+/// Common IR -> Ascend CCE compiler (checked FP32 map subset).
+#[cfg(feature = "lowering-ascend")]
+pub mod ascend {
+    pub use ruda_compiler::ascend::*;
+}

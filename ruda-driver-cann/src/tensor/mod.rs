@@ -1,9 +1,14 @@
-//! Device-resident, synchronous ACLNN operations. This does not implement Ruda's
-//! generic Backend or compile Ruda IR into Ascend kernels.
+//! Device-resident synchronous tensors: ACLNN operations plus explicit native
+//! matrix kernels and optional common-IR vector programs. Not a generic Backend.
 
+pub mod deepgemm;
+/// Explicit execution of checked common RUDA IR compiler artifacts.
+#[cfg(feature = "common-ir")]
+pub mod common_ir;
 mod ffi;
 mod layout;
 mod ops;
+mod owner;
 use crate::{CannApi, CannError, CannLibrary, check_status, sys::*};
 use ffi::*;
 use layout::invalid;
@@ -11,14 +16,16 @@ pub use layout::{DType, TensorLayout};
 pub use ops::ScalarValue;
 use std::{cell::Cell, ffi::c_void, ptr::NonNull, rc::Rc};
 
-/// Thread-local borrowed context/stream. Runtime initialization and finalization
-/// remain with the caller. All public compute operations synchronize before return.
+/// Thread-local context/stream. `attach` borrows resources from the caller;
+/// `open_exclusive` explicitly owns their lifecycle. All public compute
+/// operations synchronize before return.
 pub struct CannSession {
     api: Rc<CannApi>,
     ops: OperatorApi,
     context: AclContext,
     stream: AclStream,
     quiescent: Cell<bool>,
+    owner: Option<Rc<owner::Owner>>,
 }
 
 impl CannSession {
@@ -44,6 +51,7 @@ impl CannSession {
             context,
             stream,
             quiescent: Cell::new(false),
+            owner: None,
         });
         session.synchronize()?;
         Ok(session)
