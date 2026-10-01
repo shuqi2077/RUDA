@@ -6,6 +6,8 @@
 ![Issues](https://img.shields.io/github/issues/shuqi2077/RUDA)
 ![Last commit](https://img.shields.io/github/last-commit/shuqi2077/RUDA?display_timestamp=committer)
 
+**[Website](https://shuqi2077.github.io/RUDA/) · [Documentation](https://shuqi2077.github.io/RUDA/en/docs/index/)**
+
 **English** | [简体中文](https://github.com/shuqi2077/RUDA/blob/main/docs/zh/project.md) | [日本語](https://github.com/shuqi2077/RUDA/blob/main/docs/ja/project.md) | [Deutsch](https://github.com/shuqi2077/RUDA/blob/main/docs/de/project.md) | [Русский](https://github.com/shuqi2077/RUDA/blob/main/docs/ru/project.md)
 
 Ruda is a Rust high-performance computing library, building a complete software stack from GPU kernels, compilers, and runtimes to mathematical computing, tensors, and models.

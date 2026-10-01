@@ -3,6 +3,7 @@
 /target-*/
 /models/
 /.cache/
+/website/_site/
 /.env
 /.env.*
 *.log
