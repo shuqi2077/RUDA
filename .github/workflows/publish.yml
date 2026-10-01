@@ -25,7 +25,7 @@ env:
 
 jobs:
   plan:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_sha == github.sha)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -39,6 +39,10 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
+      - name: Attach verified revision to a release branch
+        run: |
+          git switch --create release-ci
+          git branch --set-upstream-to=origin/main release-ci
       - name: Install Rust
         run: |
           rustup toolchain install 1.97.1 --profile minimal
