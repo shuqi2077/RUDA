@@ -24,7 +24,7 @@ jobs:
       - name: Install reference dependencies
         run: |
           python -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cpu
-          python -m pip install pytest safetensors
+          python -m pip install pytest safetensors numpy
       - name: CPU model and native-region simulator tests
         run: |
           python -m pytest -q \
