@@ -196,6 +196,6 @@ features = [ "frontend", "frontend-default", "frontend-tests", "library", "libra
 
 [dependencies.ruda-compiler]
 path = "../ruda-compiler"
-version = "0.1.4"
+version = "0.1.5"
 default-features = false
 features = [ "wgsl",]
