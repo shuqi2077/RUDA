@@ -38,7 +38,7 @@ ruda-driver-wgpu = { path = "../ruda-driver-wgpu", version = "0.1.15", optional 
 [dev-dependencies]
 bytemuck = "1.16.1"
 derive-new = { version = "0.7.0", default-features = false }
-ruda-core = { path = "../ruda-core", version = "0.1.3", default-features = false, features = ["ir", "ir-serde", "tensor", "compiler", "communication"] }
+ruda-core = { path = "../ruda-core", version = "0.1.4", default-features = false, features = ["ir", "ir-serde", "tensor", "compiler", "communication"] }
 rand = { version = "0.10.0", features = ["std_rng", "thread_rng"], default-features = false }
 serial_test = "3.1.1"
 test-log = { version = "^0.2", features = ["trace"], default-features = false }
