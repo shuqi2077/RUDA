@@ -19,6 +19,8 @@ pub mod interpolate;
 mod dropout;
 mod embedding;
 mod linear;
+/// Manifold-constrained hyper-connections and residual mixing.
+pub mod mhc;
 #[cfg(feature = "sparse")]
 mod sparse_linear;
 mod noise;
@@ -33,6 +35,7 @@ pub use norm::{batch::*, group::*, instance::*, layer::*, local_response::*, rms
 pub use dropout::*;
 pub use embedding::*;
 pub use linear::*;
+pub use mhc::*;
 #[cfg(feature = "sparse")]
 pub use sparse_linear::*;
 pub use noise::*;

@@ -3,7 +3,8 @@
 NF4 weights use row-major bytes (first value in the high nibble), FP32
 absolute maxima per flat block, and the published NF4 codebook. This is a
 versioned RUDA format, not a bitsandbytes/PEFT checkpoint reader. Runtime
-decoding stays on the input device and only materializes an output-row tile.
+decoding stays on the input device: the FP16/BF16 fused path decodes shared
+matrix tiles inside GEMM; the reference/FP32 path decodes bounded row tiles.
 """
 from __future__ import annotations
 
@@ -91,11 +92,19 @@ class _NF4LinearFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, packed, scales, table, outputs, width, block_size, tile_rows):
         flat = x.reshape(-1, width)
-        result = x.new_empty((flat.shape[0], outputs))
-        for start in range(0, outputs, tile_rows):
-            rows = min(tile_rows, outputs-start)
-            weight = _decode(packed, scales, table, start, rows, width, block_size, x.dtype)
-            result[:, start:start+rows].copy_(F.linear(flat, weight))
+        fused = False
+        if x.device.type == 'ruda' and x.dtype in (torch.float16, torch.bfloat16):
+            from . import _nf4_matmul_available
+            fused = _nf4_matmul_available
+        if fused:
+            result = torch.ops.ruda.nf4_matmul(flat.contiguous(), packed, scales, table, outputs, width, block_size, False)
+        else:
+            result = x.new_empty((flat.shape[0], outputs))
+            for start in range(0, outputs, tile_rows):
+                rows = min(tile_rows, outputs-start)
+                weight = _decode(packed, scales, table, start, rows, width, block_size, x.dtype)
+                result[:, start:start+rows].copy_(F.linear(flat, weight))
+        ctx.fused = fused
         ctx.save_for_backward(packed, scales, table)
         ctx.geometry = outputs, width, block_size, tile_rows
         ctx.input_shape, ctx.input_dtype = x.shape, x.dtype
@@ -109,6 +118,10 @@ class _NF4LinearFunction(torch.autograd.Function):
         packed, scales, table = ctx.saved_tensors
         outputs, width, block_size, tile_rows = ctx.geometry
         grad = gradient.reshape(-1, outputs)
+        if ctx.fused:
+            result = torch.ops.ruda.nf4_matmul(grad.to(ctx.input_dtype).contiguous(), packed, scales, table,
+                                 outputs, width, block_size, True)
+            return (result.to(ctx.input_dtype).view(ctx.input_shape),) + (None,) * 7
         result = torch.zeros((grad.shape[0], width), dtype=torch.float32, device=grad.device)
         for start in range(0, outputs, tile_rows):
             rows = min(tile_rows, outputs-start)
@@ -128,8 +141,10 @@ class _NF4LinearFunction(torch.autograd.Function):
 class NF4Linear(nn.Module):
     """Frozen NF4 base with first-order input gradients and no dense shadow.
 
-    Decode workspace is bounded by tile_rows * in_features elements, not by
-    total model size. This is tiled dequantization + matmul, not fused INT4 GEMM.
+    Native NF4 matmul API 1 uses fused shared-tile dequantization and Tensor Core
+    GEMM for FP16/BF16 forward/input gradients, with FP32 accumulators. FP32 and
+    older native libraries retain the bounded tiled-decode path. No failed
+    fused operation is retried through that path.
     """
     def __init__(self, in_features, out_features, packed, scales, *,
                  block_size=64, tile_rows=128, bias=None):
@@ -385,7 +400,8 @@ def merge_lora(model):
 
 
 def load_nf4_safetensors(model, directory, *, target_modules, device,
-                         dtype=torch.bfloat16, block_size=64, tile_rows=128):
+                         dtype=torch.bfloat16, block_size=64, tile_rows=128,
+                         parameter_dtypes=None, buffer_dtypes=None):
     """Load exact model tensor names from HF-style safetensors, one tensor at a time.
 
     Construct the model on meta first. Selected Linear weights are quantized on
@@ -409,12 +425,30 @@ def load_nf4_safetensors(model, directory, *, target_modules, device,
     targets = {name for name, _ in selected}
     parameters = list(model.named_parameters(remove_duplicate=False))
     buffers = list(model.named_buffers(remove_duplicate=False))
+    parameter_dtypes = {} if parameter_dtypes is None else dict(parameter_dtypes)
+    buffer_dtypes = {} if buffer_dtypes is None else dict(buffer_dtypes)
+    for overrides, tensors in ((parameter_dtypes, parameters), (buffer_dtypes, buffers)):
+        known = dict(tensors)
+        if any(name not in known or not known[name].is_floating_point() or kind not in _FLOATS
+               for name, kind in overrides.items()):
+            raise ValueError('dtype overrides require exact floating parameter/buffer names')
+        tied_dtypes = {}
+        for name, tensor in tensors:
+            if name in overrides:
+                previous = tied_dtypes.setdefault(id(tensor), overrides[name])
+                if previous != overrides[name]:
+                    raise ValueError('conflicting dtype overrides for tied tensors')
+        for name, tensor in tensors:
+            if id(tensor) in tied_dtypes:
+                overrides[name] = tied_dtypes[id(tensor)]
     if any(p.device.type != 'meta' for _, p in parameters):
         raise ValueError('construct the base parameters on meta before streaming load')
     owners = {}
     for name, parameter in parameters:
         owners.setdefault(id(parameter), []).append(name)
     for name, layer in selected:
+        if name + '.weight' in parameter_dtypes:
+            raise ValueError(f'exclude dtype-preserved weights from NF4 targets: {name}')
         target_aliases = {path + '.weight' for path, other in selected if other is layer}
         if set(owners[id(layer.weight)]) != target_aliases:
             raise ValueError(f'exclude tied weights from NF4 targets: {name}')
@@ -463,7 +497,7 @@ def load_nf4_safetensors(model, directory, *, target_modules, device,
             dense_weight = read(name + '.weight', base.weight).contiguous()
             packed, scales = pack_nf4(dense_weight, block_size=block_size)
             del dense_weight
-            bias = None if base.bias is None else read(name + '.bias', base.bias).to(dtype=dtype)
+            bias = None if base.bias is None else read(name + '.bias', base.bias).to(dtype=parameter_dtypes.get(name + '.bias', dtype))
             replacements[id(base)] = NF4Linear(base.in_features, base.out_features, packed, scales,
                 block_size=block_size, tile_rows=tile_rows, bias=bias).to(device=device).train(base.training)
         _replace(model, [(name, replacements[id(base)])])
@@ -475,7 +509,9 @@ def load_nf4_safetensors(model, directory, *, target_modules, device,
         parent_name, _, leaf = name.rpartition('.')
         parent = model.get_submodule(parent_name) if parent_name else model
         if id(original) not in loaded:
-            value = read(name, original).to(device=device, dtype=dtype if original.is_floating_point() else original.dtype)
+            storage_dtype = (parameter_dtypes.get(name, dtype) if isinstance(original, nn.Parameter)
+                             else buffer_dtypes.get(name, original.dtype))
+            value = read(name, original).to(device=device, dtype=storage_dtype if original.is_floating_point() else original.dtype)
             loaded[id(original)] = nn.Parameter(value, requires_grad=False) if isinstance(original, nn.Parameter) else value
         setattr(parent, leaf, loaded[id(original)])
     return model

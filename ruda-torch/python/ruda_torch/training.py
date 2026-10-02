@@ -1,7 +1,7 @@
 """Explicit first-order RUDA training primitives; no CPU numerical fallback.
 
-StaticGraph remains inference-only. v29 registers autocast for dense projection ops; this module does not add
-paged-attention backward or make training graph-capturable. Use FP32 losses.
+StaticGraph(training=True) and the general model compiler are opt-in training
+paths. These eager primitives do not capture an optimizer step. Use FP32 losses.
 
 v28 adds native first-order LayerNorm training with FP32 saved statistics.
 """
@@ -512,7 +512,7 @@ class AdamW(torch.optim.Optimizer):
 
 
 class GradScaler:
-    """Explicit single-optimizer loss scaling for ruda_torch.AdamW.
+    """Explicit single-optimizer loss scaling for ruda_torch.AdamW or Muon/MuonAdamW.
 
     Not torch.amp.GradScaler. Autocast is registered separately for RUDA dense projection ops. Accumulate scaled losses before one
     step/update pair. Finite checking happens in step. AdamW(fused_step=True,
@@ -547,8 +547,12 @@ class GradScaler:
         return loss * self._scale
 
     def step(self, optimizer: AdamW, *args, **kwargs):
-        if not isinstance(optimizer, AdamW):
-            raise TypeError('this GradScaler only supports ruda_torch.AdamW')
+        supported = isinstance(optimizer, AdamW)
+        if not supported and __package__:
+            from .optim import Muon
+            supported = isinstance(optimizer, Muon)
+        if not supported:
+            raise TypeError('this GradScaler supports ruda_torch.AdamW, Muon and MuonAdamW')
         if args or kwargs:
             raise TypeError('scaled optimizer step does not support closures or extra arguments')
         if self._stage != 'ready' or not self._scaled:

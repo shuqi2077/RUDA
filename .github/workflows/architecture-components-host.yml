@@ -1,0 +1,33 @@
+name: Architecture components (explicit CPU and C++ host checks)
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'ruda-torch/python/ruda_torch/**'
+      - 'ruda-torch/python/tests/**'
+      - 'ruda-torch/python/examples/train_hybrid_attention.py'
+      - 'tools/validation/validate_architecture_round.py'
+      - 'ruda-nn/src/modules/mhc.rs'
+      - '.github/workflows/architecture-components-host.yml'
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        phase: [core, legacy, cpp, examples]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install pytest numpy
+      - run: sudo apt-get update && sudo apt-get install -y clang
+      - run: python tools/validation/validate_architecture_round.py --phase ${{ matrix.phase }} --output architecture-evidence
+  rust-mhc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test -p ruda-nn --lib mhc

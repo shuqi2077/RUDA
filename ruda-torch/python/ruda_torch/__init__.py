@@ -138,7 +138,34 @@ from .compiler import compile, make_backend, CompiledModel, CompiledFunction, Na
 
 from .quantization import LearnedFakeQuantize, learned_fake_quantize
 
+# Trainable architecture components are composed from same-device tensor ops.
+from .mhc import MHC, MHCResidual, MHCSequential, MHCCoefficients, sinkhorn
+from .sparse_attention import (LightningIndexer, DSAIndexer, indexer_kl_loss,
+    LearnedKVCompressor, CompressedSparseAttention, HeavilyCompressedAttention,
+    CSA, HCA, AttentionOutput, IndexerOutput, CompressedAttentionCache, CompressionState, RotaryEmbedding)
+from .optim import Muon, MuonAdamW, muon_orthogonalize
+from .hybrid_model import MHCTransformerBlock, HybridAttentionLanguageModel, next_token_loss
+
+_sequence_available = False
+if hasattr(_native, "ruda_torch_sequence_api_version") and hasattr(_C, "initialize_sequence"):
+    _native.ruda_torch_sequence_api_version.restype = ctypes.c_uint32
+    if _native.ruda_torch_sequence_api_version() != 1 or getattr(_C, "sequence_api_version", None) != 1:
+        raise RuntimeError("RUDA sequence API mismatch; rebuild Rust and C++ libraries")
+    _C.initialize_sequence([ctypes.cast(getattr(_native, name), ctypes.c_void_p).value
+                            for name in ('ruda_torch_triangular_solve', 'ruda_torch_delta_forward')])
+    _sequence_available = True
+from .sequence_training import gated_delta_rule, solve_triangular
+from . import _native_training_ops
+from . import _sequence_ops
+
 _nf4_available = False
+_nf4_matmul_available = False
+if hasattr(_native, "ruda_torch_nf4_matmul_api_version") and hasattr(_C, "initialize_nf4_matmul"):
+    _native.ruda_torch_nf4_matmul_api_version.restype = ctypes.c_uint32
+    if _native.ruda_torch_nf4_matmul_api_version() != 1 or getattr(_C, "nf4_matmul_api_version", None) != 1:
+        raise RuntimeError("RUDA NF4 matmul API mismatch; rebuild Rust and C++ libraries")
+    _C.initialize_nf4_matmul(ctypes.cast(_native.ruda_torch_nf4_matmul, ctypes.c_void_p).value)
+    _nf4_matmul_available = True
 if hasattr(_native, "ruda_torch_nf4_api_version") and hasattr(_C, "initialize_nf4"):
     _native.ruda_torch_nf4_api_version.restype = ctypes.c_uint32
     if _native.ruda_torch_nf4_api_version() != 1 or getattr(_C, "nf4_api_version", None) != 1:
@@ -148,3 +175,5 @@ if hasattr(_native, "ruda_torch_nf4_api_version") and hasattr(_C, "initialize_nf
 from .finetuning import (LoRALinear, NF4Linear, inject_lora, quantize_nf4,
                          adapter_state_dict, load_adapter_state_dict, merge_lora,
                          load_nf4_safetensors, finetune_state_dict, load_finetune_state_dict)
+from .causal_finetuning import (chunked_lm_cross_entropy, SFTCollator, CausalLMFinetuner,
+                               SFTTrainer, load_hf_nf4_model, activation_checkpoint_modules)

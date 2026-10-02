@@ -24,12 +24,15 @@ jobs:
       - name: Install reference dependencies
         run: |
           python -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cpu
-          python -m pip install pytest safetensors numpy
+          python -m pip install pytest safetensors numpy transformers==4.57.1 accelerate==1.13.0
       - name: CPU model and native-region simulator tests
         run: |
           python -m pytest -q \
             ruda-torch/python/tests/test_model_compile.py \
             ruda-torch/python/tests/test_finetuning.py \
+            ruda-torch/python/tests/test_causal_finetuning.py \
+            ruda-torch/python/tests/test_sequence_training.py \
+            ruda-torch/python/tests/test_native_training_contracts.py \
             ruda-torch/python/tests/test_compile_native.py \
             ruda-torch/python/tests/test_static_graph_spec.py \
             ruda-torch/python/tests/test_static_graph_optimizer.py \

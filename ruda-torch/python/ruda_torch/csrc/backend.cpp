@@ -183,6 +183,7 @@ struct Argument {
 #include "training.inc"
 #include "router.inc"
 #include "nf4.inc"
+#include "sequence_training.inc"
 
 class PagedPlanBridge {
   void* plan_=nullptr;
@@ -482,6 +483,21 @@ TORCH_LIBRARY_IMPL(aten, AutocastPrivateUse1, m) {
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.attr("abi_version") = 10;
+  m.attr("nf4_matmul_api_version") = 1;
+  m.def("initialize_nf4_matmul", [](uintptr_t address) {
+    TORCH_CHECK(allocate_native && address && !nf4_matmul_native, "invalid or repeated NF4 matmul initialization");
+    nf4_matmul_native=reinterpret_cast<NF4Matmul>(address);
+  });
+  m.def("nf4_matmul", nf4_matmul);
+  m.attr("sequence_api_version") = 1;
+  m.def("initialize_sequence", [](std::vector<uintptr_t> addresses) {
+    TORCH_CHECK(allocate_native && addresses.size()==2 && addresses[0] && addresses[1] && !triangular_native,
+                "invalid or repeated sequence initialization");
+    triangular_native=reinterpret_cast<TriangularSolve>(addresses[0]);
+    delta_native=reinterpret_cast<DeltaForward>(addresses[1]);
+  });
+  m.def("triangular_solve", triangular_solve);
+  m.def("delta_forward", delta_forward);
   m.def("initialize", [](std::vector<uintptr_t> addresses) {
     TORCH_CHECK(addresses.size() == 13 && !allocate_native, "invalid or repeated RUDA initialization");
     for (auto address : addresses) TORCH_CHECK(address != 0, "null RUDA ABI function");

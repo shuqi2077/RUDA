@@ -12,7 +12,7 @@ from torch.utils.checkpoint import checkpoint
 def r():
     assert os.environ.get('RUDA_CUDA_COMPILER') == 'ptx'
     import ruda_torch
-    assert ruda_torch._nf4_available and ruda_torch._training_available
+    assert ruda_torch._nf4_available and ruda_torch._nf4_matmul_available and ruda_torch._training_available
     return ruda_torch
 
 
