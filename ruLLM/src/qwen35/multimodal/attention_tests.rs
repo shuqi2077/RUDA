@@ -114,7 +114,7 @@ fn real_full_attention_components() {
     let raw: serde_json::Value = serde_json::from_slice(&fs::read(model_dir.join("config.json")).unwrap()).unwrap();
     let c: Qwen35TextConfig = serde_json::from_value(raw["text_config"].clone()).unwrap();
     let mut checkpoint = crate::huggingface::checkpoint::Checkpoint::open(&model_dir).unwrap();
-    let mut w = crate::qwen35::loading::Weights::<B> { checkpoint: &mut checkpoint, device: &device };
+    let mut w = crate::qwen35::loading::Weights::<B> { checkpoint: &mut checkpoint, device: &device, quantization: None, quantized_dtype: DType::F32, dequantized_awq_linears: 0 };
     let prefix = "model.language_model.layers.3.self_attn";
     let layer = attention::Attention {
         q: w.linear(&format!("{prefix}.q_proj"), c.hidden_size, 2*h*d, c.attention_bias).unwrap(),

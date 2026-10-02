@@ -1349,6 +1349,8 @@ impl RelativeOps for DistributedOperationIr {
             DistributedOperationIr::AllReduce(desc) => {
                 DistributedOperationIr::AllReduce(AllReduceOpIr {
                     tensor: desc.tensor.to_relative(converter),
+                    op: desc.op,
+                    device_ids: desc.device_ids.clone(),
                     out: desc.out.to_relative(converter),
                 })
             }

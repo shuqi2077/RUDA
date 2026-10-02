@@ -52,6 +52,8 @@ pub struct Runner<B: BackendIr> {
     // Mutex for the mutable handles
     context: Arc<Mutex<RunnerContext<B>>>,
     device: B::Device,
+    #[cfg(feature = "distributed")]
+    native_collectives: Option<NativeCollectives<B>>,
 }
 
 impl<B: BackendIr> core::fmt::Debug for Runner<B> {
@@ -70,6 +72,60 @@ impl<B: BackendIr> Runner<B> {
                 handles: HandleContainer::new(),
             })),
             device,
+            #[cfg(feature = "distributed")]
+            native_collectives: None,
+        }
+    }
+
+    /// Create a runner forwarding collectives to a native distributed backend.
+    /// Normal runners do not gain a hidden host-staged fallback.
+    #[cfg(feature = "distributed")]
+    pub fn new_distributed(device: B::Device) -> Self
+    where B: ruda_tensor::distributed::DistributedBackend {
+        fn enqueue<B: BackendIr + ruda_tensor::distributed::DistributedBackend>(
+            tensor: ruda_tensor::tensor::FloatTensor<B>, op: ruda_tensor::distributed::ReduceOperation,
+            devices: alloc::vec::Vec<ruda_tensor::DeviceId>) -> ruda_tensor::tensor::FloatTensor<B>
+        {
+            // The Router returns CollectiveTensor; its resolve() invokes native
+            // sync_collective before the resulting float handle is exposed.
+            unsafe { B::all_reduce(tensor, op, devices).assume_resolved() }
+        }
+        let mut runner = Self::new(device);
+        runner.native_collectives = Some(NativeCollectives {
+            enqueue: enqueue::<B>, synchronize: B::sync_collective,
+        });
+        runner
+    }
+
+    #[cfg(feature = "distributed")]
+    pub(crate) fn sync_native_collective(&self) {
+        let native = self.native_collectives.as_ref()
+            .expect("use NativeDistributedChannel or Runner::new_distributed");
+        (native.synchronize)(&self.device);
+    }
+
+    #[cfg(feature = "distributed")]
+    fn run_distributed(&self, handles: &mut HandleContainer<B::Handle>,
+        op: &ruda_tensor::graph::DistributedOperationIr)
+    {
+        use ruda_tensor::{DeviceOps, TensorMetadata};
+        let native = self.native_collectives.as_ref()
+            .expect("distributed IR requires NativeDistributedChannel or Runner::new_distributed");
+        match op {
+            ruda_tensor::graph::DistributedOperationIr::AllReduce(desc) => {
+                let devices = desc.device_ids.iter().map(|&(kind, index)| ruda_tensor::DeviceId::new(kind,index))
+                    .collect::<alloc::vec::Vec<_>>();
+                let mut unique = devices.clone(); unique.sort(); unique.dedup();
+                assert!(!devices.is_empty() && unique.len() == devices.len(), "invalid collective group");
+                assert!(devices.contains(&self.device.id()), "runner device is not a collective participant");
+                assert_eq!(desc.tensor.shape, desc.out.shape, "collective output shape mismatch");
+                assert_eq!(desc.tensor.dtype, desc.out.dtype, "collective output dtype mismatch");
+                let tensor = handles.get_float_tensor::<B>(&desc.tensor);
+                assert_eq!(tensor.shape(), desc.tensor.shape, "collective input metadata mismatch");
+                assert_eq!(tensor.dtype(), desc.tensor.dtype, "collective input dtype mismatch");
+                let output = (native.enqueue)(tensor, desc.op, devices);
+                handles.register_float_tensor::<B>(&desc.out.id, output);
+            }
         }
     }
 
@@ -181,7 +237,7 @@ impl<B: BackendIr> RunnerClient for Runner<B> {
                 handles.remove_handle(repr.id);
             }
             #[cfg(feature = "distributed")]
-            OperationIr::Distributed(_op) => todo!(),
+            OperationIr::Distributed(op) => self.run_distributed(handles, op),
         }
     }
 
@@ -228,6 +284,8 @@ impl<B: BackendIr> RunnerClient for Runner<B> {
     }
 
     fn sync(&self) -> Result<(), ExecutionError> {
+        #[cfg(feature = "distributed")]
+        if let Some(native) = &self.native_collectives { (native.synchronize)(&self.device); }
         B::sync(&self.device)
     }
 
@@ -243,4 +301,13 @@ impl<B: BackendIr> RunnerClient for Runner<B> {
     fn dtype_usage(&self, dtype: DType) -> ruda_tensor::DTypeUsageSet {
         B::dtype_usage(&self.device, dtype)
     }
+}
+
+
+#[cfg(feature = "distributed")]
+#[derive(Clone)]
+struct NativeCollectives<B: BackendIr> {
+    enqueue: fn(ruda_tensor::tensor::FloatTensor<B>, ruda_tensor::distributed::ReduceOperation,
+        alloc::vec::Vec<ruda_tensor::DeviceId>) -> ruda_tensor::tensor::FloatTensor<B>,
+    synchronize: fn(&B::Device),
 }

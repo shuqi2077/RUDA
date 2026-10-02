@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::atomic::AtomicU32};
 
-use crate::{NodeId, PeerId};
+use crate::{NodeId, PeerId, AllReduceStrategy, ReduceOperation, ReduceStrategy, BroadcastStrategy};
+use ruda_tensor::DType;
 use ruda_communication::{Address, CommunicationError};
 use ruda_core::id::IdGenerator;
 use serde::{Deserialize, Serialize};
@@ -65,8 +66,20 @@ pub(crate) enum RemoteRequest {
         peers: Vec<PeerId>,
     },
 
+    /// Agree on collective metadata before any data-plane operation.
+    Begin(CollectiveSpec),
+
     /// Unregister node
     Finish,
+}
+
+/// All participants must agree on their next collective, including legacy
+/// all-reduce, so differing operation orders fail before data transfer begins.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) enum CollectiveSpec {
+    AllReduce { op: ReduceOperation, strategy: AllReduceStrategy, shape: Vec<usize>, dtype: DType },
+    Reduce { root: PeerId, op: ReduceOperation, strategy: ReduceStrategy, shape: Vec<usize>, dtype: DType },
+    Broadcast { strategy: BroadcastStrategy, metadata: Option<(Vec<usize>, DType)> },
 }
 
 /// Responses for each server request
@@ -82,6 +95,9 @@ pub(crate) enum RemoteResponse {
         num_global_devices: u32,
     },
 
+    /// Agreement and a unique ID for the ensuing rooted tensor transfer.
+    Begin { root_node: NodeId, transfer_id: u64 },
+
     // Finish
     FinishAck,
 
@@ -94,6 +110,20 @@ pub(crate) enum RemoteResponse {
 pub enum GlobalCollectiveError {
     /// Operations that can't be done before registering
     AllReduceBeforeRegister,
+    /// Collective issued before all participants were registered.
+    CollectiveBeforeRegister,
+    /// Collective kind, root, strategy, shape or dtype differs between nodes.
+    CollectiveParamsMismatch,
+    /// Root peer does not belong to this collective.
+    UnknownRoot(PeerId),
+    /// Broadcast did not provide a tensor anywhere.
+    BroadcastNoTensor,
+    /// More than one node provided a broadcast tensor.
+    BroadcastMultipleTensors,
+    /// Zero is not a valid tree arity.
+    InvalidTreeArity,
+    /// Peer identifiers must be globally unique.
+    DuplicatePeer(PeerId),
     /// Ring all-reduce can't be done if all tensor dimensions are smaller than the number of nodes.
     RingReduceImpossible,
 

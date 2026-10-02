@@ -35,6 +35,7 @@ mod backend;
 pub(crate) mod runtime;
 
 pub use backend::*;
+pub use tensor::AutodiffQTensor;
 
 /// A facade around for HashMap and HashSet.
 /// This avoids elaborate import wrangling having to happen in every module.

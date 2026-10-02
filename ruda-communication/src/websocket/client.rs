@@ -67,7 +67,7 @@ impl CommunicationChannel for WsClientChannel {
                 Err(err) => Err(WsClientError::Tungstenite(err)),
                 msg => Err(WsClientError::UnknownMessage(format!("{msg:?}"))),
             },
-            None => todo!(),
+            None => Ok(None),
         }
     }
 

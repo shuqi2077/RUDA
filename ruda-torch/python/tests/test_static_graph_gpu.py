@@ -205,3 +205,28 @@ def test_v24_nondefault_stream_reuse_and_close(r):
                            infer_dependencies=True,track_completion=True) as g:
             result=g.replay()['y'];g.wait_completion();assert g.query_completion()
             assert torch.isfinite(result.cpu()).all()
+
+@pytest.mark.parametrize('dtype',[torch.float32,torch.float16,torch.bfloat16])
+def test_training_bridge_native_forward_and_same_device_backward(r,dtype):
+    """Real native training smoke test; never counted as covered by CPU mirrors."""
+    torch.manual_seed(740)
+    reference_x=torch.randn(2,17,dtype=dtype,requires_grad=True)
+    reference_u=torch.randn_like(reference_x,requires_grad=True)
+    reference_w=torch.randn(17,dtype=dtype,requires_grad=True)
+    x=reference_x.detach().to('ruda').requires_grad_()
+    u=reference_u.detach().to('ruda').requires_grad_()
+    w=reference_w.detach().to('ruda').requires_grad_()
+    nodes=[r.GraphOp.silu('s','x'),r.GraphOp.mul('p','s','u'),
+           r.GraphOp.rms_norm('y','p','w',eps=1e-3)]
+    s=(reference_x.float()/(1.+(-reference_x.float()).exp())).to(dtype)
+    p=(s.float()*reference_u.float()).to(dtype)
+    expected=(p.float()*torch.rsqrt(p.float().square().mean(-1,keepdim=True)+1e-3)
+              *reference_w.float()).to(dtype)
+    expected.float().sum().backward()
+    with r.StaticGraph({'x':x,'u':u,'w':w},nodes,training=True,optimize=True,reuse_workspace=True) as graph:
+        first=graph.replay()['y'];second=graph.replay()['y']
+        assert first.data_ptr()!=second.data_ptr()
+        check(first,expected.detach())
+        first.float().sum().backward()
+        check(x.grad,reference_x.grad);check(u.grad,reference_u.grad);check(w.grad,reference_w.grad)
+        assert graph.info['backward_execution']=='same-device-eager'

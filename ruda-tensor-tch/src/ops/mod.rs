@@ -3,7 +3,8 @@ mod base;
 mod bool_tensor;
 mod int_tensor;
 mod module;
-mod qtensor;
+mod deform;
+pub(crate) mod qtensor;
 mod tensor;
 mod transaction;
 

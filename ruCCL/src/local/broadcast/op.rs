@@ -77,6 +77,7 @@ impl<B: Backend> BroadcastOp<B> {
                 return Err(CollectiveError::BroadcastMultipleTensors);
             }
             self.tensor = input;
+            self.root = Some(caller);
         }
 
         self.calls.push(BroadcastOpCall {
@@ -139,7 +140,7 @@ impl<B: Backend> BroadcastOp<B> {
 
             self.tensor = Some(
                 global_client
-                    .broadcast(self.tensor.clone(), strategy)
+                    .broadcast(self.tensor.clone(), strategy, &self.calls[0].device)
                     .await
                     .map_err(CollectiveError::Global)?,
             )

@@ -5,6 +5,7 @@ mod config;
 mod delta;
 mod layer;
 mod loading;
+mod quantized_loading;
 mod vision;
 mod multimodal;
 pub use multimodal::{Qwen35MultimodalCache, Qwen35MultimodalModel, load_huggingface_qwen35_multimodal};

@@ -286,6 +286,10 @@ pub struct CatOpIr {
 #[allow(missing_docs)]
 pub struct AllReduceOpIr {
     pub tensor: TensorIr,
+    /// Reduction semantics travel with the graph instead of an out-of-band closure.
+    pub op: crate::distributed::ReduceOperation,
+    /// Native device IDs encoded as (type_id, index_id) for serialization.
+    pub device_ids: Vec<(u16, u16)>,
     pub out: TensorIr,
 }
 

@@ -36,6 +36,14 @@ torch.utils.rename_privateuse1_backend("ruda")
 def is_available():
     return True
 
+def is_initialized():
+    """The native bridge is initialized before the device module is registered."""
+    return True
+
+def _lazy_init():
+    # Importing this module already performs native ABI checks/initialization.
+    return None
+
 def device_count():
     return 1
 
@@ -89,8 +97,8 @@ if hasattr(_native, "ruda_torch_graph_api_version") and hasattr(_C, "initialize_
     _graph_available = True
 from ._graph import StaticGraph, GraphOp
 
-# Training is a separately negotiated extension, not removal of StaticGraph's
-# inference-only safeguards. No CPU fallback is installed.
+# Training is a separately negotiated extension. Explicit StaticGraph training
+# and model compilation remain opt-in. No CPU fallback is installed.
 _training_available = False
 _C.storage_mean_api = 0
 if hasattr(_native, "ruda_torch_training_api_version") and hasattr(_C, "initialize_training"):
@@ -124,3 +132,6 @@ if hasattr(_native, "ruda_torch_paged_backward_api_version") and hasattr(_C, "in
         raise RuntimeError("RUDA paged backward API mismatch; rebuild Rust and C++ extensions")
     _C.initialize_paged_backward(version)
     _paged_backward_available=True
+
+# General model capture is layered above the additive native graph API.
+from .compiler import compile, make_backend, CompiledModel, CompiledFunction, NativeCoverageError, GraphExecutionError

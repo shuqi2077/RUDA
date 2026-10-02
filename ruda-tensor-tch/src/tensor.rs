@@ -91,10 +91,24 @@ impl TensorMetadata for TchTensor {
     }
 }
 
-impl ruda_tensor::QTensorPrimitive for TchTensor {
-    fn scheme(&self) -> &ruda_tensor::quantization::QuantScheme {
-        unimplemented!("Quantization is not supported")
-    }
+/// Integer quantized values with separate, same-device FP32 scales.
+/// Sub-byte values are stored unpacked in i8, not in a packed INT4 GEMM layout.
+#[derive(Debug, Clone)]
+pub struct TchQTensor {
+    /// Logical signed quantized values.
+    pub values: TchTensor,
+    /// Per-tensor or per-block FP32 scales.
+    pub scales: TchTensor,
+    /// Logical quantizer; in-memory storage is always Native.
+    pub scheme: ruda_tensor::quantization::QuantScheme,
+}
+impl TensorMetadata for TchQTensor {
+    fn dtype(&self) -> DType { DType::QFloat(self.scheme) }
+    fn shape(&self) -> Shape { self.values.shape() }
+    fn rank(&self) -> usize { self.values.rank() }
+}
+impl ruda_tensor::QTensorPrimitive for TchQTensor {
+    fn scheme(&self) -> &ruda_tensor::quantization::QuantScheme { &self.scheme }
 }
 
 impl core::fmt::Display for TchTensor {

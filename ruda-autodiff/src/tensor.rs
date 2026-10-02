@@ -237,3 +237,32 @@ impl<B: DistributedBackend> AutodiffTensor<B> {
         grads
     }
 }
+
+
+/// Quantized storage with an optional differentiable dequantized surrogate.
+///
+/// Input gradients use an unclipped identity straight-through estimator (STE).
+/// Quantization parameters are constants, not learnable parameters.
+#[derive(Debug, Clone)]
+pub struct AutodiffQTensor<B: Backend> {
+    /// Quantized storage owned by the wrapped backend.
+    pub primitive: B::QuantizedTensorPrimitive,
+    pub(crate) surrogate: Option<AutodiffTensor<B>>,
+}
+
+impl<B: Backend> AutodiffQTensor<B> {
+    pub(crate) fn untracked(primitive: B::QuantizedTensorPrimitive) -> Self {
+        Self { primitive, surrogate: None }
+    }
+}
+
+impl<B: Backend> TensorMetadata for AutodiffQTensor<B> {
+    fn dtype(&self) -> ruda_core::tensor::DType { self.primitive.dtype() }
+    fn shape(&self) -> ruda_core::tensor::Shape { self.primitive.shape() }
+    fn rank(&self) -> usize { self.primitive.rank() }
+}
+impl<B: Backend> ruda_tensor::QTensorPrimitive for AutodiffQTensor<B> {
+    fn scheme(&self) -> &ruda_core::tensor::QuantScheme {
+        ruda_tensor::QTensorPrimitive::scheme(&self.primitive)
+    }
+}

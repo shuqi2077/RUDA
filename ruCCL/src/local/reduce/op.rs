@@ -127,10 +127,18 @@ impl<B: Backend> ReduceOp<B> {
             .map(|call| (call.caller, call.input.clone()))
             .collect();
 
-        // For Centralized and Tree, we only need to do a reduce here, we'll do a broadcast later
+        // The global root need not belong to this node. Sum onto a local peer;
+        // the root node still sums onto the requested root's own device.
+        let local_root = if self.calls.iter().any(|call| call.caller == self.root) {
+            self.root
+        } else if global_client.is_some() {
+            self.calls[0].caller
+        } else {
+            return Err(CollectiveError::ReduceRootMismatch);
+        };
         let mut local_sum = match config.local_reduce_strategy {
-            ReduceStrategy::Centralized => reduce_sum_centralized::<B>(tensors, &self.root),
-            ReduceStrategy::Tree(arity) => reduce_sum_tree::<B>(tensors, &self.root, arity),
+            ReduceStrategy::Centralized => reduce_sum_centralized::<B>(tensors, &local_root),
+            ReduceStrategy::Tree(arity) => reduce_sum_tree::<B>(tensors, &local_root, arity),
         };
 
         // Do aggregation on a global level with the main tensor

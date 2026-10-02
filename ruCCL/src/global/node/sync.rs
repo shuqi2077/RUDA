@@ -1,100 +1,72 @@
-use std::{
-    marker::PhantomData,
-    sync::{Arc, Mutex},
-    vec,
-};
-
+use std::{collections::{HashMap, HashSet}, marker::PhantomData,
+    sync::{Arc, Mutex, atomic::{AtomicU64, Ordering}}};
 use ruda_communication::{CommunicationChannel, Message, Protocol, ProtocolClient};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Notify, RwLock};
-
 use crate::{NodeId, node::base::NodeState};
 
-/// Handles the status of sync requests from other nodes
+/// Generation-tagged barrier: preserves early next-round messages, deduplicates
+/// peers, removes completed state, and registers waiters before checking state.
 pub(crate) struct SyncService<P: Protocol> {
-    /// Current node's state, shared with the thread that does aggregations
     node_state: Arc<RwLock<Option<NodeState>>>,
-    /// The number of peers that have requested to sync with us since the last successful sync.
-    syncing_peers: Mutex<Vec<NodeId>>,
-    /// Notification on each incoming sync request
+    rounds: Mutex<HashMap<u64, HashSet<NodeId>>>,
+    generation: AtomicU64,
+    completed: AtomicU64,
     sync_notif: Notify,
-
     _p: PhantomData<P>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct SyncRequest(NodeId);
+struct SyncRequest { node: NodeId, generation: u64 }
 
 impl<P: Protocol> SyncService<P> {
     pub fn new(node_state: Arc<RwLock<Option<NodeState>>>) -> Self {
-        Self {
-            node_state,
-            syncing_peers: Mutex::new(vec![]),
-            sync_notif: Notify::new(),
-            _p: PhantomData,
-        }
+        Self { node_state, rounds: Mutex::new(HashMap::new()), generation: AtomicU64::new(0),
+            completed: AtomicU64::new(0), sync_notif: Notify::new(), _p: PhantomData }
     }
-
-    fn add_syncing_peer(&self, peer: NodeId) {
-        let mut syncing_peers = self.syncing_peers.lock().unwrap();
-        syncing_peers.push(peer);
+    fn add_syncing_peer(&self, peer: NodeId, generation: u64) {
+        let mut rounds = self.rounds.lock().unwrap();
+        if generation < self.completed.load(Ordering::SeqCst) { return; }
+        rounds.entry(generation).or_default().insert(peer);
+        drop(rounds);
+        self.sync_notif.notify_waiters();
     }
-
-    /// Sync with all peers.
+    /// Calls on a node must be serialized, as in the local collective server.
     pub async fn sync(&self) {
-        // we can't sync while we register
-        let node_state = self.node_state.read().await;
-        let node_state = node_state
-            .as_ref()
-            .expect("Trying to sync a node before having registered to the orchestrator");
-
-        // this peer is syncing
-        self.add_syncing_peer(node_state.node_id);
-        for (id, addr) in &node_state.nodes {
-            if *id == node_state.node_id {
-                continue;
-            }
-
-            let mut connection = P::Client::connect(addr.clone(), "sync")
-                .await
-                .expect("Couldn't connect to peer for sync");
-            let msg = SyncRequest(node_state.node_id);
-            let sync_bytes = rmp_serde::to_vec(&msg).unwrap();
-            connection
-                .send(Message::new(sync_bytes.into()))
-                .await
-                .expect("Peer closed connection unexpectedly");
+        let guard = self.node_state.read().await;
+        let state = guard.as_ref().expect("sync before registration");
+        let generation = self.generation.fetch_add(1, Ordering::SeqCst);
+        self.add_syncing_peer(state.node_id, generation);
+        for (id, address) in &state.nodes {
+            if *id == state.node_id { continue; }
+            let mut channel = P::Client::connect(address.clone(), "sync").await
+                .expect("could not connect to peer for sync");
+            let data = rmp_serde::to_vec(&SyncRequest { node: state.node_id, generation }).unwrap();
+            channel.send(Message::new(data.into())).await.expect("peer closed sync connection");
         }
         loop {
+            let notified = self.sync_notif.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             {
-                // compare currently synced peers with list of all nodes
-                let mut syncing_peers = self.syncing_peers.lock().unwrap().to_vec();
-                syncing_peers.sort();
-
-                let mut all_node_ids = node_state.nodes.keys().cloned().collect::<Vec<_>>();
-                all_node_ids.sort();
-
-                if syncing_peers == all_node_ids {
-                    // all nodes have synced
-                    syncing_peers.clear();
+                let mut rounds = self.rounds.lock().unwrap();
+                if rounds.get(&generation).is_some_and(|peers| {
+                    peers.len() == state.nodes.len() && state.nodes.keys().all(|n| peers.contains(n))
+                }) {
+                    rounds.remove(&generation);
+                    self.completed.store(generation + 1, Ordering::SeqCst);
                     return;
                 }
             }
-            // Wait for the next sync to come in
-            self.sync_notif.notified().await
+            notified.await;
         }
     }
-
     pub async fn handle_sync_connection<C: CommunicationChannel>(&self, mut channel: C) {
-        let msg = channel.recv().await.unwrap();
-        let Some(msg) = msg else {
-            return;
-        };
-
-        let msg = rmp_serde::from_slice::<SyncRequest>(&msg.data).unwrap();
-
-        self.add_syncing_peer(msg.0);
-
-        self.sync_notif.notify_waiters();
+        let Ok(Some(message)) = channel.recv().await else { return; };
+        let Ok(request) = rmp_serde::from_slice::<SyncRequest>(&message.data) else { return; };
+        let guard = self.node_state.read().await;
+        let Some(state) = guard.as_ref() else { return; };
+        if !state.nodes.contains_key(&request.node) { return; }
+        self.add_syncing_peer(request.node, request.generation);
     }
 }

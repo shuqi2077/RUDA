@@ -70,20 +70,28 @@ macro_rules! impl_multi_backend_types {
             }
 
             impl<$DefaultBackend: Backend, $($OtherBackend: Backend),+> ruda_core::device::Device for MultiDevice<$DefaultBackend, $($OtherBackend),+> {
-                fn from_id(_device_id: DeviceId) -> Self {
-                    // TODO: Should be fix with the new router backend.
-                    Default::default()
-                }
-
-                fn to_id(&self) -> DeviceId {
-                    match self {
-                        Self::$DefaultBackend(device) => device.id(),
-                        $(
-                            Self::$OtherBackend(device) => device.id(),
-                        )+
+                fn from_id(device_id: DeviceId) -> Self {
+                    let backends = [stringify!($DefaultBackend), $(stringify!($OtherBackend)),+];
+                    let slot = (device_id.type_id >> 14) as usize;
+                    let native = DeviceId::new(device_id.type_id & 0x3fff, device_id.index_id);
+                    match *backends.get(slot).expect("invalid router backend slot") {
+                        stringify!($DefaultBackend) => Self::$DefaultBackend(
+                            <$DefaultBackend::Device as ruda_core::device::Device>::from_id(native)),
+                        $(stringify!($OtherBackend) => Self::$OtherBackend(
+                            <$OtherBackend::Device as ruda_core::device::Device>::from_id(native)),)+
+                        _ => unreachable!(),
                     }
                 }
-
+                fn to_id(&self) -> DeviceId {
+                    let backends = [stringify!($DefaultBackend), $(stringify!($OtherBackend)),+];
+                    let (native, slot) = match self {
+                        Self::$DefaultBackend(device) => (device.id(), 0),
+                        $(Self::$OtherBackend(device) => (device.id(),
+                            backends.iter().position(|name| *name == stringify!($OtherBackend)).unwrap() as u16),)+
+                    };
+                    assert!(native.type_id < 0x4000, "native device type uses reserved router slot bits");
+                    DeviceId::new(native.type_id | (slot << 14), native.index_id)
+                }
             }
 
             impl<$DefaultBackend: Backend, $($OtherBackend: Backend),+> DeviceOps for MultiDevice<$DefaultBackend, $($OtherBackend),+> {}
@@ -243,6 +251,36 @@ macro_rules! impl_multi_backend_types {
                         name.push_str(&format!(", {}", $OtherBackend::name(&<$OtherBackend::Device as Default>::default())));
                     )+
                     format!("direct<({})>", name)
+                }
+            }
+
+            #[cfg(feature = "distributed")]
+            impl<$DefaultBackend: BackendIr + ruda_tensor::distributed::DistributedBackend,
+                $($OtherBackend: BackendIr + ruda_tensor::distributed::DistributedBackend),+, Br>
+                crate::NativeCollectiveChannel for DirectChannel<($DefaultBackend, $($OtherBackend),+), Br>
+            where
+                Br: MultiBackendBridge<TensorHandle = Handle<$DefaultBackend, $($OtherBackend),+>,
+                    Device = MultiDevice<$DefaultBackend, $($OtherBackend),+>>,
+            {
+                fn init_native_client(device: &Self::Device) -> Self::Client {
+                    match device {
+                        MultiDevice::$DefaultBackend(device) => MultiRunnerClient::$DefaultBackend(Runner::new_distributed(device.clone())),
+                        $(MultiDevice::$OtherBackend(device) => MultiRunnerClient::$OtherBackend(Runner::new_distributed(device.clone())),)+
+                    }
+                }
+                fn sync_native(client: &Self::Client) {
+                    match client {
+                        MultiRunnerClient::$DefaultBackend(runner) => runner.sync_native_collective(),
+                        $(MultiRunnerClient::$OtherBackend(runner) => runner.sync_native_collective(),)+
+                    }
+                }
+                fn native_group(device: &Self::Device, devices: &[DeviceId]) -> alloc::vec::Vec<DeviceId> {
+                    let slot = device.id().type_id >> 14;
+                    devices.iter().map(|id| {
+                        assert_eq!(id.type_id >> 14, slot,
+                            "native Router collectives require one backend slot; move tensors explicitly before reducing");
+                        DeviceId::new(id.type_id & 0x3fff, id.index_id)
+                    }).collect()
                 }
             }
 
@@ -440,5 +478,25 @@ mod tests {
 
         let tensor2_1 = tensor2.clone().to_device(&device1);
         tensor2.into_data().assert_eq(&tensor2_1.into_data(), true);
+    }
+}
+
+#[cfg(test)]
+mod device_id_tests {
+    use super::*;
+    use ruda_core::device::Device;
+    use ruda_tensor_host::{Host, HostDevice};
+    type D = duo::MultiDevice<Host,Host>;
+    type C = crate::DirectByteChannel<(Host,Host)>;
+
+    #[test]
+    fn identical_native_ids_in_different_backend_slots_do_not_collide() {
+        let first = D::B1(HostDevice);
+        let second = D::B2(HostDevice);
+        assert_ne!(first.id(),second.id());
+        assert_eq!(D::from_id(first.id()),first);
+        assert_eq!(D::from_id(second.id()),second);
+        assert!(matches!(crate::get_client::<C>(&first),duo::MultiRunnerClient::B1(_)));
+        assert!(matches!(crate::get_client::<C>(&second),duo::MultiRunnerClient::B2(_)));
     }
 }

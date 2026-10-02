@@ -124,7 +124,7 @@ Compaction uses effective KV lengths of sequences with queries, not all allocate
 
 See the [ruDNN guide](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/rudnn.md) for the underlying Rust paged-attention and MoE interfaces, and the [ruLLM guide](https://github.com/shuqi2077/RUDA/blob/main/docs/en/model-inference.md) for model integration.
 
-## Optional fixed-address inference graphs (v24)
+## Optional fixed-address subgraphs (v24 and opt-in training)
 
 `ruda_torch.StaticGraph` connects selected native PyTorch tensor operations to
 RUDA's existing `CudaGraph`, rather than a separate CUDA extension/runtime.
@@ -135,8 +135,9 @@ Supported explicit nodes: copy, same-shape add/mul, SiLU, last-axis RMSNorm and 
 Opt-in `optimize=True` removes unused nodes and fuses single-use left SiLU/mul;
 `reuse_workspace=True` reuses only equal-spec scratch storage after its last read.
 Returned outputs remain dedicated. Both options default to False pending GPU validation.
-This is not arbitrary model/stream capture, an autograd implementation or a
-replacement for `torch.cuda.graph`. See `docs/zh/static-pytorch-graphs.md` in the
+Explicit `training=True` enables the first-order gradient bridge described in
+the static-graph guide. This low-level API is not arbitrary model/stream capture
+or a replacement for `torch.cuda.graph`. See `docs/zh/static-pytorch-graphs.md` in the
 repository root for fixed-pointer, output-reuse and synchronization contracts.
 
 ```sh
@@ -214,4 +215,36 @@ validation.
 
 `ruda_torch.AdamW` uses FP32 master parameters and moments. Its default path unscales gradients in place and reads a 4-byte finite flag before updates. Explicit `fused_step=True` instead keeps gradient storage unchanged and reads a 12-byte statistics report; it still launches one update kernel per active parameter. `max_grad_norm` is optional global clipping across all active parameter groups and requires the fused path. `hierarchical_stats=True` also requires that path. Both boolean options default to `False`. Clear gradients before accumulating the next step.
 
-On one `ruda_torch.GradScaler` instance, use `scaler.scale(loss).backward()`, `scaler.step(optimizer)`, then `scaler.update()`. Save model, optimizer and scaler states together with data position and RNG state. See the [training guide](https://github.com/shuqi2077/RUDA/blob/main/docs/en/training.md) for checkpoint options and the examples [train_native.py](python/examples/train_native.py), [train_paged_block.py](python/examples/train_paged_block.py) and [train_router.py](python/examples/train_router.py). These training paths do not add training support to StaticGraph.
+On one `ruda_torch.GradScaler` instance, use `scaler.scale(loss).backward()`, `scaler.step(optimizer)`, then `scaler.update()`. Save model, optimizer and scaler states together with data position and RNG state. See the [training guide](https://github.com/shuqi2077/RUDA/blob/main/docs/en/training.md) for checkpoint options and the examples [train_native.py](python/examples/train_native.py), [train_paged_block.py](python/examples/train_paged_block.py) and [train_router.py](python/examples/train_router.py). These optimizer and paged-training paths are independent of the explicit StaticGraph gradient bridge and general model compiler described above and below.
+
+
+## General model and training-graph entry point
+
+`ruda_torch.compile(model)` accepts ordinary `torch.nn.Module` objects or Python
+callables. PyTorch AOTAutograd generates forward/backward graphs; supported pure
+ATen regions use the native StaticGraph, while other operations keep their
+original-device dispatch. `StaticGraph.from_model(model)` is an alias returning
+a callable wrapper (not a fixed-input object with `replay()`).
+
+```python
+model = model.to('ruda:0')
+compiled = ruda_torch.compile(model, native='auto', fullgraph=False)
+loss = compiled(inputs).square().mean()
+loss.backward()
+print(compiled.info)
+compiled.close()  # after every outstanding backward has completed
+```
+
+This removes the hand-written GraphOp/model derivative restriction. It does
+**not** implement every missing device operator or promise full native training
+capture, arbitrary optimizer capture, GPU validation, or a speedup. Native
+regions currently recognize exact add/mul/SiLU/clone overloads with runtime
+metadata guards; no CPU fallback or retry-after-dispatch is installed.
+`native='off'` isolates AOT capture from native regions; `capture='eager'`
+explicitly uses normal PyTorch execution rather than claiming compilation.
+Parameter identities and top-level original checkpoint keys are retained. A wrapper saved as a child module retains its structural `_original` prefix for recursive checkpoint loading.
+
+See [`docs/zh/model-compiler.md`](../docs/zh/model-compiler.md) for execution
+policies, cache ownership, custom-op decompositions, limitations, and CPU/C++/GPU
+validation commands. The full native acceptance command is
+`python ruda-torch/tools/validate_model_compile.py --output model-gpu.json`.

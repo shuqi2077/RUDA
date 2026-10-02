@@ -19,7 +19,7 @@ resolver = "2"
 
 [features]
 default = [ "std",]
-distributed = [ "ruda-tensor/graph-distributed", "ruda-core/std", "ruda-core/id-tests-std", "ruda-tensor-config/std", "ruda-test-runtime?/std",]
+distributed = [ "std", "ruda-tensor/graph-distributed", "ruda-core/std", "ruda-core/id-tests-std", "ruda-tensor-config/std", "ruda-test-runtime?/std",]
 doc = [ "default",]
 std = [ "ruda-tensor/std", "ruda-core/std", "ruda-core/id-tests-std", "ruda-tensor-config/std", "ruda-test-runtime?/std",]
 tracing = [ "ruda-tensor/tracing", "ruda-core/tracing", "ruda-tensor-config/tracing", "ruda-test-runtime/tracing",]

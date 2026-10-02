@@ -136,3 +136,9 @@ version = "0.21.15"
 optional = true
 default-features = false
 features = ["std"]
+
+[dev-dependencies.ruda-tensor-host]
+path = "../ruda-tensor-host"
+version = "0.21.15"
+default-features = false
+features = ["std"]

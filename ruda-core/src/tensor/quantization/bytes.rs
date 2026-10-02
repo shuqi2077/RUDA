@@ -109,9 +109,10 @@ impl QuantizedBytes {
                 chunk[0] as u8, chunk[1] as u8, chunk[2] as u8, chunk[3] as u8,
             ]))
             .collect();
-        if matches!(self.scheme.store, QuantStore::PackedU32(_)) {
-            values.truncate(self.num_elements);
-        }
+        // Native i8 payloads also contain padding before aligned FP32 scales.
+        // Padding is never part of the logical tensor (e.g. a three-element tensor).
+        assert!(values.len() >= self.num_elements, "Truncated quantized values");
+        values.truncate(self.num_elements);
         (values, qparams)
     }
 
@@ -159,5 +160,22 @@ fn read_bytes_to_i8(bytes: Bytes) -> Vec<i8> {
     match bytes.try_into_vec::<i8>() {
         Ok(val) => val,
         Err(bytes) => bytemuck::allocation::cast_vec(bytes.to_vec()),
+    }
+}
+
+#[cfg(test)]
+mod alignment_tests {
+    use super::*;
+
+    #[test]
+    fn native_i8_alignment_bytes_are_not_tensor_elements() {
+        let scheme = QuantScheme::default().with_value(QuantValue::Q8S).with_store(QuantStore::Native);
+        for len in 1..=9 {
+            let values = (0..len).map(|i| i as i8 - 3).collect::<Vec<_>>();
+            let bytes = QuantizedBytes::new(values.clone(), scheme, &[0.25]);
+            let (actual, params) = bytes.into_vec_i8_with_shape(&Shape::new([len]));
+            assert_eq!(actual, values);
+            assert_eq!(params.scales, alloc::vec![0.25]);
+        }
     }
 }

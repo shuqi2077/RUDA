@@ -100,7 +100,7 @@ impl CommunicationChannel for WsServerChannel {
                 Err(err) => Err(WsServerError::Axum(err)),
                 msg => Err(WsServerError::UnknownMessage(format!("{msg:?}"))),
             },
-            None => todo!(),
+            None => Ok(None),
         }
     }
 

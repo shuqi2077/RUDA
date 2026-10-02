@@ -276,7 +276,7 @@ impl_ir_create!(
 
 #[cfg(feature = "graph-distributed")]
 impl_ir_create!(
-    AllReduceOpIr { tensor: TensorIr },
+    AllReduceOpIr { tensor: TensorIr, op: crate::distributed::ReduceOperation, device_ids: Vec<(u16, u16)> },
     shape = tensor.shape.clone(),
     dtype = tensor.dtype
 );

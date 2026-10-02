@@ -13,6 +13,10 @@ mod ops;
 mod runner;
 mod tensor;
 mod types;
+#[cfg(feature = "distributed")]
+mod distributed;
+#[cfg(feature = "distributed")]
+pub use distributed::*;
 
 pub use backend::*;
 pub use bridge::*;

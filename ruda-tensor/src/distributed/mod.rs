@@ -37,7 +37,7 @@ pub struct DistributedParams {
 }
 
 /// The different ways to execute the reduce operation.
-#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub enum ReduceOperation {
     /// The sum of the values.
     Sum,

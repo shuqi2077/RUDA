@@ -1,4 +1,4 @@
-use ruda_tensor::Backend;
+use ruda_tensor::{Backend, TensorMetadata};
 use ruda_communication::Protocol;
 use ruda_communication::data_service::TensorDataServer;
 use ruda_communication::{Address, ProtocolServer, data_service::TensorDataService};
@@ -129,6 +129,9 @@ where
         let Some(ref state) = *state else {
             return Err(GlobalCollectiveError::AllReduceBeforeRegister);
         };
+        self.begin(crate::global::shared::CollectiveSpec::AllReduce {
+            op, strategy, shape: tensor.shape().dims.to_vec(), dtype: tensor.dtype(),
+        }).await?;
         let node = state.node_id;
         let nodes = &state.nodes;
 
@@ -173,22 +176,49 @@ where
         Ok(result)
     }
 
-    pub async fn reduce(
-        &self,
-        _tensor: B::FloatTensorPrimitive,
-        _strategy: ReduceStrategy,
-        _root: PeerId,
-        _op: ReduceOperation,
-    ) -> Result<Option<B::FloatTensorPrimitive>, GlobalCollectiveError> {
-        unimplemented!("Global reduce unimplemented");
+    async fn begin(&self, spec: crate::global::shared::CollectiveSpec)
+        -> Result<(NodeId, u64), GlobalCollectiveError>
+    {
+        match self.worker.request(RemoteRequest::Begin(spec)).await {
+            RemoteResponse::Begin { root_node, transfer_id } => Ok((root_node, transfer_id)),
+            RemoteResponse::Error(error) => Err(error),
+            _ => Err(GlobalCollectiveError::WrongOrchestratorResponse),
+        }
     }
 
-    pub async fn broadcast(
-        &self,
-        _tensor: Option<B::FloatTensorPrimitive>,
-        _strategy: BroadcastStrategy,
-    ) -> Result<B::FloatTensorPrimitive, GlobalCollectiveError> {
-        unimplemented!("Global broadcast unimplemented");
+    pub async fn reduce(&self, tensor: B::FloatTensorPrimitive, strategy: ReduceStrategy,
+        root: PeerId, op: ReduceOperation)
+        -> Result<Option<B::FloatTensorPrimitive>, GlobalCollectiveError>
+    {
+        let guard = self.state.read().await;
+        let state = guard.as_ref().ok_or(GlobalCollectiveError::CollectiveBeforeRegister)?;
+        let (root_node, transfer) = self.begin(crate::global::shared::CollectiveSpec::Reduce {
+            root, op, strategy, shape: tensor.shape().dims.to_vec(), dtype: tensor.dtype(),
+        }).await?;
+        let arity = match strategy { ReduceStrategy::Centralized => None, ReduceStrategy::Tree(k) => Some(k) };
+        let result = super::rooted::reduce_sum::<B, P>(state.node_id, root_node, &state.nodes,
+            &self.data_service, tensor, arity, transfer).await?;
+        let result = result.map(|tensor| if op == ReduceOperation::Mean {
+            B::float_div_scalar(tensor, (state.num_global_devices as f32).into())
+        } else { tensor });
+        self.sync_service.sync().await;
+        Ok(result)
+    }
+
+    pub async fn broadcast(&self, tensor: Option<B::FloatTensorPrimitive>, strategy: BroadcastStrategy,
+        device: &B::Device) -> Result<B::FloatTensorPrimitive, GlobalCollectiveError>
+    {
+        let guard = self.state.read().await;
+        let state = guard.as_ref().ok_or(GlobalCollectiveError::CollectiveBeforeRegister)?;
+        let metadata = tensor.as_ref().map(|t| (t.shape().dims.to_vec(), t.dtype()));
+        let (root_node, transfer) = self.begin(crate::global::shared::CollectiveSpec::Broadcast {
+            strategy, metadata,
+        }).await?;
+        let arity = match strategy { BroadcastStrategy::Centralized => None, BroadcastStrategy::Tree(k) => Some(k) };
+        let result = super::rooted::broadcast::<B, P>(state.node_id, root_node, &state.nodes,
+            &self.data_service, tensor, device, arity, transfer).await?;
+        self.sync_service.sync().await;
+        Ok(result)
     }
 
     pub async fn finish(&mut self) {

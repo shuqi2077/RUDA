@@ -1,5 +1,5 @@
 use super::*;
-use alloc::vec;
+use alloc::{vec, vec::Vec};
 use ruda_core::future::block_on;
 use ruda_tensor::graph::{BinaryOpIr, LinearOpIr, ShapeOpIr, UnaryOpIr};
 use ruda_tensor_host::Host;
@@ -149,4 +149,28 @@ fn split_runner_clones_share_handles_and_read_future_owns_its_result() {
         block_on(future).unwrap().to_vec::<f32>().unwrap(),
         vec![7.0, 11.0]
     );
+}
+
+#[cfg(feature="distributed")]
+#[test]
+fn distributed_ir_dispatch_preserves_operation_group_and_result_handle() {
+    use ruda_tensor::{DeviceId, ops::FloatTensorOps, distributed::ReduceOperation,
+        graph::{AllReduceOpIr,DistributedOperationIr}};
+    // Dispatch instrumentation only: this callback does not simulate a network.
+    fn enqueue(tensor: <Host as ruda_tensor::BackendTypes>::FloatTensorPrimitive,
+        op: ReduceOperation, devices: Vec<DeviceId>) -> <Host as ruda_tensor::BackendTypes>::FloatTensorPrimitive
+    {
+        assert_eq!(op,ReduceOperation::Mean);
+        assert_eq!(devices,vec![DeviceId::new(0,0)]);
+        Host::float_add_scalar(tensor,1.0f32.into())
+    }
+    let mut runner = Runner::<Host>::new(Default::default());
+    runner.native_collectives = Some(NativeCollectives { enqueue, synchronize: |_| {} });
+    let input = runner.register_tensor_data_desc(TensorData::new(vec![2.0f32,3.0],[2]));
+    let desc = AllReduceOpIr::create(input,ReduceOperation::Mean,vec![(0,0)],|| runner.create_empty_handle());
+    let out = desc.out.clone();
+    runner.register_op(OperationIr::Distributed(DistributedOperationIr::AllReduce(desc)));
+    let result = block_on(runner.read_tensor_async(readable(out))).unwrap();
+    assert_eq!(result.to_vec::<f32>().unwrap(),vec![3.0,4.0]);
+    runner.sync_native_collective();
 }

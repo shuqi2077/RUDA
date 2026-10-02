@@ -204,6 +204,9 @@ impl<B: Backend, P: Protocol> TensorDataService<B, P> {
         transfer_id: TensorTransferId,
     ) -> Option<bytes::Bytes> {
         loop {
+            let notified = self.new_tensor_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             {
                 let mut exposed_tensors = self.exposed_tensors.lock().await;
                 // take the tensor out of the hashmap while we download
@@ -220,7 +223,10 @@ impl<B: Backend, P: Protocol> TensorDataService<B, P> {
                 }
             }
             // No matching tensor, wait for a new one to come in.
-            self.new_tensor_notify.notified().await;
+            tokio::select! {
+                _ = notified => {},
+                _ = self.cancel_token.cancelled() => return None,
+            }
         }
     }
 
@@ -242,9 +248,8 @@ impl<B: Backend, P: Protocol> TensorDataService<B, P> {
                             panic!("Received a message that wasn't a tensor request! {msg:?}");
                         };
 
-                        let bytes = self.get_exposed_tensor_bytes(transfer_id).await.unwrap();
-
-                        channel.send(Message::new(bytes)).await.unwrap();
+                        let Some(bytes) = self.get_exposed_tensor_bytes(transfer_id).await else { return; };
+                        if channel.send(Message::new(bytes)).await.is_err() { return; }
                     } else {
                         log::info!("Closed connection");
                         return;

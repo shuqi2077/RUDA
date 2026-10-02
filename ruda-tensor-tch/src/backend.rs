@@ -118,7 +118,7 @@ impl<E: TchElement> BackendTypes for LibTorch<E> {
     type BoolTensorPrimitive = TchTensor;
     type BoolElem = bool;
 
-    type QuantizedTensorPrimitive = TchTensor;
+    type QuantizedTensorPrimitive = crate::TchQTensor;
 }
 
 impl<E: TchElement> Backend for LibTorch<E> {
@@ -164,6 +164,11 @@ impl<E: TchElement> Backend for LibTorch<E> {
         _device: &Self::Device,
         dtype: ruda_tensor::DType,
     ) -> ruda_tensor::DTypeUsageSet {
+        if let ruda_tensor::DType::QFloat(scheme) = dtype {
+            return if crate::ops::qtensor::supported_scheme(&scheme) {
+                ruda_tensor::DTypeUsage::general()
+            } else { ruda_tensor::DTypeUsageSet::empty() };
+        }
         if dtype.try_into_kind().is_ok() {
             ruda_tensor::DTypeUsage::general()
         } else {

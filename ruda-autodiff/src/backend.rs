@@ -1,7 +1,7 @@
 use crate::{
     checkpoint::strategy::{CheckpointStrategy, NoCheckpointing},
     grads::Gradients,
-    tensor::AutodiffTensor,
+    tensor::{AutodiffTensor, AutodiffQTensor},
 };
 use alloc::{format, string::String};
 use core::marker::PhantomData;
@@ -36,7 +36,7 @@ impl<B: Backend, C: CheckpointStrategy> BackendTypes for Autodiff<B, C> {
     type BoolTensorPrimitive = B::BoolTensorPrimitive;
     type BoolElem = B::BoolElem;
 
-    type QuantizedTensorPrimitive = B::QuantizedTensorPrimitive;
+    type QuantizedTensorPrimitive = AutodiffQTensor<B>;
 }
 
 impl<B: Backend, C: CheckpointStrategy> Backend for Autodiff<B, C> {
@@ -144,11 +144,11 @@ impl<B: Backend, C: CheckpointStrategy> AutodiffBackend for Autodiff<B, C> {
     }
 
     fn q_inner(tensor: QuantizedTensor<Self>) -> QuantizedTensor<Self::InnerBackend> {
-        tensor
+        tensor.primitive
     }
 
     fn q_from_inner(tensor: QuantizedTensor<Self::InnerBackend>) -> QuantizedTensor<Self> {
-        tensor
+        AutodiffQTensor::untracked(tensor)
     }
 }
 
@@ -204,11 +204,11 @@ impl<B: DistributedBackend, C: CheckpointStrategy> AutodiffBackend for Autodiff<
     }
 
     fn q_inner(tensor: QuantizedTensor<Self>) -> QuantizedTensor<Self::InnerBackend> {
-        tensor
+        tensor.primitive
     }
 
     fn q_from_inner(tensor: QuantizedTensor<Self::InnerBackend>) -> QuantizedTensor<Self> {
-        tensor
+        AutodiffQTensor::untracked(tensor)
     }
 
     fn set_distributed_params(

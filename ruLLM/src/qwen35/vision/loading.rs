@@ -56,6 +56,9 @@ pub fn load_huggingface_qwen35_vision<B: Backend>(
     let mut w = Weights::<B> {
         checkpoint: &mut checkpoint,
         device,
+        quantization: None,
+        quantized_dtype: DType::F32,
+        dequantized_awq_linears: 0,
     };
     let base = "model.visual";
     let patch_weight = w.tensor(

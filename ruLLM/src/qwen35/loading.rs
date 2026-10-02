@@ -1,6 +1,7 @@
 use super::*;
 use crate::huggingface::checkpoint::Checkpoint;
 use crate::{HuggingFaceLoadError, HuggingFaceLoadReport};
+use crate::huggingface::AwqQuantizationConfig;
 use ruda_model::module::Param;
 use std::path::Path;
 
@@ -8,11 +9,17 @@ pub struct LoadedQwen35Text<B: Backend> {
     pub model: Qwen35TextModel<B>,
     pub report: HuggingFaceLoadReport,
     pub unloaded_tensors: Vec<String>,
+    /// AWQ matrices expanded into dense model weights at load time.
+    /// Nonzero does NOT mean that inference uses packed INT4 kernels.
+    pub dequantized_awq_linears: usize,
 }
 
 pub(super) struct Weights<'a, B: Backend> {
     pub checkpoint: &'a mut Checkpoint,
     pub device: &'a B::Device,
+    pub quantization: Option<AwqQuantizationConfig>,
+    pub quantized_dtype: DType,
+    pub dequantized_awq_linears: usize,
 }
 impl<B: Backend> Weights<'_, B> {
     pub fn tensor<const D: usize>(
@@ -29,14 +36,28 @@ impl<B: Backend> Weights<'_, B> {
         output: usize,
         bias: bool,
     ) -> Result<Linear<B>, HuggingFaceLoadError> {
+        let packed = self.checkpoint.tensors.contains_key(&format!("{prefix}.qweight"));
+        let weight = if packed {
+            let config = self.quantization.as_ref().ok_or_else(|| HuggingFaceLoadError(
+                format!("{prefix}: packed weights require an AWQ quantization_config")))?;
+            if config.modules_to_not_convert.as_ref().is_some_and(|modules| modules.iter().any(
+                |name| prefix == name || prefix.ends_with(&format!(".{name}")) ||
+                    prefix.split('.').any(|part| part == name))) {
+                return Err(HuggingFaceLoadError(format!("{prefix}: packed weights in an excluded module")));
+            }
+            let tensor = super::quantized_loading::load_awq_linear::<B>(self.checkpoint,
+                prefix, input, output, config, self.quantized_dtype, self.device)?;
+            self.dequantized_awq_linears += 1;
+            tensor
+        } else {
+            self.tensor(&format!("{prefix}.weight"), [output, input])?
+        };
+        let dtype = weight.dtype();
         Ok(Linear {
-            weight: Param::from_tensor(
-                self.tensor(&format!("{prefix}.weight"), [output, input])?
-                    .transpose(),
-            ),
+            weight: Param::from_tensor(weight.transpose()),
             bias: if bias {
                 Some(Param::from_tensor(
-                    self.tensor(&format!("{prefix}.bias"), [output])?,
+                    self.tensor(&format!("{prefix}.bias"), [output])?.cast(dtype),
                 ))
             } else {
                 None
@@ -66,11 +87,9 @@ pub fn load_huggingface_qwen35_text<B: Backend>(
         &std::fs::read(&config_path).map_err(|e| HuggingFaceLoadError(e.to_string()))?,
     )
     .map_err(|e| HuggingFaceLoadError(e.to_string()))?;
-    if raw.get("quantization_config").is_some_and(|v| !v.is_null()) {
-        return Err(HuggingFaceLoadError(
-            "quantized Qwen3.5 loading is not implemented".into(),
-        ));
-    }
+    // Accept metadata at the HF top level or in text_config, but never prefer
+    // one conflicting declaration silently. Unsupported formats remain errors.
+    let quantization = super::quantized_loading::configuration(&raw)?;
     let multimodal = raw.get("text_config").is_some();
     if multimodal && raw["model_type"] != "qwen3_5" {
         return Err(HuggingFaceLoadError(
@@ -85,14 +104,16 @@ pub fn load_huggingface_qwen35_text<B: Backend>(
     .map_err(|e| HuggingFaceLoadError(e.to_string()))?;
     config.validate()?;
     let mut checkpoint = Checkpoint::open(dir)?;
+    let base = if multimodal { "model.language_model" } else { "model" };
+    let quantized_dtype = checkpoint.tensors.get(&format!("{base}.embed_tokens.weight"))
+        .map(|tensor| tensor.dtype)
+        .ok_or_else(|| HuggingFaceLoadError("missing Qwen3.5 token embedding".into()))?;
     let mut w = Weights::<B> {
         checkpoint: &mut checkpoint,
         device,
-    };
-    let base = if multimodal {
-        "model.language_model"
-    } else {
-        "model"
+        quantization,
+        quantized_dtype,
+        dequantized_awq_linears: 0,
     };
     let embedding = Embedding {
         weight: Param::from_tensor(w.tensor(
@@ -207,6 +228,8 @@ pub fn load_huggingface_qwen35_text<B: Backend>(
     } else {
         w.linear("lm_head", c.hidden_size, c.vocab_size, false)?
     };
+    let dequantized_awq_linears = w.dequantized_awq_linears;
+    drop(w);
     let unloaded_tensors = checkpoint
         .tensors
         .keys()
@@ -236,5 +259,6 @@ pub fn load_huggingface_qwen35_text<B: Backend>(
             head,
         },
         unloaded_tensors,
+        dequantized_awq_linears,
     })
 }

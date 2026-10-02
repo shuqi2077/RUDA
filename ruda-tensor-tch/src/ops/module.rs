@@ -117,27 +117,18 @@ impl<E: TchElement> ModuleOps<Self> for LibTorch<E> {
         TchTensor::new(tensor)
     }
 
-    fn deform_conv2d(
-        _x: TchTensor,
-        _offset: TchTensor,
-        _weight: TchTensor,
-        _mask: Option<TchTensor>,
-        _bias: Option<TchTensor>,
-        _options: DeformConvOptions<2>,
-    ) -> TchTensor {
-        unimplemented!("Torch bindings don't support deform_conv2d");
+    fn deform_conv2d(x: TchTensor, offset: TchTensor, weight: TchTensor,
+        mask: Option<TchTensor>, bias: Option<TchTensor>, options: DeformConvOptions<2>) -> TchTensor
+    {
+        TchTensor::new(super::deform::forward(&x.tensor, &offset.tensor, &weight.tensor,
+            mask.as_ref().map(|t| &t.tensor), bias.as_ref().map(|t| &t.tensor), &options))
     }
 
-    fn deform_conv2d_backward(
-        _x: TchTensor,
-        _offset: TchTensor,
-        _weight: TchTensor,
-        _mask: Option<TchTensor>,
-        _bias: Option<TchTensor>,
-        _out_grad: TchTensor,
-        _options: DeformConvOptions<2>,
-    ) -> DeformConv2dBackward<Self> {
-        unimplemented!("Torch bindings don't support deform_conv2d");
+    fn deform_conv2d_backward(x: TchTensor, offset: TchTensor, weight: TchTensor,
+        mask: Option<TchTensor>, bias: Option<TchTensor>, out_grad: TchTensor,
+        options: DeformConvOptions<2>) -> DeformConv2dBackward<Self>
+    {
+        super::deform::backward::<E>(x, offset, weight, mask, bias, out_grad, options)
     }
 
     fn conv_transpose1d(
