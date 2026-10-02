@@ -22,6 +22,32 @@ pub trait Runtime: Sized + Send + Sync + 'static + core::fmt::Debug + Clone {
     /// Retrieve the compute client from the runtime device.
     fn client(device: &Self::Device) -> ComputeClient<Self>;
 
+    /// Whether this runtime supplies native LayerNorm forward and all first-order gradients.
+    fn has_native_layer_norm() -> bool { false }
+
+    /// Native LayerNorm, returning output, mean and reciprocal standard deviation.
+    fn layer_norm(
+        _client: &ComputeClient<Self>,
+        _input: super::normalization::TensorBuffer,
+        _weight: super::normalization::TensorBuffer,
+        _bias: Option<super::normalization::TensorBuffer>,
+        _epsilon: f64,
+    ) -> [super::normalization::TensorBuffer; 3] {
+        unimplemented!("runtime does not supply native LayerNorm")
+    }
+
+    /// Native LayerNorm gradients, returning input, weight and bias gradients.
+    fn layer_norm_backward(
+        _client: &ComputeClient<Self>,
+        _input: super::normalization::TensorBuffer,
+        _weight: super::normalization::TensorBuffer,
+        _grad: super::normalization::TensorBuffer,
+        _mean: super::normalization::TensorBuffer,
+        _rstd: super::normalization::TensorBuffer,
+    ) -> [super::normalization::TensorBuffer; 3] {
+        unimplemented!("runtime does not supply native LayerNorm backward")
+    }
+
     /// The runtime name on the given device.
     fn name(client: &ComputeClient<Self>) -> &'static str;
 

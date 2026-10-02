@@ -9,6 +9,21 @@ use ruda_tensor::{
     },
 };
 
+fn norm_buffer<R: DeviceRuntime>(tensor: crate::RudaTensor<R>) -> ruda::runtime::normalization::TensorBuffer {
+    ruda::runtime::normalization::TensorBuffer {
+        shape: tensor.meta.shape().clone(), strides: tensor.meta.strides().clone(),
+        handle: tensor.handle, dtype: tensor.dtype,
+    }
+}
+
+fn norm_tensor<R: DeviceRuntime>(
+    buffer: ruda::runtime::normalization::TensorBuffer,
+    client: ruda::runtime::client::ComputeClient<R>, device: R::Device,
+) -> crate::RudaTensor<R> {
+    crate::RudaTensor::new(client, buffer.handle,
+        ruda_core::tensor::Metadata::new(buffer.shape, buffer.strides), device, buffer.dtype)
+}
+
 impl<R, F, I, BT> ModuleOps<Self> for DeviceBackend<R, F, I, BT>
 where
     R: DeviceRuntime,
@@ -16,6 +31,54 @@ where
     I: IntElement,
     BT: BoolElement,
 {
+    fn has_layer_norm_backward() -> bool { R::has_native_layer_norm() }
+
+    fn layer_norm(
+        tensor: FloatTensor<Self>, gamma: FloatTensor<Self>,
+        beta: Option<FloatTensor<Self>>, epsilon: f64,
+    ) -> FloatTensor<Self> {
+        if R::has_native_layer_norm() {
+            Self::layer_norm_with_stats(tensor, gamma, beta, epsilon).output
+        } else {
+            Self::layer_norm_default(tensor, gamma, beta, epsilon)
+        }
+    }
+
+    fn layer_norm_with_stats(
+        tensor: FloatTensor<Self>, gamma: FloatTensor<Self>,
+        beta: Option<FloatTensor<Self>>, epsilon: f64,
+    ) -> ruda_tensor::ops::LayerNormOutput<Self> {
+        let client = tensor.client.clone();
+        let device = tensor.device.clone();
+        for other in core::iter::once(&gamma).chain(beta.iter()) {
+            assert_eq!(device, other.device, "LayerNorm device mismatch");
+            assert!(client.same_execution_queue(&other.client), "LayerNorm queue mismatch");
+        }
+        let [output, mean, rstd] = R::layer_norm(
+            &client, norm_buffer(tensor), norm_buffer(gamma), beta.map(norm_buffer), epsilon,
+        );
+        let from = |buffer| norm_tensor(buffer, client.clone(), device.clone());
+        ruda_tensor::ops::LayerNormOutput { output: from(output), mean: from(mean), rstd: from(rstd) }
+    }
+
+    fn layer_norm_backward(
+        tensor: FloatTensor<Self>, gamma: FloatTensor<Self>, grad: FloatTensor<Self>,
+        mean: FloatTensor<Self>, rstd: FloatTensor<Self>,
+    ) -> ruda_tensor::ops::LayerNormBackward<Self> {
+        let client = tensor.client.clone();
+        let device = tensor.device.clone();
+        for other in [&gamma, &grad, &mean, &rstd] {
+            assert_eq!(device, other.device, "LayerNorm backward device mismatch");
+            assert!(client.same_execution_queue(&other.client), "LayerNorm backward queue mismatch");
+        }
+        let [input, weight, bias] = R::layer_norm_backward(
+            &client, norm_buffer(tensor), norm_buffer(gamma), norm_buffer(grad),
+            norm_buffer(mean), norm_buffer(rstd),
+        );
+        let from = |buffer| norm_tensor(buffer, client.clone(), device.clone());
+        ruda_tensor::ops::LayerNormBackward { input: from(input), weight: from(weight), bias: from(bias) }
+    }
+
     fn conv1d(
         x: FloatTensor<Self>,
         weight: FloatTensor<Self>,

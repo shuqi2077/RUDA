@@ -236,6 +236,36 @@ mod tests {
             .assert_approx_eq::<FT>(&expected, Tolerance::default());
     }
 
+    #[cfg(feature = "std")]
+    #[test]
+    fn layer_norm_affine_gradients_with_and_without_bias() {
+        let device = Default::default();
+        for has_bias in [true, false] {
+            let module = LayerNormConfig::new(3).with_bias(has_bias).init::<TestAutodiffBackend>(&device);
+            let x = Tensor::<TestAutodiffBackend, 2>::from_data([[1., 2., 4.], [3., -1., 2.]], &device).require_grad();
+            let dy = Tensor::<TestAutodiffBackend, 2>::from_data([[0.2, -0.5, 0.7], [1.1, 0.3, -0.4]], &device);
+            let gradients = (module.forward(x.clone()) * dy).backward();
+            let mut dx = [[0f32; 3]; 2]; let mut dw = [0f32; 3]; let mut db = [0f32; 3];
+            for (r, (row, grad)) in [[1f64, 2., 4.], [3., -1., 2.]].into_iter()
+                .zip([[0.2, -0.5, 0.7], [1.1, 0.3, -0.4]]).enumerate() {
+                let mean = row.iter().sum::<f64>()/3.;
+                let rstd = (row.iter().map(|v| (v-mean).powi(2)).sum::<f64>()/3.+1e-5).sqrt().recip();
+                let norm = row.map(|v| (v-mean)*rstd);
+                let gmean = grad.iter().sum::<f64>()/3.;
+                let dot = grad.iter().zip(norm).map(|(g,n)| g*n).sum::<f64>()/3.;
+                for c in 0..3 {
+                    dx[r][c] = (rstd*(grad[c]-gmean-norm[c]*dot)) as f32;
+                    dw[c] += (grad[c]*norm[c]) as f32; db[c] += grad[c] as f32;
+                }
+            }
+            x.grad(&gradients).unwrap().to_data().assert_approx_eq::<FT>(&TensorData::from(dx), Tolerance::default());
+            module.gamma.val().grad(&gradients).unwrap().to_data().assert_approx_eq::<FT>(&TensorData::from(dw), Tolerance::default());
+            if let Some(beta) = &module.beta {
+                beta.val().grad(&gradients).unwrap().to_data().assert_approx_eq::<FT>(&TensorData::from(db), Tolerance::default());
+            }
+        }
+    }
+
     #[test]
     fn display() {
         let config = LayerNormConfig::new(6);

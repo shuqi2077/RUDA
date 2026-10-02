@@ -39,6 +39,8 @@ pub mod tma;
 pub mod compiler;
 /// Runtime trait and related types
 pub mod backend;
+/// Device buffer contracts for native normalization dispatch.
+pub mod normalization;
 /// Simple system profiling using timestamps.
 pub mod timestamp_profiler;
 

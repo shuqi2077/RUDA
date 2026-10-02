@@ -63,6 +63,47 @@ fn causal_attention_probabilities<B: Backend>(
 }
 
 impl<B: Backend, C: CheckpointStrategy> ModuleOps<Autodiff<B, C>> for Autodiff<B, C> {
+    fn layer_norm(
+        tensor: AutodiffTensor<B>, gamma: AutodiffTensor<B>,
+        beta: Option<AutodiffTensor<B>>, epsilon: f64,
+    ) -> AutodiffTensor<B> {
+        if !B::has_layer_norm_backward() {
+            return Self::layer_norm_default(tensor, gamma, beta, epsilon);
+        }
+        #[derive(Debug)]
+        struct LayerNorm;
+        impl<B: Backend, const N: usize> Backward<B, N> for LayerNorm {
+            type State = (B::FloatTensorPrimitive, B::FloatTensorPrimitive,
+                B::FloatTensorPrimitive, B::FloatTensorPrimitive);
+            fn backward(self, ops: Ops<Self::State, N>, grads: &mut Gradients, _: &mut Checkpointer) {
+                let (input, weight, mean, rstd) = ops.state;
+                let grad = grads.consume::<B>(&ops.node);
+                let out = B::layer_norm_backward(input, weight, grad, mean, rstd);
+                for (parent, grad) in ops.parents.into_iter().zip([out.input, out.weight, out.bias]) {
+                    if let Some(parent) = parent { grads.register::<B>(parent.id, grad); }
+                }
+            }
+        }
+        let input = tensor.primitive.clone();
+        let weight = gamma.primitive.clone();
+        match beta {
+            Some(beta) => {
+                let out = B::layer_norm_with_stats(input.clone(), weight.clone(), Some(beta.primitive), epsilon);
+                match LayerNorm.prepare::<C>([tensor.node, gamma.node, beta.node]).compute_bound().stateful() {
+                    OpsKind::Tracked(prep) => prep.finish((input, weight, out.mean, out.rstd), out.output),
+                    OpsKind::UnTracked(prep) => prep.finish(out.output),
+                }
+            },
+            None => {
+                let out = B::layer_norm_with_stats(input.clone(), weight.clone(), None, epsilon);
+                match LayerNorm.prepare::<C>([tensor.node, gamma.node]).compute_bound().stateful() {
+                    OpsKind::Tracked(prep) => prep.finish((input, weight, out.mean, out.rstd), out.output),
+                    OpsKind::UnTracked(prep) => prep.finish(out.output),
+                }
+            },
+        }
+    }
+
     fn embedding(weights: AutodiffTensor<B>, indices: IntTensor<B>) -> AutodiffTensor<B> {
         #[derive(Debug)]
         struct Embedding;
