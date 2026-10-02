@@ -7,7 +7,7 @@ fn decode<F: Float + RudaElement>(
     packed: &Tensor<u8>, scales: &Tensor<f32>, table: &Tensor<f32>,
     output: &mut Tensor<F>, start: u32, block: u32,
 ) {
-    let position = ABSOLUTE_POS;
+    let position = ABSOLUTE_POS as u32;
     if (position as usize) < output.len() {
         let index = position + start;
         let byte = u32::cast_from(packed[(index / 2) as usize]);
