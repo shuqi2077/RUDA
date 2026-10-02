@@ -9,7 +9,7 @@ import argparse,ctypes.util,hashlib,json,os,re,shutil,subprocess,sys
 from pathlib import Path
 import xml.etree.ElementTree as ET
 ROOT=Path(__file__).resolve().parents[2]
-MARKER='RUDA_V24_STATIC_GRAPH_RUNTIME abi=9 graph_api=2'
+MARKER='RUDA_V24_STATIC_GRAPH_RUNTIME abi=10 graph_api=3'
 EXPECTED=77
 TOOLS=('memcheck','racecheck','initcheck','synccheck')
 

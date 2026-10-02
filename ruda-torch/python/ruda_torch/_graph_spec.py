@@ -41,6 +41,19 @@ class GraphOp:
     @classmethod
     def rms_norm(cls, output, value, weight=None, *, eps=1e-5): return cls('rms_norm',output,value,weight,eps)
 
+# API 3 operators. Codes reuse the production pointwise dispatch where possible.
+UNARY_CODES = {'copy': 0, 'relu': 3, 'exp': 9, 'log': 10, 'sqrt': 11,
+    'rsqrt': 12, 'sigmoid': 13, 'silu': 14, 'tanh': 17, 'sin': 19,
+    'cos': 20, 'abs': 21, 'sign': 22, 'floor': 23, 'ceil': 24, 'trunc': 25,
+    'reciprocal': 27, 'log1p': 35, 'sinh': 36, 'cosh': 37, 'asinh': 38,
+    'acosh': 39, 'atanh': 40, 'hardsigmoid': 43, 'hardswish': 45, 'neg': 108}
+BINARY_CODES = {'add': 1, 'mul': 2, 'div': 8, 'silu_backward': 15,
+    'sigmoid_backward': 16, 'tanh_backward': 18, 'silu_mul': 101}
+SCALAR_CODES = {'add_scalar': 109, 'mul_scalar': 110, 'div_scalar': 111}
+CODES = {**UNARY_CODES, **BINARY_CODES, **SCALAR_CODES, 'mm': 7, 'bmm': 30,
+    'rms_norm': 100, 'softmax': 102, 'log_softmax': 103, 'sum_keepdim': 104,
+    'mean_keepdim': 105, 'softmax_backward': 106, 'log_softmax_backward': 107}
+
 @dataclass(frozen=True)
 class Layout:
     names: tuple[str,...]
@@ -71,7 +84,7 @@ def plan_layout(inputs: Mapping[str,TensorSpec], nodes: Sequence[GraphOp], outpu
             raise ValueError('static graph requires nonempty rank 1..8 shapes')
         if math.prod(spec.shape)>2**32-1: raise ValueError('32-bit kernel indexing limit')
     words=[]; scalars=[]
-    codes={'copy':0,'add':1,'mul':2,'silu':14,'rms_norm':100,'silu_mul':101}
+    codes=CODES
     for node in nodes:
         if not isinstance(node,GraphOp): raise TypeError('nodes must be GraphOp objects')
         if node.kind not in codes: raise ValueError(f'unsupported graph operator: {node.kind}')
@@ -83,24 +96,58 @@ def plan_layout(inputs: Mapping[str,TensorSpec], nodes: Sequence[GraphOp], outpu
         try: scalar=struct.unpack('<f',struct.pack('<f',float(node.scalar)))[0]
         except (TypeError,ValueError,OverflowError,struct.error) as exc: raise ValueError('invalid FP32 scalar') from exc
         if not math.isfinite(scalar): raise ValueError('graph scalar must be finite in FP32')
-        if node.kind in ('copy','silu'):
-            if node.right is not None or scalar!=0. or math.copysign(1.,scalar)<0:
+        if node.kind in UNARY_CODES:
+            if node.right is not None or scalar != 0. or math.copysign(1., scalar) < 0:
                 raise ValueError('unary operation requires no right input and canonical zero scalar')
-            b=a
-        elif node.kind in ('add','mul','silu_mul'):
+            b = a
+        elif node.kind in SCALAR_CODES:
+            if node.right is not None:
+                raise ValueError('scalar operation has no right tensor')
+            b = a
+        elif node.kind in BINARY_CODES:
             if node.right not in ids: raise ValueError('missing second graph input')
-            b=ids[node.right]
-            if specs[b]!=spec: raise ValueError('no broadcasting or mixed-dtype promotion in static graph')
-            if node.kind in ('mul','silu_mul') and (scalar!=0. or math.copysign(1.,scalar)<0):
-                raise ValueError('mul/silu_mul scalar must be canonical zero')
+            b = ids[node.right]
+            if specs[b] != spec: raise ValueError('no broadcasting or mixed-dtype promotion in static graph')
+            if node.kind != 'add' and (scalar != 0. or math.copysign(1., scalar) < 0):
+                raise ValueError('binary scalar must be canonical zero')
+        elif node.kind in ('mm', 'bmm'):
+            if node.right not in ids: raise ValueError('missing matrix input')
+            b = ids[node.right]; right = specs[b]
+            rank = 2 if node.kind == 'mm' else 3
+            if len(spec.shape) != rank or len(right.shape) != rank or spec.dtype != right.dtype:
+                raise ValueError('matmul requires equal-dtype rank-2/rank-3 inputs')
+            if spec.shape[-1] != right.shape[-2] or spec.shape[:-2] != right.shape[:-2]:
+                raise ValueError('matmul dimensions/batches do not match')
+            if scalar != 0. or math.copysign(1., scalar) < 0:
+                raise ValueError('matmul scalar must be canonical zero')
+            spec = TensorSpec(spec.shape[:-1] + (right.shape[-1],), spec.dtype)
+            if math.prod(spec.shape) > 2**32-1: raise ValueError('matmul indexing limit')
+        elif node.kind in ('softmax', 'log_softmax', 'softmax_backward', 'log_softmax_backward'):
+            if not scalar.is_integer() or not 0 <= scalar < len(spec.shape):
+                raise ValueError('softmax axis must be canonical and in range')
+            b = a
+            if node.kind.endswith('_backward'):
+                if node.right not in ids or specs[ids[node.right]] != spec:
+                    raise ValueError('softmax backward output/gradient mismatch')
+                b = ids[node.right]
+            elif node.right is not None:
+                raise ValueError('softmax forward has no right tensor')
+        elif node.kind in ('sum_keepdim', 'mean_keepdim'):
+            # Bit mask, not a shape guessed from the resulting singleton axes.
+            mask = int(scalar)
+            if scalar != mask or not 0 < mask < (1 << len(spec.shape)) or node.right is not None:
+                raise ValueError('reduction requires a nonempty in-range dimension mask')
+            b = a
+            spec = TensorSpec(tuple(1 if mask & (1 << d) else size
+                                    for d, size in enumerate(spec.shape)), spec.dtype)
         else:
-            if scalar<=0: raise ValueError('RMSNorm epsilon must remain positive after FP32 conversion')
-            if math.prod(spec.shape[:-1])>(2**32-1)//32: raise ValueError('RMSNorm row grid limit')
-            b=NO_WEIGHT
+            if scalar <= 0: raise ValueError('RMSNorm epsilon must remain positive after FP32 conversion')
+            if math.prod(spec.shape[:-1]) > (2**32-1)//32: raise ValueError('RMSNorm row grid limit')
+            b = NO_WEIGHT
             if node.right is not None:
                 if node.right not in ids: raise ValueError('missing RMSNorm weight')
-                b=ids[node.right]
-                if specs[b]!=TensorSpec((spec.shape[-1],),spec.dtype):
+                b = ids[node.right]
+                if specs[b] != TensorSpec((spec.shape[-1],), spec.dtype):
                     raise ValueError('RMSNorm needs same-dtype last-axis weight')
         words.extend((codes[node.kind],a,b)); scalars.append(scalar)
         ids[node.output]=len(names); names.append(node.output); specs.append(spec)

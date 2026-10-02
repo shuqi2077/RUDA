@@ -1,4 +1,4 @@
-// Optional router-weight API 1, independent of training API 4 and graph API 2.
+// Optional router-weight API 1, independent of training API 4 and graph API 3.
 using RouterCommand = int (*)(uint32_t, const Descriptor*, size_t, uint32_t, bool, float);
 RouterCommand router_native = nullptr;
 

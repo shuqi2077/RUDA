@@ -157,3 +157,33 @@ fn real_checkpoint_reference_and_cached_continuation() {
         );
     }
 }
+
+#[test]
+fn packed_awq_projection_loader_executes_without_dense_linear() {
+    use crate::huggingface::{checkpoint::Checkpoint,AwqQuantizationConfig};
+    use ruda_store::TensorSnapshot;
+    use std::collections::{BTreeMap,BTreeSet};
+    let device=CudaDevice::default();
+    let pack=|row:usize| [0usize,2,4,6,1,3,5,7].iter().enumerate()
+        .fold(0u32,|word,(nibble,&column)| word | ((((row+column)%16) as u32)<<(4*nibble))) as i32;
+    for dtype in [DType::F32,DType::F16,DType::BF16] {
+        let mut checkpoint=Checkpoint{files:vec![],tensors:BTreeMap::new(),consumed:BTreeSet::new()};
+        for (name,data) in [
+            ("qweight",TensorData::new((0..4).map(pack).collect::<Vec<_>>(),[4,1])),
+            ("qzeros",TensorData::new(vec![0x11111111i32;2],[2,1])),
+            ("scales",TensorData::new(vec![0.125f32;16],[2,8]).convert_dtype(dtype)),
+            ("bias",TensorData::new(vec![0.25f32;8],[8]).convert_dtype(dtype)),
+        ] {
+            checkpoint.tensors.insert(format!("p.{name}"),TensorSnapshot::from_data(data,vec![],vec![],Default::default()));
+        }
+        let config:AwqQuantizationConfig=serde_json::from_value(serde_json::json!({
+            "quant_method":"awq","bits":4,"group_size":2,"zero_point":true,"version":"gemm"})).unwrap();
+        let projection=super::quantized_loading::load_awq_projection::<ruda_driver_cuda::CudaRuntime,bf16,i32,u8>(
+            &mut checkpoint,"p",4,8,&config,dtype,true,&device).unwrap();
+        assert!(projection.dense().is_none());assert_eq!(checkpoint.consumed.len(),4);
+        let input=Tensor::<B,2>::from_data(TensorData::new(vec![1f32,2.,3.,4.],[1,4]),(&device,dtype));
+        let actual=projection.forward(input).cast(DType::F32).into_data().to_vec::<f32>().unwrap();
+        let expected=(0..8).map(|j| (0..4).map(|i| (i+1) as f32*((i+j) as f32-1.)*0.125).sum::<f32>()+0.25).collect::<Vec<_>>();
+        assert_eq!(actual,expected);
+    }
+}

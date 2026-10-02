@@ -108,6 +108,10 @@ pub(crate) enum RemoteResponse {
 /// Errors that occur during collective operations on the global level
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GlobalCollectiveError {
+    /// A bounded control or data operation exceeded its deadline.
+    OperationTimeout,
+    /// This communicator cannot be reused after a timeout, disconnect or cancellation.
+    CommunicatorAborted,
     /// Operations that can't be done before registering
     AllReduceBeforeRegister,
     /// Collective issued before all participants were registered.

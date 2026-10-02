@@ -1,5 +1,5 @@
 //! Host-only validation shared by the native static graph bridge.
-//! No backend calls or GPU emulation. Kernels are fixed, contiguous, inference-only.
+//! No backend calls or GPU emulation. Kernels use fixed, contiguous buffers; AOTAutograd owns training differentiation.
 
 pub const MAX_NODES: usize = 256;
 pub const MAX_TENSORS: usize = 512;
@@ -50,19 +50,54 @@ pub fn validate(tensors: &[TensorSpec<'_>], nodes: &[NodeSpec], inputs: usize) -
         if n.a as usize >= out_index { return Err("static graph input must precede its output".into()); }
         let a = &tensors[n.a as usize];
         let out = &tensors[out_index];
-        if a.shape != out.shape || a.dtype != out.dtype { return Err("static graph output shape/dtype mismatch".into()); }
+        if a.dtype != out.dtype || (!matches!(n.op, 7 | 30 | 104 | 105) && a.shape != out.shape) { return Err("static graph output shape/dtype mismatch".into()); }
         match n.op {
-            COPY | SILU => {
+            COPY | 3 | 9..=14 | 17 | 19..=25 | 27 | 35..=40 | 43 | 45 | 108 => {
                 if n.b != n.a || n.scalar.to_bits() != 0f32.to_bits() {
                     return Err("unary graph node must use its input as dummy and canonical zero scalar".into());
                 }
             }
-            ADD | MUL | SILU_MUL => {
+            ADD | MUL | 8 | 15 | 16 | 18 | SILU_MUL => {
                 if n.b as usize >= out_index { return Err("static graph second input must precede its output".into()); }
                 let b = &tensors[n.b as usize];
                 if a.shape != b.shape || a.dtype != b.dtype { return Err("static graph broadcasting/type promotion is not supported".into()); }
                 if !n.scalar.is_finite() || (n.op != ADD && n.scalar.to_bits() != 0f32.to_bits()) {
                     return Err("invalid static graph pointwise scalar".into());
+                }
+            }
+            109..=111 => {
+                if n.b != n.a || !n.scalar.is_finite() {
+                    return Err("invalid unary scalar operation".into());
+                }
+            }
+            7 | 30 => {
+                if n.b as usize >= out_index { return Err("future matrix input".into()); }
+                let b = &tensors[n.b as usize];
+                let rank = if n.op == 7 { 2 } else { 3 };
+                if a.shape.len() != rank || b.shape.len() != rank || out.shape.len() != rank
+                    || b.dtype != a.dtype || n.scalar.to_bits() != 0
+                    || a.shape[rank-1] != b.shape[rank-2]
+                    || out.shape[rank-2] != a.shape[rank-2] || out.shape[rank-1] != b.shape[rank-1]
+                    || a.shape[..rank-2] != b.shape[..rank-2] || a.shape[..rank-2] != out.shape[..rank-2] {
+                    return Err("invalid static matrix multiply shapes/dtypes".into());
+                }
+            }
+            102 | 103 | 106 | 107 => {
+                if !n.scalar.is_finite() || n.scalar.fract() != 0.0 || n.scalar < 0.0
+                    || n.scalar as usize >= a.shape.len() || n.b as usize >= out_index {
+                    return Err("invalid softmax axis or input".into());
+                }
+                let b = &tensors[n.b as usize];
+                if b.shape != a.shape || b.dtype != a.dtype || (n.op < 106 && n.a != n.b) {
+                    return Err("softmax gradient/output mismatch".into());
+                }
+            }
+            104 | 105 => {
+                let mask = n.scalar as u32;
+                if !n.scalar.is_finite() || mask as f32 != n.scalar || mask == 0
+                    || mask >= (1 << a.shape.len()) || n.b != n.a || out.shape.len() != a.shape.len()
+                    || a.shape.iter().enumerate().any(|(d, &v)| out.shape[d] != if mask & (1 << d) != 0 {1} else {v}) {
+                    return Err("invalid keepdim reduction mask/output".into());
                 }
             }
             RMS_NORM => {
@@ -109,4 +144,22 @@ mod tests {
     #[test] fn silu_mul_no_broadcast() { assert!(validate(&[t(&[2],&[1],0),t(&[1],&[1],0),t(&[2],&[1],0)], &[NodeSpec{op:SILU_MUL,a:0,b:1,scalar:0.}],2).is_err()); }
     #[test] fn silu_mul_code_is_extension_only() { assert_eq!(SILU_MUL,101); assert_ne!(SILU_MUL,SILU); }
     #[test] fn abi_layout() { assert_eq!(std::mem::size_of::<NodeSpec>(),16); assert_eq!(std::mem::align_of::<NodeSpec>(),4); }
+}
+
+#[cfg(test)]
+mod api3_tests {
+    use super::*;
+    #[test]
+    fn changed_matrix_output_shape_is_validated() {
+        fn spec(shape: &'static [usize], strides: &'static [usize]) -> TensorSpec<'static> { TensorSpec{shape,strides,dtype:0} }
+        let values=[spec(&[2,3],&[3,1]),spec(&[3,4],&[4,1]),spec(&[2,4],&[4,1])];
+        assert!(validate(&values,&[NodeSpec{op:7,a:0,b:1,scalar:0.}],2).is_ok());
+    }
+    #[test]
+    fn reduction_bitmask_and_softmax_axis_checked() {
+        let values=[TensorSpec{shape:&[2,3,4],strides:&[12,4,1],dtype:1},
+            TensorSpec{shape:&[1,3,1],strides:&[3,1,1],dtype:1}];
+        assert!(validate(&values,&[NodeSpec{op:104,a:0,b:0,scalar:5.}],1).is_ok());
+        assert!(validate(&values,&[NodeSpec{op:104,a:0,b:0,scalar:2.}],1).is_err());
+    }
 }

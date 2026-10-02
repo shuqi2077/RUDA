@@ -57,6 +57,21 @@ impl AwqGemmLayout {
         })
     }
 
+    /// Logical stored bytes for packed words, zero points, scales and optional bias.
+    /// This excludes allocator padding and activations; it is not a GPU peak metric.
+    pub fn packed_payload_bytes(self, dtype: DType, bias: bool) -> Result<usize, Int4Error> {
+        Self::new(self.input_features, self.output_features, self.group_size)?;
+        if !matches!(dtype, DType::F16 | DType::BF16 | DType::F32) {
+            return Err(Int4Error("AWQ scales require FP16/BF16/FP32"));
+        }
+        let kn = self.input_features * self.output_features;
+        let gn = self.groups() * self.output_features;
+        (kn / 2).checked_add(gn / 2)
+            .and_then(|v| v.checked_add(gn.checked_mul(dtype.size())?))
+            .and_then(|v| v.checked_add(if bias { self.output_features.checked_mul(dtype.size())? } else {0}))
+            .ok_or(Int4Error("AWQ packed payload size overflow"))
+    }
+
     pub fn groups(self) -> usize {
         self.input_features / self.group_size
     }
@@ -90,11 +105,11 @@ impl<R: Runtime> AwqGemm<R> {
             || qzeros.dtype != DType::I32
             || qweight.meta.shape() != &Shape::from([k, n / 8])
             || qzeros.meta.shape() != &Shape::from([layout.groups(), n / 8])
-            || scales.dtype != DType::F16
+            || !matches!(scales.dtype, DType::F16 | DType::BF16 | DType::F32)
             || scales.meta.shape() != &Shape::from([layout.groups(), n])
         {
             return Err(Int4Error(
-                "AWQ GEMM requires I32 packed weights/zeros and F16 per-group scales with matching shapes",
+                "AWQ GEMM requires I32 packed weights/zeros and FP16/BF16/FP32 per-group scales with matching shapes",
             ));
         }
         for tensor in [&qzeros, &scales].into_iter().chain(bias.iter()) {
@@ -103,9 +118,9 @@ impl<R: Runtime> AwqGemm<R> {
             }
         }
         if let Some(bias) = &bias {
-            if bias.dtype != DType::F16 || bias.meta.shape() != &Shape::from([n]) {
+            if bias.dtype != scales.dtype || bias.meta.shape() != &Shape::from([n]) {
                 return Err(Int4Error(
-                    "AWQ GEMM bias must be an F16 output-channel vector",
+                    "AWQ GEMM bias must be a scale-dtype output-channel vector",
                 ));
             }
         }
@@ -122,13 +137,19 @@ impl<R: Runtime> AwqGemm<R> {
         self.layout
     }
 
+    /// Logical resident packed payload; no full floating matrix is cached.
+    pub fn packed_payload_bytes(&self) -> usize {
+        self.layout.packed_payload_bytes(self.scales.dtype, self.bias.is_some())
+            .expect("validated packed layout")
+    }
+
     pub fn forward(&self, input: RudaTensor<R>) -> Result<RudaTensor<R>, Int4Error> {
         let rank = input.meta.num_dims();
         let k = self.layout.input_features;
         let n = self.layout.output_features;
-        if rank == 0 || input.meta.shape()[rank - 1] != k || input.dtype != DType::F16 {
+        if rank == 0 || input.meta.shape()[rank - 1] != k || input.dtype != self.scales.dtype {
             return Err(Int4Error(
-                "AWQ GEMM input must be F16 with matching last dimension",
+                "AWQ GEMM input must match scale dtype and last dimension",
             ));
         }
         if input.device.to_id() != self.qweight.device.to_id() {
@@ -161,7 +182,7 @@ impl<R: Runtime> AwqGemm<R> {
             input.client.clone(),
             input.device.clone(),
             shape,
-            DType::F16,
+            input.dtype,
         );
         if elements == 0 {
             return Ok(output);
@@ -186,7 +207,7 @@ impl<R: Runtime> AwqGemm<R> {
             n as u32,
             self.layout.group_size as u32,
             u32::from(self.bias.is_some()),
-            DType::F16.into(),
+            input.dtype.into(),
         );
         Ok(output)
     }

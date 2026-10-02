@@ -1,297 +1,199 @@
-use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Duration};
-
+//! Single-owner control pump. Requests are removed after one response; no
+//! unchecked callbacks, infinite reconnect loops, or post-dispatch retries.
+use std::{collections::HashMap, marker::PhantomData};
 use ruda_communication::{Address, CommunicationChannel, Message, ProtocolClient};
-use tokio::{
-    runtime::Runtime,
-    sync::{
-        Mutex,
-        mpsc::{Receiver, Sender},
-    },
-    task::JoinHandle,
-};
+use tokio::{runtime::Runtime, sync::mpsc::{Receiver, Sender}, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
+use crate::global::{policy::GlobalFailurePolicy, shared::{CollectiveMessage,
+    CollectiveMessageResponse, GlobalCollectiveError, RemoteRequest, RemoteResponse, RequestId, SessionId}};
 
-use crate::global::shared::{
-    CollectiveMessage, CollectiveMessageResponse, GlobalCollectiveError, RemoteRequest,
-    RemoteResponse, RequestId, SessionId,
-};
-
-/// Worker that handles communication with the orchestrator for global collective operations.
 pub(crate) struct GlobalClientWorker<P: ProtocolClient> {
     handle: Option<JoinHandle<Result<(), GlobalCollectiveError>>>,
     cancel_token: CancellationToken,
     request_sender: Sender<ClientRequest>,
+    policy: GlobalFailurePolicy,
     _phantom_data: PhantomData<P>,
 }
-
-// Rename
-struct GlobalClientWorkerState {
-    requests: HashMap<RequestId, Sender<RemoteResponse>>,
-}
-
-impl GlobalClientWorkerState {
-    fn new() -> Self {
-        Self {
-            requests: HashMap::new(),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct ClientRequest {
-    pub request: RemoteRequest,
-    pub callback: Sender<RemoteResponse>,
-}
-
-impl ClientRequest {
-    pub(crate) fn new(request: RemoteRequest, callback: Sender<RemoteResponse>) -> Self {
-        Self { request, callback }
-    }
-}
+struct ClientRequest { request: RemoteRequest, callback: Sender<RemoteResponse> }
 
 impl<C: ProtocolClient> GlobalClientWorker<C> {
-    /// Create a new global client worker and start the tasks.
-    pub(crate) fn new(
-        runtime: &Runtime,
-        cancel_token: CancellationToken,
-        global_address: &Address,
-    ) -> Self {
-        let (request_sender, request_recv) = tokio::sync::mpsc::channel::<ClientRequest>(10);
-
-        let state = Arc::new(Mutex::new(GlobalClientWorkerState::new()));
-
-        let handle = runtime.spawn(Self::start(
-            state,
-            cancel_token.clone(),
-            global_address.clone(),
-            request_recv,
-        ));
-
-        Self {
-            handle: Some(handle),
-            cancel_token,
-            request_sender,
-            _phantom_data: PhantomData,
-        }
+    pub(crate) fn new(runtime: &Runtime, cancel_token: CancellationToken, address: &Address) -> Self {
+        let policy = GlobalFailurePolicy::from_environment().expect("invalid ruCCL failure policy");
+        let (request_sender, request_recv) = tokio::sync::mpsc::channel(10);
+        let handle = runtime.spawn(Self::start(cancel_token.clone(), address.clone(), request_recv, policy));
+        Self { handle: Some(handle), cancel_token, request_sender, policy, _phantom_data: PhantomData }
     }
+    pub(crate) fn policy(&self) -> GlobalFailurePolicy { self.policy }
+    pub(crate) fn token(&self) -> CancellationToken { self.cancel_token.clone() }
+    pub(crate) fn abort(&self) { self.cancel_token.cancel(); }
 
-    /// Start the global client tasks
-    async fn start(
-        state: Arc<Mutex<GlobalClientWorkerState>>,
-        cancel_token: CancellationToken,
-        global_address: Address,
-        request_recv: Receiver<ClientRequest>,
-    ) -> Result<(), GlobalCollectiveError> {
-        // Init the connection.
-        let (request, response) = Self::init_connection(&global_address).await?;
-
-        // Websocket async worker loading responses from the server.
-        let response_handle = tokio::spawn(Self::response_loader(
-            state.clone(),
-            response,
-            cancel_token.clone(),
-        ));
-
-        // Channel async worker sending operations to the server.
-        let request_handle = tokio::spawn(Self::request_sender(
-            request_recv,
-            state,
-            request,
-            cancel_token.clone(),
-        ));
-
-        if let Err(e) = response_handle.await {
-            log::error!("Response handler failed: {e:?}");
-        }
-        if let Err(e) = request_handle.await {
-            log::error!("Request handler failed: {e:?}");
-        }
-
-        Ok(())
-    }
-
-    async fn init_connection(
-        address: &Address,
-    ) -> Result<(C::Channel, C::Channel), GlobalCollectiveError> {
-        let session_id = SessionId::new();
-
-        let stream_request = tokio::spawn(Self::connect_with_retry(
-            address.clone(),
-            "request",
-            std::time::Duration::from_secs(1),
-            None,
-            session_id,
-        ));
-        let stream_response = tokio::spawn(Self::connect_with_retry(
-            address.clone(),
-            "response",
-            std::time::Duration::from_secs(1),
-            None,
-            session_id,
-        ));
-
-        let Ok(Some(request)) = stream_request.await else {
-            return Err(GlobalCollectiveError::OrchestratorUnreachable);
-        };
-        let Ok(Some(response)) = stream_response.await else {
-            return Err(GlobalCollectiveError::OrchestratorUnreachable);
-        };
-
-        Ok((request, response))
-    }
-
-    /// Connect with websocket with retries.
-    async fn connect_with_retry(
-        address: Address,
-        route: &str,
-        retry_pause: Duration,
-        retry_max: Option<u32>,
-        session_id: SessionId,
-    ) -> Option<C::Channel> {
-        let mut retries = 0;
-        loop {
-            if let Some(max) = retry_max
-                && retries >= max
-            {
-                log::warn!("Failed to connect to {address} after {max} retries.");
-                return None;
+    async fn connect(address: Address, route: &str, session: SessionId,
+        token: CancellationToken, policy: GlobalFailurePolicy) -> Result<C::Channel, GlobalCollectiveError>
+    {
+        for attempt in 0..policy.connect_attempts {
+            let stream = tokio::select! {
+                _ = token.cancelled() => return Err(GlobalCollectiveError::CommunicatorAborted),
+                value = tokio::time::timeout(policy.connect_timeout, C::connect(address.clone(), route)) => value,
+            };
+            if let Ok(Some(mut stream)) = stream {
+                let bytes = rmp_serde::to_vec(&CollectiveMessage::Init(session))
+                    .map_err(|_| GlobalCollectiveError::InvalidMessage)?;
+                // Once Init is submitted, an ambiguous send must abort rather
+                // than retry on another socket with the same session identity.
+                tokio::select! {
+                    _ = token.cancelled() => return Err(GlobalCollectiveError::CommunicatorAborted),
+                    value = tokio::time::timeout(policy.connect_timeout, stream.send(Message::new(bytes.into()))) => {
+                        value.map_err(|_| GlobalCollectiveError::OperationTimeout)??;
+                    }
+                }
+                return Ok(stream);
             }
-
-            // Try to connect to the request address.
-            println!("Connecting to {address} ...");
-            let result = C::connect(address.clone(), route).await;
-
-            if let Some(mut stream) = result {
-                let init_msg = CollectiveMessage::Init(session_id);
-                let bytes: bytes::Bytes = rmp_serde::to_vec(&init_msg).unwrap().into();
-                stream
-                    .send(Message::new(bytes))
-                    .await
-                    .expect("Can send the init message on the websocket.");
-                return Some(stream);
+            if attempt + 1 < policy.connect_attempts {
+                tokio::select! {
+                    _ = token.cancelled() => return Err(GlobalCollectiveError::CommunicatorAborted),
+                    _ = tokio::time::sleep(policy.backoff(attempt)) => {}
+                }
             }
-
-            println!("Failed to connect to {address}, retrying... Attempt #{retries}");
-            tokio::time::sleep(retry_pause).await;
-            retries += 1;
         }
+        Err(GlobalCollectiveError::OrchestratorUnreachable)
     }
 
-    /// Unregister the worker and close the connection.
+    async fn start(token: CancellationToken, address: Address, mut requests: Receiver<ClientRequest>,
+        policy: GlobalFailurePolicy) -> Result<(), GlobalCollectiveError>
+    {
+        let mut pending: HashMap<RequestId, Sender<RemoteResponse>> = HashMap::new();
+        let result = async {
+            let id = SessionId::new();
+            let (mut send, mut recv) = tokio::try_join!(
+                Self::connect(address.clone(), "request", id, token.clone(), policy),
+                Self::connect(address, "response", id, token.clone(), policy))?;
+            loop {
+                tokio::select! {
+                    _ = token.cancelled() => return Err(GlobalCollectiveError::CommunicatorAborted),
+                    request = requests.recv() => {
+                        let Some(request) = request else { return Ok(()); };
+                        if request.callback.is_closed() { continue; }
+                        let id = RequestId::new();
+                        pending.insert(id, request.callback);
+                        let bytes = rmp_serde::to_vec(&CollectiveMessage::Request(id, request.request))
+                            .map_err(|_| GlobalCollectiveError::InvalidMessage)?;
+                        tokio::time::timeout(policy.request_timeout, send.send(Message::new(bytes.into())))
+                            .await.map_err(|_| GlobalCollectiveError::OperationTimeout)??;
+                    }
+                    packet = recv.recv() => {
+                        let packet = packet?.ok_or(GlobalCollectiveError::CommunicatorAborted)?;
+                        let response: CollectiveMessageResponse = rmp_serde::from_slice(&packet.data)
+                            .map_err(|_| GlobalCollectiveError::InvalidMessage)?;
+                        // Duplicate, stale or unsolicited replies are protocol errors,
+                        // never a second completion or an unbounded map leak.
+                        let callback = pending.remove(&response.request_id)
+                            .ok_or(GlobalCollectiveError::WrongOrchestratorResponse)?;
+                        let _ = callback.try_send(response.content);
+                    }
+                }
+            }
+        }.await;
+        token.cancel(); // Also stops this node's data/sync listener.
+        let error = result.as_ref().err().cloned().unwrap_or(GlobalCollectiveError::CommunicatorAborted);
+        for (_, callback) in pending { let _ = callback.try_send(RemoteResponse::Error(error.clone())); }
+        while let Ok(request) = requests.try_recv() {
+            let _ = request.callback.try_send(RemoteResponse::Error(error.clone()));
+        }
+        result
+    }
+
+    pub(crate) async fn request(&self, request: RemoteRequest) -> RemoteResponse {
+        if self.cancel_token.is_cancelled() {
+            return RemoteResponse::Error(GlobalCollectiveError::CommunicatorAborted);
+        }
+        let wait = async {
+            let (callback, mut recv) = tokio::sync::mpsc::channel(1);
+            self.request_sender.send(ClientRequest { request, callback }).await
+                .map_err(|_| GlobalCollectiveError::CommunicatorAborted)?;
+            recv.recv().await.ok_or(GlobalCollectiveError::CommunicatorAborted)
+        };
+        // Cancellation of the CALLER also poisons the epoch. A dropped request
+        // may already be executing remotely, so it cannot be ignored or replayed.
+        let mut guard = CancelOnDrop { token: self.token(), completed: false };
+        let result = tokio::select! {
+            _ = self.cancel_token.cancelled() => Err(GlobalCollectiveError::CommunicatorAborted),
+            value = tokio::time::timeout(self.policy.request_timeout, wait) =>
+                value.map_err(|_| GlobalCollectiveError::OperationTimeout).and_then(|x| x),
+        };
+        guard.completed = result.is_ok();
+        result.unwrap_or_else(RemoteResponse::Error)
+    }
+
     pub(crate) async fn close_connection(&mut self) -> Result<(), GlobalCollectiveError> {
-        if let Some(handle) = self.handle.take() {
-            // Un-register from server
-            let req = RemoteRequest::Finish;
-            let resp = self.request(req).await;
-            if resp != RemoteResponse::FinishAck {
-                log::error!("Requested to finish, did not get FinishAck; got {resp:?}");
-                return Err(GlobalCollectiveError::WrongOrchestratorResponse);
-            }
-
-            self.cancel_token.cancel();
-
-            if let Err(e) = handle.await.unwrap() {
-                log::error!("Connection error {e:?}");
-            }
-        }
-
-        Ok(())
+        let Some(mut handle) = self.handle.take() else { return Ok(()); };
+        let response = if self.cancel_token.is_cancelled() { RemoteResponse::FinishAck }
+            else { self.request(RemoteRequest::Finish).await };
+        self.abort();
+        if tokio::time::timeout(self.policy.request_timeout, &mut handle).await.is_err() { handle.abort(); }
+        if response == RemoteResponse::FinishAck { Ok(()) }
+        else { Err(GlobalCollectiveError::WrongOrchestratorResponse) }
     }
+}
+impl<C: ProtocolClient> Drop for GlobalClientWorker<C> {
+    fn drop(&mut self) { self.cancel_token.cancel(); if let Some(handle) = &self.handle { handle.abort(); } }
+}
 
-    async fn response_loader(
-        state: Arc<Mutex<GlobalClientWorkerState>>,
-        mut stream_response: C::Channel,
-        cancel_token: CancellationToken,
-    ) {
-        loop {
-            tokio::select! {
-                // Check if the cancel token is cancelled
-                _ = cancel_token.cancelled() => {
-                    break;
-                }
-                // .. Or get a message from the websocket
-                response = stream_response.recv() => {
-                    match response {
-                        Err(err) => {
-                            log::error!("Error receiving message from websocket: {err:?}");
-                            break;
-                        }
-                        Ok(response) => {
-                            let Some(response) = response else {
-                                log::warn!("Closed connection");
-                                break;
-                            };
+pub(super) struct CancelOnDrop { pub token: CancellationToken, pub completed: bool }
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) { if !self.completed { self.token.cancel(); } }
+}
 
-                            let response: CollectiveMessageResponse = rmp_serde::from_slice(&response.data)
-                                .expect("Can deserialize messages from the websocket.");
-                            let state_resp = state.lock().await;
-                            let response_callback = state_resp
-                                .requests
-                                .get(&response.request_id)
-                                .expect("Got a response to an unknown request");
-                            response_callback.send(response.content).await.unwrap();
-                        }
-                    }
-                }
-            }
-        }
-
-        log::info!("Worker closing connection");
-        stream_response
-            .close()
-            .await
-            .expect("Can close the websocket stream.");
+#[cfg(test)]
+mod bounded_tests {
+    use super::*;
+    use ruda_core::future::DynFut;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    #[derive(Debug)] struct MockError;
+    impl ruda_communication::CommunicationError for MockError {}
+    struct Channel;
+    impl CommunicationChannel for Channel {
+        type Error = MockError;
+        async fn send(&mut self, _: Message) -> Result<(), MockError> { Err(MockError) }
+        async fn recv(&mut self) -> Result<Option<Message>, MockError> { std::future::pending().await }
+        async fn close(&mut self) -> Result<(), MockError> { Ok(()) }
     }
-
-    async fn request_sender(
-        mut request_recv: Receiver<ClientRequest>,
-        worker: Arc<Mutex<GlobalClientWorkerState>>,
-        mut stream_request: C::Channel,
-        cancel_token: CancellationToken,
-    ) {
-        loop {
-            tokio::select! {
-                _ = cancel_token.cancelled() => {
-                    break;
-                },
-                request = request_recv.recv() => {
-                    let Some(request) = request else {
-                        continue;
-                    };
-
-                    let id = RequestId::new();
-
-                    // Register the callback if there is one
-                    {
-                        let mut state = worker.lock().await;
-                        state.requests.insert(id, request.callback);
-                    }
-
-                    let request = CollectiveMessage::Request(id, request.request);
-
-                    let bytes = rmp_serde::to_vec::<CollectiveMessage>(&request)
-                        .expect("Can serialize tasks to bytes.")
-                        .into();
-                    stream_request
-                        .send(Message::new(bytes))
-                        .await
-                        .expect("Can send the message on the websocket.");
-                }
-            }
+    static REFUSED: AtomicUsize = AtomicUsize::new(0);
+    struct Refused;
+    impl ProtocolClient for Refused {
+        type Channel = Channel; type Error = MockError;
+        fn connect(_: Address, _: &str) -> DynFut<Option<Channel>> {
+            REFUSED.fetch_add(1, Ordering::SeqCst); Box::pin(async {None})
         }
-
-        log::info!("Worker closing connection");
-        stream_request
-            .close()
-            .await
-            .expect("Can send the close message on the websocket.");
     }
-
-    pub(crate) async fn request(&self, req: RemoteRequest) -> RemoteResponse {
-        let (callback, mut response_recv) = tokio::sync::mpsc::channel::<RemoteResponse>(10);
-        let client_req = ClientRequest::new(req, callback);
-        self.request_sender.send(client_req).await.unwrap();
-
-        response_recv.recv().await.unwrap()
+    static HANDSHAKE: AtomicUsize = AtomicUsize::new(0);
+    struct AmbiguousHandshake;
+    impl ProtocolClient for AmbiguousHandshake {
+        type Channel = Channel; type Error = MockError;
+        fn connect(_: Address, _: &str) -> DynFut<Option<Channel>> {
+            HANDSHAKE.fetch_add(1, Ordering::SeqCst); Box::pin(async {Some(Channel)})
+        }
+    }
+    fn policy() -> GlobalFailurePolicy {
+        GlobalFailurePolicy { connect_attempts:3, connect_timeout:std::time::Duration::from_millis(20),
+            retry_backoff:std::time::Duration::from_millis(1), ..Default::default() }
+    }
+    #[tokio::test]
+    async fn refused_startup_has_finite_attempt_count() {
+        let result=GlobalClientWorker::<Refused>::connect("unused".parse().unwrap(),"request",SessionId::new(),
+            CancellationToken::new(),policy()).await;
+        assert!(matches!(result,Err(GlobalCollectiveError::OrchestratorUnreachable)));
+        assert_eq!(REFUSED.load(Ordering::SeqCst),3);
+    }
+    #[tokio::test]
+    async fn ambiguous_handshake_is_never_retried() {
+        let result=GlobalClientWorker::<AmbiguousHandshake>::connect("unused".parse().unwrap(),"request",SessionId::new(),
+            CancellationToken::new(),policy()).await;
+        assert!(result.is_err());assert_eq!(HANDSHAKE.load(Ordering::SeqCst),1);
+    }
+    #[test]
+    fn dropped_pending_call_poisoned_but_completed_call_not_poisoned() {
+        let token=CancellationToken::new();
+        drop(CancelOnDrop{token:token.clone(),completed:true});assert!(!token.is_cancelled());
+        drop(CancelOnDrop{token:token.clone(),completed:false});assert!(token.is_cancelled());
     }
 }

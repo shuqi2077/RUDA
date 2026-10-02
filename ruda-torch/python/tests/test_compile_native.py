@@ -49,6 +49,23 @@ class Simulator:
                 y = x.clone()
             elif node.kind == 'silu':
                 y = torch.nn.functional.silu(x)
+            elif node.kind in spec.UNARY_CODES:
+                y = getattr(torch.ops.aten, node.kind).default(x)
+            elif node.kind in ('mm','bmm'):
+                y = getattr(torch, node.kind)(x, values[node.right])
+            elif node.kind == 'div': y = x / values[node.right]
+            elif node.kind in ('add_scalar','mul_scalar','div_scalar'):
+                y = {'add_scalar':torch.add,'mul_scalar':torch.mul,'div_scalar':torch.div}[node.kind](x,node.scalar)
+            elif node.kind in ('silu_backward','sigmoid_backward','tanh_backward'):
+                y = getattr(torch.ops.aten, node.kind).default(x, values[node.right])
+            elif node.kind in ('softmax','log_softmax'):
+                y = getattr(torch, node.kind)(x, dim=int(node.scalar))
+            elif node.kind in ('softmax_backward','log_softmax_backward'):
+                target = torch.ops.aten._softmax_backward_data if node.kind == 'softmax_backward' else torch.ops.aten._log_softmax_backward_data
+                y = target.default(x, values[node.right], int(node.scalar), x.dtype)
+            elif node.kind in ('sum_keepdim','mean_keepdim'):
+                dims = tuple(i for i in range(x.ndim) if int(node.scalar) & (1<<i))
+                y = getattr(x,'sum' if node.kind == 'sum_keepdim' else 'mean')(dims,keepdim=True)
             else:
                 raise AssertionError(node.kind)
             if node.output not in self.workspace:
@@ -73,8 +90,8 @@ def simulated(monkeypatch):
     def cpu_spec(t):
         if not isinstance(t, torch.Tensor) or t.device.type != 'cpu':
             raise ValueError('explicit CPU simulator only')
-        if t.layout != torch.strided or not t.is_contiguous():
-            raise ValueError('native regions require contiguous dense tensors')
+        if t.layout != torch.strided:
+            raise ValueError('native regions require dense strided tensors')
         return spec.TensorSpec(tuple(t.shape), str(t.dtype).removeprefix('torch.'))
     monkeypatch.setattr(native, '_native_available', lambda: True)
     monkeypatch.setattr(native, '_stream_id', lambda: stream[0])
@@ -186,8 +203,11 @@ def test_runtime_metadata_guard_uses_reference_before_dispatch(simulated, case):
     backend, call = make_call(fn, args)
     torch.testing.assert_close(call(args), fn(*args))
     assert not simulated[0]
-    assert backend.info['region_reference_runs'] == 1
-    assert backend.info['reference_reasons']
+    assert backend.info['region_reference_runs'] == (0 if case == 'noncontiguous' else 1)
+    if case == 'noncontiguous':
+        assert not backend.info['graphs'][0]['native_regions']
+    else:
+        assert backend.info['reference_reasons']
 
 
 def test_required_native_runtime_guard_rejects_broadcast(simulated):

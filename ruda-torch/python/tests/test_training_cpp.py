@@ -101,4 +101,4 @@ def test_native_failure_and_initialization_contract(training_bridge):
         with pytest.raises(RuntimeError,match='ABI test failure'):cpp.training_silu_forward(x,x)
     finally:s.training_fail=False
     with pytest.raises(RuntimeError,match='initialization'):cpp.initialize_training(1)
-    assert cpp.training_api_version==4 and cpp.abi_version==10 and cpp.graph_api_version==2
+    assert cpp.training_api_version==4 and cpp.abi_version==10 and cpp.graph_api_version==3

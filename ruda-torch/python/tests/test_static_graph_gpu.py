@@ -14,14 +14,14 @@ def r():
         pytest.skip('explicit native GPU execution required')
     assert os.environ.get('RUDA_CUDA_COMPILER')=='ptx'
     import ruda_torch as r
-    assert r._C.abi_version==10 and r._graph_available and r._C.graph_api_version==2
+    assert r._C.abi_version==10 and r._graph_available and r._C.graph_api_version==3
     # Runtime marker is emitted only AFTER a real native graph result was read.
     x=torch.tensor([1.,2.]).to('ruda')
     with r.StaticGraph({'x':x},[r.GraphOp.copy('y','x')]) as g:
         before=r.execution_stats()['static_graph_replays']
         torch.testing.assert_close(g.replay()['y'].cpu(),torch.tensor([1.,2.]))
         assert r.execution_stats()['static_graph_replays']==before+1
-    print('RUDA_V24_STATIC_GRAPH_RUNTIME abi=9 graph_api=2',flush=True)
+    print('RUDA_V24_STATIC_GRAPH_RUNTIME abi=10 graph_api=3',flush=True)
     return r
 
 def tol(dtype): return {torch.float32:3e-5,torch.float16:5e-3,torch.bfloat16:4e-2}[dtype]

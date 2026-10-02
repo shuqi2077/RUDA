@@ -141,7 +141,7 @@ class StaticGraph:
                 'fused_activations':self._plan.fused_activations,
                 'optimize':self._optimize,'reuse_workspace':self._reuse_workspace,
                 'outputs':tuple(self._layout.names[i] for i in self._layout.output_indices),'tracked_completion':self._track_completion,
-                'base_abi':9,'graph_api':2,'closed':self._closed}
+                'base_abi':10,'graph_api':3,'closed':self._closed}
 
     def close(self):
         with self._replay_lock:

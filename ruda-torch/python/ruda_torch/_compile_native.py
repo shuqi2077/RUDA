@@ -12,49 +12,86 @@ import torch
 from torch.fx import Graph, GraphModule, Node
 from torch.fx.node import map_arg
 
-from ._graph_spec import GraphOp, MAX_NODES, MAX_TENSORS, TensorSpec, plan_layout
+from ._graph_spec import GraphOp, MAX_NODES, MAX_TENSORS, TensorSpec, plan_layout, UNARY_CODES
 
 
 class NativeCoverageError(RuntimeError):
     """A required-native graph contains unsupported operations or input metadata."""
 
 
-# Deliberately exact overloads, not string/sub-string matching. Views, mutation,
-# broadcasts, random ops and reductions retain their original ATen semantics.
-_TARGETS = {
-    torch.ops.aten.add.Tensor: 'add',
-    torch.ops.aten.mul.Tensor: 'mul',
-    torch.ops.aten.silu.default: 'silu',
-    torch.ops.aten.clone.default: 'copy',
-}
+# Exact overloads only; no mutations, RNG, alias-changing views or implicit casts.
+_TARGETS = {getattr(torch.ops.aten, name).default: name for name in UNARY_CODES
+            if name not in ('copy',)}
+_TARGETS.update({torch.ops.aten.clone.default: 'copy', torch.ops.aten.add.Tensor: 'add',
+    torch.ops.aten.sub.Tensor: 'sub', torch.ops.aten.mul.Tensor: 'mul',
+    torch.ops.aten.div.Tensor: 'div', torch.ops.aten.mm.default: 'mm',
+    torch.ops.aten.bmm.default: 'bmm', torch.ops.aten.silu_backward.default: 'silu_backward',
+    torch.ops.aten.sigmoid_backward.default: 'sigmoid_backward',
+    torch.ops.aten.tanh_backward.default: 'tanh_backward',
+    torch.ops.aten._softmax.default: 'softmax', torch.ops.aten._log_softmax.default: 'log_softmax',
+    torch.ops.aten._softmax_backward_data.default: 'softmax_backward',
+    torch.ops.aten._log_softmax_backward_data.default: 'log_softmax_backward',
+    torch.ops.aten.sum.dim_IntList: 'sum_keepdim', torch.ops.aten.mean.dim: 'mean_keepdim',
+    torch.ops.aten.add.Scalar: 'add', torch.ops.aten.sub.Scalar: 'sub',
+    torch.ops.aten.mul.Scalar: 'mul', torch.ops.aten.div.Scalar: 'div'})
+
+
+def _rank(node):
+    value = node.meta.get('val')
+    return value.ndim if isinstance(value, torch.Tensor) else None
 
 
 def _lower(node):
     if node.op != 'call_function' or node.target not in _TARGETS:
         return None
-    kind = _TARGETS[node.target]
-    args, kwargs = node.args, node.kwargs
-    if kind in ('add', 'mul'):
-        if len(args) != 2 or not all(isinstance(a, Node) for a in args):
-            return None
-        if set(kwargs) - ({'alpha'} if kind == 'add' else set()):
+    value = node.meta.get('val')
+    if isinstance(value, torch.Tensor) and not value.is_contiguous():
+        return None  # Output stride/clone memory-format is observable to users.
+    kind, args, kwargs = _TARGETS[node.target], node.args, dict(node.kwargs)
+    if not args or not isinstance(args[0], Node): return None
+    left = args[0].name
+    if kind in ('add', 'sub', 'mul', 'div'):
+        if len(args) != 2 or set(kwargs) - ({'alpha'} if kind in ('add','sub') else set()):
             return None
         alpha = kwargs.get('alpha', 1.)
-        if type(alpha) not in (int, float) or not math.isfinite(alpha):
-            return None
-        return (GraphOp.add(node.name, args[0].name, args[1].name, alpha=alpha)
-                if kind == 'add' else GraphOp.mul(node.name, args[0].name, args[1].name))
-    if len(args) != 1 or not isinstance(args[0], Node):
-        return None
+        if type(alpha) not in (int, float) or not math.isfinite(alpha): return None
+        if kind == 'sub': alpha = -alpha
+        if isinstance(args[1], Node):
+            return GraphOp('add' if kind == 'sub' else kind, node.name, left, args[1].name,
+                           alpha if kind in ('add','sub') else 0.)
+        if type(args[1]) not in (int,float) or not math.isfinite(args[1]): return None
+        scalar = args[1] * alpha if kind in ('add','sub') else args[1]
+        return GraphOp(('add' if kind == 'sub' else kind)+'_scalar', node.name, left, scalar=scalar)
+    if kind in ('mm', 'bmm', 'silu_backward', 'sigmoid_backward', 'tanh_backward'):
+        if len(args) != 2 or not isinstance(args[1], Node) or kwargs: return None
+        return GraphOp(kind, node.name, left, args[1].name)
+    if kind.startswith(('softmax', 'log_softmax')):
+        backward = kind.endswith('_backward')
+        if kwargs or len(args) != (4 if backward else 3): return None
+        axis = args[2 if backward else 1]; rank = _rank(args[0])
+        if type(axis) is not int or rank is None or not -rank <= axis < rank: return None
+        if not backward and args[2] is not False: return None  # no half-to-float cast
+        if backward:
+            value = args[0].meta.get('val')
+            if not isinstance(args[1], Node) or args[3] != value.dtype: return None
+        return GraphOp(kind, node.name, left, args[1].name if backward else None, axis % rank)
+    if kind in ('sum_keepdim', 'mean_keepdim'):
+        if not 2 <= len(args) <= 3 or set(kwargs) - {'keepdim','dtype'}: return None
+        if (args[2] if len(args) == 3 else kwargs.get('keepdim', False)) is not True: return None
+        if kwargs.get('dtype') is not None: return None
+        rank = _rank(args[0]); dims = args[1]
+        if rank is None or not isinstance(dims, (tuple,list)): return None
+        dims = list(dims) if dims else list(range(rank))
+        if any(type(d) is not int or not -rank <= d < rank for d in dims): return None
+        dims = [d % rank for d in dims]
+        if len(set(dims)) != len(dims): return None
+        return GraphOp(kind, node.name, left, scalar=sum(1 << d for d in dims))
     if kind == 'copy':
-        if set(kwargs) - {'memory_format'}:
-            return None
-        if kwargs.get('memory_format') not in (None, torch.preserve_format, torch.contiguous_format):
-            return None
-        return GraphOp.copy(node.name, args[0].name)
-    if kwargs:
+        if len(args) != 1 or set(kwargs) - {'memory_format'}: return None
+        if kwargs.get('memory_format') not in (None, torch.preserve_format, torch.contiguous_format): return None
+    elif len(args) != 1 or kwargs:
         return None
-    return GraphOp.silu(node.name, args[0].name)
+    return GraphOp(kind, node.name, left)
 
 
 def _native_available():
@@ -78,8 +115,8 @@ def _input_spec(value):
         raise ValueError('native regions require tensor inputs')
     if value.device.type != 'ruda' or value.device.index not in (None, 0):
         raise ValueError('native regions require ruda:0 (no implicit device transfer)')
-    if value.layout != torch.strided or not value.is_contiguous():
-        raise ValueError('native regions require contiguous dense tensors')
+    if value.layout != torch.strided:
+        raise ValueError('native regions require dense strided tensors')
     if value.is_conj() or value.is_neg():
         raise ValueError('native regions do not support unresolved conjugate/negative views')
     return TensorSpec(tuple(value.shape), str(value.dtype).removeprefix('torch.'))

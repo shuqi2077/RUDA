@@ -19,7 +19,7 @@ pub(crate) struct Session {
 
 impl Session {
     fn new() -> Self {
-        let (response_sender, recv) = tokio::sync::mpsc::channel::<CollectiveMessageResponse>(1);
+        let (response_sender, recv) = tokio::sync::mpsc::channel::<CollectiveMessageResponse>(64);
         Self {
             response_sender,
             response_receiver: Some(recv),
@@ -27,7 +27,9 @@ impl Session {
     }
 
     async fn respond(&mut self, response: CollectiveMessageResponse) {
-        self.response_sender.send(response).await.unwrap();
+        if let Err(error) = self.response_sender.try_send(response) {
+            log::warn!("collective response queue closed/full: {error}");
+        }
     }
 }
 
@@ -50,6 +52,7 @@ pub(crate) struct GlobalCollectiveState {
     pending_collectives: Vec<(SessionId, RequestId, CollectiveSpec)>,
     next_transfer_id: u64,
     next_node_id: u32,
+    failed: Option<GlobalCollectiveError>,
 }
 
 impl GlobalCollectiveState {
@@ -65,6 +68,7 @@ impl GlobalCollectiveState {
             pending_collectives: Vec::new(),
             next_transfer_id: 2, // All-reduce algorithms reserve 0 and 1.
             next_node_id: 0,
+            failed: None,
         }
     }
 
@@ -79,12 +83,12 @@ impl GlobalCollectiveState {
     pub(crate) fn get_session_responder(
         &mut self,
         id: SessionId,
-    ) -> Receiver<CollectiveMessageResponse> {
+    ) -> Result<Receiver<CollectiveMessageResponse>, GlobalCollectiveError> {
         self.init_session(id);
         let session = self.sessions.get_mut(&id).unwrap();
         let response_recv = session.response_receiver.take();
 
-        response_recv.unwrap()
+        response_recv.ok_or(GlobalCollectiveError::InvalidMessage)
     }
 
     pub(crate) async fn respond(
@@ -92,8 +96,30 @@ impl GlobalCollectiveState {
         session_id: SessionId,
         response: CollectiveMessageResponse,
     ) {
-        let session = self.sessions.get_mut(&session_id).unwrap();
-        session.respond(response).await;
+        if let Some(session) = self.sessions.get_mut(&session_id) { session.respond(response).await; }
+    }
+
+    /// A lost socket poisons the group; late Begin messages cannot form a new
+    /// operation using stale peers. Fresh registration is allowed only after
+    /// every old participant has disconnected/unregistered.
+    pub(crate) async fn disconnect(&mut self, session_id: SessionId) {
+        if let Some(node) = self.registered_nodes.remove(&session_id) {
+            self.node_addresses.remove(&node);
+            self.node_peers.remove(&node);
+            self.num_global_peers = self.node_peers.values().map(|p| p.len() as u32).sum();
+            let error = GlobalCollectiveError::PeerLost(node);
+            self.failed = Some(error.clone());
+            for (session, request_id, _) in core::mem::take(&mut self.pending_collectives) {
+                self.respond(session, CollectiveMessageResponse {request_id, content: RemoteResponse::Error(error.clone())}).await;
+            }
+            for (session, request_id, _) in core::mem::take(&mut self.register_requests) {
+                self.respond(session, CollectiveMessageResponse {request_id, content: RemoteResponse::Error(error.clone())}).await;
+            }
+        }
+        self.sessions.remove(&session_id);
+        if self.registered_nodes.is_empty() {
+            self.cur_num_nodes = None; self.next_node_id = 0; self.failed = None;
+        }
     }
 
     /// Process an incoming node's request
@@ -103,6 +129,13 @@ impl GlobalCollectiveState {
         request_id: RequestId,
         request: RemoteRequest,
     ) {
+        if let Some(error) = self.failed.clone() {
+            if !matches!(request, RemoteRequest::Finish) {
+                self.respond(session_id, CollectiveMessageResponse { request_id,
+                    content: RemoteResponse::Error(error) }).await;
+                return;
+            }
+        }
         if let Err(err) = match request {
             RemoteRequest::Register {
                 node_addr,
@@ -138,6 +171,7 @@ impl GlobalCollectiveState {
             .registered_nodes
             .remove(&session_id)
             .ok_or(GlobalCollectiveError::NotRegisteredOnFinish)?;
+        self.failed = Some(GlobalCollectiveError::PeerLost(node_id));
         self.node_addresses.remove(&node_id);
         self.node_peers.remove(&node_id);
         self.num_global_peers = self.node_peers.values().map(|peers| peers.len() as u32).sum();
@@ -147,23 +181,11 @@ impl GlobalCollectiveState {
                 content: RemoteResponse::Error(GlobalCollectiveError::PeerLost(node_id)),
             }).await;
         }
-        if self.registered_nodes.is_empty() { self.cur_num_nodes = None; self.next_node_id = 0; }
+        if self.registered_nodes.is_empty() { self.cur_num_nodes = None; self.next_node_id = 0; self.failed = None; }
 
-        let mut register_requests = vec![];
-        core::mem::swap(&mut register_requests, &mut self.register_requests);
-        for (session, req, node_id) in register_requests {
-            if session == session_id {
-                // Send a response if we are finishing a session with a pending register request
-                let content = RemoteResponse::Error(GlobalCollectiveError::PendingRegisterOnFinish);
-                let response = CollectiveMessageResponse {
-                    request_id: req,
-                    content,
-                };
-                self.respond(session_id, response).await;
-            } else {
-                // keep the register request
-                self.register_requests.push((session, req, node_id));
-            }
+        for (session, req, _) in core::mem::take(&mut self.register_requests) {
+            self.respond(session, CollectiveMessageResponse { request_id: req,
+                content: RemoteResponse::Error(GlobalCollectiveError::PeerLost(node_id)) }).await;
         }
 
         self.respond(
@@ -361,5 +383,44 @@ mod rooted_agreement_tests {
         assert_eq!(agree_collective(&[(0.into(), &some), (1.into(), &some)], &peers),
             Err(GlobalCollectiveError::BroadcastMultipleTensors));
         assert_eq!(agree_collective(&[(0.into(), &none), (1.into(), &some)], &peers), Ok(1.into()));
+    }
+}
+
+#[cfg(test)]
+mod failure_state_tests {
+    use super::*;
+    #[tokio::test]
+    async fn disconnected_member_fails_pending_and_allows_only_fresh_epoch() {
+        let mut state=GlobalCollectiveState::new();
+        let a=SessionId::new();let b=SessionId::new();
+        let mut ar=state.get_session_responder(a).unwrap();
+        let mut br=state.get_session_responder(b).unwrap();
+        state.register(a,RequestId::new(),"ws://a".parse().unwrap(),2,vec![PeerId(0)]).await.unwrap();
+        state.register(b,RequestId::new(),"ws://b".parse().unwrap(),2,vec![PeerId(1)]).await.unwrap();
+        ar.recv().await.unwrap();br.recv().await.unwrap();
+        let spec=CollectiveSpec::AllReduce{op:crate::ReduceOperation::Sum,
+            strategy:crate::AllReduceStrategy::Centralized,shape:vec![2],dtype:ruda_tensor::DType::F32};
+        state.begin(a,RequestId::new(),spec.clone()).await.unwrap();
+        state.disconnect(b).await;
+        assert!(matches!(ar.recv().await.unwrap().content,RemoteResponse::Error(GlobalCollectiveError::PeerLost(_))));
+        state.process_request(a,RequestId::new(),RemoteRequest::Begin(spec)).await;
+        assert!(matches!(ar.recv().await.unwrap().content,RemoteResponse::Error(_)));
+        state.disconnect(a).await;assert!(state.failed.is_none());assert!(state.cur_num_nodes.is_none());
+        let fresh=SessionId::new();let mut response=state.get_session_responder(fresh).unwrap();
+        state.register(fresh,RequestId::new(),"ws://fresh".parse().unwrap(),1,vec![PeerId(9)]).await.unwrap();
+        assert!(matches!(response.recv().await.unwrap().content,RemoteResponse::Register{..}));
+    }
+    #[test]
+    fn duplicate_response_socket_returns_error_not_panic() {
+        let mut state=GlobalCollectiveState::new();let session=SessionId::new();
+        let _receiver=state.get_session_responder(session).unwrap();
+        assert!(state.get_session_responder(session).is_err());
+    }
+    #[tokio::test]
+    async fn closed_response_queue_does_not_panic_under_state_lock() {
+        let mut state=GlobalCollectiveState::new();let session=SessionId::new();
+        drop(state.get_session_responder(session).unwrap());
+        state.respond(session,CollectiveMessageResponse{request_id:RequestId::new(),content:RemoteResponse::FinishAck}).await;
+        state.disconnect(session).await;
     }
 }

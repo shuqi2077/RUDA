@@ -5,7 +5,7 @@ hidden CPU execution fallback are used. This is not native backward capture.
 """
 import torch
 from torch.autograd.function import once_differentiable
-from ._graph_spec import NO_WEIGHT
+from ._graph_spec import NO_WEIGHT, UNARY_CODES
 
 
 def _silu(x):
@@ -34,6 +34,27 @@ def forward_values(layout, inputs):
         elif op == 100:
             norm = x*torch.rsqrt((x*x).mean(-1, keepdim=True)+scalar)
             out = (norm if y is None else norm*y).to(left.dtype)
+        elif op in UNARY_CODES.values():
+            name = next(name for name, code in UNARY_CODES.items() if code == op)
+            out = getattr(torch.ops.aten, name).default(x).to(left.dtype)
+        elif op in (7, 30):
+            out = (torch.mm(x, y) if op == 7 else torch.bmm(x, y)).to(left.dtype)
+        elif op == 8: out = (x / y).to(left.dtype)
+        elif op in (15, 16, 18):
+            name = {15:'silu_backward', 16:'sigmoid_backward', 18:'tanh_backward'}[op]
+            out = getattr(torch.ops.aten, name).default(x, y).to(left.dtype)
+        elif op in (109,110,111):
+            out = ({109: lambda: x+scalar, 110: lambda: x*scalar,
+                    111: lambda: x/scalar}[op]()).to(left.dtype)
+        elif op in (102,103):
+            out = (torch.softmax(x, int(scalar)) if op == 102 else
+                   torch.log_softmax(x, int(scalar))).to(left.dtype)
+        elif op in (106,107):
+            fn = torch.ops.aten._softmax_backward_data if op == 106 else torch.ops.aten._log_softmax_backward_data
+            out = fn.default(x, y, int(scalar), x.dtype).to(left.dtype)
+        elif op in (104,105):
+            dims = tuple(d for d in range(x.ndim) if int(scalar) & (1 << d))
+            out = (x.sum(dims, keepdim=True) if op == 104 else x.mean(dims, keepdim=True)).to(left.dtype)
         else:
             raise RuntimeError(f'unsupported training graph opcode: {op}')
         values.append(out)
@@ -46,6 +67,19 @@ def backward_values(layout, inputs, grad_outputs):
     Intermediate gradients accumulate in their corresponding storage dtype.
     In particular, fused SiLU-mul keeps the original low-precision cast boundary.
     """
+    if any(op not in (0,1,2,14,100,101) for op in layout.words[::3]):
+        # Legacy graphs keep their tested storage-rounded hand derivatives.
+        # New operations use same-device autograd; the model compiler separately
+        # captures these derivatives through AOTAutograd, not this bridge.
+        with torch.enable_grad():
+            leaves = tuple(value.detach().requires_grad_(True) for value in inputs)
+            values = forward_values(layout, leaves)
+            selected = [(values[i], grad) for i, grad in
+                        zip(layout.output_indices, grad_outputs, strict=True)
+                        if grad is not None and values[i].requires_grad]
+            if not selected: return (None,) * len(leaves)
+            return torch.autograd.grad(tuple(v for v,g in selected), leaves,
+                tuple(g for v,g in selected), allow_unused=True)
     values = forward_values(layout, inputs)
     gradients = [None]*len(values)
 

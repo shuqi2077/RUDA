@@ -55,9 +55,20 @@ def main(argv=None):
             def forward(self, x):
                 return self.output(torch.relu(self.conv(x)).mean((2, 3)))
 
+        class AttentionCore(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.key = torch.nn.Parameter(torch.randn(2, 4, 5) * .1)
+                self.value = torch.nn.Parameter(torch.randn(2, 5, 6) * .1)
+            def forward(self, x):
+                scores = torch.bmm(x, self.key) / 2.
+                probabilities = torch.softmax(scores, -1)
+                return torch.bmm(probabilities, self.value).tanh().mean(-1, keepdim=True)
+
         for name, constructor, shape in (
             ('gated_dense', GatedBlock, (3, 8)),
             ('convolution', ConvBlock, (2, 3, 5, 5)),
+            ('native_attention_core', AttentionCore, (2, 3, 4)),
         ):
             torch.random.default_generator.manual_seed(672)
             reference = constructor()
@@ -99,8 +110,14 @@ def main(argv=None):
                 case['compiler'] = compiled.info
                 if compiled.info['forward_calls'] < args.steps or compiled.info['backward_calls'] < args.steps:
                     raise RuntimeError('the test did not execute captured forward AND backward graphs')
-                if name == 'gated_dense' and compiled.info['native_replays'] == 0:
-                    raise RuntimeError('gated test executed no native static graph region')
+                if name in ('gated_dense', 'native_attention_core') and compiled.info['native_replays'] == 0:
+                    raise RuntimeError(f'{name} executed no native static graph region')
+                if name == 'native_attention_core':
+                    operators = [op for graph in compiled.info['graphs'] for op in graph['operators']]
+                    for target in ('aten.bmm.default', 'aten._softmax.default'):
+                        if not any(op['target'] == target and op['execution'] == 'guarded-native-region'
+                                   for op in operators):
+                            raise RuntimeError(f'attention native mapping missing: {target}')
                 case['passed'] = True
             finally:
                 case.setdefault('compiler', compiled.info)

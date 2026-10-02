@@ -12,7 +12,13 @@ pub struct LoadedQwen35Text<B: Backend> {
     /// AWQ matrices expanded into dense model weights at load time.
     /// Nonzero does NOT mean that inference uses packed INT4 kernels.
     pub dequantized_awq_linears: usize,
+    /// Projections retaining packed weights and using the ruBLAS AWQ kernel.
+    pub packed_awq_linears: usize,
 }
+
+pub(super) type PackedLoader<B: Backend> = fn(&mut Checkpoint, &str, usize, usize,
+    &AwqQuantizationConfig, DType, bool, &<B as ruda_tensor::BackendTypes>::Device)
+    -> Result<Projection<B>, HuggingFaceLoadError>;
 
 pub(super) struct Weights<'a, B: Backend> {
     pub checkpoint: &'a mut Checkpoint,
@@ -20,6 +26,8 @@ pub(super) struct Weights<'a, B: Backend> {
     pub quantization: Option<AwqQuantizationConfig>,
     pub quantized_dtype: DType,
     pub dequantized_awq_linears: usize,
+    pub packed_awq_linears: usize,
+    pub packed_loader: Option<PackedLoader<B>>,
 }
 impl<B: Backend> Weights<'_, B> {
     pub fn tensor<const D: usize>(
@@ -64,6 +72,27 @@ impl<B: Backend> Weights<'_, B> {
             },
         })
     }
+    /// Packed mode never allocates a full floating-point weight matrix.
+    pub fn projection(&mut self, prefix: &str, input: usize, output: usize, bias: bool)
+        -> Result<Projection<B>, HuggingFaceLoadError>
+    {
+        if self.checkpoint.tensors.contains_key(&format!("{prefix}.qweight")) {
+            if let Some(load) = self.packed_loader {
+                let config = self.quantization.as_ref().ok_or_else(|| HuggingFaceLoadError(
+                    format!("{prefix}: packed weights require an AWQ quantization_config")))?;
+                if config.modules_to_not_convert.as_ref().is_some_and(|modules| modules.iter().any(
+                    |name| prefix == name || prefix.ends_with(&format!(".{name}")) ||
+                        prefix.split('.').any(|part| part == name))) {
+                    return Err(HuggingFaceLoadError(format!("{prefix}: packed weights in an excluded module")));
+                }
+                let result = load(self.checkpoint, prefix, input, output, config,
+                    self.quantized_dtype, bias, self.device)?;
+                self.packed_awq_linears += 1;
+                return Ok(result);
+            }
+        }
+        self.linear(prefix, input, output, bias).map(Projection::Dense)
+    }
     fn norm(
         &mut self,
         prefix: &str,
@@ -81,7 +110,24 @@ pub fn load_huggingface_qwen35_text<B: Backend>(
     directory: impl AsRef<Path>,
     device: &B::Device,
 ) -> Result<LoadedQwen35Text<B>, HuggingFaceLoadError> {
-    let dir = directory.as_ref();
+    load_text(directory.as_ref(), device, None)
+}
+
+/// Load a text model with device-resident AWQ I32 words. Dense/excluded layers
+/// remain dense. No conversion to a full floating weight matrix is performed.
+pub fn load_huggingface_qwen35_text_packed<R, F, I, BT>(
+    directory: impl AsRef<Path>, device: &R::Device,
+) -> Result<LoadedQwen35Text<DeviceBackend<R, F, I, BT>>, HuggingFaceLoadError>
+where R: DeviceRuntime, R::Server: ComputeServer, R::Device: DeviceOps,
+    F: FloatElement, I: IntElement, BT: BoolElement,
+{
+    load_text(directory.as_ref(), device, Some(super::quantized_loading::load_awq_projection::<R,F,I,BT>))
+}
+
+fn load_text<B: Backend>(directory: &Path, device: &B::Device, packed_loader: Option<PackedLoader<B>>)
+    -> Result<LoadedQwen35Text<B>, HuggingFaceLoadError>
+{
+    let dir = directory;
     let config_path = dir.join("config.json");
     let raw: serde_json::Value = serde_json::from_slice(
         &std::fs::read(&config_path).map_err(|e| HuggingFaceLoadError(e.to_string()))?,
@@ -114,6 +160,8 @@ pub fn load_huggingface_qwen35_text<B: Backend>(
         quantization,
         quantized_dtype,
         dequantized_awq_linears: 0,
+        packed_awq_linears: 0,
+        packed_loader,
     };
     let embedding = Embedding {
         weight: Param::from_tensor(w.tensor(
@@ -133,15 +181,15 @@ pub fn load_huggingface_qwen35_text<B: Backend>(
                     c.num_key_value_heads * c.head_dim,
                 );
                 Mixer::Full(attention::Attention {
-                    q: w.linear(
+                    q: w.projection(
                         &format!("{p}.q_proj"),
                         c.hidden_size,
                         2 * q,
                         c.attention_bias,
                     )?,
-                    k: w.linear(&format!("{p}.k_proj"), c.hidden_size, kv, c.attention_bias)?,
-                    v: w.linear(&format!("{p}.v_proj"), c.hidden_size, kv, c.attention_bias)?,
-                    out: w.linear(&format!("{p}.o_proj"), q, c.hidden_size, c.attention_bias)?,
+                    k: w.projection(&format!("{p}.k_proj"), c.hidden_size, kv, c.attention_bias)?,
+                    v: w.projection(&format!("{p}.v_proj"), c.hidden_size, kv, c.attention_bias)?,
+                    out: w.projection(&format!("{p}.o_proj"), q, c.hidden_size, c.attention_bias)?,
                     q_norm: w.norm(&format!("{p}.q_norm"), c.head_dim, c.rms_norm_eps)?,
                     k_norm: w.norm(&format!("{p}.k_norm"), c.head_dim, c.rms_norm_eps)?,
                 })
@@ -152,21 +200,21 @@ pub fn load_huggingface_qwen35_text<B: Backend>(
                     + c.linear_num_value_heads * c.linear_value_head_dim;
                 let values = c.linear_num_value_heads * c.linear_value_head_dim;
                 Mixer::Delta(delta::Delta {
-                    qkv: w.linear(&format!("{p}.in_proj_qkv"), c.hidden_size, channels, false)?,
-                    z: w.linear(&format!("{p}.in_proj_z"), c.hidden_size, values, false)?,
-                    a: w.linear(
+                    qkv: w.projection(&format!("{p}.in_proj_qkv"), c.hidden_size, channels, false)?,
+                    z: w.projection(&format!("{p}.in_proj_z"), c.hidden_size, values, false)?,
+                    a: w.projection(
                         &format!("{p}.in_proj_a"),
                         c.hidden_size,
                         c.linear_num_value_heads,
                         false,
                     )?,
-                    b: w.linear(
+                    b: w.projection(
                         &format!("{p}.in_proj_b"),
                         c.hidden_size,
                         c.linear_num_value_heads,
                         false,
                     )?,
-                    out: w.linear(&format!("{p}.out_proj"), values, c.hidden_size, false)?,
+                    out: w.projection(&format!("{p}.out_proj"), values, c.hidden_size, false)?,
                     conv: w.tensor(
                         &format!("{p}.conv1d.weight"),
                         [channels, 1, c.linear_conv_kernel_dim],
@@ -190,19 +238,19 @@ pub fn load_huggingface_qwen35_text<B: Backend>(
                 c.rms_norm_eps,
             )?,
             mlp: Mlp {
-                gate: w.linear(
+                gate: w.projection(
                     &format!("{prefix}.mlp.gate_proj"),
                     c.hidden_size,
                     c.intermediate_size,
                     false,
                 )?,
-                up: w.linear(
+                up: w.projection(
                     &format!("{prefix}.mlp.up_proj"),
                     c.hidden_size,
                     c.intermediate_size,
                     false,
                 )?,
-                down: w.linear(
+                down: w.projection(
                     &format!("{prefix}.mlp.down_proj"),
                     c.intermediate_size,
                     c.hidden_size,
@@ -221,14 +269,15 @@ pub fn load_huggingface_qwen35_text<B: Backend>(
                 ));
             }
         }
-        Linear {
+        Projection::Dense(Linear {
             weight: Param::from_tensor(embedding.weight.val().transpose()),
             bias: None,
-        }
+        })
     } else {
-        w.linear("lm_head", c.hidden_size, c.vocab_size, false)?
+        w.projection("lm_head", c.hidden_size, c.vocab_size, false)?
     };
     let dequantized_awq_linears = w.dequantized_awq_linears;
+    let packed_awq_linears = w.packed_awq_linears;
     drop(w);
     let unloaded_tensors = checkpoint
         .tensors
@@ -260,5 +309,6 @@ pub fn load_huggingface_qwen35_text<B: Backend>(
         },
         unloaded_tensors,
         dequantized_awq_linears,
+        packed_awq_linears,
     })
 }

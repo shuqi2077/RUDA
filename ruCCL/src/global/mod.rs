@@ -8,3 +8,6 @@ pub use orchestrator::*;
 
 mod base;
 pub use base::*;
+
+pub mod policy;
+pub use policy::GlobalFailurePolicy;

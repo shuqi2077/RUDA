@@ -12,6 +12,7 @@ mod paged;
 mod kernels;
 mod training;
 mod router;
+mod nf4;
 mod training_kernels;
 mod matmul;
 mod pointwise;

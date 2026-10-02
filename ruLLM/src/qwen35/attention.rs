@@ -2,10 +2,10 @@ use super::*;
 use ruda_tensor::api::activation::sigmoid;
 
 pub(super) struct Attention<B: Backend> {
-    pub q: Linear<B>,
-    pub k: Linear<B>,
-    pub v: Linear<B>,
-    pub out: Linear<B>,
+    pub q: Projection<B>,
+    pub k: Projection<B>,
+    pub v: Projection<B>,
+    pub out: Projection<B>,
     pub q_norm: Norm<B>,
     pub k_norm: Norm<B>,
 }

@@ -86,7 +86,7 @@ def test_close_failure_can_be_retried(graph_bridge):
     g.close()
 
 @pytest.mark.parametrize('words,scalars,match',[
-    ([7,0,1],[0.],'unsupported'),([1,2,1],[1.],'future'),
+    ([999,0,1],[0.],'unsupported'),([1,2,1],[1.],'future'),
     ([14,0,1],[0.],'unary'),([14,0,0],[-0.],'unary'),([1,0,1],[float('nan')],'scalar'),
     ([2,0,1],[1.],'scalar'),([100,0,1],[0.],'epsilon'),([],[],'header')])
 def test_invalid_nodes_no_native_call(graph_bridge,words,scalars,match):
@@ -191,7 +191,7 @@ def test_storage_rounded_silu_mul_code(graph_bridge,dtype):
     cpp,s=graph_bridge;t=ts(dtype)
     g=cpp.NativeStaticGraph(t,2,[101,0,1],[0.],False,False)
     assert list(s.graphs.values())[-1]['nodes']==[(101,0,1,0.)]
-    assert cpp.graph_api_version==2
+    assert cpp.graph_api_version==3
     g.run();g.close()
 
 @pytest.mark.parametrize('scalar',[-0.,1.,float('nan'),float('inf')])

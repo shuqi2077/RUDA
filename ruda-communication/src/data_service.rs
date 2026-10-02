@@ -127,10 +127,11 @@ impl<B: Backend, P: Protocol> TensorDataService<B, P> {
         for (_, stream) in streams.drain() {
             let mut stream = stream.lock().await;
 
-            stream
-                .close()
-                .await
-                .expect("Failed to close WebSocket stream");
+            // Closing an already failed peer is best-effort cleanup, not a
+            // reason to panic while releasing a failed communicator.
+            if let Err(error) = stream.close().await {
+                log::warn!("Failed to close data WebSocket stream: {error:?}");
+            }
         }
     }
 

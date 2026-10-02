@@ -6210,6 +6210,7 @@ version = "0.21.15"
 dependencies = [
  "hashbrown 0.16.1",
  "log",
+ "ruCCL",
  "ruda-core",
  "ruda-tensor",
  "ruda-tensor-config",
@@ -6217,6 +6218,7 @@ dependencies = [
  "ruda-tensor-wgpu",
  "ruda-test-runtime",
  "spin",
+ "tokio",
 ]
 
 [[package]]

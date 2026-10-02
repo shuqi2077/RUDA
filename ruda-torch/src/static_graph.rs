@@ -1,5 +1,5 @@
 //! Fixed-address inference subgraphs for native PyTorch tensors.
-//! Reuses production pointwise/RMSNorm kernels and the existing RUDA CudaGraph.
+//! Reuses production pointwise/matrix/reduction/normalization kernels and the existing RUDA CudaGraph.
 //! No stream capture, CPU fallback, or CUDA C++ compiler.
 //! SILU_MUL fuses two operators while preserving the intermediate storage cast.
 use super::*;
@@ -40,6 +40,23 @@ fn prepare(state_client: &ComputeClient<CudaRuntime>, ts: &[View], n: &NodeSpec,
                 unsafe { kernels::rms_norm_warp::prepare::<$dtype, CudaRuntime>(
                     state_client, RudaCount::Static(blocks,1,1), RudaDim::new_1d(128),
                     a.arg(), b.arg(), out.arg(), n.scalar, n.b != NO_WEIGHT) }
+            } else if n.op == 7 || n.op == 30 {
+                let blocks = u32::try_from(out.len.div_ceil(128)).expect("graph matmul grid overflow");
+                unsafe { kernels::matmul_storage::prepare::<$dtype, $dtype, CudaRuntime>(
+                    state_client, RudaCount::Static(blocks,1,1), RudaDim::new_1d(128),
+                    a.arg(), b.arg(), out.arg(), n.op == 30) }
+            } else if n.op == 104 || n.op == 105 {
+                let blocks = u32::try_from(out.len.div_ceil(128)).expect("graph reduction grid overflow");
+                unsafe { kernels::reduce_sum_storage::prepare::<$dtype, $dtype, CudaRuntime>(
+                    state_client, RudaCount::Static(blocks,1,1), RudaDim::new_1d(128),
+                    a.arg(), out.arg(), n.op == 105) }
+            } else if matches!(n.op, 102 | 103 | 106 | 107) {
+                let axis = n.scalar as usize;
+                let rows = a.len / a.shape[axis];
+                let blocks = u32::try_from(rows.div_ceil(128)).expect("graph softmax grid overflow");
+                unsafe { kernels::softmax::prepare::<$dtype, $dtype, CudaRuntime>(
+                    state_client, RudaCount::Static(blocks,1,1), RudaDim::new_1d(128),
+                    a.arg(), b.arg(), out.arg(), axis, n.op >= 106, n.op == 103 || n.op == 107) }
             } else {
                 let blocks = u32::try_from(out.len.div_ceil(128)).expect("graph pointwise grid overflow");
                 unsafe { kernels::pointwise::prepare::<$dtype,$dtype,$dtype,CudaRuntime>(
@@ -52,9 +69,9 @@ fn prepare(state_client: &ComputeClient<CudaRuntime>, ts: &[View], n: &NodeSpec,
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ruda_torch_graph_api_version() -> u32 { 2 }
+pub extern "C" fn ruda_torch_graph_api_version() -> u32 { 3 }
 
-/// Optional in-process extension API 2; base tensor ABI remains 9.
+/// Optional in-process extension API 3; base tensor ABI remains 10.
 /// 0=build, 1=replay, 2=wait, 3=query fixed queue, 4=close,
 /// 5=preallocated eager control (same kernels, one final sync policy),
 /// 6=query tracked completion, 7=wait tracked completion.

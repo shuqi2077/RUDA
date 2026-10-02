@@ -6,6 +6,8 @@ mod delta;
 mod layer;
 mod loading;
 mod quantized_loading;
+mod projection;
+use projection::Projection;
 mod vision;
 mod multimodal;
 pub use multimodal::{Qwen35MultimodalCache, Qwen35MultimodalModel, load_huggingface_qwen35_multimodal};
@@ -17,7 +19,7 @@ mod tests;
 use crate::{CausalModel, GenerationError};
 use config::LayerType;
 pub use config::{LayerType as Qwen35LayerType, Qwen35TextConfig, RopeConfig as Qwen35RopeConfig};
-pub use loading::{LoadedQwen35Text, load_huggingface_qwen35_text};
+pub use loading::{LoadedQwen35Text, load_huggingface_qwen35_text, load_huggingface_qwen35_text_packed};
 use ruda::runtime::server::ComputeServer;
 use ruda_nn::{Embedding, Linear};
 use ruda_tensor::api::{DType, Int, Tensor, TensorData, activation::silu, backend::Backend};
@@ -46,9 +48,9 @@ where
 }
 
 struct Mlp<B: Backend> {
-    gate: Linear<B>,
-    up: Linear<B>,
-    down: Linear<B>,
+    gate: Projection<B>,
+    up: Projection<B>,
+    down: Projection<B>,
 }
 impl<B: Backend> Mlp<B> {
     fn forward(&self, input: Tensor<B, 3>) -> Tensor<B, 3> {
@@ -74,7 +76,7 @@ pub struct Qwen35TextModel<B: Backend> {
     embedding: Embedding<B>,
     layers: Vec<Layer<B>>,
     norm: Norm<B>,
-    head: Linear<B>,
+    head: Projection<B>,
 }
 
 #[derive(Clone)]

@@ -17,7 +17,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--output',type=Path,default=Path('cpp-bridge-validation'))
     p.add_argument('--compiler',default=os.environ.get('CXX','clang++'))
-    p.add_argument('--static-graph',action='store_true',help='also test extension API 2 in a fresh process')
+    p.add_argument('--static-graph',action='store_true',help='also test extension API 3 in a fresh process')
     args=p.parse_args();out=args.output.resolve();out.mkdir(parents=True,exist_ok=True)
     root=Path(__file__).resolve().parents[2]
     report={'cpp_compiled':False,'cpp_loaded_and_protocol_tested':False,'gpu_validated':False,'rust_compiled':False,'commands':[]}

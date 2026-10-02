@@ -91,7 +91,7 @@ from ._paged import PagedAttentionPlan
 _graph_available = False
 if hasattr(_native, "ruda_torch_graph_api_version") and hasattr(_C, "initialize_graph"):
     _native.ruda_torch_graph_api_version.restype = ctypes.c_uint32
-    if _native.ruda_torch_graph_api_version() != 2 or getattr(_C,"graph_api_version",None) != 2:
+    if _native.ruda_torch_graph_api_version() != 3 or getattr(_C,"graph_api_version",None) != 3:
         raise RuntimeError("RUDA static graph API mismatch; rebuild Rust and C++ extensions")
     _C.initialize_graph(ctypes.cast(_native.ruda_torch_graph,ctypes.c_void_p).value)
     _graph_available = True
@@ -135,3 +135,16 @@ if hasattr(_native, "ruda_torch_paged_backward_api_version") and hasattr(_C, "in
 
 # General model capture is layered above the additive native graph API.
 from .compiler import compile, make_backend, CompiledModel, CompiledFunction, NativeCoverageError, GraphExecutionError
+
+from .quantization import LearnedFakeQuantize, learned_fake_quantize
+
+_nf4_available = False
+if hasattr(_native, "ruda_torch_nf4_api_version") and hasattr(_C, "initialize_nf4"):
+    _native.ruda_torch_nf4_api_version.restype = ctypes.c_uint32
+    if _native.ruda_torch_nf4_api_version() != 1 or getattr(_C, "nf4_api_version", None) != 1:
+        raise RuntimeError("RUDA NF4 API mismatch; rebuild Rust and C++ libraries")
+    _C.initialize_nf4(ctypes.cast(_native.ruda_torch_nf4_decode, ctypes.c_void_p).value)
+    _nf4_available = True
+from .finetuning import (LoRALinear, NF4Linear, inject_lora, quantize_nf4,
+                         adapter_state_dict, load_adapter_state_dict, merge_lora,
+                         load_nf4_safetensors, finetune_state_dict, load_finetune_state_dict)

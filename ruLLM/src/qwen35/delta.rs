@@ -3,11 +3,11 @@ use ruda_tensor::api::{activation::sigmoid, module::conv1d, ops::ConvOptions};
 use rudnn::gated_delta::{GatedDeltaInput, chunk_gated_delta_rule, gated_delta_rule};
 
 pub(super) struct Delta<B: Backend> {
-    pub qkv: Linear<B>,
-    pub z: Linear<B>,
-    pub a: Linear<B>,
-    pub b: Linear<B>,
-    pub out: Linear<B>,
+    pub qkv: Projection<B>,
+    pub z: Projection<B>,
+    pub a: Projection<B>,
+    pub b: Projection<B>,
+    pub out: Projection<B>,
     pub conv: Tensor<B, 3>,
     pub dt_bias: Tensor<B, 1>,
     pub a_log: Tensor<B, 1>,
@@ -38,9 +38,12 @@ where
     BT: BoolElement,
 {
     pub(super) fn gate_projection(
-        linear: &Linear<DeviceBackend<R, F, I, BT>>,
+        linear: &Projection<DeviceBackend<R, F, I, BT>>,
         input: Tensor<DeviceBackend<R, F, I, BT>, 3>,
     ) -> Result<Tensor<DeviceBackend<R, F, I, BT>, 3>, GenerationError> {
+        // The tiny delta gates also use packed kernels when present. Do not
+        // demand a dense weight merely to select the small-matrix strategy.
+        let Some(linear) = linear.dense() else { return Ok(linear.forward(input)); };
         let dtype = input.dtype();
         let output = rublas::tensor_matmul::matmul(
             input.into_primitive().tensor(),

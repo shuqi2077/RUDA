@@ -40,6 +40,7 @@ where
     data_service: Arc<TensorDataService<B, P>>,
     sync_service: Arc<SyncService<P>>,
     worker: GlobalClientWorker<P::Client>,
+    operation_lock: tokio::sync::Mutex<()>,
     _n: PhantomData<P>,
 }
 
@@ -77,6 +78,7 @@ where
             data_service,
             sync_service,
             worker,
+            operation_lock: tokio::sync::Mutex::new(()),
             _n: PhantomData,
         }
     }
@@ -105,6 +107,7 @@ where
                 });
             }
             RemoteResponse::Error(err) => {
+                self.worker.abort();
                 return Err(err);
             }
             resp => {
@@ -119,7 +122,35 @@ where
     /// Performs an all-reduce
     ///
     /// Reads the NodeState
-    pub async fn all_reduce(
+    async fn guarded<T>(&self, work: impl std::future::Future<Output=Result<T, GlobalCollectiveError>>)
+        -> Result<T, GlobalCollectiveError>
+    {
+        let mut guard = super::worker::CancelOnDrop { token: self.worker.token(), completed: false };
+        let queued = async {
+            let _serial = self.operation_lock.lock().await;
+            if self.worker.token().is_cancelled() { return Err(GlobalCollectiveError::CommunicatorAborted); }
+            work.await
+        };
+        let token = self.worker.token();
+        let result = tokio::select! {
+            _ = token.cancelled() => Err(GlobalCollectiveError::CommunicatorAborted),
+            value = tokio::time::timeout(self.worker.policy().collective_timeout, queued) =>
+                value.map_err(|_| GlobalCollectiveError::OperationTimeout).and_then(|result| result),
+        };
+        guard.completed = result.is_ok();
+        result
+    }
+    pub async fn all_reduce(&self, tensor: B::FloatTensorPrimitive, strategy: AllReduceStrategy,
+        op: ReduceOperation) -> Result<B::FloatTensorPrimitive, GlobalCollectiveError>
+    { self.guarded(self.all_reduce_inner(tensor, strategy, op)).await }
+    pub async fn reduce(&self, tensor: B::FloatTensorPrimitive, strategy: ReduceStrategy,
+        root: PeerId, op: ReduceOperation) -> Result<Option<B::FloatTensorPrimitive>, GlobalCollectiveError>
+    { self.guarded(self.reduce_inner(tensor, strategy, root, op)).await }
+    pub async fn broadcast(&self, tensor: Option<B::FloatTensorPrimitive>, strategy: BroadcastStrategy,
+        device: &B::Device) -> Result<B::FloatTensorPrimitive, GlobalCollectiveError>
+    { self.guarded(self.broadcast_inner(tensor, strategy, device)).await }
+
+    async fn all_reduce_inner(
         &self,
         tensor: B::FloatTensorPrimitive,
         strategy: AllReduceStrategy,
@@ -186,7 +217,7 @@ where
         }
     }
 
-    pub async fn reduce(&self, tensor: B::FloatTensorPrimitive, strategy: ReduceStrategy,
+    async fn reduce_inner(&self, tensor: B::FloatTensorPrimitive, strategy: ReduceStrategy,
         root: PeerId, op: ReduceOperation)
         -> Result<Option<B::FloatTensorPrimitive>, GlobalCollectiveError>
     {
@@ -205,7 +236,7 @@ where
         Ok(result)
     }
 
-    pub async fn broadcast(&self, tensor: Option<B::FloatTensorPrimitive>, strategy: BroadcastStrategy,
+    async fn broadcast_inner(&self, tensor: Option<B::FloatTensorPrimitive>, strategy: BroadcastStrategy,
         device: &B::Device) -> Result<B::FloatTensorPrimitive, GlobalCollectiveError>
     {
         let guard = self.state.read().await;
@@ -226,6 +257,12 @@ where
         if let Err(err) = res {
             log::error!("Global collective client error: {err:?}");
         }
-        self.data_service.close().await;
+        // A disconnected data peer must not make explicit shutdown wait
+        // forever after the control worker has already aborted this epoch.
+        if tokio::time::timeout(self.worker.policy().request_timeout,
+            self.data_service.close()).await.is_err()
+        {
+            log::warn!("Global collective data-channel shutdown timed out");
+        }
     }
 }

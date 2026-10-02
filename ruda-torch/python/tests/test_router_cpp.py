@@ -76,5 +76,5 @@ def test_native_error_propagates_without_fallback(router_bridge):
 
 def test_optional_api_version_and_duplicate_init(router_bridge):
     cpp,_=router_bridge
-    assert cpp.abi_version==10 and cpp.training_api_version==4 and cpp.graph_api_version==2 and cpp.router_api_version==1
+    assert cpp.abi_version==10 and cpp.training_api_version==4 and cpp.graph_api_version==3 and cpp.router_api_version==1
     with pytest.raises(RuntimeError,match='initialization'):cpp.initialize_router(1)

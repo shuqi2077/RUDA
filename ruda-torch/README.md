@@ -160,7 +160,7 @@ kernels and 49,200 bytes of reusable scratch are used for 4096 parameters.
 Small workloads (<=1024 rows) need no extra merge kernel. Different reduction
 order can change FP32 rounding; bitwise equality is not promised.
 
-Rebuild both Rust and C++ (base ABI 10 / graph API 2 / training API 4).
+Rebuild both Rust and C++ (base ABI 10 / graph API 3 / training API 4).
 Do not load a v26 training library into this bridge. Checkpoints without the
 hierarchical option restore with that option disabled; opt-in checkpoints carry
 step-options version 2 and are rejected by older v26 readers.
@@ -203,7 +203,8 @@ Selection/grouping/correction bias remain model-owned. Invalid device indices
 produce bounded NaN rows, not an index exception or a CPU fallback. Repeated
 indices have gather semantics. No higher-order derivatives or auxiliary router
 loss are implemented. New optional Router API 1 requires rebuilding both sides;
-base tensor ABI 10, training API 4 and graph API 2 are unchanged.
+base tensor ABI 10 and training API 4 are unchanged; the native-coverage extension
+requires graph API 3 in both rebuilt native components.
 
 Run `python ruda-torch/tools/validate_router.py --build --output ./v30-results`
 from the repository root for strict Rust/public-operator and native-PyTorch GPU
@@ -248,3 +249,13 @@ See [`docs/zh/model-compiler.md`](../docs/zh/model-compiler.md) for execution
 policies, cache ownership, custom-op decompositions, limitations, and CPU/C++/GPU
 validation commands. The full native acceptance command is
 `python ruda-torch/tools/validate_model_compile.py --output model-gpu.json`.
+
+### Native coverage and learned-scale extension (graph API 3)
+
+The new extension maps matrix multiplication, keepdim reductions, softmax and
+more activation forward/backward operations into native regions. Both native
+components must be rebuilt. `LearnedFakeQuantize` adds trainable FP32 scales,
+but returns floating tensors and is not packed INT4 inference.
+See `../RUDA-native-quant-distributed-report.md` for exact supported metadata,
+packed Qwen3.5 loading, the explicit host-staged router group, failure semantics,
+and the separation between passing host tests and unvalidated Rust/GPU paths.

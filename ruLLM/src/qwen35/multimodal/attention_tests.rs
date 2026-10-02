@@ -114,13 +114,13 @@ fn real_full_attention_components() {
     let raw: serde_json::Value = serde_json::from_slice(&fs::read(model_dir.join("config.json")).unwrap()).unwrap();
     let c: Qwen35TextConfig = serde_json::from_value(raw["text_config"].clone()).unwrap();
     let mut checkpoint = crate::huggingface::checkpoint::Checkpoint::open(&model_dir).unwrap();
-    let mut w = crate::qwen35::loading::Weights::<B> { checkpoint: &mut checkpoint, device: &device, quantization: None, quantized_dtype: DType::F32, dequantized_awq_linears: 0 };
+    let mut w = crate::qwen35::loading::Weights::<B> { checkpoint: &mut checkpoint, device: &device, quantization: None, quantized_dtype: DType::F32, dequantized_awq_linears: 0, packed_awq_linears: 0, packed_loader: None };
     let prefix = "model.language_model.layers.3.self_attn";
     let layer = attention::Attention {
-        q: w.linear(&format!("{prefix}.q_proj"), c.hidden_size, 2*h*d, c.attention_bias).unwrap(),
-        k: w.linear(&format!("{prefix}.k_proj"), c.hidden_size, c.num_key_value_heads*d, c.attention_bias).unwrap(),
-        v: w.linear(&format!("{prefix}.v_proj"), c.hidden_size, c.num_key_value_heads*d, c.attention_bias).unwrap(),
-        out: w.linear(&format!("{prefix}.o_proj"), h*d, c.hidden_size, c.attention_bias).unwrap(),
+        q: w.projection(&format!("{prefix}.q_proj"), c.hidden_size, 2*h*d, c.attention_bias).unwrap(),
+        k: w.projection(&format!("{prefix}.k_proj"), c.hidden_size, c.num_key_value_heads*d, c.attention_bias).unwrap(),
+        v: w.projection(&format!("{prefix}.v_proj"), c.hidden_size, c.num_key_value_heads*d, c.attention_bias).unwrap(),
+        out: w.projection(&format!("{prefix}.o_proj"), h*d, c.hidden_size, c.attention_bias).unwrap(),
         q_norm: crate::qwen35::Norm { weight: w.tensor(&format!("{prefix}.q_norm.weight"), [d]).unwrap(), epsilon: c.rms_norm_eps },
         k_norm: crate::qwen35::Norm { weight: w.tensor(&format!("{prefix}.k_norm.weight"), [d]).unwrap(), epsilon: c.rms_norm_eps },
     };

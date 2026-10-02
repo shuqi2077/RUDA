@@ -60,10 +60,9 @@ impl GlobalOrchestrator {
     ) -> Result<(), GlobalCollectiveError> {
         log::info!("[Response Handler] On new connection.");
 
-        let msg = stream
-            .recv()
-            .await
-            .map_err(|err| GlobalCollectiveError::Server(format!("{err:?}")))?;
+        let policy = crate::global::policy::GlobalFailurePolicy::from_environment().map_err(GlobalCollectiveError::Server)?;
+        let msg = tokio::time::timeout(policy.connect_timeout, stream.recv()).await
+            .map_err(|_| GlobalCollectiveError::OperationTimeout)??;
         let Some(msg) = msg else {
             log::warn!("Response socket closed early!");
             return Ok(());
@@ -78,17 +77,31 @@ impl GlobalOrchestrator {
 
         let mut receiver = {
             let mut state = self.state.lock().await;
-            state.get_session_responder(id)
+            state.get_session_responder(id)?
         };
-
-        while let Some(response) = receiver.recv().await {
-            let bytes = rmp_serde::to_vec(&response).unwrap();
-
-            stream.send(Message::new(bytes.into())).await?;
-        }
-
-        log::info!("[Response Handler] Closing connection.");
-        Ok(())
+        let result = async {
+            loop {
+                tokio::select! {
+                    packet = stream.recv() => {
+                        // This socket is response-only after Init. Also observe a
+                        // closed peer even when no response is currently queued.
+                        match packet? {
+                            None => break,
+                            Some(_) => return Err(GlobalCollectiveError::InvalidMessage),
+                        }
+                    }
+                    response = receiver.recv() => {
+                        let Some(response) = response else { break; };
+                        let bytes = rmp_serde::to_vec(&response).map_err(|_| GlobalCollectiveError::InvalidMessage)?;
+                        tokio::time::timeout(policy.request_timeout, stream.send(Message::new(bytes.into())))
+                            .await.map_err(|_| GlobalCollectiveError::OperationTimeout)??;
+                    }
+                }
+            }
+            Ok(())
+        }.await;
+        self.state.lock().await.disconnect(id).await;
+        result
     }
 
     async fn handle_socket_request<S: ProtocolServer>(
@@ -98,9 +111,13 @@ impl GlobalOrchestrator {
         log::info!("[Request Handler] On new connection.");
 
         let mut session_id = None;
-
+        let policy = crate::global::policy::GlobalFailurePolicy::from_environment().map_err(GlobalCollectiveError::Server)?;
+        let result = async {
         loop {
-            let packet = stream.recv().await?;
+            let packet = if session_id.is_none() {
+                tokio::time::timeout(policy.connect_timeout, stream.recv()).await
+                    .map_err(|_| GlobalCollectiveError::OperationTimeout)??
+            } else { stream.recv().await? };
             let Some(msg) = packet else {
                 log::info!("Peer closed the connection");
                 break;
@@ -112,6 +129,7 @@ impl GlobalOrchestrator {
                 .map_err(|_| GlobalCollectiveError::InvalidMessage)?;
             match msg {
                 CollectiveMessage::Init(id) => {
+                    if session_id.is_some() { return Err(GlobalCollectiveError::InvalidMessage); }
                     state.init_session(id);
                     session_id = Some(id);
                 }
@@ -124,7 +142,10 @@ impl GlobalOrchestrator {
             }
         }
 
-        Ok(())
+            Ok(())
+        }.await;
+        if let Some(id) = session_id { self.state.lock().await.disconnect(id).await; }
+        result
     }
 }
 

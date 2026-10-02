@@ -187,7 +187,7 @@ fn real_checkpoint_projection_diagnosis() {
         let actual = delta::Delta::gate_projection(linear,input.clone()).unwrap().cast(DType::F32).into_data().to_vec::<f32>().unwrap();
         assert_eq!(actual,expected,"precision-sensitive gate projection must match fixed reference");
         for (strategy_name,strategy) in [("default",MatmulStrategy::default()),("ruda",MatmulStrategy::Ruda),("naive",MatmulStrategy::Naive)] {
-            let result = matmul(input.clone().into_primitive().tensor(),linear.weight.val().unsqueeze::<3>().into_primitive().tensor(),None,strategy,DType::BF16).unwrap();
+            let result = matmul(input.clone().into_primitive().tensor(),linear.dense().expect("dense fixture").weight.val().unsqueeze::<3>().into_primitive().tensor(),None,strategy,DType::BF16).unwrap();
             let actual = Tensor::<B,3>::from_primitive(TensorPrimitive::Float(result)).cast(DType::F32).into_data().to_vec::<f32>().unwrap();
             let error = actual.iter().zip(&expected).map(|(&a,&b)| (a as f64-b as f64).powi(2)).sum::<f64>();
             let norm = expected.iter().map(|&v| (v as f64).powi(2)).sum::<f64>();
@@ -200,7 +200,7 @@ fn real_checkpoint_projection_diagnosis() {
             let start = std::time::Instant::now();
             for _ in 0..20 {
                 let strategy = if naive { MatmulStrategy::Naive } else { MatmulStrategy::Ruda };
-                let _ = matmul(input.clone().into_primitive().tensor(),linear.weight.val().unsqueeze::<3>().into_primitive().tensor(),None,strategy,DType::BF16).unwrap();
+                let _ = matmul(input.clone().into_primitive().tensor(),linear.dense().expect("dense fixture").weight.val().unsqueeze::<3>().into_primitive().tensor(),None,strategy,DType::BF16).unwrap();
             }
             B::sync(&device).unwrap();
             eprintln!("projection {name} {label}: 20 warm submissions+sync {:?}; includes host dispatch, not kernel-only time",start.elapsed());

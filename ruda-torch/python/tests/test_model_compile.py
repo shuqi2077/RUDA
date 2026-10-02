@@ -429,7 +429,7 @@ def test_exception_side_effects_are_not_retried():
 
 
 def test_required_native_rejects_unsupported_operator():
-    compiled = wrap(lambda x: x.sin(), native='required')
+    compiled = wrap(lambda x: x.erf(), native='required')
     with pytest.raises(Exception, match='not entirely native'):
         compiled(torch.randn(3, requires_grad=True))
 

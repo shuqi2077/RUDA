@@ -19,7 +19,7 @@ resolver = "2"
 
 [features]
 default = [ "std",]
-distributed = [ "std", "ruda-tensor/graph-distributed", "ruda-core/std", "ruda-core/id-tests-std", "ruda-tensor-config/std", "ruda-test-runtime?/std",]
+distributed = [ "std", "dep:tokio", "dep:ruccl", "ruda-tensor/graph-distributed", "ruda-core/std", "ruda-core/id-tests-std", "ruda-tensor-config/std", "ruda-test-runtime?/std",]
 doc = [ "default",]
 std = [ "ruda-tensor/std", "ruda-core/std", "ruda-core/id-tests-std", "ruda-tensor-config/std", "ruda-test-runtime?/std",]
 tracing = [ "ruda-tensor/tracing", "ruda-core/tracing", "ruda-tensor-config/tracing", "ruda-test-runtime/tracing",]
@@ -86,3 +86,15 @@ invalid_html_tags = "deny"
 [package.metadata.docs.rs]
 features = [ "doc",]
 rustdoc-args = [ "--cfg", "docsrs",]
+
+[dependencies.tokio]
+version = "1.51.1"
+optional = true
+features = ["rt", "macros", "sync", "time"]
+
+[dependencies.ruccl]
+package = "ruCCL"
+path = "../ruCCL"
+version = "0.21.15"
+optional = true
+default-features = false

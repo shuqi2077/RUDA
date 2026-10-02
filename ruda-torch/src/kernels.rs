@@ -180,6 +180,10 @@ pub fn pointwise<A: Float + RudaElement, B: Float + RudaElement, O: Float + Ruda
         else {
             let x = f32::cast_from(a[offset(a, pos)]);
             if comptime!(op == 0) { out[target] = O::cast_from(x); }
+            else if comptime!(op == 108) { out[target] = O::cast_from(-x); }
+            else if comptime!(op == 109) { out[target] = O::cast_from(x + scalar); }
+            else if comptime!(op == 110) { out[target] = O::cast_from(x * scalar); }
+            else if comptime!(op == 111) { out[target] = O::cast_from(x / scalar); }
             else if comptime!(op == 1) { out[target] = O::cast_from(x + scalar * f32::cast_from(b[offset(b, pos)])); }
             else if comptime!(op == 2) { out[target] = O::cast_from(x * f32::cast_from(b[offset(b, pos)])); }
             else if comptime!(op == 3) {

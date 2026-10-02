@@ -1,5 +1,6 @@
 //! AWQ GEMM checkpoint compatibility: unpack once on the host into dense model
-//! weights, in the embedding's dtype. This is not memory-saving INT4 inference.
+//! weights for the compatibility loader. The explicit packed loader instead
+//! uploads the I32 words and calls the ruBLAS AWQ kernel directly.
 use crate::{HuggingFaceLoadError, huggingface::{AwqQuantizationConfig, checkpoint::Checkpoint}};
 use ruda_tensor::api::{backend::Backend, DType, Tensor, TensorData};
 
@@ -14,7 +15,7 @@ pub(super) fn configuration(raw: &serde_json::Value)
     top.or(nested).map(|value| {
         let config: AwqQuantizationConfig = serde_json::from_value(value.clone())
             .map_err(|e| HuggingFaceLoadError(format!(
-                "Qwen3.5 supports AWQ GEMM 4-bit loading into dense weights: {e}")))?;
+                "Qwen3.5 requires AWQ GEMM 4-bit metadata: {e}")))?;
         config.validate()?;
         Ok(config)
     }).transpose()
@@ -80,6 +81,59 @@ pub(super) fn load_awq_linear<B: Backend>(checkpoint: &mut Checkpoint, prefix: &
     let tensor = Tensor::from_data(data, (device, dtype));
     for name in names { checkpoint.consumed.insert(name); }
     Ok(tensor)
+}
+
+/// Native packed path, separate from the compatibility dequantization path.
+pub(super) fn load_awq_projection<R, F, I, BT>(checkpoint: &mut Checkpoint, prefix: &str,
+    input: usize, output: usize, config: &AwqQuantizationConfig, dtype: DType,
+    has_bias: bool, device: &R::Device)
+    -> Result<super::Projection<ruda_tensor_device::DeviceBackend<R,F,I,BT>>, HuggingFaceLoadError>
+where R: ruda_tensor_device::DeviceRuntime, R::Server: ruda::runtime::server::ComputeServer,
+    R::Device: ruda_tensor::DeviceOps, F: ruda_tensor_device::FloatElement,
+    I: ruda_tensor_device::IntElement, BT: ruda_tensor_device::BoolElement,
+{
+    use ruda_kernel::tensor::transfer::from_data;
+    let layout = config.layout(input, output)?;
+    if !matches!(dtype, DType::F16 | DType::BF16 | DType::F32) {
+        return Err(HuggingFaceLoadError("packed AWQ requires floating activations".into()));
+    }
+    for suffix in ["weight", "g_idx"] {
+        if checkpoint.tensors.contains_key(&format!("{prefix}.{suffix}")) {
+            return Err(HuggingFaceLoadError(format!("{prefix}: ambiguous AWQ tensor .{suffix}")));
+        }
+    }
+    let names = [format!("{prefix}.qweight"), format!("{prefix}.qzeros"), format!("{prefix}.scales")];
+    let weights = packed_tensor(checkpoint, &names[0], [input, output/8], true)?;
+    let zeros = packed_tensor(checkpoint, &names[1], [layout.groups(), output/8], true)?;
+    let scales = packed_tensor(checkpoint, &names[2], [layout.groups(), output], false)?.convert_dtype(dtype);
+    if scales.iter::<f32>().any(|v| !v.is_finite() || v < 0.0) {
+        return Err(HuggingFaceLoadError(format!("{prefix}: invalid AWQ scales after dtype conversion")));
+    }
+    let bias_name = format!("{prefix}.bias");
+    let bias = if has_bias {
+        let snapshot = checkpoint.tensors.get(&bias_name)
+            .ok_or_else(|| HuggingFaceLoadError(format!("missing AWQ bias {bias_name}")))?;
+        if snapshot.shape != [output].into() || !matches!(snapshot.dtype, DType::F16 | DType::BF16 | DType::F32) {
+            return Err(HuggingFaceLoadError(format!("{bias_name}: invalid shape or dtype")));
+        }
+        Some(snapshot.to_data().map_err(|e| HuggingFaceLoadError(e.to_string()))?.convert_dtype(dtype))
+    } else {
+        if checkpoint.tensors.contains_key(&bias_name) {
+            return Err(HuggingFaceLoadError(format!("unexpected AWQ bias {bias_name}")));
+        }
+        None
+    };
+    // Validate every host tensor before the first device allocation. These
+    // uploads contain K*N/8 packed words, never K*N floating weights.
+    let packed = rublas::tensor_int4::AwqGemm::<R>::new(
+        from_data(weights, device), from_data(zeros, device), from_data(scales, device),
+        bias.map(|data| from_data(data, device)), layout.group_size,
+    ).map_err(|e| HuggingFaceLoadError(format!("{prefix}: {e}")))?;
+    for name in names { checkpoint.consumed.insert(name); }
+    if has_bias { checkpoint.consumed.insert(bias_name); }
+    Ok(super::Projection::Packed(std::sync::Arc::new(move |input| {
+        packed.forward(input).expect("validated AWQ projection input/device/dtype mismatch")
+    })))
 }
 
 #[cfg(test)]

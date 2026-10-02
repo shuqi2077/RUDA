@@ -1,5 +1,5 @@
 // Included inside backend.cpp's anonymous namespace, after Argument.
-// Optional extension API 2; deliberately does not change base tensor ABI 10.
+// Optional extension API 3; deliberately does not change base tensor ABI 10.
 struct StaticNode { uint32_t op, a, b; float scalar; };
 static_assert(sizeof(StaticNode)==16 && alignof(StaticNode)==4, "static graph ABI layout");
 using StaticGraphCommand = int (*)(uint32_t,void**,const Descriptor*,size_t,
@@ -77,14 +77,34 @@ class StaticGraphBridge {
       const size_t out=inputs+i;
       TORCH_CHECK(a<out,"static graph node refers to a future input");
       const auto& x=tensors_[a]; const auto& y=tensors_[out];
-      TORCH_CHECK(x.sizes()==y.sizes() && x.scalar_type()==y.scalar_type(),"static graph output mismatch");
-      if(op==0 || op==14) {
+      TORCH_CHECK((op==7 || op==30 || op==104 || op==105 || x.sizes()==y.sizes()) && x.scalar_type()==y.scalar_type(),"static graph output mismatch");
+      if(op==0 || op==3 || (op>=9 && op<=14) || op==17 || (op>=19 && op<=25) || op==27 || (op>=35 && op<=40) || op==43 || op==45 || op==108) {
         TORCH_CHECK(b==a && scalars[i]==0.0f && !std::signbit(scalars[i]),"invalid unary static graph node");
-      } else if(op==1 || op==2 || op==101) {
+      } else if(op==1 || op==2 || op==8 || op==15 || op==16 || op==18 || op==101) {
         TORCH_CHECK(b<out && tensors_[b].sizes()==x.sizes() && tensors_[b].scalar_type()==x.scalar_type(),
                     "static graph broadcasting/type promotion is not supported");
         TORCH_CHECK(std::isfinite(scalars[i]) && (op==1 || (scalars[i]==0.0f && !std::signbit(scalars[i]))),
                     "invalid static graph scalar");
+      } else if(op>=109 && op<=111) {
+        TORCH_CHECK(b==a && std::isfinite(scalars[i]), "invalid scalar graph operation");
+      } else if(op==7 || op==30) {
+        TORCH_CHECK(b<out, "future matrix graph input");
+        const auto& r=tensors_[b]; const int rank=op==7 ? 2 : 3;
+        TORCH_CHECK(x.dim()==rank && r.dim()==rank && y.dim()==rank && x.scalar_type()==r.scalar_type()
+          && x.size(-1)==r.size(-2) && y.size(-2)==x.size(-2) && y.size(-1)==r.size(-1)
+          && (rank==2 || (x.size(0)==r.size(0) && y.size(0)==x.size(0)))
+          && scalars[i]==0.0f && !std::signbit(scalars[i]), "invalid graph matrix multiply");
+      } else if(op==102 || op==103 || op==106 || op==107) {
+        TORCH_CHECK(std::isfinite(scalars[i]) && scalars[i]>=0 && scalars[i]<x.dim()
+          && std::floor(scalars[i])==scalars[i] && b<out, "invalid graph softmax axis/input");
+        TORCH_CHECK(tensors_[b].sizes()==x.sizes() && tensors_[b].scalar_type()==x.scalar_type()
+          && (op>=106 || b==a), "graph softmax gradient/output mismatch");
+      } else if(op==104 || op==105) {
+        TORCH_CHECK(std::isfinite(scalars[i]) && scalars[i]>0 && scalars[i]<(1u<<x.dim())
+          && std::floor(scalars[i])==scalars[i] && b==a && y.dim()==x.dim(), "invalid graph reduction mask");
+        const auto mask=static_cast<uint32_t>(scalars[i]);
+        for(int d=0;d<x.dim();++d) TORCH_CHECK(y.size(d)==((mask & (1u<<d)) ? 1 : x.size(d)),
+          "graph reduction output mismatch");
       } else if(op==100) {
         TORCH_CHECK(std::isfinite(scalars[i]) && scalars[i]>0.0f,"invalid RMSNorm epsilon");
         TORCH_CHECK(x.numel()/x.size(-1)<=std::numeric_limits<uint32_t>::max()/32,

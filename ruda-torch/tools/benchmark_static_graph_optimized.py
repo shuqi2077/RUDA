@@ -25,7 +25,7 @@ def main():
     if os.environ.get('RUDA_CUDA_COMPILER')!='ptx':p.error('explicit direct PTX configuration required')
     import torch
     import ruda_torch as r
-    if r._C.graph_api_version!=2:raise RuntimeError('rebuild API 2 Rust and C++ bridge')
+    if r._C.graph_api_version!=3:raise RuntimeError('rebuild graph API 3 Rust and C++ bridge')
     dtype=getattr(torch,a.dtype)
     results=[]
     configurations={'baseline':(False,False),'fusion':(True,False),

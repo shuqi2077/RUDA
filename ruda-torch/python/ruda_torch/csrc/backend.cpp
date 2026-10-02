@@ -182,6 +182,7 @@ struct Argument {
 
 #include "training.inc"
 #include "router.inc"
+#include "nf4.inc"
 
 class PagedPlanBridge {
   void* plan_=nullptr;
@@ -507,6 +508,12 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     paged_backward_selected_ready=true; paged_backward_api=version;
   });
   m.attr("router_api_version") = 1;
+  m.attr("nf4_api_version") = 1;
+  m.def("initialize_nf4", [](uintptr_t address) {
+    TORCH_CHECK(allocate_native && address && !nf4_native, "invalid or repeated NF4 initialization");
+    nf4_native = reinterpret_cast<NF4Decode>(address);
+  });
+  m.def("nf4_decode", nf4_decode);
   m.def("initialize_router", [](uintptr_t address) {
     TORCH_CHECK(allocate_native && address && !router_native, "invalid or repeated router initialization");
     router_native = reinterpret_cast<RouterCommand>(address);
@@ -529,7 +536,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("training_analyze", training_analyze);
   m.def("training_analyze_hierarchical", training_analyze_hierarchical);
   m.def("training_adamw_batch_", training_adamw_batch);
-  m.attr("graph_api_version") = 2;
+  m.attr("graph_api_version") = 3;
   m.def("initialize_graph", [](uintptr_t address) {
     TORCH_CHECK(allocate_native && address && !static_graph_native, "invalid or repeated static graph initialization");
     static_graph_native = reinterpret_cast<StaticGraphCommand>(address);

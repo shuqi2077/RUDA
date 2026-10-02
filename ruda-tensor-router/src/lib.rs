@@ -17,6 +17,10 @@ mod types;
 mod distributed;
 #[cfg(feature = "distributed")]
 pub use distributed::*;
+#[cfg(feature = "distributed")]
+mod host_collective;
+#[cfg(feature = "distributed")]
+pub use host_collective::*;
 
 pub use backend::*;
 pub use bridge::*;

@@ -1,6 +1,7 @@
 //! Quantized storage remains quantized while a surrogate retains its graph.
 //! The QAT input derivative is an **unclipped identity STE**, not the derivative
-//! of rounding. Calibration/scales are constants; learned-scale QAT is rejected.
+//! of rounding. Tracked integer scales opt into a clipped learned-step estimator.
+//! Scales use FP32 and a positive floor; no calibration gradient is invented.
 use ruda_tensor::{
     Backend, ExecutionError, TensorData, TensorMetadata,
     ops::{QTensorOps, FloatTensorOps},
@@ -30,14 +31,82 @@ fn ste<B: Backend, C: CheckpointStrategy>(
     IdentitySte.prepare::<C>([input.node.clone()]).compute_bound().stateless(value)
 }
 
+// Differentiate the scale broadcast using ordinary autodiff operators, including
+// trimming partial blocks. The stored primitive remains genuinely quantized.
+fn expand_learned_scales<B: Backend, C: CheckpointStrategy>(
+    scales: AutodiffTensor<B>, shape: &Shape, level: ruda_core::tensor::QuantLevel,
+) -> AutodiffTensor<B> {
+    use ruda_core::tensor::QuantLevel;
+    type A<B, C> = Autodiff<B, C>;
+    if let QuantLevel::Block(block) = level {
+        assert!(!block.to_dim_vec(shape.rank()).contains(&0), "learned scale block must be nonzero");
+    }
+    let params = ruda_tensor::quantization::params_shape(shape, level);
+    assert_eq!(scales.shape().num_elements(), params.num_elements(), "learned scale count mismatch");
+    match level {
+        QuantLevel::Tensor => A::<B,C>::float_reshape(scales, Shape::from(alloc::vec![1; shape.rank()])),
+        QuantLevel::Block(block) => {
+            let block = block.to_dim_vec(shape.rank());
+            assert!(!block.contains(&0), "learned scale block must be nonzero");
+            let mut source = alloc::vec::Vec::new();
+            let mut expanded = alloc::vec::Vec::new();
+            let mut padded = alloc::vec::Vec::new();
+            for axis in 0..shape.rank() {
+                source.extend([params[axis], 1]);
+                expanded.extend([params[axis], block[axis] as usize]);
+                padded.push(params[axis] * block[axis] as usize);
+            }
+            let value = A::<B,C>::float_reshape(scales, Shape::from(source));
+            let value = A::<B,C>::float_expand(value, Shape::from(expanded));
+            let value = A::<B,C>::float_reshape(value, Shape::from(padded));
+            let slices = shape.iter().map(|&size| ruda_tensor::Slice::from(0..size)).collect::<alloc::vec::Vec<_>>();
+            A::<B,C>::float_slice(value, &slices)
+        }
+    }
+}
+
+fn learned_quantize<B: Backend, C: CheckpointStrategy>(
+    tensor: AutodiffTensor<B>, scheme: &QuantScheme, scales: AutodiffTensor<B>,
+) -> AutodiffQTensor<B> {
+    use ruda_core::tensor::{QuantParam, QuantValue};
+    type A<B, C> = Autodiff<B, C>;
+    assert!(matches!(scheme.value, QuantValue::Q8F | QuantValue::Q8S |
+        QuantValue::Q4F | QuantValue::Q4S | QuantValue::Q2F | QuantValue::Q2S)
+        && scheme.param == QuantParam::F32,
+        "learned scales require integer Q8/Q4/Q2 and FP32 scale parameters");
+    assert_eq!(B::float_device(&tensor.primitive), B::float_device(&scales.primitive),
+        "learned scales must be on the input device");
+    let shape = tensor.shape();
+    assert!(shape.num_elements() > 0, "learned quantization requires nonempty input");
+    let dtype: FloatDType = tensor.dtype().into();
+    let scales = A::<B,C>::float_clamp_min(A::<B,C>::float_cast(scales, FloatDType::F32), 1e-8f32.into());
+    let primitive = B::quantize(tensor.primitive.clone(), scheme,
+        QuantizationParametersPrimitive { scales: scales.primitive.clone() });
+    let value = B::dequantize(primitive.clone(), FloatDType::F32);
+    let scales = expand_learned_scales::<B,C>(scales, &shape, scheme.level);
+    let normalized = A::<B,C>::float_div(A::<B,C>::float_cast(tensor, FloatDType::F32), scales.clone());
+    let (lower, upper) = scheme.value.range();
+    let clipped = A::<B,C>::float_clamp(normalized, lower.into(), upper.into());
+    // Detached integer codes match the BACKEND's actual rounding, not an
+    // independently reimplemented rounding rule. Zero-valued correction supplies
+    // d(code)/d(input/scale)=1 inside bounds, 0 outside.
+    let codes = AutodiffTensor::new(B::float_div(value.clone(), scales.primitive.clone()));
+    let correction = A::<B,C>::float_sub(clipped.clone(), AutodiffTensor::new(clipped.primitive));
+    let surrogate = A::<B,C>::float_mul(scales, A::<B,C>::float_add(codes, correction));
+    let surrogate = A::<B,C>::float_cast(surrogate, dtype);
+    let exact_value = B::dequantize(primitive.clone(), dtype);
+    AutodiffQTensor { primitive, surrogate: Some(ste::<B,C>(surrogate, exact_value)) }
+}
+
 impl<B: Backend, C: CheckpointStrategy> QTensorOps<Self> for Autodiff<B, C> {
     fn q_from_data(data: TensorData, device: &Device<Self>) -> QuantizedTensor<Self> {
         AutodiffQTensor::untracked(B::q_from_data(data, device))
     }
     fn quantize(tensor: FloatTensor<Self>, scheme: &QuantScheme,
         qparams: QuantizationParametersPrimitive<Self>) -> QuantizedTensor<Self> {
-        assert!(!qparams.scales.is_tracked(),
-            "identity-STE quantization differentiates inputs only; use untracked scales");
+        if qparams.scales.is_tracked() {
+            return learned_quantize::<B, C>(tensor, scheme, qparams.scales);
+        }
         let primitive = B::quantize(tensor.primitive.clone(), scheme,
             QuantizationParametersPrimitive { scales: qparams.scales.primitive });
         let surrogate = tensor.is_tracked().then(|| {
@@ -218,9 +287,26 @@ mod tests {
         assert!(A::grad(&x,&gradients).is_none());
     }
     #[test]
-    #[should_panic(expected="scales")]
-    fn learning_scales_is_rejected_instead_of_silently_losing_gradient() {
-        A::quantize(input::<NoCheckpointing>(vec![1.0]), &QuantScheme::default(),
-            QuantizationParametersPrimitive { scales: input::<NoCheckpointing>(vec![0.5]) });
+    fn learned_step_has_clipped_input_gradient_and_nonzero_scale_gradient() {
+        let x = input::<NoCheckpointing>(vec![-10.0, -0.25, 0.25, 10.0]);
+        let scales = input::<NoCheckpointing>(vec![0.5]);
+        let scheme = QuantScheme::default().with_value(QuantValue::Q4S).with_store(QuantStore::Native);
+        let q = A::quantize(x.clone(), &scheme, QuantizationParametersPrimitive { scales: scales.clone() });
+        let y = A::dequantize(q, FloatDType::F32);
+        assert_eq!(values(y.primitive.clone()), vec![-3.5, -0.5, 0.5, 3.5]);
+        let weights = A::float_from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], [4]), &Default::default());
+        let gradients = A::backward(A::float_sum(A::float_mul(y, weights)));
+        assert_eq!(values(A::grad(&x, &gradients).unwrap()), vec![0.0, 2.0, 3.0, 0.0]);
+        assert_eq!(values(A::grad(&scales, &gradients).unwrap()), vec![21.5]);
+    }
+
+    #[test]
+    fn learned_scale_only_parent_is_retained() {
+        let x = A::float_from_data(TensorData::new(vec![0.25f32], [1]), &Default::default());
+        let scale = input::<NoCheckpointing>(vec![0.5]);
+        let q = A::quantize(x, &QuantScheme::default().with_store(QuantStore::Native),
+            QuantizationParametersPrimitive { scales: scale.clone() });
+        let gradients = A::backward(A::float_sum(A::dequantize(q, FloatDType::F32)));
+        assert_eq!(values(A::grad(&scale, &gradients).unwrap()), vec![0.5]);
     }
 }

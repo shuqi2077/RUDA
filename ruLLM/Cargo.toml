@@ -78,3 +78,7 @@ required-features = ["amd", "stack-autotune"]
 name = "stack_autotune_gpu"
 path = "tests/stack_autotune_gpu.rs"
 required-features = ["stack-autotune"]
+
+[[example]]
+name = "qwen35_generate_packed"
+required-features = ["nvidia"]
