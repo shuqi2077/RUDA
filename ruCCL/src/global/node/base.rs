@@ -130,7 +130,7 @@ where
             return Err(GlobalCollectiveError::AllReduceBeforeRegister);
         };
         self.begin(crate::global::shared::CollectiveSpec::AllReduce {
-            op, strategy, shape: tensor.shape().dims.to_vec(), dtype: tensor.dtype(),
+            op, strategy, shape: tensor.shape().to_vec(), dtype: tensor.dtype(),
         }).await?;
         let node = state.node_id;
         let nodes = &state.nodes;
@@ -193,7 +193,7 @@ where
         let guard = self.state.read().await;
         let state = guard.as_ref().ok_or(GlobalCollectiveError::CollectiveBeforeRegister)?;
         let (root_node, transfer) = self.begin(crate::global::shared::CollectiveSpec::Reduce {
-            root, op, strategy, shape: tensor.shape().dims.to_vec(), dtype: tensor.dtype(),
+            root, op, strategy, shape: tensor.shape().to_vec(), dtype: tensor.dtype(),
         }).await?;
         let arity = match strategy { ReduceStrategy::Centralized => None, ReduceStrategy::Tree(k) => Some(k) };
         let result = super::rooted::reduce_sum::<B, P>(state.node_id, root_node, &state.nodes,
@@ -210,7 +210,7 @@ where
     {
         let guard = self.state.read().await;
         let state = guard.as_ref().ok_or(GlobalCollectiveError::CollectiveBeforeRegister)?;
-        let metadata = tensor.as_ref().map(|t| (t.shape().dims.to_vec(), t.dtype()));
+        let metadata = tensor.as_ref().map(|t| (t.shape().to_vec(), t.dtype()));
         let (root_node, transfer) = self.begin(crate::global::shared::CollectiveSpec::Broadcast {
             strategy, metadata,
         }).await?;

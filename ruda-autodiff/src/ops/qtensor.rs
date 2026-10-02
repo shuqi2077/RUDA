@@ -166,6 +166,29 @@ mod tests {
             QuantizationParametersPrimitive { scales: scale })
     }
     #[test]
+    fn transaction_readback_preserves_quantized_storage_and_gradient_history() {
+        use ruda_tensor::ops::{TransactionOps, TransactionPrimitive};
+        let x = input::<NoCheckpointing>(vec![-1.25, 0.25, 2.75]);
+        let q = quantize::<NoCheckpointing>(x.clone());
+        let expected = read_sync(Host::q_into_data(q.primitive.clone())).unwrap();
+        let untracked = A::q_from_data(expected.clone(), &Default::default());
+        let data = read_sync(A::tr_execute(TransactionPrimitive::new(
+            vec![x.clone()], vec![q.clone(), untracked], vec![], vec![],
+        ))).unwrap();
+        assert_eq!(data.read_floats.len(), 1);
+        assert_eq!(data.read_floats[0].to_vec::<f32>().unwrap(), vec![-1.25, 0.25, 2.75]);
+        assert_eq!(data.read_qfloats.len(), 2);
+        for actual in &data.read_qfloats {
+            assert_eq!(actual.dtype, expected.dtype);
+            assert_eq!(actual.shape, expected.shape);
+            assert_eq!(actual.bytes, expected.bytes);
+        }
+        assert!(data.read_ints.is_empty() && data.read_bools.is_empty());
+        let gradients = A::backward(A::float_sum(A::dequantize(q, FloatDType::F32)));
+        assert_eq!(values(A::grad(&x, &gradients).unwrap()), vec![1.0; 3]);
+    }
+
+    #[test]
     fn unclipped_identity_ste_has_real_quantized_forward_and_input_gradients() {
         let x = input::<NoCheckpointing>(vec![-100.0,-0.25,0.25,100.0]);
         let y = A::dequantize(quantize::<NoCheckpointing>(x.clone()), FloatDType::F32);
