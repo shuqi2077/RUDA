@@ -118,14 +118,14 @@ invalid_html_tags = "warn"
 
 [dependencies.ruda-core]
 path = "../ruda-core"
-version = "0.1.3"
+version = "0.1.4"
 default-features = false
 features = [ "std",]
 
 [dependencies.ruda]
 package = "ruda-runtime"
 path = "../ruda-runtime"
-version = "0.1.0"
+version = "0.1.1"
 default-features = false
 features = [ "runtime", "runtime-channel-mutex", "runtime-std", "runtime-storage-bytes",]
 

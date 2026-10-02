@@ -54,13 +54,13 @@ required-features = ["std", "collective"]
 [dependencies.ruccl]
 package = "ruCCL"
 path = "../ruCCL"
-version = "0.21.15"
+version = "0.21.16"
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-remote]
 path = "../ruda-tensor-remote"
-version = "0.21.15"
+version = "0.21.16"
 optional = true
 default-features = false
 
@@ -72,13 +72,13 @@ default-features = false
 
 [dependencies.ruda-tensor-router]
 path = "../ruda-tensor-router"
-version = "0.21.15"
+version = "0.21.16"
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-tch]
 path = "../ruda-tensor-tch"
-version = "0.21.18"
+version = "0.21.19"
 features = [ "default",]
 optional = true
 default-features = false
@@ -121,7 +121,7 @@ version = "0.21.16"
 optional = true
 default-features = false
 path = "../ruda-tensor-device"
-version = "0.21.16"
+version = "0.21.17"
 features = [ "cuda",]
 
 [dependencies.ruda-fusion]
@@ -129,7 +129,7 @@ features = [ "std", "tracing",]
 optional = true
 default-features = false
 path = "../ruda-fusion"
-version = "0.21.16"
+version = "0.21.17"
 
 [dependencies.ruda-kernel]
 path = "../ruda-kernel"
@@ -140,7 +140,7 @@ features = [ "frontend",]
 
 [dependencies.ruda-core]
 path = "../ruda-core"
-version = "0.1.3"
+version = "0.1.4"
 default-features = false
 optional = true
 

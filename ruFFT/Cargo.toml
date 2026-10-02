@@ -95,14 +95,14 @@ features = ["frontend", "library"]
 
 [dependencies.ruda-core]
 path = "../ruda-core"
-version = "0.1.3"
+version = "0.1.4"
 default-features = false
 optional = true
 
 [dependencies.ruprim]
 package = "ruPRIM"
 path = "../ruPRIM"
-version = "0.1.13"
+version = "0.1.17"
 default-features = false
 features = ["indexing"]
 optional = true
