@@ -43,24 +43,22 @@ if hasattr(_native, "ruda_torch_factory_api_version") and hasattr(_C, "initializ
     _factory_available = True
 
 
-def manual_seed_all(seed):
-    _C.default_generator().manual_seed(seed)
+if hasattr(_C, "default_generator"):
+    def manual_seed_all(seed):
+        _C.default_generator().manual_seed(seed)
 
+    def manual_seed(seed):
+        manual_seed_all(seed)
 
-def manual_seed(seed):
-    manual_seed_all(seed)
+    def get_rng_state(device=0):
+        if device not in (0, "ruda", "ruda:0", torch.device("ruda:0")):
+            raise ValueError("RUDA currently exposes only ruda:0")
+        return _C.default_generator().get_state()
 
-
-def get_rng_state(device=0):
-    if device not in (0, "ruda", "ruda:0", torch.device("ruda:0")):
-        raise ValueError("RUDA currently exposes only ruda:0")
-    return _C.default_generator().get_state()
-
-
-def set_rng_state(state, device=0):
-    if device not in (0, "ruda", "ruda:0", torch.device("ruda:0")):
-        raise ValueError("RUDA currently exposes only ruda:0")
-    _C.default_generator().set_state(state)
+    def set_rng_state(state, device=0):
+        if device not in (0, "ruda", "ruda:0", torch.device("ruda:0")):
+            raise ValueError("RUDA currently exposes only ruda:0")
+        _C.default_generator().set_state(state)
 
 
 def is_available():

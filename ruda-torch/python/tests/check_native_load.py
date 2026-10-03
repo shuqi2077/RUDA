@@ -5,8 +5,9 @@ import sys
 
 import torch
 
-package = Path(__file__).resolve().parents[1] / 'ruda_torch'
-extension = next(p for p in package.glob('_C*') if p.suffix in ('.so', '.pyd'))
+root = Path(__file__).resolve().parents[1]
+extension = next(p for p in root.glob('build/lib*/ruda_torch/_C*') if p.suffix in ('.so', '.pyd'))
+package = extension.parent
 spec = importlib.util.spec_from_file_location('_C', extension)
 cpp = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cpp)
