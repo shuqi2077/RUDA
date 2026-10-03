@@ -49,7 +49,8 @@ pub unsafe extern "C" fn ruda_torch_normal(
         let seeds: [u32; 4] = unsafe { std::slice::from_raw_parts(seeds, 4) }.try_into().unwrap();
         let client = client();
         let tensor = primitives::tensor(&out);
-        rurand::random_normal_seeded(&client, mean, std, tensor.binding(), tensor.dtype.into(), seeds)
+        let dtype = tensor.dtype.into();
+        rurand::random_normal_seeded(&client, mean, std, tensor.binding(), dtype, seeds)
             .expect("RUDA normal launch failed");
         finish_dispatch(&client);
         LAUNCHES.fetch_add(1, Ordering::Relaxed);
