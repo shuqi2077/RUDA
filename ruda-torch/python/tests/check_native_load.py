@@ -25,7 +25,7 @@ for name, version in (('abi', 10), ('factory_api', 1)):
 for name in ('arange', 'normal'):
     assert getattr(native, 'ruda_torch_'+name)
 
-generator = torch.Generator(device='privateuseone').manual_seed(1729)
+generator = cpp.default_generator().manual_seed(1729)
 state = generator.get_state()
 generator.manual_seed(42)
 generator.set_state(state)
