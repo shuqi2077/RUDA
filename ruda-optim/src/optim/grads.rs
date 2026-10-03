@@ -110,6 +110,14 @@ impl GradientsParams {
         self.len() == 0
     }
 
+    #[cfg(feature = "collective")]
+    pub(crate) fn primitive<B: Backend>(
+        &self,
+        id: ParamId,
+    ) -> Option<ruda_model::tensor::TensorPrimitive<B>> {
+        self.container.get(&id)
+    }
+
     /// Change the device of each tensor gradients registered for the given [module](AutodiffModule).
     pub fn to_device<B: AutodiffBackend, M: AutodiffModule<B>>(
         mut self,

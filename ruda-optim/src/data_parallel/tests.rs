@@ -64,7 +64,7 @@ fn loss(model: &Linear<B>, rank: u32) -> Tensor<B, 1> {
         (vec![2.0, -1.0], vec![0.5])
     };
     let count = y.len();
-    let residual = model.forward(Tensor::from_floats(TensorData::new(x, [count, 2]), &device))
+    let residual = model.forward::<2>(Tensor::from_floats(TensorData::new(x, [count, 2]), &device))
         - Tensor::from_floats(TensorData::new(y, [count, 1]), &device);
     residual.clone().mul(residual).sum()
 }
@@ -250,10 +250,20 @@ fn gradient_shape_and_policy_mismatch_reject_on_every_rank() {
             ddp.reduce(&replica, gradients, 1, MissingGradientPolicy::Zero)
                 .is_err()
         );
+        let mut gradients = GradientsParams::new();
+        gradients.register(
+            replica.weight.id,
+            Tensor::<Host, 1>::ones([2], &Default::default()),
+        );
+        assert!(
+            ddp.reduce(&replica, gradients, 1, MissingGradientPolicy::Zero)
+                .is_err()
+        );
+        let gradients = GradientsParams::from_grads(loss(&replica, rank).backward(), &replica);
         assert!(
             ddp.reduce(
                 &replica,
-                GradientsParams::new(),
+                gradients,
                 1,
                 if rank == 0 {
                     MissingGradientPolicy::Error

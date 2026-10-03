@@ -9,7 +9,8 @@ use ruccl::{
 use ruda_model::{
     module::{AutodiffModule, ModuleMapper, ModuleVisitor, Param, ParamId},
     tensor::{
-        Bool, DType, Int, Tensor, TensorPrimitive, backend::AutodiffBackend,
+        Bool, DType, Int, Tensor, TensorMetadata, TensorPrimitive,
+        backend::{AutodiffBackend, Backend},
         container::TensorContainer,
     },
 };
@@ -421,12 +422,17 @@ impl<B: AutodiffBackend> ModuleVisitor<B> for Check<'_, B> {
         if !value.is_require_grad() || self.ids.contains(&param.id) {
             return;
         }
-        let gradient = self.gradients.get::<B::InnerBackend, D>(param.id);
+        let gradient = self.gradients.primitive::<B::InnerBackend>(param.id);
         if let Some(gradient) = &gradient {
-            if gradient.dims() != value.dims()
-                || gradient.dtype() != value.dtype()
-                || &gradient.device() != self.device
-            {
+            let valid = match gradient {
+                TensorPrimitive::Float(gradient) => {
+                    gradient.shape() == value.shape()
+                        && gradient.dtype() == value.dtype()
+                        && &B::InnerBackend::float_device(gradient) == self.device
+                }
+                TensorPrimitive::QFloat(_) => false,
+            };
+            if !valid {
                 self.error =
                     Some("gradient shape, dtype or device differs from its parameter".into());
             }
