@@ -9,9 +9,8 @@ use ruccl::{
 use ruda_model::{
     module::{AutodiffModule, ModuleMapper, ModuleVisitor, Param, ParamId},
     tensor::{
-        Bool, DType, Int, Tensor, TensorMetadata, TensorPrimitive,
-        backend::{AutodiffBackend, Backend},
-        container::TensorContainer,
+        Bool, DType, Int, Tensor, TensorMetadata, TensorPrimitive, backend::AutodiffBackend,
+        container::TensorContainer, ops::FloatTensorOps,
     },
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
