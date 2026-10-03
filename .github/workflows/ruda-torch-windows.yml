@@ -164,6 +164,7 @@ jobs:
           python -m compileall -q ruda_torch tests
           python tests/check_spatial_schemas.py
           python setup.py bdist_wheel
+          python tests/check_native_load.py
       - name: Save Linux wheel
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -223,6 +224,8 @@ jobs:
           $env:DISTUTILS_USE_SDK = '1'
           $env:MSSdk = '1'
           python setup.py bdist_wheel
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python tests/check_native_load.py
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Save installable wheel
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
