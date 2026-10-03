@@ -15,7 +15,16 @@ pub(crate) fn random<F: RandomFamily, R: Runtime>(
     output: TensorBinding<R>,
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
-    let seeds = get_seeds();
+    random_seeded::<F, R>(client, prng, output, dtype, get_seeds())
+}
+
+pub(crate) fn random_seeded<F: RandomFamily, R: Runtime>(
+    client: &ComputeClient<R>,
+    prng: F::Runtime,
+    output: TensorBinding<R>,
+    dtype: StorageType,
+    seeds: [u32; 4],
+) -> Result<(), LaunchError> {
     let args = prng.args();
 
     let ruda_dim = RudaDim::new(client.properties(), output.size().div_ceil(N_VALUES_PER_THREAD));

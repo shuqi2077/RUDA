@@ -75,10 +75,10 @@ def pack_nf4(weight, *, block_size=64, chunk_blocks=1024):
 
 def _decode(packed, scales, table, begin, rows, width, block_size, dtype):
     if packed.device.type == 'ruda':
-        from . import _C, _nf4_available
+        from . import _nf4_available
         if not _nf4_available:
             raise RuntimeError('RUDA NF4 API 1 required; rebuild Rust and C++ libraries')
-        return _C.nf4_decode(packed, scales, table, begin, rows, width, block_size, _FLOATS.index(dtype))
+        return torch.ops.ruda.nf4_decode(packed, scales, table, begin, rows, width, block_size, _FLOATS.index(dtype))
     # Explicit same-device reference, never a fallback from a failed RUDA call.
     if packed.device.type not in ('cpu', 'cuda'):
         raise ValueError('NF4 supports ruda, cpu reference, or cuda reference devices')
@@ -128,10 +128,8 @@ class _NF4LinearFunction(torch.autograd.Function):
             weight = _decode(packed, scales, table, start, rows, width, block_size, ctx.input_dtype)
             left = grad[:, start:start+rows].to(ctx.input_dtype).contiguous()
             if grad.device.type == 'ruda':
-                from . import _C
-                partial = torch.empty_like(result)
                 # ruBLAS supports low-precision inputs and FP32 output accumulation.
-                _C.execute(7, left, weight, partial, 0.)
+                partial = torch.ops.ruda.mm_fp32(left, weight)
             else:
                 partial = left.float() @ weight.float()
             result.add_(partial)

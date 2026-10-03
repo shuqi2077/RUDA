@@ -6285,6 +6285,7 @@ dependencies = [
  "half",
  "ruDNN",
  "ruPRIM",
+ "ruRAND",
  "rublas",
  "ruda",
  "ruda-core",

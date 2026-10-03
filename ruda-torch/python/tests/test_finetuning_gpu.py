@@ -78,3 +78,29 @@ def test_native_qlora_adamw_checkpoint_recompute_and_resume(r):
     r.synchronize()
     for p, q in zip(model.parameters(), restored.parameters()):
         torch.testing.assert_close(p.cpu(), q.cpu(), rtol=1e-5, atol=1e-6)
+
+
+def test_native_fp32_nf4_fullgraph_forward_and_backward(r):
+    torch.manual_seed(97)
+    reference = r.NF4Linear.from_linear(nn.Linear(33, 17), block_size=64, tile_rows=5)
+    native = copy.deepcopy(reference).to('ruda')
+    data = torch.randn(2, 3, 33)
+    x = data.to('ruda').requires_grad_()
+    xr = data.clone().requires_grad_()
+    grad = torch.randn(2, 3, 17)
+    dg = grad.to('ruda')
+    expected = reference(xr)
+    expected.backward(grad)
+    compiled = r.compile(native, fullgraph=True)
+    try:
+        before = r.execution_stats()
+        actual = compiled(x)
+        actual.backward(dg)
+        r.synchronize()
+        after = r.execution_stats()
+        for key in ('host_to_device_bytes', 'device_to_host_bytes'):
+            assert before[key] == after[key]
+        torch.testing.assert_close(actual.cpu(), expected, rtol=3e-5, atol=3e-5)
+        torch.testing.assert_close(x.grad.cpu(), xr.grad, rtol=3e-5, atol=3e-5)
+    finally:
+        compiled.close()

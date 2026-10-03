@@ -21,6 +21,7 @@ mod softmax;
 mod normalization;
 mod primitives;
 mod spatial;
+mod factories;
 
 thread_local! { static ERROR: RefCell<CString> = RefCell::new(CString::default()); }
 static LAUNCHES: AtomicU64 = AtomicU64::new(0);
@@ -503,7 +504,7 @@ pub unsafe extern "C" fn ruda_torch_execute(op: u32, a: *const Descriptor, b: *c
                     assert!(out.shape[rank - spatial..].iter().all(|&size| size > 0));
                 }
             }
-            6 => {
+            6 | 107 => {
                 assert_eq!(a.shape.len(), out.shape.len());
                 assert!(a.shape.iter().zip(&out.shape).all(|(a, o)| *o == 1 || a == o));
             }

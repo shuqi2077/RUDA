@@ -3,7 +3,7 @@
 use super::*;
 use half::{bf16, f16};
 use ruda_core::tensor::data::TensorData;
-use ruda_kernel::tensor::{transfer::from_data, readback::into_data_sync};
+use ruda_kernel::tensor::{contiguous::into_contiguous, transfer::from_data, readback::into_data_sync};
 use ruda_test_runtime::TestRuntime;
 type Tensor = RudaTensor<TestRuntime>;
 
@@ -14,7 +14,7 @@ fn tensor(values: Vec<f32>, shape: impl Into<Shape>, dtype: DType) -> Tensor {
         DType::BF16 => TensorData::new(values.into_iter().map(bf16::from_f32).collect::<Vec<_>>(),shape),
         _ => TensorData::new(values,shape),
     };
-    from_data(data,&Default::default())
+    into_contiguous(from_data(data,&Default::default()))
 }
 fn floats(t: Tensor) -> Vec<f32> {
     let dtype=t.dtype;let data=into_data_sync(t);

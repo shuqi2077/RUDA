@@ -33,6 +33,36 @@ _C.initialize([ctypes.cast(getattr(_native, "ruda_torch_" + name), ctypes.c_void
                for name in ("alloc", "free", "error", "execute", "transfer", "sync", "fill", "spatial", "addmm", "layer_norm", "rms_norm", "stream", "paged")])
 torch.utils.rename_privateuse1_backend("ruda")
 
+_factory_available = False
+if hasattr(_native, "ruda_torch_factory_api_version") and hasattr(_C, "initialize_factories"):
+    _native.ruda_torch_factory_api_version.restype = ctypes.c_uint32
+    if _native.ruda_torch_factory_api_version() != 1 or getattr(_C, "factory_api_version", None) != 1:
+        raise RuntimeError("RUDA factory API mismatch; rebuild Rust and C++ extensions")
+    _C.initialize_factories([ctypes.cast(getattr(_native, "ruda_torch_" + name), ctypes.c_void_p).value
+                            for name in ("arange", "normal")])
+    _factory_available = True
+
+
+def manual_seed_all(seed):
+    _C.default_generator().manual_seed(seed)
+
+
+def manual_seed(seed):
+    manual_seed_all(seed)
+
+
+def get_rng_state(device=0):
+    if device not in (0, "ruda", "ruda:0", torch.device("ruda:0")):
+        raise ValueError("RUDA currently exposes only ruda:0")
+    return _C.default_generator().get_state()
+
+
+def set_rng_state(state, device=0):
+    if device not in (0, "ruda", "ruda:0", torch.device("ruda:0")):
+        raise ValueError("RUDA currently exposes only ruda:0")
+    _C.default_generator().set_state(state)
+
+
 def is_available():
     return True
 

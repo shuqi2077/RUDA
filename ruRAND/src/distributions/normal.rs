@@ -39,4 +39,16 @@ pub fn random_normal<R: Runtime>(
     random::<NormalFamily, R>(client, Normal { mean, std }, out, dtype)
 }
 
+/// Normal samples using caller-owned seeds, independent of the global generator.
+pub fn random_normal_seeded<R: Runtime>(
+    client: &ComputeClient<R>,
+    mean: f32,
+    std: f32,
+    out: TensorBinding<R>,
+    dtype: StorageType,
+    seeds: [u32; 4],
+) -> Result<(), LaunchError> {
+    crate::random_seeded::<NormalFamily, R>(client, Normal { mean, std }, out, dtype, seeds)
+}
+
 mod kernel;

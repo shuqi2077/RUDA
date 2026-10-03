@@ -54,7 +54,7 @@ class StaticGraph:
             if t.device.type!='ruda' or t.device.index not in (None,0):
                 raise ValueError('StaticGraph accepts native ruda:0 tensors, not CPU/CUDA tensors')
             if t.requires_grad and not training:
-                raise ValueError('requires_grad inputs need StaticGraph(training=True)')
+                raise ValueError('StaticGraph is inference-only unless training=True; requires_grad inputs need StaticGraph(training=True)')
             if t.layout!=torch.strided or not t.is_contiguous():
                 raise ValueError('StaticGraph requires contiguous dense tensors')
             metadata[name]=TensorSpec(tuple(t.shape),str(t.dtype).removeprefix('torch.'))

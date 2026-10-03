@@ -12,7 +12,7 @@ from test_paged_selected_gpu import DTYPES,tol
 @pytest.mark.parametrize('causal',[True,False])
 def test_v34_visibility_numerics_and_reuse(backend,dtype_name,mla,mode,causal):
     dtype=getattr(torch,dtype_name);spec=make_spec(mode,129);ts=tensors(spec,mla,dtype=dtype)
-    ref=[x.float().requires_grad_() for x in ts];dev=[x.to('ruda').requires_grad_() for x in ts]
+    ref=[x.detach().float().requires_grad_() for x in ts];dev=[x.detach().to('ruda').requires_grad_() for x in ts]
     y=dense(ref,mla,spec=spec,causal=causal);g=torch.linspace(-.3,.4,y.numel()).reshape_as(y).to(dtype)
     y.backward(g.float());plan=backend.PagedAttentionPlan(**spec,backward_strategy='ordered')
     snapshots=[];before=backend.execution_stats()['paged_backward_ordered_workspace_allocations']

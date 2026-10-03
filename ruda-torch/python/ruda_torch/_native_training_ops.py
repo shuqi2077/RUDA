@@ -2,6 +2,31 @@
 import torch
 
 
+@torch.library.custom_op('ruda::nf4_decode', mutates_args=())
+def nf4_decode(packed: torch.Tensor, scales: torch.Tensor, table: torch.Tensor,
+               begin: int, rows: int, width: int, block: int, dtype: int) -> torch.Tensor:
+    from . import _C
+    return _C.nf4_decode(packed, scales, table, begin, rows, width, block, dtype)
+
+
+@nf4_decode.register_fake
+def _nf4_decode_fake(packed, scales, table, begin, rows, width, block, dtype):
+    return packed.new_empty((rows, width), dtype=(torch.float32, torch.float16, torch.bfloat16)[dtype])
+
+
+@torch.library.custom_op('ruda::mm_fp32', mutates_args=())
+def mm_fp32(left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+    from . import _C
+    output = left.new_empty((left.shape[0], right.shape[1]), dtype=torch.float32)
+    _C.execute(7, left, right, output, 0.)
+    return output
+
+
+@mm_fp32.register_fake
+def _mm_fp32_fake(left, right):
+    return left.new_empty((left.shape[0], right.shape[1]), dtype=torch.float32)
+
+
 @torch.library.custom_op('ruda::nf4_matmul', mutates_args=())
 def nf4_matmul(input: torch.Tensor, packed: torch.Tensor, scales: torch.Tensor,
                table: torch.Tensor, columns: int, width: int, block: int,

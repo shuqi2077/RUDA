@@ -22,7 +22,7 @@ def call(plan,ts,mla,causal=True):
 @pytest.mark.parametrize('causal',[False,True])
 def test_ordered_masks_numerics_and_scratch(backend,dtype_name,mla,mask,causal):
     dtype=getattr(torch,dtype_name);ts=data(mla,dtype=dtype);needs=[bool(mask&(1<<i)) for i in range(len(ts))]
-    ref=[x.float().requires_grad_(n) for x,n in zip(ts,needs)];dev=[x.to('ruda').requires_grad_(n) for x,n in zip(ts,needs)]
+    ref=[x.detach().float().requires_grad_(n) for x,n in zip(ts,needs)];dev=[x.detach().to('ruda').requires_grad_(n) for x,n in zip(ts,needs)]
     expected=dense(ref,mla,causal=causal);go=torch.linspace(-.3,.4,expected.numel()).reshape_as(expected).to(dtype)
     expected.backward(go.float());plan=backend.PagedAttentionPlan(**SPEC,backward_strategy='ordered')
     old=torch.are_deterministic_algorithms_enabled();warn=torch.is_deterministic_algorithms_warn_only_enabled()
@@ -90,7 +90,7 @@ def test_feature_tails_and_head_groups(backend,dtype_name,mla,heads,kh,d,dv):
     def t(*shape):return (torch.randn(shape,generator=gen)*.2).to(dtype)
     q=t(4,heads,d);k=t(4,3,1 if mla else kh,d)
     ts=(q,t(4,heads,33),k,t(4,3,1,33)) if mla else (q,k,t(4,3,kh,dv))
-    ref=[x.float().requires_grad_() for x in ts];dev=[x.to('ruda').requires_grad_() for x in ts]
+    ref=[x.detach().float().requires_grad_() for x in ts];dev=[x.detach().to('ruda').requires_grad_() for x in ts]
     expected=dense(ref,mla);go=torch.ones_like(expected).to(dtype);expected.backward(go.float())
     y=call(backend.PagedAttentionPlan(**SPEC,backward_strategy='ordered'),dev,mla);y.backward(go.to('ruda'))
     for a,b in zip(dev,ref):torch.testing.assert_close(a.grad.cpu().float(),b.grad,atol=tol(dtype),rtol=tol(dtype))

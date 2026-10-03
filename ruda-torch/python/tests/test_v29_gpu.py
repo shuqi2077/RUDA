@@ -16,9 +16,9 @@ def backend():
 @pytest.mark.parametrize('dtype',[torch.float32,torch.float16])
 def test_paged_gqa_backward(backend,dtype):
     q,k,v=inputs(dtype);s=schedule();args=[s[x] for x in ('block_tables','kv_lengths','sequence_ids','positions')]
-    qr=q.float().requires_grad_();kr=k.float().requires_grad_();vr=v.float().requires_grad_()
+    qr=q.detach().float().requires_grad_();kr=k.detach().float().requires_grad_();vr=v.detach().float().requires_grad_()
     ref=dense(qr,kr,vr,*args,33**-.5,True);go=torch.randn_like(ref);ref.backward(go)
-    qd=q.to('ruda').requires_grad_();kd=k.to('ruda').requires_grad_();vd=v.to('ruda').requires_grad_()
+    qd=q.detach().to('ruda').requires_grad_();kd=k.detach().to('ruda').requires_grad_();vd=v.detach().to('ruda').requires_grad_()
     out=backend.PagedAttentionPlan(**s).attention(qd,kd,vd,scale=33**-.5,causal=True)
     out.backward(go.to(dtype).to('ruda'))
     tol=.025 if dtype==torch.float16 else 3e-4
@@ -31,9 +31,9 @@ def test_paged_mla_backward(backend,dtype):
     q,c,_=inputs(dtype,512,512,1,4);s=schedule();g=torch.Generator().manual_seed(81)
     qp=torch.randn((4,4,64),generator=g).to(dtype);kp=torch.randn((6,4,1,64),generator=g).to(dtype)
     args=[s[x] for x in ('block_tables','kv_lengths','sequence_ids','positions')]
-    qr=q.float().requires_grad_();cr=c.float().requires_grad_();qpr=qp.float().requires_grad_();kpr=kp.float().requires_grad_()
+    qr=q.detach().float().requires_grad_();cr=c.detach().float().requires_grad_();qpr=qp.detach().float().requires_grad_();kpr=kp.detach().float().requires_grad_()
     ref=dense(qr,cr,cr,*args,192**-.5,True,qpr,kpr);go=torch.randn_like(ref);ref.backward(go)
-    qd=q.to('ruda').requires_grad_();cd=c.to('ruda').requires_grad_();qpd=qp.to('ruda').requires_grad_();kpd=kp.to('ruda').requires_grad_()
+    qd=q.detach().to('ruda').requires_grad_();cd=c.detach().to('ruda').requires_grad_();qpd=qp.detach().to('ruda').requires_grad_();kpd=kp.detach().to('ruda').requires_grad_()
     out=backend.PagedAttentionPlan(**s).mla(qd,qpd,cd,kpd,scale=192**-.5,causal=True);out.backward(go.to(dtype).to('ruda'))
     tol=.03 if dtype==torch.float16 else 4e-4
     for actual,expected in ((qd.grad,qr.grad),(qpd.grad,qpr.grad),(cd.grad,cr.grad),(kpd.grad,kpr.grad)):

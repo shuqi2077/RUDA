@@ -3,6 +3,9 @@
 #include <ATen/autocast_mode.h>
 #include <ATen/MemoryOverlap.h>
 #include <ATen/detail/PrivateUse1HooksInterface.h>
+#include <ATen/CPUGeneratorImpl.h>
+#include <ATen/native/Resize.h>
+#include <ATen/native/RangeUtils.h>
 #include <ATen/ops/as_strided_native.h>
 #include <ATen/ops/view_native.h>
 #include <ATen/ops/_reshape_alias_native.h>
@@ -100,6 +103,9 @@ class Allocator final : public c10::Allocator {
 Allocator allocator;
 REGISTER_ALLOCATOR(c10::DeviceType::PrivateUse1, &allocator);
 
+#include "storage.inc"
+#include "generator.inc"
+
 uint64_t stream_command(uint32_t op, uint64_t stream=0, uint64_t object=0, uint32_t flags=0) {
   TORCH_CHECK(stream_native, "RUDA ABI 8 stream bridge is not initialized");
   uint64_t result=0;check(stream_native(op,stream,object,flags,&result));return result;
@@ -156,6 +162,12 @@ C10_REGISTER_GUARD_IMPL(PrivateUse1, Guard);
 
 class Hooks final : public at::PrivateUse1HooksInterface {
  public:
+  const at::Generator& getDefaultGenerator(c10::DeviceIndex index) const override {
+    validate(c10::Device(c10::DeviceType::PrivateUse1,index)); return default_generator();
+  }
+  void resizePrivateUse1Bytes(const c10::Storage& storage, size_t bytes) const override {
+    resize_storage(storage, bytes);
+  }
   bool isBuilt() const override { return true; }
   bool isAvailable() const override { return allocate_native != nullptr; }
   bool hasPrimaryContext(c10::DeviceIndex device) const override { return device == 0 && isAvailable(); }
@@ -426,6 +438,7 @@ at::Tensor copy_from(const at::Tensor& source, const at::Tensor& dest, bool non_
   return dest;
 }
 at::Tensor& copy_(at::Tensor& dest, const at::Tensor& source, bool non_blocking) { copy_from(source, dest, non_blocking); return dest; }
+#include "factories.inc"
 template <typename T>
 T read_scalar(const at::Tensor& value) {
   T result{};
@@ -454,6 +467,11 @@ void record_tensor_stream(at::Tensor& value, c10::Stream stream) {
   stream_command(12,stream.id(),reinterpret_cast<uintptr_t>(arg.desc.allocation));
 }
 TORCH_LIBRARY_IMPL(aten, PrivateUse1, m) {
+  m.impl("set_.source_Storage", set_storage);
+  m.impl("set_.source_Storage_storage_offset", set_storage_offset);
+  m.impl("resize_", resize_tensor);
+  m.impl("normal_", normal_);
+  m.impl("arange.start_out", arange_out);
   m.impl("record_stream",record_tensor_stream);
   m.impl("empty.memory_format", empty);
   m.impl("empty_strided", empty_strided);
@@ -483,6 +501,14 @@ TORCH_LIBRARY_IMPL(aten, AutocastPrivateUse1, m) {
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.attr("abi_version") = 10;
+  m.attr("factory_api_version") = 1;
+  m.def("initialize_factories", [](std::vector<uintptr_t> addresses) {
+    TORCH_CHECK(allocate_native && addresses.size()==2 && addresses[0] && addresses[1] && !arange_native,
+                "invalid or repeated factory initialization");
+    arange_native = reinterpret_cast<Arange>(addresses[0]);
+    normal_native = reinterpret_cast<Normal>(addresses[1]);
+  });
+  m.def("default_generator", [] { return default_generator(); });
   m.attr("nf4_matmul_api_version") = 1;
   m.def("initialize_nf4_matmul", [](uintptr_t address) {
     TORCH_CHECK(allocate_native && address && !nf4_matmul_native, "invalid or repeated NF4 matmul initialization");

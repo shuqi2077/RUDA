@@ -14,6 +14,17 @@ fn offset<F: Numeric>(tensor: &Tensor<F>, position: usize) -> usize {
 }
 
 #[ruda(launch)]
+pub fn arange<O: Numeric + RudaElement, A: Numeric + RudaElement>(
+    out: &mut Tensor<O>, start: A, step: A,
+) {
+    let pos = ABSOLUTE_POS as usize;
+    if pos < out.len() {
+        let increment = step * A::cast_from(pos);
+        out[offset(out, pos)] = O::cast_from(start + increment);
+    }
+}
+
+#[ruda(launch)]
 pub fn convert<I: Numeric + RudaElement, O: Numeric + RudaElement>(a: &Tensor<I>, out: &mut Tensor<O>) {
     let pos = ABSOLUTE_POS as usize;
     if pos < out.len() {
