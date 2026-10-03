@@ -92,7 +92,7 @@ fn lora_forward_backward_and_merge_match_dense_equations() {
     actual
         .to_data()
         .assert_eq(&TensorData::from([[[5.5, 7.5], [5.0, 16.5]]]), false);
-    let grads = actual.sum().backward();
+    let grads = actual.clone().sum().backward();
     input
         .grad(&grads)
         .unwrap()
