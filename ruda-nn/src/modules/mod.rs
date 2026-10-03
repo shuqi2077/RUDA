@@ -19,6 +19,7 @@ pub mod interpolate;
 mod dropout;
 mod embedding;
 mod linear;
+mod lora;
 /// Manifold-constrained hyper-connections and residual mixing.
 pub mod mhc;
 #[cfg(feature = "sparse")]
@@ -35,6 +36,7 @@ pub use norm::{batch::*, group::*, instance::*, layer::*, local_response::*, rms
 pub use dropout::*;
 pub use embedding::*;
 pub use linear::*;
+pub use lora::*;
 pub use mhc::*;
 #[cfg(feature = "sparse")]
 pub use sparse_linear::*;

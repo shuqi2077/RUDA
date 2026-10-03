@@ -91,7 +91,11 @@ jobs:
           - name: Optimizer CPU tests
             key: optim
             command: |
-              cargo test --locked -p ruda-optim --lib --features gradient-guard
+              /usr/bin/time -v cargo test --locked -p ruda-optim --lib --features gradient-guard,collective
+              cargo test --locked -p ruCCL --lib rank::host::exchange::tests
+              cargo test --locked -p ruda-nn --lib lora
+              cargo test --locked -p ruda-nn --lib causal_lm
+              cargo check --locked -p ruda-nn --no-default-features --lib
               cargo test --locked -p ruda-nn --lib layer_norm
               cargo test --locked -p ruda-autodiff --lib ops::qtensor::tests::transaction_readback
           - name: ruLLM host regression tests

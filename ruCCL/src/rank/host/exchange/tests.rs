@@ -49,6 +49,12 @@ fn native_tcp_host_exchange_and_reduction_need_no_gx_context() {
                 exchange.set_timeout(Duration::from_secs(5)).unwrap();
                 exchange.heartbeat(Duration::from_secs(5)).unwrap();
 
+                let (gathered, _) = exchange.all_gather_host_staged(
+                    ElementType::U8, 3, vec![rank as u8, 0, 255],
+                ).unwrap();
+                assert_eq!(gathered, vec![0, 0, 255, 1, 0, 255]);
+                assert!(exchange.all_gather_host_staged(ElementType::U64, 1, vec![0; 7]).is_err());
+
                 let input = i64::encode(&[i64::from(rank) + 1, i64::from(rank) + 2]);
                 let (payload, stats) = exchange
                     .all_reduce_host_staged(ElementType::I64, 2, input, ReductionOperation::Sum)

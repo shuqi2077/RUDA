@@ -1,6 +1,7 @@
 mod binary_cross_entropy;
 mod cosine_embedding;
 mod cross_entropy;
+mod causal_lm;
 mod ctc;
 mod huber;
 mod kldiv;
@@ -14,6 +15,7 @@ mod smooth_l1;
 pub use binary_cross_entropy::*;
 pub use cosine_embedding::*;
 pub use cross_entropy::*;
+pub use causal_lm::*;
 pub use ctc::*;
 pub use huber::*;
 pub use kldiv::*;

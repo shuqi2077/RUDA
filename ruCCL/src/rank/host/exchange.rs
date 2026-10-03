@@ -35,6 +35,29 @@ impl<'a> HostStagedExchange<'a> {
         Ok(self.session.heartbeat(timeout)?)
     }
 
+    /// Gather equal-sized host payloads in rank order without reducing values.
+    pub fn all_gather_host_staged(
+        &self,
+        element_type: ElementType,
+        element_count: usize,
+        payload: Vec<u8>,
+    ) -> Result<(Vec<u8>, CollectiveStats), RankError> {
+        let rank_bytes = validate_host_reduction_payload(element_type, element_count, &payload)?;
+        let response = self.session.exchange(
+            Opcode::AllGather, element_type, super::super::ANY_RANK,
+            element_count as u64, payload,
+        )?;
+        let expected = rank_bytes.checked_mul(self.world_size() as usize)
+            .ok_or(RankError::Overflow("host all-gather response bytes"))?;
+        validate_host_reduction_response("all-gather", &response.payload, expected)?;
+        let stats = self.stats(
+            CollectiveAlgorithm::Direct, self.world_size().saturating_sub(1),
+            rank_bytes.checked_add(expected)
+                .ok_or(RankError::Overflow("host all-gather transferred bytes"))?, 0,
+        )?;
+        Ok((response.payload, stats))
+    }
+
     pub fn all_reduce_host_staged(
         &self,
         element_type: ElementType,

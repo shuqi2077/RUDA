@@ -4,6 +4,42 @@ use crate::rank::{ReductionOperation, communicator::RankCommunicator};
 use ruda_tensor::{Backend, DType, Shape, TensorMetadata, bf16, f16};
 
 impl<B: Backend> RankCommunicator<TensorDevice<B>> {
+    /// Broadcast a floating tensor, retaining its shape, dtype and local device.
+    pub fn broadcast_float(
+        &self,
+        value: B::FloatTensorPrimitive,
+        root: u32,
+    ) -> Result<B::FloatTensorPrimitive, TensorDeviceError> {
+        match value.dtype() {
+            DType::F32 => self.broadcast_typed::<f32>(value, root),
+            DType::F16 => self.broadcast_typed::<f16>(value, root),
+            DType::BF16 => self.broadcast_typed::<bf16>(value, root),
+            dtype => Err(TensorDeviceError::UnsupportedDType(dtype)),
+        }
+    }
+
+    fn broadcast_typed<T: TensorElement>(
+        &self,
+        value: B::FloatTensorPrimitive,
+        root: u32,
+    ) -> Result<B::FloatTensorPrimitive, TensorDeviceError> {
+        let execution = self.execution();
+        execution.validate_type::<T>()?;
+        if &B::float_device(&value) != execution.device() {
+            return Err(TensorDeviceError::DeviceMismatch);
+        }
+        let shape = value.shape();
+        let length = shape.iter().try_fold(1_usize, |length, dim| {
+            length.checked_mul(*dim).ok_or(TensorDeviceError::InvalidBuffer(
+                "collective tensor element count overflow",
+            ))
+        })?;
+        storage::checked_length::<T>(length)?;
+        let buffer = execution.import_float::<T>(B::float_reshape(value, Shape::new([length])))?;
+        self.tensor_collective::<T>().broadcast(&buffer, root)?;
+        Ok(B::float_reshape(buffer.float_tensor()?, shape))
+    }
+
     /// Reduce a floating tensor through this rank's configured transport.
     ///
     /// All ranks must submit the same tensor shapes, dtypes and operations in

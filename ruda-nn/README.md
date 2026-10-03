@@ -7,6 +7,8 @@ Neural-network layers, activation modules, padding, and loss functions for Ruda 
 - `modules` contains neural-network layer implementations and is re-exported at the crate root.
 - `activation` exposes activation modules; `loss` exposes loss functions.
 - `Initializer` is re-exported from `ruda-model` for parameter initialization.
+- `LoRALinearConfig::init(base)` freezes an existing dense projection and adds trainable A/B adapters. `merge()` produces a frozen, dropout-free dense projection.
+- `loss::CausalLanguageModel` separates decoder hidden states from the vocabulary head. `CausalCrossEntropyConfig` projects full-vocabulary token chunks, handles shifted/ignored labels, and returns an FP32 loss sum with the effective token count. Chunking does not recompute the backward graph.
 
 ## Usage
 

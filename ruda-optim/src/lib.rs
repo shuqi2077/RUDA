@@ -29,6 +29,10 @@ pub mod lr_scheduler;
 #[cfg(feature = "std")]
 pub mod training;
 
+/// Explicit replicated data-parallel training through ruCCL rank communicators.
+#[cfg(feature = "collective")]
+pub mod data_parallel;
+
 /// Type alias for the learning rate.
 ///
 /// LearningRate also implements [learning rate scheduler](crate::lr_scheduler::LrScheduler) so it

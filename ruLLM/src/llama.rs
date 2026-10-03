@@ -17,6 +17,8 @@ use crate::ruda_inference;
 
 pub(crate) mod awq;
 pub(crate) mod rope;
+#[cfg(test)]
+mod causal_training_tests;
 use rope::qwen2_rope;
 
 const PACKED_TRAINING_MIN_TOKENS: usize = 32;
@@ -682,6 +684,11 @@ impl<B: Backend> LlamaForCausalLm<B> {
 
     /// Full causal prefill. Returns logits in `[batch, sequence, vocabulary]` order.
     pub fn forward(&self, tokens: Tensor<B, 2, Int>) -> Tensor<B, 3> {
+        self.lm_head.forward(self.forward_hidden(tokens))
+    }
+
+    /// Full causal hidden states, without a sequence-wide vocabulary projection.
+    pub fn forward_hidden(&self, tokens: Tensor<B, 2, Int>) -> Tensor<B, 3> {
         let sequence = tokens.dims()[1];
         assert!(
             sequence <= self.max_sequence_length,
@@ -691,7 +698,7 @@ impl<B: Backend> LlamaForCausalLm<B> {
         for layer in &self.layers {
             hidden = layer.forward(hidden);
         }
-        self.lm_head.forward(self.norm.forward(hidden))
+        self.norm.forward(hidden)
     }
 
     /// Appends one or more tokens to a KV cache and returns logits for only those tokens.
@@ -772,6 +779,26 @@ impl<B: Backend> LlamaForCausalLm<B> {
             lm_head: self.lm_head,
             max_sequence_length: self.max_sequence_length,
         }
+    }
+}
+
+impl<B: Backend> ruda_nn::loss::CausalLanguageModel<B> for LlamaForCausalLm<B> {
+    fn forward_hidden(&self, tokens: Tensor<B, 2, Int>) -> Tensor<B, 3> {
+        LlamaForCausalLm::forward_hidden(self, tokens)
+    }
+
+    fn project(&self, hidden: Tensor<B, 2>) -> Tensor<B, 2> {
+        self.lm_head.forward(hidden)
+    }
+}
+
+impl<B: Backend> ruda_nn::loss::CausalLanguageModel<B> for PackedLlamaForCausalLm<B> {
+    fn forward_hidden(&self, tokens: Tensor<B, 2, Int>) -> Tensor<B, 3> {
+        PackedLlamaForCausalLm::forward_hidden(self, tokens)
+    }
+
+    fn project(&self, hidden: Tensor<B, 2>) -> Tensor<B, 2> {
+        self.lm_head.forward(hidden)
     }
 }
 
@@ -1238,6 +1265,11 @@ impl<B: Backend> PackedLlamaForCausalLm<B> {
 
     /// Full causal forward for pretraining and fine-tuning.
     pub fn forward(&self, tokens: Tensor<B, 2, Int>) -> Tensor<B, 3> {
+        self.lm_head.forward(self.forward_hidden(tokens))
+    }
+
+    /// Full causal hidden states for chunked loss on packed projections.
+    pub fn forward_hidden(&self, tokens: Tensor<B, 2, Int>) -> Tensor<B, 3> {
         let sequence = tokens.dims()[1];
         assert!(
             sequence <= self.max_sequence_length,
@@ -1249,7 +1281,7 @@ impl<B: Backend> PackedLlamaForCausalLm<B> {
         for layer in &self.layers {
             hidden = layer.forward(hidden, causal_mask.clone());
         }
-        self.lm_head.forward(self.norm.forward(hidden))
+        self.norm.forward(hidden)
     }
 
     pub fn forward_cached_last(

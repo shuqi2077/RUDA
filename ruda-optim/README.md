@@ -7,6 +7,8 @@ Optimizer updates, gradient handling, clipping, learning-rate schedules, and tra
 - Crate-root optimizer exports provide optimizer configurations and gradient updates.
 - `grad_clipping` and `lr_scheduler` handle clipping and schedules.
 - `training` combines model, optimizer, scheduler, and accumulated-gradient records.
+- With `collective`, `data_parallel::DataParallel::initialize` validates replica paths, shapes, dtypes and tied aliases, then broadcasts floating parameters from an explicit root. Local parameter IDs are preserved.
+- `DataParallel::reduce` synchronizes gradients of local loss sums and divides by the total effective token/sample count. Accumulate locally before reducing; `MissingGradientPolicy` explicitly selects rejection or zero contribution for unused parameters. Globally unused parameters remain absent. Transport is ruCCL host-staged; this is replicated data parallelism, not TP/PP/FSDP. Save each rank's model/optimizer/continuation records together.
 - `fused_adamw` supplies opt-in AdamW/AMSGrad implementations.
 - `fused_adamw::storage` supplies preallocated native-adapter kernels under `fused-adamw-device`; `stats_plan::StatsPlan` plans bounded hierarchical gradient reductions. The out-of-place `adamw_step` API and default Rust optimizer remain separate. See the [fused AdamW guide](https://github.com/shuqi2077/RUDA/blob/main/docs/en/fused-adamw.md) and [native PyTorch training](https://github.com/shuqi2077/RUDA/blob/main/docs/en/training.md).
 

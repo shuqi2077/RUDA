@@ -9,6 +9,12 @@ ruLLM combines tokenization, model loading, cached autoregressive generation, an
 - Cargo package: `ruda-llm`
 - Rust crate: `rullm`
 
+`LlamaForCausalLm` and `PackedLlamaForCausalLm` implement the model-independent
+`ruda_nn::loss::CausalLanguageModel` contract. `CausalCrossEntropyConfig::forward_model`
+uses their normalized hidden states and chunked full-vocabulary projections for
+native pretraining/fine-tuning without sequence-wide logits. Existing generation
+and checkpoint-loading entry points are unchanged.
+
 ## Multi-backend and execution reliability candidate
 
 The second-round candidate adds HIP feature wiring, capability-gated packed
