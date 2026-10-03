@@ -54,8 +54,12 @@ impl LoRALinearConfig {
             .with_bias(false)
             .with_initializer(Initializer::Zeros)
             .init(&device);
-        adapter_a.weight = adapter_a.weight.map(|value| value.cast(dtype));
-        adapter_b.weight = adapter_b.weight.map(|value| value.cast(dtype));
+        adapter_a.weight = adapter_a
+            .weight
+            .map(|value| value.cast(dtype).detach().require_grad());
+        adapter_b.weight = adapter_b
+            .weight
+            .map(|value| value.cast(dtype).detach().require_grad());
         LoRALinear {
             base: base.no_grad(),
             adapter_a,

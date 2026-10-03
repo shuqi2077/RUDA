@@ -51,6 +51,31 @@ fn lora_initial_output_and_frozen_base_gradients() {
 }
 
 #[test]
+fn dtype_adaptation_keeps_adapter_parameters_as_trainable_leaves() {
+    use ruda_model::tensor::DType;
+    for dtype in [DType::F16, DType::BF16] {
+        let mut layer = base();
+        layer.weight = layer
+            .weight
+            .map(|value| value.cast(dtype).detach().require_grad());
+        layer.bias = layer
+            .bias
+            .map(|bias| bias.map(|value| value.cast(dtype).detach().require_grad()));
+        let adapter = LoRALinearConfig::new(1, 1.0).init(layer);
+        assert_eq!(adapter.adapter_a.weight.val().dtype(), dtype);
+        assert_eq!(adapter.adapter_b.weight.val().dtype(), dtype);
+        assert!(adapter.adapter_a.weight.val().is_require_grad());
+        assert!(adapter.adapter_b.weight.val().is_require_grad());
+        assert!(!adapter.base.weight.val().is_require_grad());
+        let gradients = (adapter.adapter_a.weight.val().sum()
+            + adapter.adapter_b.weight.val().sum())
+        .backward();
+        assert!(adapter.adapter_a.weight.val().grad(&gradients).is_some());
+        assert!(adapter.adapter_b.weight.val().grad(&gradients).is_some());
+    }
+}
+
+#[test]
 fn lora_forward_backward_and_merge_match_dense_equations() {
     let mut adapter = LoRALinearConfig::new(1, 2.0).init(base());
     adapter.adapter_a.weight = adapter
