@@ -112,7 +112,7 @@ optional = true
 
 [dependencies.ruda-tensor-router]
 path = "../ruda-tensor-router"
-version = "0.21.17"
+version = "0.21.18"
 default-features = false
 features = [ "default",]
 
