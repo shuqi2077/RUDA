@@ -9,7 +9,7 @@ pub fn seed(seed: u64) {
     *seed = Some(rng);
 }
 
-pub(crate) fn get_seeds() -> [u32; 4] {
+pub fn get_seeds() -> [u32; 4] {
     let mut seed = SEED.lock().unwrap();
     let mut rng: StdRng = match seed.take() {
         Some(rng_seeded) => rng_seeded,
