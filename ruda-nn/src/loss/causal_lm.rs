@@ -52,6 +52,14 @@ impl<B: Backend> CausalLoss<B> {
 }
 
 impl CausalCrossEntropyConfig {
+    pub fn forward_logits<B: Backend>(
+        &self,
+        logits: Tensor<B, 3>,
+        labels: Tensor<B, 2, Int>,
+    ) -> CausalLoss<B> {
+        self.forward_hidden(logits, labels, |rows| rows)
+    }
+
     /// Train any decoder implementing the hidden-state/projection contract.
     pub fn forward_model<B: Backend, M: CausalLanguageModel<B>>(
         &self,

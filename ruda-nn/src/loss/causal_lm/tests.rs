@@ -6,6 +6,41 @@ use ruda_model::{
 };
 
 #[test]
+fn precomputed_logits_preserve_causal_shift_ignore_and_gradient_semantics() {
+    let device = Default::default();
+    let logits = Tensor::<B, 3>::from_floats(
+        [[[1.0, 2.0, -1.0], [0.0, -0.5, 3.0], [1.5, 1.0, 0.0]]],
+        &device,
+    )
+    .require_grad();
+    let labels = Tensor::<B, 2, Int>::from_data([[2, 1, -100]], &device);
+    let expected = -log_softmax(logits.clone().slice([0..1, 0..1, 0..3]).reshape([1, 3]), 1)
+        .slice([0..1, 1..2])
+        .sum();
+    let expected_data = expected.to_data();
+    let expected_grads = expected.backward();
+    for chunk in [1, 3] {
+        let result = CausalCrossEntropyConfig::new()
+            .with_token_chunk_size(chunk)
+            .forward_logits(logits.clone(), labels.clone());
+        assert_eq!(result.valid_tokens.clone().into_scalar(), 1);
+        result
+            .mean()
+            .to_data()
+            .assert_approx_eq::<f32>(&expected_data, Tolerance::absolute(1e-6));
+        let grads = result.mean().backward();
+        logits
+            .grad(&grads)
+            .unwrap()
+            .to_data()
+            .assert_approx_eq::<f32>(
+                &logits.grad(&expected_grads).unwrap().to_data(),
+                Tolerance::absolute(1e-6),
+            );
+    }
+}
+
+#[test]
 fn chunked_causal_loss_and_gradients_match_full_vocabulary_reference() {
     let device = Default::default();
     let head = Linear::<B> {
