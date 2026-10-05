@@ -19,7 +19,7 @@ ruCCL includes tensor Backend collectives, a rank core, and in-process implement
 | `finish_collective<B>` | Ends the peer's collective session |
 | `reset_collective<B>` | Resets the local collective service and discards registrations and in-progress operation state |
 
-Interfaces use `B: ruda_tensor::Backend` and `B::FloatTensorPrimitive`. When integrating with automatic differentiation, register the inner Backend; a collective call does not itself define an automatic backward rule.
+These registered interfaces use `B: ruda_tensor::Backend` and `B::FloatTensorPrimitive`. Register the inner backend for low-level calls; use `ruda_autodiff::collective` for explicit-rank tensor graph operations.
 
 ## 3. Registration and call contracts
 
@@ -57,3 +57,11 @@ cargo run --locked -p ruda-optim --features collective,cuda --example collective
 `run` requires a directory that does not yet exist. It saves each rank's model and optimizer after the first update, then executes the second update. `resume` restores that directory and executes the second update. With CUDA enabled, both logical ranks in this example use the same default device.
 
 See the [collective training example](../../../ruda-optim/examples/collective_training.rs) for the complete call sequence. To also save scheduler state and pending accumulated gradients, use `TrainingRecord` from [Training and saving state](../training.md).
+
+## 7. Explicit-rank tensor collectives
+
+`RankCommunicator<TensorDevice<B>>` provides floating and I32/I64 broadcast, all-reduce, all-gather and reduce-scatter. Gather concatenates equal axis-zero shards in rank order; scatter requires axis zero to divide evenly by world size. Integer tensors retain their width without floating-point conversion. This transport remains host-staged.
+
+Use `ruda_autodiff::collective` for tracked `all_gather`, `reduce_scatter_sum`, `reduce_scatter_mean`, `all_reduce_sum`, `all_reduce_mean` and `broadcast`. The gather/scatter `_dim` variants accept arbitrary positive or negative axes. Forward and backward must have matching rank order, shapes, dtypes, gradient tracking and root. The [training guide](../training.md#replicated-training-and-differentiable-tensor-collectives) describes each backward rule and token-weighted `DataParallel::reduce_fp32`.
+
+`DataParallel<B, C>` accepts a `DataParallelCommunicator<B::InnerBackend>`; [rust-ascend](https://github.com/shuqi2077/rust-ascend) supplies native HCCL tensor transport while retaining TCP only for training metadata. Changing transport does not change parameter IDs, frozen/tied semantics or token/sample weighting.

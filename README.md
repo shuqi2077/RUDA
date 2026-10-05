@@ -122,6 +122,14 @@ One repository, multiple crates with clearly defined responsibilities. From doma
 
 Paged attention requires contiguous FP32/FP16/BF16 tensors of the same dtype on the same device and execution queue. Forward and first-order backward are available, without arbitrary external masks or quantized KV caches. PyTorch defaults to atomic history gradients; `backward_strategy="ordered"` selects the atomic-free path. Ordered history-row caching and physical-page compaction are opt-in. MLA/MoE are reusable components; complete model adapters must supply projections, positional encoding, routing parameters and cache ownership.
 
+## Rust Training and Distributed Tensors
+
+- **Mixed precision:** `Module::to_dtype` preserves parameter IDs, tied aliases and frozen settings. `Fp32MasterOptimizer` wraps an existing optimizer with FP32 master parameters; explicit FP32 gradient accumulation and loss unscale leave parameter storage in FP16/BF16.
+- **Training continuation:** `TrainingRecord::capture_with_dtypes` and `restore_with_dtypes` preserve mixed parameter storage together with optimizer state, scheduler state, pending gradients and caller continuation state.
+- **Distributed execution:** `DataParallel` supports token/sample-weighted replicated training and explicit integer/Bool buffer initialization. `ruda_autodiff::collective` supplies differentiable gather, scatter, sum/mean all-reduce and root broadcast; gather/scatter also accept arbitrary axes. The default ruCCL tensor transport is host-staged; [rust-ascend](https://github.com/shuqi2077/rust-ascend) connects the shared contracts to native NPU HCCL.
+
+See [Training and saving state](docs/en/training.md) and the [ruCCL guide](docs/en/libraries/ruccl.md) for API contracts and usage.
+
 ## Experimental Numerical Science
 
 `rusolver` adds host real/complex factorizations, SVD, sparse LU, row-partitioned CG and analytic pullbacks; opt-in FP32 batched LU/Cholesky/QR/eigen/CG device paths are separate. `ruintegrate` adds host quadrature, infinite-domain transforms, RK45, stiff BDF1 and event location. First-order host solver graph integration is opt-in via `ruda-autodiff/solver-host`. [Extended scope](https://github.com/shuqi2077/RUDA/blob/main/docs/en/libraries/science-extended.md).

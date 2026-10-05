@@ -11,6 +11,9 @@
 | 选择张量执行目标 | `Host`、`Cuda`、`Rocm`、`Wgpu`、Router、Remote | [后端组合](backend-composition.md) |
 | 调用领域算子 | ruBLAS、ruDNN、ruPRIM 等领域库 | [计算库](libraries/README.md) |
 | 构建和训练模型 | `Module`、`ruda-nn`、`ruda-optim` | [训练指南](training.md) |
+| 半精度存储与 FP32 更新 | `Module::to_dtype`、`Fp32MasterOptimizer`、`GradientsAccumulator::accumulate_with_dtype` | [混合精度训练](training.md#fp32-主参数与混合参数存储) |
+| 保留混合存储与待累积梯度 | `TrainingRecord::capture_with_dtypes`、`restore_with_dtypes` | [训练状态](training.md#保存和恢复训练状态) |
+| 同步副本或对集合通信求导 | `DataParallel`、`ruda_autodiff::collective` | [分布式训练](training.md#副本训练与可微分张量集合通信) |
 | 加载样本或权重 | `Dataset`、`DataLoaderBuilder`、`ModuleSnapshot` | [数据与存储](data-and-storage.md) |
 | 运行本地模型推理 | `rullm` | [模型推理](model-inference.md) |
 

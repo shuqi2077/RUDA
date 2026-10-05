@@ -25,7 +25,7 @@
 - [张量实用示例](tensor-recipes.md)：矩阵乘、布局、dtype 选择与梯度的完整 CPU 示例。
 - [后端选择与组合](backend-composition.md)：CUDA／ROCm／WGPU 选择、本地路由与远程执行。
 - [数据管线与模型存储](data-and-storage.md)：样本组批、权重保存与检查点格式导入。
-- [训练与状态保存](training.md)：训练步、梯度累积、学习率调度、保存与恢复。
+- [训练与状态保存](training.md)：训练步、FP32 主参数／累积、混合存储 checkpoint、token 加权副本、可微分集合通信和学习率调度。
 - [模型加载与推理](model-inference.md)：ruLLM、文本与图片输入、采样、AWQ 和连续批处理。
 
 ## 编译与底层执行

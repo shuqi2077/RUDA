@@ -24,7 +24,7 @@ Requires a working NVIDIA driver and CUDA Toolkit. The example creates four logi
 | `test-wgpu` / `test-metal` / `test-vulkan` | Existing WGPU test entry points; run separately from the CUDA test features |
 | `tracing` | Existing cross-layer tracing integration |
 
-The public tensor API includes `register`, `all_reduce`, `reduce`, `broadcast`, and `finish_collective`. All ranks must call matching collective operations in the same order. Autodiff callers use the inner backend; the optimizer layer handles gradient synchronization.
+The registered tensor API includes `register`, `all_reduce`, `reduce`, `broadcast`, and `finish_collective`. All ranks must call matching collective operations in the same order. These low-level calls use the inner backend; differentiable explicit-rank operations are provided by `ruda_autodiff::collective`, and the optimizer layer handles parameter-gradient synchronization.
 
 ## ruCCL User Guide
 
@@ -47,7 +47,7 @@ ruCCL includes tensor Backend collectives, a rank core, and in-process implement
 | `finish_collective<B>` | Ends the peer's collective session |
 | `reset_collective<B>` | Resets the local collective service and discards registrations and in-progress operation state |
 
-Interfaces use `B: ruda_tensor::Backend` and `B::FloatTensorPrimitive`. When integrating with automatic differentiation, register the inner Backend; a collective call does not itself define an automatic backward rule.
+These registered interfaces use `B: ruda_tensor::Backend` and `B::FloatTensorPrimitive`. Register the inner backend for low-level calls; use `ruda_autodiff::collective` for the explicit-rank forward/backward graph rules described below.
 
 ### 3. Registration and call contracts
 
@@ -85,3 +85,11 @@ cargo run --locked -p ruda-optim --features collective,cuda --example collective
 `run` requires a directory that does not yet exist. It saves each rank's model and optimizer after the first update, then executes the second update. `resume` restores that directory and executes the second update. With CUDA enabled, both logical ranks in this example use the same default device.
 
 See the [collective training example](https://github.com/shuqi2077/RUDA/blob/main/ruda-optim/examples/collective_training.rs) for the complete call sequence. To also save scheduler state and pending accumulated gradients, use `TrainingRecord` from [Training and saving state](https://github.com/shuqi2077/RUDA/blob/main/docs/en/training.md).
+
+### 7. Explicit-rank tensor collectives
+
+`RankCommunicator<TensorDevice<B>>` exposes floating `broadcast_float`, `all_reduce_float`, `all_gather_float` and `reduce_scatter_float`, plus the corresponding I32/I64 operations. Gather concatenates equal axis-zero shards in rank order; scatter requires axis zero to divide evenly by world size. Integer tensors retain their storage width without floating-point conversion. Tensor payloads use the existing host-staged transport, not native NCCL or zero-copy P2P.
+
+For tracked tensors, use `ruda_autodiff::collective::{all_gather, all_gather_dim, reduce_scatter_sum, reduce_scatter_sum_dim, reduce_scatter_mean, reduce_scatter_mean_dim, all_reduce_sum, all_reduce_mean, broadcast}`. All ranks must enter matching forward and backward operations, with matching dtypes, shapes, gradient tracking and root. See [differentiable rank collectives](https://github.com/shuqi2077/RUDA/blob/main/ruda-autodiff/README.md) for the backward rules.
+
+`ruda_optim::data_parallel::DataParallel<B, C>` reuses replica validation, token/sample weighting, frozen/tied parameters and FP32 gradient output with a `DataParallelCommunicator<B::InnerBackend>`. The default is this ruCCL transport; [rust-ascend](https://github.com/shuqi2077/rust-ascend) supplies a native HCCL implementation with TCP used only for metadata.

@@ -94,6 +94,32 @@ fn train_window(
 
 Call `scheduler.step()` once per parameter update, not after each microbatch. Create it with `StepLrSchedulerConfig::new(1e-3, 100).with_gamma(0.5).init()`: the learning rate starts at `1e-3` and is multiplied by `0.5` every 100 calls. Initialization returns `Result<StepLrScheduler, String>`.
 
+## FP32 masters and mixed parameter storage
+
+`Module::to_dtype(FloatDType::F16)` / `to_dtype(FloatDType::BF16)` converts floating parameter storage while retaining IDs, tied aliases and frozen settings. Converted trainable parameters are graph leaves; conversion itself is not differentiated. Use it at model setup or restoration, not as an operation inside an active forward graph.
+
+Wrap an existing `SimpleOptimizer` with `Fp32MasterOptimizer` to retain authoritative FP32 parameters and the original optimizer state. Updates run in FP32 and return parameters in their incoming storage dtype. For the CUDA model defined above:
+
+```rust
+use ruda_model::{module::Module, tensor::FloatDType};
+use ruda_optim::{AdamW, AdamWConfig, Fp32MasterOptimizer};
+
+fn initialize_master(
+    device: &CudaDevice,
+) -> (Model, OptimizerAdaptor<Fp32MasterOptimizer<AdamW>, Model, B>) {
+    let model = LinearConfig::new(2, 1)
+        .init::<B>(device)
+        .to_dtype(FloatDType::BF16);
+    let optimizer = Fp32MasterOptimizer::new(AdamWConfig::new().build())
+        .init::<B, Model>();
+    (model, optimizer)
+}
+```
+
+Match activation storage to the layer's requirements. For FP32 accumulation, replace `accumulator.accumulate(&model, gradients)` with `accumulator.accumulate_with_dtype(&model, gradients, FloatDType::F32)`; incoming and pending gradients are converted before addition. This does not rescale losses, average microbatches or change parameter storage. After restoration, continue using the same accumulation dtype.
+
+`Fp32MasterOptimizer::with_gradient_scale(scale)` explicitly divides gradients by a finite positive loss scale in FP32 before optional `with_grad_clipping`. Scale the loss yourself and keep one scale throughout an accumulation window. Clipping uses RUDA's existing per-parameter rule, not global model-norm clipping; these options do not enable dynamic scaling or automatic nonfinite-step skipping.
+
 ## Save and restore training state
 
 `TrainingRecord` saves the model, optimizer, learning-rate scheduler, pending accumulated gradients, and caller state together. These functions reuse the types above and receive the active training state. Saving does not create a new optimizer, scheduler, or accumulator.
@@ -137,6 +163,30 @@ fn restore_training(
 Passing `Path::new("checkpoints/step-100")` writes `checkpoints/step-100.bin`. `completed_updates` counts completed parameter updates, and `pending_microbatches` counts accumulated microbatches in the current window. Retrieve both counters from `restored.state` after restoring.
 
 Restore with the same model structure, Adam configuration, and scheduler configuration used when saving. Continue with `restored.accumulator`; do not clear it early or replay microbatches already accumulated. Put data-iteration position and RNG state in caller state `U` and restore them before fetching the next batch. `TrainingRecord` does not automatically snapshot a DataLoader.
+
+For mixed storage, `TrainingRecord::capture_with_dtypes` also captures `ModuleDTypeRecord` and returns `TrainingRecord<B, M, O, S, (ModuleDTypeRecord, U)>`. Load that stored type and call `restore_with_dtypes` to recover each floating parameter's storage dtype while returning the original caller state `U`. Use the actual FP32-master optimizer type for `O` and full-precision recorder settings to preserve master parameters, optimizer moments and pending FP32 gradients. Recreate the same optimizer options, including loss scale and clipping, before restoring its state. Ordinary `capture` / `restore` and their record format remain unchanged.
+
+## Replicated training and differentiable tensor collectives
+
+Enable `ruda-optim/collective` and initialize `DataParallel<B, C>` before constructing optimizer state, using an explicit root and a communicator for `B::InnerBackend`. Replica paths, shapes, dtypes and frozen/tied structure must match; rank-local parameter IDs may differ and are retained. The default `C` is ruCCL's host-staged `RankCommunicator<TensorDevice<B::InnerBackend>>`; a `DataParallelCommunicator` can supply native device transport without changing replica or optimizer semantics.
+
+`initialize` broadcasts floating parameters. `initialize_with_buffers` additionally broadcasts I32/I64 and Bool parameter buffers once; it retains local IDs, integer widths, aliases and frozen flags. Buffers do not enter gradient updates, and this is not automatic synchronization before each forward pass.
+
+Accumulate gradients of **local loss sums**, then call `reduce(&model, gradients, local_weight, policy)` or `reduce_fp32(...)` at the accumulation boundary. `local_weight` is the effective token/sample count for that entire window; the result divides the global gradient sum by the summed count. `reduce` returns the parameter storage dtype; `reduce_fp32` retains FP32 output and accepts FP32 accumulated gradients for half-storage parameters. All ranks must select the same mode and `MissingGradientPolicy`; globally unused parameters remain absent. Call the optimizer and scheduler yourself after reduction, and save each rank's model, optimizer and continuation state together.
+
+`ruda_autodiff::collective` instead connects communication inside the tensor graph:
+
+| API | Forward and backward |
+| --- | --- |
+| `all_gather` / `all_gather_dim` | Gather equal rank-ordered shards; backward sums and scatters all ranks' gradients |
+| `reduce_scatter_sum` / `reduce_scatter_sum_dim` | Sum and scatter equal shards; backward gathers output gradients |
+| `reduce_scatter_mean` / `reduce_scatter_mean_dim` | Mean and scatter; backward gathers and divides by world size |
+| `all_reduce_sum` / `all_reduce_mean` | Replicated sum/mean; backward sums rank-local gradients, dividing by world size for Mean |
+| `broadcast` | Broadcast an explicit root; backward sums into root and gives non-root placeholder inputs zeros |
+
+Unsuffixed gather/scatter use axis zero; `_dim` variants accept positive or negative `AsIndex` axes and retain tensor axis order. Shards must have equal shapes, and the selected scatter axis must divide evenly by world size. All ranks must agree on shapes, dtypes, gradient tracking, broadcast root and collective order in forward and backward. Tracked operations retain the communicator and do not replay communication during checkpoint recomputation. These primitives do not automatically implement ZeRO/FSDP, parameter sharding, tensor parallelism or pipeline scheduling.
+
+See the [ruCCL guide](libraries/ruccl.md) for transport entry points. [rust-ascend](https://github.com/shuqi2077/rust-ascend) reuses these APIs through native NPU `HcclCommunicator` and `Autodiff<RudaAscend>`.
 
 ## Choose another optimizer
 

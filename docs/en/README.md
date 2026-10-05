@@ -25,7 +25,7 @@ From your first GPU kernel to compute libraries, tensor training, and local mode
 - [Tensor recipes](tensor-recipes.md): complete CPU examples for matrix multiplication, layouts, dtype selection, and gradients.
 - [Backend selection and composition](backend-composition.md): CUDA/ROCm/WGPU selection, local routing, and remote execution.
 - [Data pipelines and model storage](data-and-storage.md): batching samples, saving weights, and importing checkpoint formats.
-- [Training and saving state](training.md): training steps, gradient accumulation, learning-rate scheduling, saving, and restoring.
+- [Training and saving state](training.md): training steps, FP32 masters/accumulation, mixed-storage checkpoints, token-weighted replicas, differentiable collectives and learning-rate schedules.
 - [Model loading and inference](model-inference.md): ruLLM, text and image inputs, sampling, AWQ, and continuous batching.
 
 ## Compilation and execution

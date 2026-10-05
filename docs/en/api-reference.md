@@ -11,6 +11,9 @@
 | Choose a tensor execution target | `Host`, `Cuda`, `Rocm`, `Wgpu`, Router, Remote | [Backend composition](backend-composition.md) |
 | Call a domain operator | ruBLAS, ruDNN, ruPRIM, and other domain crates | [Compute libraries](libraries/README.md) |
 | Build and train a model | `Module`, `ruda-nn`, `ruda-optim` | [Training](training.md) |
+| Train with half storage and FP32 updates | `Module::to_dtype`, `Fp32MasterOptimizer`, `GradientsAccumulator::accumulate_with_dtype` | [Mixed-precision training](training.md#fp32-masters-and-mixed-parameter-storage) |
+| Preserve mixed storage and pending gradients | `TrainingRecord::capture_with_dtypes`, `restore_with_dtypes` | [Training state](training.md#save-and-restore-training-state) |
+| Synchronize replicas or differentiate collectives | `DataParallel`, `ruda_autodiff::collective` | [Distributed training](training.md#replicated-training-and-differentiable-tensor-collectives) |
 | Load samples or weights | `Dataset`, `DataLoaderBuilder`, `ModuleSnapshot` | [Data and storage](data-and-storage.md) |
 | Run local model inference | `rullm` | [Model inference](model-inference.md) |
 

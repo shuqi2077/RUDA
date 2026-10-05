@@ -19,7 +19,7 @@ ruCCL 包含面向张量 Backend 的集合操作、rank 核心与进程内实现
 | `finish_collective<B>` | 结束该 peer 的集合会话 |
 | `reset_collective<B>` | 重置本地集合服务并丢弃注册及进行中操作状态 |
 
-接口基于 `B: ruda_tensor::Backend`，数据类型是 `B::FloatTensorPrimitive`。与自动微分框架集成时，注册入口要求使用内层 Backend，不把集合调用本身当作自动生成的反向传播规则。
+这些注册接口基于 `B: ruda_tensor::Backend`，数据类型是 `B::FloatTensorPrimitive`。低层调用注册内层 Backend；需要显式 rank 的张量图操作时，使用 `ruda_autodiff::collective`。
 
 ## 3. 注册与调用契约
 
@@ -57,3 +57,11 @@ cargo run --locked -p ruda-optim --features collective,cuda --example collective
 `run` 要求保存目录尚不存在；它在第一次更新后保存各 rank 的模型和优化器，再执行第二次更新。`resume` 从该目录恢复并执行第二次更新。启用 CUDA 时，这个示例的两个逻辑 rank 使用同一默认设备。
 
 完整调用见[集合通信训练示例](../../../ruda-optim/examples/collective_training.rs)；需要连同调度器和待累积梯度一起保存时，使用[训练状态保存](../training.md)中的 `TrainingRecord`。
+
+## 7. 显式 rank 张量集合通信
+
+`RankCommunicator<TensorDevice<B>>` 提供浮点与 I32/I64 的 broadcast、all-reduce、all-gather、reduce-scatter。Gather 按 rank 顺序拼接等形第零轴分片；scatter 要求第零轴能被 world size 整除。整数保留存储宽度，不经浮点转换；此传输仍为 host-staged。
+
+已跟踪张量使用 `ruda_autodiff::collective` 中的 `all_gather`、`reduce_scatter_sum`、`reduce_scatter_mean`、`all_reduce_sum`、`all_reduce_mean`、`broadcast`；聚合／分片的 `_dim` 版本接受任意正轴或负轴。各 rank 的前向和反向须保持匹配的调用顺序、shape、dtype、梯度跟踪和 root。[训练指南](../training.md#副本训练与可微分张量集合通信)列出反向规则及按 token 加权的 `DataParallel::reduce_fp32`。
+
+`DataParallel<B, C>` 接受 `DataParallelCommunicator<B::InnerBackend>`；[rust-ascend](https://github.com/shuqi2077/rust-ascend) 提供原生 HCCL 张量传输，TCP 仅传递训练 metadata。替换通信器不改变参数 ID、冻结／共享语义或 token／样本加权。
