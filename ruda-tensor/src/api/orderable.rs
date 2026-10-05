@@ -232,7 +232,7 @@ where
     /// }
     /// ```
     pub fn topk(self, k: usize, dim: usize) -> Self {
-        assert!(self.shape()[dim] > k);
+        assert!(self.shape()[dim] >= k);
         Tensor::new(K::topk(self.primitive, dim, k))
     }
 
@@ -266,6 +266,7 @@ where
     /// }
     /// ```
     pub fn topk_with_indices(self, k: usize, dim: usize) -> (Self, Tensor<B, D, Int>) {
+        assert!(self.shape()[dim] >= k);
         let k_indices = Tensor::arange(0..k as i64, &self.device());
         let (values, indices) = self.sort_descending_with_indices(dim);
         (
@@ -617,7 +618,7 @@ where
     /// }
     /// ```
     pub fn argtopk(self, k: usize, dim: usize) -> Tensor<B, D, Int> {
-        assert!(self.shape()[dim] > k);
+        assert!(self.shape()[dim] >= k);
         Tensor::new(K::argtopk(self.primitive, dim, k))
     }
 
