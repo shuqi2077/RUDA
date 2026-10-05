@@ -16,6 +16,8 @@ extern crate alloc;
 
 /// Checkpoint module.
 pub mod checkpoint;
+/// Explicit differentiable rank collectives.
+pub mod collective;
 #[cfg(feature = "distributed")]
 /// Distributed utils.
 pub mod distributed;

@@ -21,6 +21,7 @@ pub use element::*;
 pub mod device;
 pub mod primitive;
 pub mod ops;
+pub mod collective;
 #[cfg(feature = "distributed")]
 pub mod distributed;
 

@@ -4,6 +4,28 @@ use crate::rank::{ReductionOperation, communicator::RankCommunicator};
 use ruda_core::tensor::collective::CollectiveShape;
 use ruda_tensor::{Backend, DType, Shape, TensorMetadata, bf16, f16};
 
+impl<B: Backend> ruda_tensor::collective::TensorCollective<B> for RankCommunicator<TensorDevice<B>> {
+    type Error = TensorDeviceError;
+
+    fn world_size(&self) -> u32 {
+        RankCommunicator::world_size(self)
+    }
+
+    fn all_gather_float(
+        &self,
+        value: B::FloatTensorPrimitive,
+    ) -> Result<B::FloatTensorPrimitive, Self::Error> {
+        RankCommunicator::all_gather_float(self, value)
+    }
+
+    fn reduce_scatter_sum(
+        &self,
+        value: B::FloatTensorPrimitive,
+    ) -> Result<B::FloatTensorPrimitive, Self::Error> {
+        RankCommunicator::reduce_scatter_float(self, value, ReduceOperation::Sum)
+    }
+}
+
 impl<B: Backend> RankCommunicator<TensorDevice<B>> {
     /// Gather equal-size floating tensors along axis zero in rank order.
     /// Retains dtype, remaining axes and input snapshots; transfers are host-staged.
