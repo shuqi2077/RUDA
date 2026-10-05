@@ -619,7 +619,6 @@ pub fn reduce(a: &Tensor<f32>, out: &mut Tensor<f32>) {
             remaining /= out.shape(dim);
         }
         let mut value = 0.0f32;
-        let mut correction = 0.0f32;
         for index in 0..reduction_size {
             let mut reduction_index = index;
             let mut source = source_base;
@@ -873,6 +872,7 @@ pub fn reduce_sum_storage<F: Float + RudaElement, O: Float + RudaElement>(
             }
         }
         let mut value = 0.0f32;
+        let mut correction = 0.0f32;
         for index in 0..reduction_size {
             let mut reduction_index = index;
             let mut source = source_base;
