@@ -775,6 +775,13 @@ def arange(start, end=None, step=1, *, dtype=None, layout=None, device=None,
         out = torch.empty(0, dtype=dtype, device=device or 'ruda')
     if out.dtype not in _storage_dtypes or out.dtype == torch.bool:
         raise RuntimeError("RUDA arange requires a supported numeric dtype")
+    if not all(math.isfinite(v) for v in (start, end, step)):
+        raise RuntimeError("arange requires finite bounds and step")
+    if step == 0:
+        raise RuntimeError("step must be nonzero")
+    if (step > 0 and end < start) or (step < 0 and end > start):
+        raise RuntimeError("upper bound and larger bound inconsistent with step sign")
+    bounds = (start, end, step)
     integral = out.dtype not in _dtypes
     if integral:
         start, end, step = int(start), int(end), int(step)
@@ -782,17 +789,16 @@ def arange(start, end=None, step=1, *, dtype=None, layout=None, device=None,
             raise RuntimeError("arange scalar exceeds int64 range")
     else:
         start, end, step = float(start), float(end), float(step)
-    if not all(math.isfinite(v) for v in (start, end, step)):
-        raise RuntimeError("arange requires finite bounds and step")
-    if step == 0:
-        raise RuntimeError("step must be nonzero")
-    if (step > 0 and end < start) or (step < 0 and end > start):
-        raise RuntimeError("upper bound and larger bound inconsistent with step sign")
     if integral and out.dtype == torch.int64:
+        if step == 0:
+            raise RuntimeError("step must be nonzero after int64 conversion")
         distance = abs(end - start)
         length = (distance + abs(step) - 1) // abs(step)
     else:
-        length = math.ceil((end - start) / step)
+        first, last, increment = map(float, bounds)
+        length = math.ceil((last - first) / increment)
+    if length < 0 or length >= (1 << 63):
+        raise RuntimeError("invalid size, possible overflow")
     if out.numel() != length:
         _C.prepare_index_output(out, [length])
     if length:
