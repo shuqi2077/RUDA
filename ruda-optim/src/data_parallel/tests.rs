@@ -51,7 +51,8 @@ fn integer_collectives_preserve_wide_values_shapes_and_backend_reductions() {
     use ruda_model::tensor::{IntDType, TensorCreationOptions};
     for dtype in [IntDType::I32, IntDType::I64] {
         world(move |rank, communicator| {
-            let device: <Host as ruda_model::tensor::backend::Backend>::Device = Default::default();
+            let device: <Host as ruda_model::tensor::backend::BackendTypes>::Device =
+                Default::default();
             let large = if dtype == IntDType::I64 {
                 9_007_199_254_740_993_i64
             } else {
@@ -327,7 +328,7 @@ struct BufferedReplica<B: ruda_model::tensor::backend::Backend> {
 }
 
 fn buffered_replica(rank: u32) -> BufferedReplica<B> {
-    let device: <B as ruda_model::tensor::backend::Backend>::Device = Default::default();
+    let device: <B as ruda_model::tensor::backend::BackendTypes>::Device = Default::default();
     let counter = Param::initialized(
         ParamId::new(),
         Tensor::<B, 1, Int>::from_data(
