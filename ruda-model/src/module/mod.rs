@@ -2,6 +2,7 @@ mod base;
 mod display;
 mod initializer;
 mod param;
+mod precision;
 mod quantize;
 #[cfg(feature = "std")]
 mod reinit;

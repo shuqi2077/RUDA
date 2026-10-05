@@ -118,6 +118,13 @@ pub trait Module<B: Backend>: Clone + Send + core::fmt::Debug {
     /// target device, use [fork](Module::fork) instead.
     fn to_device(self, device: &B::Device) -> Self;
 
+    /// Convert floating parameter storage while preserving IDs, shared parameters
+    /// and frozen/trainable settings. Converted trainable parameters are new leaves;
+    /// gradients through the conversion itself are not retained.
+    fn to_dtype(self, dtype: ruda_tensor::FloatDType) -> Self {
+        self.map(&mut super::precision::DtypeMapper::new(dtype))
+    }
+
     /// Each tensor in the module tree will not require grad.
     ///
     /// # Warnings

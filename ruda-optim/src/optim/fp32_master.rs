@@ -1,5 +1,6 @@
 use super::{SimpleOptimizer, adaptor::OptimizerAdaptor};
 use crate::LearningRate;
+use crate::grad_clipping::GradientClipping;
 use ruda_model::{
     module::AutodiffModule,
     record::{PrecisionSettings, Record},
@@ -17,6 +18,7 @@ use ruda_model::{
 #[derive(Clone)]
 pub struct Fp32MasterOptimizer<O> {
     optimizer: O,
+    grad_clipping: Option<GradientClipping>,
 }
 
 /// Master parameter and the original optimizer's state, recorded together.
@@ -32,11 +34,20 @@ pub struct Fp32MasterState<B: Backend, const D: usize, S: Record<B> + Clone> {
 impl<O> Fp32MasterOptimizer<O> {
     /// Wrap an existing optimizer without modifying its configuration.
     pub fn new(optimizer: O) -> Self {
-        Self { optimizer }
+        Self {
+            optimizer,
+            grad_clipping: None,
+        }
+    }
+
+    /// Explicitly apply RUDA's existing per-parameter clipping after FP32 conversion.
+    pub fn with_grad_clipping(mut self, clipping: GradientClipping) -> Self {
+        self.grad_clipping = Some(clipping);
+        self
     }
 
     /// Build RUDA's original module adaptor, preserving parameter IDs and records.
-    /// Clipping remains an explicit `with_grad_clipping` adaptor option.
+    /// Clipping is disabled unless explicitly configured on the wrapper or adaptor.
     pub fn init<B, M>(self) -> OptimizerAdaptor<Self, M, B>
     where
         B: AutodiffBackend,
@@ -79,9 +90,12 @@ impl<B: Backend, O: SimpleOptimizer<B>> SimpleOptimizer<B> for Fp32MasterOptimiz
             }
             None => (tensor.cast(DType::F32), None),
         };
-        let (master, inner) = self
-            .optimizer
-            .step(lr, master, grad.cast(DType::F32), inner);
+        let grad = grad.cast(DType::F32);
+        let grad = match &self.grad_clipping {
+            Some(clipping) => clipping.clip_gradient(grad),
+            None => grad,
+        };
+        let (master, inner) = self.optimizer.step(lr, master, grad, inner);
         assert_eq!(
             master.dtype(),
             DType::F32,
@@ -122,7 +136,7 @@ mod tests {
         AdamWConfig, GradientsParams, Optimizer, SgdConfig, TestAutodiffBackend, TestBackend,
     };
     use ruda_model::{
-        module::Initializer,
+        module::{Initializer, Module},
         record::{BinBytesRecorder, FullPrecisionSettings, Recorder},
     };
     use ruda_nn::LinearConfig;
@@ -219,13 +233,84 @@ mod tests {
     }
 
     #[test]
+    fn explicit_clipping_uses_original_algorithm_after_fp32_conversion() {
+        let device = Default::default();
+        let original = SgdConfig::new().build::<TestBackend>();
+        let gradient =
+            Tensor::<TestBackend, 1>::from_floats([1000., -2000.], &device).cast(DType::F16);
+        for clipping in [GradientClipping::Value(1.), GradientClipping::Norm(1.)] {
+            let parameter = Tensor::<TestBackend, 1>::ones([2], &device).cast(DType::F16);
+            let fp32_gradient = clipping.clip_gradient(gradient.clone().cast(DType::F32));
+            let (expected, _) = original.step(
+                0.01,
+                parameter.clone().cast(DType::F32),
+                fp32_gradient,
+                None,
+            );
+            let optimizer = Fp32MasterOptimizer::new(original.clone()).with_grad_clipping(clipping);
+            let (actual, state) = optimizer.step(0.01, parameter, gradient.clone(), None);
+            state
+                .unwrap()
+                .master
+                .to_data()
+                .assert_eq(&expected.to_data(), false);
+            actual
+                .to_data()
+                .assert_eq(&expected.cast(DType::F16).to_data(), false);
+        }
+    }
+
+    #[test]
+    fn muon_master_reuses_original_fp32_matrix_update_and_momentum() {
+        let device = Default::default();
+        for dtype in [DType::F16, DType::BF16] {
+            let original = crate::MuonConfig::new()
+                .with_stable_normalization(true)
+                .build::<TestBackend>();
+            let optimizer = Fp32MasterOptimizer::new(original.clone());
+            let mut parameter = Tensor::<TestBackend, 2>::ones([2, 3], &device).cast(dtype);
+            let gradient =
+                Tensor::<TestBackend, 2>::from_floats([[1., 2., 3.], [-2., 1., 4.]], &device)
+                    .cast(dtype);
+            let mut expected = parameter.clone().cast(DType::F32);
+            let mut state = None;
+            let mut expected_state = None;
+            for _ in 0..3 {
+                (expected, expected_state) = original.step(
+                    0.01,
+                    expected,
+                    gradient.clone().cast(DType::F32),
+                    expected_state,
+                );
+                (parameter, state) = optimizer.step(0.01, parameter, gradient.clone(), state);
+                let saved = state.as_ref().unwrap();
+                saved.master.to_data().assert_eq(&expected.to_data(), false);
+                let velocity = saved.inner.as_ref().unwrap().momentum.velocity();
+                assert_eq!(velocity.dtype(), DType::F32);
+                velocity.to_data().assert_eq(
+                    &expected_state
+                        .as_ref()
+                        .unwrap()
+                        .momentum
+                        .velocity()
+                        .to_data(),
+                    false,
+                );
+                parameter
+                    .to_data()
+                    .assert_eq(&expected.clone().cast(dtype).to_data(), false);
+            }
+        }
+    }
+
+    #[test]
     fn original_module_adaptor_preserves_param_id_and_recorded_master() {
         let device = Default::default();
         let mut model = LinearConfig::new(2, 1)
             .with_bias(false)
             .with_initializer(Initializer::Ones)
-            .init::<TestAutodiffBackend>(&device);
-        model.weight = model.weight.map(|tensor| tensor.cast(DType::BF16));
+            .init::<TestAutodiffBackend>(&device)
+            .to_dtype(ruda_model::tensor::FloatDType::BF16);
         let id = model.weight.id;
         let mut optimizer = Fp32MasterOptimizer::new(AdamWConfig::new().build()).init();
         for _ in 0..3 {
