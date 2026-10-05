@@ -6223,7 +6223,7 @@ dependencies = [
 
 [[package]]
 name = "ruda-tensor-tch"
-version = "0.21.31"
+version = "0.21.32"
 dependencies = [
  "cc",
  "libc",
