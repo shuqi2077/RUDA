@@ -269,5 +269,5 @@ fn sharded_shape(
     } else {
         CollectiveShape::all_gather(shape, world_size as usize)
     };
-    result.map_err(|error| TensorDeviceError::Data(error.to_string()))
+    result.map_err(|error| TensorDeviceError::Data(format!("{error:?}")))
 }
