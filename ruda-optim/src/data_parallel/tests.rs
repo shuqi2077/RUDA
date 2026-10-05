@@ -273,6 +273,71 @@ fn sharded_collectives_backward_exchanges_rank_gradients_and_preserves_leaf_view
 }
 
 #[test]
+fn broadcast_backward_accumulates_only_into_requested_root_and_preserves_placeholders() {
+    use ruda_autodiff::collective::broadcast;
+    use ruda_model::tensor::FloatDType;
+    for dtype in [FloatDType::F32, FloatDType::F16, FloatDType::BF16] {
+        world(move |rank, communicator| {
+            let device = Default::default();
+            for root in [0u32, 1] {
+                let input = Tensor::<B, 2>::from_data([[1., 2.], [3., 4.]], &device)
+                    .cast(dtype)
+                    .mul_scalar(rank + 1)
+                    .swap_dims(0, 1)
+                    .detach()
+                    .require_grad();
+                let output = broadcast(input.clone(), communicator.clone(), root).unwrap();
+                assert_eq!(output.dtype(), dtype.into());
+                assert_eq!(output.dims(), [2, 2]);
+                assert_eq!(
+                    output
+                        .clone()
+                        .cast(FloatDType::F32)
+                        .into_data()
+                        .to_vec::<f32>()
+                        .unwrap(),
+                    [1., 3., 2., 4.]
+                        .map(|value| value * (root + 1) as f32)
+                        .to_vec()
+                );
+                let weights = Tensor::<B, 2>::from_data([[1., 2.], [3., 4.]], &device)
+                    .cast(dtype)
+                    .mul_scalar(rank + 1);
+                let gradients = (output * weights).sum().backward();
+                let gradient = input.grad(&gradients).unwrap();
+                assert_eq!(gradient.dtype(), dtype.into());
+                assert_eq!(gradient.dims(), [2, 2]);
+                let scale = if rank == root { 3. } else { 0. };
+                assert_eq!(
+                    gradient
+                        .cast(FloatDType::F32)
+                        .into_data()
+                        .to_vec::<f32>()
+                        .unwrap(),
+                    [1., 2., 3., 4.].map(|value| value * scale).to_vec()
+                );
+                assert_eq!(
+                    input
+                        .cast(FloatDType::F32)
+                        .into_data()
+                        .to_vec::<f32>()
+                        .unwrap(),
+                    [1., 3., 2., 4.]
+                        .map(|value| value * (rank + 1) as f32)
+                        .to_vec()
+                );
+            }
+            let empty = Tensor::<B, 2>::empty([0, 2], &device)
+                .cast(dtype)
+                .require_grad();
+            let output = broadcast(empty.clone(), communicator, 1).unwrap();
+            let gradients = output.sum().backward();
+            assert_eq!(empty.grad(&gradients).unwrap().dims(), [0, 2]);
+        });
+    }
+}
+
+#[test]
 fn replicated_collectives_backward_sums_rank_local_losses_without_mutating_leaves() {
     use ruda_autodiff::collective::{all_reduce_mean, all_reduce_sum};
     use ruda_model::tensor::FloatDType;

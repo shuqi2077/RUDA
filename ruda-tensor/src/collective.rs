@@ -20,3 +20,15 @@ pub trait ReplicatedTensorCollective<B: Backend>: TensorCollective<B> {
     /// Sum corresponding tensor elements across ranks, retaining shape and dtype.
     fn all_reduce_sum(&self, value: FloatTensor<B>) -> Result<FloatTensor<B>, Self::Error>;
 }
+
+/// Root-owned broadcasts with replicated reductions for their backward pass.
+pub trait BroadcastTensorCollective<B: Backend>: ReplicatedTensorCollective<B> {
+    /// This communicator's rank.
+    fn rank(&self) -> u32;
+    /// Broadcast root's tensor while retaining each rank's input snapshot.
+    fn broadcast_float(
+        &self,
+        value: FloatTensor<B>,
+        root: u32,
+    ) -> Result<FloatTensor<B>, Self::Error>;
+}

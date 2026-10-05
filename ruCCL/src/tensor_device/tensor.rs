@@ -37,6 +37,22 @@ impl<B: Backend> ruda_tensor::collective::ReplicatedTensorCollective<B>
     }
 }
 
+impl<B: Backend> ruda_tensor::collective::BroadcastTensorCollective<B>
+    for RankCommunicator<TensorDevice<B>>
+{
+    fn rank(&self) -> u32 {
+        RankCommunicator::rank(self)
+    }
+
+    fn broadcast_float(
+        &self,
+        value: B::FloatTensorPrimitive,
+        root: u32,
+    ) -> Result<B::FloatTensorPrimitive, Self::Error> {
+        RankCommunicator::broadcast_float(self, value, root)
+    }
+}
+
 impl<B: Backend> RankCommunicator<TensorDevice<B>> {
     /// Gather equal-size floating tensors along axis zero in rank order.
     /// Retains dtype, remaining axes and input snapshots; transfers are host-staged.

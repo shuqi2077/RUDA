@@ -7,9 +7,9 @@ use crate::{
 };
 use core::marker::PhantomData;
 use ruda_tensor::{
-    AsIndex, Backend,
+    AsIndex, Backend, TensorMetadata,
     api::Tensor,
-    collective::{ReplicatedTensorCollective, TensorCollective},
+    collective::{BroadcastTensorCollective, ReplicatedTensorCollective, TensorCollective},
     primitive::TensorPrimitive,
 };
 
@@ -18,6 +18,27 @@ struct Collective<C>(PhantomData<C>);
 
 #[derive(Debug)]
 struct AllReduce<C>(PhantomData<C>);
+
+#[derive(Debug)]
+struct Broadcast<C>(PhantomData<C>);
+
+impl<B: Backend, C: BroadcastTensorCollective<B>> Backward<B, 1> for Broadcast<C> {
+    type State = (C, u32);
+
+    fn backward(self, ops: Ops<Self::State, 1>, grads: &mut Gradients, _: &mut Checkpointer) {
+        let (communicator, root) = ops.state;
+        unary::<B, _>(ops.parents, ops.node, grads, |grad| {
+            let grad = communicator
+                .all_reduce_sum(grad)
+                .unwrap_or_else(|error| panic!("broadcast backward failed: {error:?}"));
+            if communicator.rank() == root {
+                grad
+            } else {
+                B::float_zeros(grad.shape(), &B::float_device(&grad), grad.dtype().into())
+            }
+        });
+    }
+}
 
 impl<B: Backend, C: ReplicatedTensorCollective<B>> Backward<B, 1> for AllReduce<C> {
     type State = C;
@@ -200,4 +221,30 @@ where
 {
     let world_size = communicator.world_size();
     all_reduce_sum(tensor, communicator).map(|tensor| tensor.div_scalar(world_size))
+}
+
+/// Broadcast root's tensor; backward sums rank-local gradients into root's input.
+/// Non-root inputs are placeholders and receive zeros. All ranks must use matching
+/// shapes, dtypes, gradient tracking, root and collective order.
+pub fn broadcast<B, S, C, const D: usize>(
+    tensor: Tensor<Autodiff<B, S>, D>,
+    communicator: C,
+    root: u32,
+) -> Result<Tensor<Autodiff<B, S>, D>, C::Error>
+where
+    B: Backend,
+    S: CheckpointStrategy,
+    C: BroadcastTensorCollective<B>,
+{
+    let tensor = tensor.into_primitive().tensor();
+    let output = communicator.broadcast_float(tensor.primitive, root)?;
+    let output = match Broadcast::<C>(PhantomData)
+        .prepare::<S>([tensor.node])
+        .compute_bound()
+        .stateful()
+    {
+        OpsKind::Tracked(prep) => prep.finish((communicator, root), output),
+        OpsKind::UnTracked(prep) => prep.finish(output),
+    };
+    Ok(Tensor::from_primitive(TensorPrimitive::Float(output)))
 }
