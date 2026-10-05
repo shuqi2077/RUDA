@@ -282,7 +282,7 @@ fn fp32_reduction_keeps_half_parameter_gradient_precision_and_checks_rank_mode()
         world(move |rank, communicator| {
             let device = Default::default();
             let original = Linear::<B> {
-                weight: Param::from_tensor(Tensor::ones([1, 1], &device).cast(dtype)),
+                weight: Param::from_tensor(Tensor::<B, 2>::ones([1, 1], &device).cast(dtype)),
                 bias: None,
             };
             let (ddp, replica) = DataParallel::<B>::initialize(communicator, original, 0).unwrap();
