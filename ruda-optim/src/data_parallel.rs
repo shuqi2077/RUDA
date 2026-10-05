@@ -160,6 +160,7 @@ struct Initialization {
 struct Window {
     weight: u64,
     policy: MissingGradientPolicy,
+    fp32_gradients: bool,
     present: Vec<bool>,
     error: Option<String>,
 }
@@ -251,6 +252,32 @@ impl<B: AutodiffBackend> DataParallel<B> {
         local_weight: u64,
         policy: MissingGradientPolicy,
     ) -> Result<DataParallelGradients, DataParallelError> {
+        self.reduce_inner(model, gradients, local_weight, policy, false)
+    }
+
+    /// Reduce into FP32 gradients for explicit FP32-master optimizer updates.
+    ///
+    /// Accepts gradients in their parameter dtype or FP32, including FP32
+    /// accumulation for half-precision parameters. Loss-sum weighting and missing
+    /// gradient semantics match `reduce`. All ranks must select this same method.
+    pub fn reduce_fp32<M: AutodiffModule<B>>(
+        &self,
+        model: &M,
+        gradients: GradientsParams,
+        local_weight: u64,
+        policy: MissingGradientPolicy,
+    ) -> Result<DataParallelGradients, DataParallelError> {
+        self.reduce_inner(model, gradients, local_weight, policy, true)
+    }
+
+    fn reduce_inner<M: AutodiffModule<B>>(
+        &self,
+        model: &M,
+        gradients: GradientsParams,
+        local_weight: u64,
+        policy: MissingGradientPolicy,
+        fp32_gradients: bool,
+    ) -> Result<DataParallelGradients, DataParallelError> {
         let mut schema = Schema::new();
         model.visit(&mut schema);
         let mut check = Check::<B> {
@@ -259,6 +286,7 @@ impl<B: AutodiffBackend> DataParallel<B> {
             present: Vec::new(),
             error: schema.device_error,
             device: self.communicator.execution().device(),
+            fp32_gradients,
         };
         model.visit(&mut check);
         if schema.contract != self.contract || schema.ids != self.ids {
@@ -286,6 +314,7 @@ impl<B: AutodiffBackend> DataParallel<B> {
             &Window {
                 weight: local_weight,
                 policy,
+                fp32_gradients,
                 present: check.present.clone(),
                 error: check.error,
             },
@@ -296,7 +325,10 @@ impl<B: AutodiffBackend> DataParallel<B> {
             if let Some(error) = &window.error {
                 return Err(contract(format!("rank {rank}: {error}")));
             }
-            if window.policy != policy || window.present.len() != globally_present.len() {
+            if window.policy != policy
+                || window.fp32_gradients != fp32_gradients
+                || window.present.len() != globally_present.len()
+            {
                 return Err(contract("ranks disagree on gradient reduction policy"));
             }
             global_weight = global_weight
@@ -320,6 +352,7 @@ impl<B: AutodiffBackend> DataParallel<B> {
             globally_present: &globally_present,
             local_weight,
             global_weight,
+            fp32_gradients,
             error: None,
         };
         model.visit(&mut reducer);
@@ -414,6 +447,7 @@ struct Check<'a, B: AutodiffBackend> {
     present: Vec<bool>,
     error: Option<String>,
     device: &'a B::Device,
+    fp32_gradients: bool,
 }
 impl<B: AutodiffBackend> ModuleVisitor<B> for Check<'_, B> {
     fn visit_float<const D: usize>(&mut self, param: &Param<Tensor<B, D>>) {
@@ -426,7 +460,8 @@ impl<B: AutodiffBackend> ModuleVisitor<B> for Check<'_, B> {
             let valid = match gradient {
                 TensorPrimitive::Float(gradient) => {
                     gradient.shape() == value.shape()
-                        && gradient.dtype() == value.dtype()
+                        && (gradient.dtype() == value.dtype()
+                            || (self.fp32_gradients && gradient.dtype() == DType::F32))
                         && &B::InnerBackend::float_device(gradient) == self.device
                 }
                 TensorPrimitive::QFloat(_) => false,
@@ -450,6 +485,7 @@ struct Reduce<'a, B: AutodiffBackend> {
     globally_present: &'a [bool],
     local_weight: u64,
     global_weight: u64,
+    fp32_gradients: bool,
     error: Option<TensorDeviceError>,
 }
 impl<B: AutodiffBackend> ModuleVisitor<B> for Reduce<'_, B> {
@@ -482,8 +518,12 @@ impl<B: AutodiffBackend> ModuleVisitor<B> for Reduce<'_, B> {
             Ok(gradient) => {
                 let gradient =
                     Tensor::<B::InnerBackend, D>::from_primitive(TensorPrimitive::Float(gradient))
-                        .div_scalar(self.global_weight as f64)
-                        .cast(value.dtype());
+                        .div_scalar(self.global_weight as f64);
+                let gradient = if self.fp32_gradients {
+                    gradient
+                } else {
+                    gradient.cast(value.dtype())
+                };
                 self.output.register(param.id, gradient);
             }
             Err(error) => self.error = Some(error),

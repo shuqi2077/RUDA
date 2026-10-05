@@ -3,7 +3,7 @@ use core::marker::PhantomData;
 
 use ruda_model::module::{AutodiffModule, ModuleVisitor, Param};
 use ruda_model::record::RecorderError;
-use ruda_model::tensor::{Tensor, backend::AutodiffBackend};
+use ruda_model::tensor::{FloatDType, Tensor, backend::AutodiffBackend};
 
 use super::{GradientsParams, GradientsParamsRecord};
 
@@ -69,7 +69,25 @@ impl<M> GradientsAccumulator<M> {
     where
         M: AutodiffModule<B>,
     {
-        let mut visitor = ModuleGradsAccumulator::<M>::new(&mut self.grads, grads);
+        let mut visitor = ModuleGradsAccumulator::<M>::new(&mut self.grads, grads, None);
+        module.visit(&mut visitor);
+    }
+
+    /// Accumulate after converting incoming and pending gradients to the given dtype.
+    ///
+    /// FP32 accumulation can retain small additions to half-precision gradients.
+    /// Parameter storage, loss normalization and accumulation counts are unchanged.
+    /// Checkpoints preserve the pending gradient dtype; select the same dtype on
+    /// subsequent calls after restoring. No accumulator reset is performed.
+    pub fn accumulate_with_dtype<B: AutodiffBackend>(
+        &mut self,
+        module: &M,
+        grads: GradientsParams,
+        dtype: FloatDType,
+    ) where
+        M: AutodiffModule<B>,
+    {
+        let mut visitor = ModuleGradsAccumulator::<M>::new(&mut self.grads, grads, Some(dtype));
         module.visit(&mut visitor);
     }
 
@@ -86,17 +104,35 @@ impl<M> GradientsAccumulator<M> {
 struct ModuleGradsAccumulator<'a, M> {
     grads: &'a mut GradientsParams,
     grads_new: GradientsParams,
+    dtype: Option<FloatDType>,
     phantom: PhantomData<M>,
 }
 
 impl<B: AutodiffBackend, M: AutodiffModule<B>> ModuleVisitor<B> for ModuleGradsAccumulator<'_, M> {
     fn visit_float<const D: usize>(&mut self, param: &Param<Tensor<B, D>>) {
-        let grad_updated = match self.grads_new.remove::<B::InnerBackend, D>(param.id) {
-            Some(new) => match self.grads.remove::<B::InnerBackend, D>(param.id) {
+        let dtype = self.dtype;
+        let convert = |tensor: Tensor<B::InnerBackend, D>| match dtype {
+            Some(dtype) => tensor.cast(dtype),
+            None => tensor,
+        };
+        let grad_updated = match self
+            .grads_new
+            .remove::<B::InnerBackend, D>(param.id)
+            .map(convert)
+        {
+            Some(new) => match self
+                .grads
+                .remove::<B::InnerBackend, D>(param.id)
+                .map(convert)
+            {
                 Some(grad) => grad.add(new),
                 None => new,
             },
-            None => match self.grads.remove::<B::InnerBackend, D>(param.id) {
+            None => match self
+                .grads
+                .remove::<B::InnerBackend, D>(param.id)
+                .map(convert)
+            {
                 Some(grad) => grad,
                 None => return,
             },
@@ -110,7 +146,8 @@ impl<B: AutodiffBackend, M: AutodiffModule<B>> ModuleVisitor<B> for ModuleGradsA
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TestAutodiffBackend;
+    use crate::{TestAutodiffBackend, TestBackend};
+    use ruda_model::module::Module;
     use ruda_model::tensor::{Distribution, backend::Backend};
     use ruda_nn::{Linear, LinearConfig};
 
@@ -143,6 +180,47 @@ mod tests {
 
         let grads = accumulator.grads();
         assert_eq!(grads.len(), 2)
+    }
+
+    #[test]
+    fn fp32_accumulation_retains_small_half_gradients_after_pending_record_restore() {
+        let device = Default::default();
+        for dtype in [FloatDType::F16, FloatDType::BF16] {
+            let model = LinearConfig::new(1, 1)
+                .with_bias(false)
+                .init::<TestAutodiffBackend>(&device)
+                .to_dtype(dtype);
+            let id = model.weight.id;
+            let gradient = |value| {
+                let mut grads = GradientsParams::new();
+                grads.register(
+                    id,
+                    Tensor::<TestBackend, 2>::full([1, 1], value, &device).cast(dtype),
+                );
+                grads
+            };
+            let mut original = GradientsAccumulator::new();
+            let mut fp32 = GradientsAccumulator::new();
+            original.accumulate(&model, gradient(1024.));
+            fp32.accumulate_with_dtype(&model, gradient(1024.), FloatDType::F32);
+            for step in 0..8 {
+                original.accumulate(&model, gradient(0.125));
+                fp32.accumulate_with_dtype(&model, gradient(0.125), FloatDType::F32);
+                if step == 3 {
+                    let record = fp32.try_to_record::<TestAutodiffBackend>().unwrap();
+                    fp32 = GradientsAccumulator::new();
+                    fp32.load_record::<TestAutodiffBackend>(record, &device)
+                        .unwrap();
+                }
+            }
+            let result = fp32.grads().remove::<TestBackend, 2>(id).unwrap();
+            assert_eq!(result.dtype(), FloatDType::F32.into());
+            assert_eq!(result.into_scalar(), 1025.);
+            let unchanged = original.grads().remove::<TestBackend, 2>(id).unwrap();
+            assert_eq!(unchanged.dtype(), dtype.into());
+            assert_eq!(unchanged.cast(FloatDType::F32).into_scalar(), 1024.);
+            assert!(fp32.grads().is_empty());
+        }
     }
 
     fn layer<B: Backend>(device: &B::Device) -> Linear<B> {

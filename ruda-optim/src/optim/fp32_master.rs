@@ -19,6 +19,7 @@ use ruda_model::{
 pub struct Fp32MasterOptimizer<O> {
     optimizer: O,
     grad_clipping: Option<GradientClipping>,
+    gradient_scale: f32,
 }
 
 /// Master parameter and the original optimizer's state, recorded together.
@@ -37,12 +38,26 @@ impl<O> Fp32MasterOptimizer<O> {
         Self {
             optimizer,
             grad_clipping: None,
+            gradient_scale: 1.,
         }
     }
 
     /// Explicitly apply RUDA's existing per-parameter clipping after FP32 conversion.
     pub fn with_grad_clipping(mut self, clipping: GradientClipping) -> Self {
         self.grad_clipping = Some(clipping);
+        self
+    }
+
+    /// Explicitly divide gradients by this loss scale in FP32 before clipping.
+    ///
+    /// The caller scales the loss and uses one scale for the accumulation window.
+    /// No dynamic scaling, non-finite policy or optimizer-step skipping is enabled.
+    pub fn with_gradient_scale(mut self, scale: f32) -> Self {
+        assert!(
+            scale.is_finite() && scale > 0. && scale.recip().is_finite(),
+            "gradient scale must be finite, positive and have a finite reciprocal"
+        );
+        self.gradient_scale = scale;
         self
     }
 
@@ -91,6 +106,11 @@ impl<B: Backend, O: SimpleOptimizer<B>> SimpleOptimizer<B> for Fp32MasterOptimiz
             None => (tensor.cast(DType::F32), None),
         };
         let grad = grad.cast(DType::F32);
+        let grad = if self.gradient_scale == 1. {
+            grad
+        } else {
+            grad / self.gradient_scale
+        };
         let grad = match &self.grad_clipping {
             Some(clipping) => clipping.clip_gradient(grad),
             None => grad,
@@ -247,16 +267,21 @@ mod tests {
                 fp32_gradient,
                 None,
             );
-            let optimizer = Fp32MasterOptimizer::new(original.clone()).with_grad_clipping(clipping);
-            let (actual, state) = optimizer.step(0.01, parameter, gradient.clone(), None);
-            state
-                .unwrap()
-                .master
-                .to_data()
-                .assert_eq(&expected.to_data(), false);
-            actual
-                .to_data()
-                .assert_eq(&expected.cast(DType::F16).to_data(), false);
+            for scale in [1., 16.] {
+                let optimizer = Fp32MasterOptimizer::new(original.clone())
+                    .with_gradient_scale(scale)
+                    .with_grad_clipping(clipping.clone());
+                let (actual, state) =
+                    optimizer.step(0.01, parameter.clone(), gradient.clone() * scale, None);
+                state
+                    .unwrap()
+                    .master
+                    .to_data()
+                    .assert_eq(&expected.to_data(), false);
+                actual
+                    .to_data()
+                    .assert_eq(&expected.clone().cast(DType::F16).to_data(), false);
+            }
         }
     }
 

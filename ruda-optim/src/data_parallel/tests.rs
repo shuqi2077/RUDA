@@ -275,3 +275,45 @@ fn gradient_shape_and_policy_mismatch_reject_on_every_rank() {
         );
     });
 }
+
+#[test]
+fn fp32_reduction_keeps_half_parameter_gradient_precision_and_checks_rank_mode() {
+    for dtype in [DType::F16, DType::BF16] {
+        world(move |rank, communicator| {
+            let device = Default::default();
+            let original = Linear::<B> {
+                weight: Param::from_tensor(Tensor::ones([1, 1], &device).cast(dtype)),
+                bias: None,
+            };
+            let (ddp, replica) = DataParallel::<B>::initialize(communicator, original, 0).unwrap();
+            let gradient = || {
+                let mut gradients = GradientsParams::new();
+                let value = if rank == 0 { 1024.125 } else { -1024. };
+                gradients.register(
+                    replica.weight.id,
+                    Tensor::<Host, 2>::full([1, 1], value, &device),
+                );
+                gradients
+            };
+            assert!(
+                ddp.reduce(&replica, gradient(), 1, MissingGradientPolicy::Error)
+                    .is_err()
+            );
+            let result = ddp
+                .reduce_fp32(&replica, gradient(), 1, MissingGradientPolicy::Error)
+                .unwrap();
+            assert_eq!(result.global_weight, 2);
+            let gradient = result.gradients.get::<Host, 2>(replica.weight.id).unwrap();
+            assert_eq!(gradient.dtype(), DType::F32);
+            assert_eq!(gradient.into_scalar(), 0.0625);
+            assert_eq!(replica.weight.val().dtype(), dtype);
+            let gradients = GradientsParams::new();
+            let result = if rank == 0 {
+                ddp.reduce(&replica, gradients, 0, MissingGradientPolicy::Zero)
+            } else {
+                ddp.reduce_fp32(&replica, gradients, 1, MissingGradientPolicy::Zero)
+            };
+            assert!(result.is_err());
+        });
+    }
+}
