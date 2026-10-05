@@ -1,6 +1,7 @@
 use ruda_kernel::dsl as kernel_dsl;
 use crate::convolution::components::{ConvolutionOperation, global::args::RuntimeArgs};
 use ruda_kernel::dsl::prelude::*;
+use ruda_kernel::dsl::{CompilationError, backtrace::BackTrace, ir::features::Tma};
 use ruda_kernel::library::tensor::into_contiguous_pitched;
 use ruda_kernel::library::tensor::is_contiguous_pitched;
 use rublas::kernel_ir::{
@@ -68,6 +69,12 @@ pub(crate) fn into_tensor_handle_tma<R: Runtime>(
     dtype: StorageType,
     operation: ConvolutionOperation,
 ) -> Result<TensorBinding<R>, LaunchError> {
+    if !client.properties().features.tma.contains(&Tma::Base) {
+        return Err(CompilationError::UnsupportedInstruction {
+            reason: "TMA convolution requires tensor-map support on this device".into(),
+            backtrace: BackTrace::capture(),
+        }.into());
+    }
     let binding = if has_valid_layout_tma(&handle, dtype, operation) {
         handle
     } else {
