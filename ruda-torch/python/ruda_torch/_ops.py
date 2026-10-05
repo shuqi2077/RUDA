@@ -1,4 +1,5 @@
 import math
+import numbers
 import torch
 from torch._prims_common import suggest_memory_format
 from . import _C
@@ -762,6 +763,46 @@ def _typed_value(value, dtype, device):
     return fill_(result, value)
 
 
+def arange(start, end=None, step=1, *, dtype=None, layout=None, device=None,
+           pin_memory=False, out=None):
+    if end is None:
+        start, end = 0, start
+    if layout not in (None, torch.strided) or pin_memory:
+        raise RuntimeError("RUDA arange requires strided device storage")
+    if out is None:
+        dtype = dtype or (torch.int64 if all(isinstance(v, numbers.Integral)
+                                           for v in (start, end, step)) else torch.get_default_dtype())
+        out = torch.empty(0, dtype=dtype, device=device or 'ruda')
+    if out.dtype not in _storage_dtypes or out.dtype == torch.bool:
+        raise RuntimeError("RUDA arange requires a supported numeric dtype")
+    integral = out.dtype not in _dtypes
+    if integral:
+        start, end, step = int(start), int(end), int(step)
+        if any(v < -(1 << 63) or v >= (1 << 63) for v in (start, end, step)):
+            raise RuntimeError("arange scalar exceeds int64 range")
+    else:
+        start, end, step = float(start), float(end), float(step)
+    if not all(math.isfinite(v) for v in (start, end, step)):
+        raise RuntimeError("arange requires finite bounds and step")
+    if step == 0:
+        raise RuntimeError("step must be nonzero")
+    if (step > 0 and end < start) or (step < 0 and end > start):
+        raise RuntimeError("upper bound and larger bound inconsistent with step sign")
+    if integral and out.dtype == torch.int64:
+        distance = abs(end - start)
+        length = (distance + abs(step) - 1) // abs(step)
+    else:
+        length = math.ceil((end - start) / step)
+    if out.numel() != length:
+        _C.prepare_index_output(out, [length])
+    if length:
+        accumulator = torch.int64 if integral else torch.float32
+        first = _typed_value(start, accumulator, out.device)
+        increment = _typed_value(step, accumulator, out.device)
+        _C.execute(108, first, increment, out, 0.0)
+    return out
+
+
 def _comparison(op, a, b, *, inplace=False):
     dtype = torch.result_type(a, b)
     left = _typed_value(a, dtype, a.device)
@@ -1084,6 +1125,12 @@ for name, op in (("bitwise_and", 89), ("bitwise_or", 90), ("bitwise_xor", 91)):
         _registry.impl(f"{name}.{overload}", lambda a, b, op=op: bitwise(op, a, b))
         _registry.impl(f"{name}_.{overload}", lambda a, b, op=op: bitwise(op, a, b, inplace=True))
     _registry.impl(f"{name}.Scalar_Tensor", lambda a, b, op=op: bitwise(op, b, a))
+
+_registry.impl("arange", lambda end, **kwargs: arange(0, end, **kwargs))
+_registry.impl("arange.start", arange)
+_registry.impl("arange.start_step", arange)
+_registry.impl("arange.out", lambda end, *, out: arange(0, end, out=out))
+_registry.impl("arange.start_out", arange)
 
 from . import _indexing
 from . import _spatial

@@ -14,6 +14,7 @@ use crate::attention::kernel_ir::{
 /// Contains all seq_q·head_dim materialized tiles at once because they are reused extensively
 pub struct QueryPartition<L: Numeric> {
     sequence: Sequence<Query<L>>,
+    pub head_dim: u32,
 }
 
 #[ruda]
@@ -29,7 +30,7 @@ impl<L: Numeric> QueryPartition<L> {
             sequence.push(Query::<L>::new(allocate_lhs::<L>(matmul)));
         }
 
-        QueryPartition::<L> { sequence }
+        QueryPartition::<L> { sequence, head_dim: 0 }
     }
 
     pub fn get(

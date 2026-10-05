@@ -28,6 +28,18 @@ def main(path, attention=False, builtin=False, dtype=torch.float32):
         gradients=[p.grad.cpu() for p in model.parameters()]), path)
 
 
+def max_pool(path, input_path):
+    fixture = torch.load(input_path, weights_only=True)
+    x = fixture['source'].to('cuda').requires_grad_()
+    values, indices = torch.nn.functional.max_pool2d(x, return_indices=True, **fixture['kwargs'])
+    grad = torch.linspace(-0.7, 0.9, values.numel()).reshape(values.shape).to(values.dtype)
+    values.backward(grad.to('cuda'))
+    torch.save(dict(values=values.detach().cpu(), indices=indices.cpu(), gradient=x.grad.cpu()), path)
+
+
 if __name__ == "__main__":
-    dtype = torch.float16 if "--float16" in sys.argv else torch.bfloat16 if "--bfloat16" in sys.argv else torch.float32
-    main(sys.argv[1], "--attention" in sys.argv[2:], "--builtin" in sys.argv[2:], dtype)
+    if '--max-pool' in sys.argv:
+        max_pool(sys.argv[1], sys.argv[sys.argv.index('--max-pool') + 1])
+    else:
+        dtype = torch.float16 if "--float16" in sys.argv else torch.bfloat16 if "--bfloat16" in sys.argv else torch.float32
+        main(sys.argv[1], "--attention" in sys.argv[2:], "--builtin" in sys.argv[2:], dtype)

@@ -39,10 +39,10 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
-      - name: Attach verified revision to a release branch
+      - name: Attach verified revision to main
         run: |
-          git switch --create release-ci
-          git branch --set-upstream-to=origin/main release-ci
+          git checkout -B main
+          git branch --set-upstream-to=origin/main main
       - name: Install Rust
         run: |
           rustup toolchain install 1.97.1 --profile minimal

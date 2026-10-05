@@ -24,6 +24,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True, help='JSON validation report')
     parser.add_argument('--steps', type=positive, default=3)
+    parser.add_argument('--models', nargs='+', choices=('gated_dense', 'convolution', 'native_attention_core'))
     args = parser.parse_args(argv)
     report = {'status': 'failed', 'gpu_executed': False, 'cpu_fallback': False,
               'rust_built_by_this_script': False, 'cases': []}
@@ -70,15 +71,18 @@ def main(argv=None):
             ('convolution', ConvBlock, (2, 3, 5, 5)),
             ('native_attention_core', AttentionCore, (2, 3, 4)),
         ):
-            torch.random.default_generator.manual_seed(672)
-            reference = constructor()
-            model = copy.deepcopy(reference).to('ruda:0')
-            compiled = ruda_torch.compile(model, min_native_ops=1, dynamic=False)
-            optimizer = torch.optim.SGD(model.parameters(), lr=.002, foreach=False)
-            expected_optimizer = torch.optim.SGD(reference.parameters(), lr=.002, foreach=False)
+            if args.models is not None and name not in args.models:
+                continue
             case = {'name': name, 'passed': False, 'steps': 0}
             report['cases'].append(case)
+            compiled = None
             try:
+                torch.random.default_generator.manual_seed(672)
+                reference = constructor()
+                model = copy.deepcopy(reference).to('ruda:0')
+                compiled = ruda_torch.compile(model, min_native_ops=1, dynamic=False)
+                optimizer = torch.optim.SGD(model.parameters(), lr=.002, foreach=False)
+                expected_optimizer = torch.optim.SGD(reference.parameters(), lr=.002, foreach=False)
                 for step in range(args.steps):
                     host = torch.randn(shape, requires_grad=True)
                     x = host.detach().to('ruda:0').requires_grad_()
@@ -119,11 +123,18 @@ def main(argv=None):
                                    for op in operators):
                             raise RuntimeError(f'attention native mapping missing: {target}')
                 case['passed'] = True
+            except Exception as exc:
+                case['error'] = f'{type(exc).__name__}: {exc}'
+                case['traceback'] = traceback.format_exc()
             finally:
-                case.setdefault('compiler', compiled.info)
-                compiled.close()
-        report['status'] = 'passed'
-        code = 0
+                if compiled is not None:
+                    case.setdefault('compiler', compiled.info)
+                    compiled.close()
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
+                print('RUDA_T4_MODEL_OUTCOME=' + json.dumps({'name': name, 'passed': case['passed']}), flush=True)
+        report['status'] = 'passed' if report['cases'] and all(c['passed'] for c in report['cases']) else 'failed'
+        code = 0 if report['status'] == 'passed' else 2
     except Exception as exc:
         report['error'] = f'{type(exc).__name__}: {exc}'
         report['traceback'] = traceback.format_exc()

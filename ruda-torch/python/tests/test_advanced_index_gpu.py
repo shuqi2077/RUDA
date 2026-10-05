@@ -44,7 +44,7 @@ def test_advanced_index_bounds_are_checked_per_axis():
 def test_advanced_index_vmap_mask():
     source = torch.tensor([[True, False, True], [False, True, False]])
     a, b = torch.tensor([0, 1]), torch.tensor([2, 1])
-    expected = torch.vmap(lambda i, j: source[i, j])(a, b)
+    expected = torch.vmap(lambda i, j: torch.ops.aten.index.Tensor(source, [i, j]))(a, b)
     device_source = source.to("ruda")
-    actual = torch.vmap(lambda i, j: device_source[i, j])(a.to("ruda"), b.to("ruda"))
+    actual = torch.vmap(lambda i, j: torch.ops.aten.index.Tensor(device_source, [i, j]))(a.to("ruda"), b.to("ruda"))
     torch.testing.assert_close(actual.cpu(), expected)

@@ -175,6 +175,35 @@ pub unsafe extern "C" fn ruda_torch_fill(out: *const Descriptor, bits: u64) -> i
 fn launch(op: u32, a: &View, b: &View, out: &View, scalar: f32) {
     if out.len == 0 { return; }
     if op == 0 { convert(a, out); return; }
+    if op == 108 {
+        assert_eq!(a.dtype, b.dtype);
+        let client = client();
+        let count = u32::try_from(out.len.div_ceil(128)).expect("launch grid overflow");
+        macro_rules! run {
+            ($input:ty, $output:ty) => { kernels::arange::launch::<$input, $output, CudaRuntime>(
+                &client, RudaCount::Static(count, 1, 1), RudaDim::new_1d(128),
+                a.arg(), b.arg(), out.arg()) };
+        }
+        unsafe {
+            match out.dtype {
+                0..=2 => {
+                    assert_eq!(a.dtype, 0);
+                    match out.dtype { 0 => run!(f32, f32), 1 => run!(f32, f16), 2 => run!(f32, bf16), _ => unreachable!() }
+                }
+                4..=8 => {
+                    assert_eq!(a.dtype, 4);
+                    match out.dtype {
+                        4 => run!(i64, i64), 5 => run!(i64, i32), 6 => run!(i64, i16),
+                        7 => run!(i64, i8), 8 => run!(i64, u8), _ => unreachable!()
+                    }
+                }
+                _ => panic!("unsupported RUDA arange dtype"),
+            }
+        }
+        finish_dispatch(&client);
+        LAUNCHES.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
     if (89..=106).contains(&op) { primitives::launch(op, a, b, out, scalar); return; }
     if (78..=88).contains(&op) {
         let client = client();
@@ -503,9 +532,13 @@ pub unsafe extern "C" fn ruda_torch_execute(op: u32, a: *const Descriptor, b: *c
                     assert!(out.shape[rank - spatial..].iter().all(|&size| size > 0));
                 }
             }
-            6 => {
+            6 | 107 => {
                 assert_eq!(a.shape.len(), out.shape.len());
                 assert!(a.shape.iter().zip(&out.shape).all(|(a, o)| *o == 1 || a == o));
+            }
+            108 => {
+                assert_eq!(a.len, 1); assert_eq!(b.len, 1);
+                assert_eq!(a.dtype, b.dtype);
             }
             7 => {
                 assert_eq!(a.shape.len(), 2); assert_eq!(b.shape.len(), 2);

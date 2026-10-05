@@ -66,4 +66,8 @@ impl<AP: AttentionPrecision> QueryReader<AP> {
             self.gmem_config.matrix_layout,
         )
     }
+
+    pub fn head_dim(&self) -> u32 {
+        self.query.shape().1
+    }
 }

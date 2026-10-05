@@ -87,7 +87,7 @@ def convolution_backward(grad, a, weight, bias_sizes, stride, padding, dilation,
     _matching(a, grad)
     if tuple(grad.shape) != shape or len(output_mask) != 3:
         raise RuntimeError("invalid convolution gradient shape or output mask")
-    if bias_sizes is not None and tuple(bias_sizes) != (shape[1],):
+    if output_mask[2] and bias_sizes is not None and tuple(bias_sizes) != (shape[1],):
         raise RuntimeError("invalid convolution bias gradient shape")
     x, w, dy = a.float(), weight.float(), grad.float()
     dx = dw = db = None

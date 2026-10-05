@@ -22,6 +22,16 @@ pub fn convert<I: Numeric + RudaElement, O: Numeric + RudaElement>(a: &Tensor<I>
 }
 
 #[ruda(launch)]
+pub fn arange<I: Numeric + RudaElement, O: Numeric + RudaElement>(
+    start: &Tensor<I>, step: &Tensor<I>, out: &mut Tensor<O>,
+) {
+    let pos = ABSOLUTE_POS as usize;
+    if pos < out.len() {
+        out[offset(out, pos)] = O::cast_from(start[0] + I::cast_from(pos) * step[0]);
+    }
+}
+
+#[ruda(launch)]
 pub fn copy_bytes(a: &Tensor<u8>, out: &mut Tensor<u8>) {
     let pos = ABSOLUTE_POS as usize;
     if pos < out.len() { out[offset(out, pos)] = a[offset(a, pos)]; }
@@ -609,6 +619,7 @@ pub fn reduce(a: &Tensor<f32>, out: &mut Tensor<f32>) {
             remaining /= out.shape(dim);
         }
         let mut value = 0.0f32;
+        let mut correction = 0.0f32;
         for index in 0..reduction_size {
             let mut reduction_index = index;
             let mut source = source_base;
@@ -873,8 +884,20 @@ pub fn reduce_sum_storage<F: Float + RudaElement, O: Float + RudaElement>(
                     reduction_index /= a.shape(dim);
                 }
             }
-            value += f32::cast_from(a[source]);
+            let item = f32::cast_from(a[source]);
+            let next = value + item;
+            if next.abs() <= 3.4028234663852886e38f32 {
+                if value.abs() >= item.abs() {
+                    correction += (value - next) + item;
+                } else {
+                    correction += (item - next) + value;
+                }
+            } else {
+                correction = 0.0f32;
+            }
+            value = next;
         }
+        value += correction;
         // Empty means are NaN (0/0); empty sums keep the additive identity.
         if comptime!(mean) { value /= reduction_size as f32; }
         out[offset(out, pos)] = O::cast_from(value);

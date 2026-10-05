@@ -36,8 +36,8 @@ def tol(dtype):return 7e-4 if dtype==torch.float32 else (.007 if dtype==torch.fl
 def test_selective_gradients_and_workspace(backend,dtype_name,mla,mask,causal):
     dtype=getattr(torch,dtype_name);cpu=data(mla,dtype=dtype)
     needs=[bool(mask&(1<<i)) for i in range(len(cpu))]
-    ref=[x.float().requires_grad_(n) for x,n in zip(cpu,needs)]
-    dev=[x.to('ruda').requires_grad_(n) for x,n in zip(cpu,needs)]
+    ref=[x.detach().float().requires_grad_(n) for x,n in zip(cpu,needs)]
+    dev=[x.detach().to('ruda').requires_grad_(n) for x,n in zip(cpu,needs)]
     expected=dense(ref,mla,causal=causal)
     go=torch.linspace(-.3,.7,expected.numel()).reshape_as(expected).to(dtype)
     expected.backward(go.float())

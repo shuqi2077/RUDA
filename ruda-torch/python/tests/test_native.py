@@ -28,6 +28,29 @@ class NativeGpuTests(unittest.TestCase):
         self.assertEqual(memory_type.value, 2)  # CU_MEMORYTYPE_DEVICE, not HOST or UNIFIED.
         self.assertEqual(tensor.device, torch.device("ruda:0"))
 
+    def test_native_arange_factories_and_out(self):
+        for dtype in (torch.float32, torch.float16, torch.int64, torch.int32, torch.int16, torch.int8, torch.uint8):
+            for arguments in ((17,), (3, 17), (19, 2, -3), (-1.5, 2.5, .25)):
+                if dtype not in (torch.float32, torch.float16) and arguments[-1] == .25:
+                    continue
+                with self.subTest(dtype=dtype, arguments=arguments):
+                    expected = torch.arange(*arguments, dtype=dtype)
+                    actual = torch.arange(*arguments, dtype=dtype, device='ruda')
+                    torch.testing.assert_close(actual.cpu(), expected, rtol=0, atol=0)
+        start = (1 << 53) + 7
+        torch.testing.assert_close(torch.arange(start, start + 13, 3, device='ruda').cpu(),
+                                   torch.arange(start, start + 13, 3), rtol=0, atol=0)
+        out = torch.empty(1, device='ruda')
+        self.assertIs(torch.arange(2, 8, 2, out=out), out)
+        torch.testing.assert_close(out.cpu(), torch.tensor([2., 4., 6.]), rtol=0, atol=0)
+        storage = torch.full((6,), -7., device='ruda')
+        torch.arange(2, 8, 2, out=storage[::2])
+        torch.testing.assert_close(storage.cpu(), torch.tensor([2., -7., 4., -7., 6., -7.]), rtol=0, atol=0)
+        self.assertEqual(torch.arange(3, 3, device='ruda').numel(), 0)
+        for arguments in ((0, 3, 0), (3, 0, 1), (0., float('inf'), 1)):
+            with self.subTest(arguments=arguments), self.assertRaises(RuntimeError):
+                torch.arange(*arguments, device='ruda')
+
     def test_transfer_and_strided_alias(self):
         source = torch.arange(35, dtype=torch.float32).view(5, 7)
         tensor = source.to("ruda")

@@ -1,4 +1,8 @@
 import math
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
 
 import torch
@@ -8,23 +12,37 @@ import ruda_torch
 
 class MaxPoolGpuTests(unittest.TestCase):
     def compare(self, source, kwargs, *, cuda_reference=False):
-        reference_device = "cuda" if cuda_reference else "cpu"
-        x = source.detach().to(reference_device).requires_grad_()
+        if cuda_reference:
+            # PyTorch 2.10 selects PrivateUse1 globally for autograd streams.
+            # Keep the CUDA reference in the same isolation used by model tests.
+            with tempfile.TemporaryDirectory() as directory:
+                fixture = Path(directory) / 'input.pt'
+                result = Path(directory) / 'cuda.pt'
+                torch.save(dict(source=source.detach(), kwargs=kwargs), fixture)
+                subprocess.run([sys.executable, str(Path(__file__).with_name('cuda_reference.py')),
+                                str(result), '--max-pool', str(fixture)], check=True)
+                reference = torch.load(result, weights_only=True)
+            expected, expected_indices = reference['values'], reference['indices']
+            expected_grad = reference['gradient']
+        else:
+            x = source.detach().requires_grad_()
+            expected, expected_indices = F.max_pool2d(x, return_indices=True, **kwargs)
         a = source.detach().to("ruda").requires_grad_()
         before = ruda_torch.execution_stats()["device_to_host_bytes"]
         actual, indices = F.max_pool2d(a, return_indices=True, **kwargs)
         self.assertEqual(ruda_torch.execution_stats()["device_to_host_bytes"], before)
-        expected, expected_indices = F.max_pool2d(x, return_indices=True, **kwargs)
         torch.testing.assert_close(actual.cpu(), expected.cpu(), rtol=0, atol=0, equal_nan=True)
         torch.testing.assert_close(indices.cpu(), expected_indices.cpu(), rtol=0, atol=0)
         self.assertEqual(indices.dtype, torch.int64)
         grad = torch.linspace(-0.7, 0.9, actual.numel()).reshape(actual.shape).to(actual.dtype)
-        expected.backward(grad.to(reference_device))
+        if not cuda_reference:
+            expected.backward(grad)
+            expected_grad = x.grad
         device_grad = grad.to("ruda")
         before = ruda_torch.execution_stats()["device_to_host_bytes"]
         actual.backward(device_grad)
         self.assertEqual(ruda_torch.execution_stats()["device_to_host_bytes"], before)
-        torch.testing.assert_close(a.grad.cpu(), x.grad.cpu(), equal_nan=True)
+        torch.testing.assert_close(a.grad.cpu(), expected_grad.cpu(), equal_nan=True)
 
     def test_shapes_dilation_ceil_and_noncontiguous_inputs(self):
         cases = [((2, 3, 7, 9), dict(kernel_size=(3, 2), stride=(2, 2), padding=(1, 1), dilation=(2, 1))),
