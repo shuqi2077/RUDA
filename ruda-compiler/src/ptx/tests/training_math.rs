@@ -19,7 +19,9 @@ fn erf_and_powf_compile_for_training_storage() {
                 else { Arithmetic::Erf(UnaryOperator { input: x }) };
             k.body.instructions.push(Instruction::new(op, z));
             store(&mut k.body, output, idx, z);
-            let result = compile(k, ExecutionMode::Checked, UIntKind::U32).unwrap();
+            let mut target = options();
+            if kind != FloatKind::BF16 { target.target.as_mut().unwrap().sm = 75; }
+            let result = PtxCompiler.compile(k, &target, ExecutionMode::Checked, UIntKind::U32).unwrap();
             assert!(!result.source.contains("call.uni"));
             assert!(result.source.contains(if power { "mul.rn.f64" } else { "fma.rn.f32" }));
             export(&result);

@@ -88,7 +88,17 @@ jobs:
               cargo check --locked -p ruda-kernel --no-default-features --features lowering-ascend --lib
           - name: Core and compiler tests
             key: compiler
-            command: cargo test --locked -p ruda-core -p ruda-compiler --lib --features ruda-core/tensor-host-storage,ruda-core/compilation-cache
+            command: |
+              RUDA_PTX_TEST_OUTPUT="$RUNNER_TEMP/ptx" cargo test --locked -p ruda-core -p ruda-compiler --lib --features ruda-core/tensor-host-storage,ruda-core/compilation-cache
+              python3 -m pip install --quiet --target "$RUNNER_TEMP/ptx-tools" nvidia-cuda-nvcc-cu12==12.6.85
+              count=0
+              for source in "$RUNNER_TEMP"/ptx/training_math_*.ptx; do
+                target=sm_75
+                [[ "$source" == *BF16* ]] && target=sm_89
+                "$RUNNER_TEMP/ptx-tools/nvidia/cuda_nvcc/bin/ptxas" --gpu-name "$target" "$source" -o "${source%.ptx}.cubin"
+                count=$((count + 1))
+              done
+              test "$count" -eq 6
           - name: Optimizer CPU tests
             key: optim
             command: |
