@@ -45,6 +45,115 @@ fn world<R: Send + 'static>(
     results
 }
 
+#[test]
+fn integer_collectives_preserve_wide_values_shapes_and_backend_reductions() {
+    use ruccl::rank::ReductionOperation;
+    use ruda_model::tensor::IntDType;
+    for dtype in [IntDType::I32, IntDType::I64] {
+        world(move |rank, communicator| {
+            let device = Default::default();
+            let large = if dtype == IntDType::I64 {
+                9_007_199_254_740_993_i64
+            } else {
+                16_777_217_i64
+            };
+            let values = [large, -9, 7, large + 3];
+            let tensor = |values: [i64; 4]| {
+                Tensor::<Host, 2, Int>::from_data(TensorData::new(values.to_vec(), [2, 2]), &device)
+                    .cast(dtype)
+            };
+            let input = tensor([
+                large + rank as i64,
+                7 + rank as i64,
+                -9 + rank as i64,
+                large + 3 + rank as i64,
+            ])
+            .swap_dims(0, 1);
+            let broadcast = communicator
+                .broadcast_int(input.clone().into_primitive(), 1)
+                .unwrap();
+            let broadcast = Tensor::<Host, 2, Int>::from_primitive(broadcast);
+            assert_eq!(broadcast.dims(), [2, 2]);
+            assert_eq!(broadcast.dtype(), dtype.into());
+            assert_eq!(
+                broadcast
+                    .cast(IntDType::I64)
+                    .into_data()
+                    .to_vec::<i64>()
+                    .unwrap(),
+                values.map(|value| value + 1).to_vec()
+            );
+            for operation in [
+                ReductionOperation::Sum,
+                ReductionOperation::Minimum,
+                ReductionOperation::Maximum,
+                ReductionOperation::BitAnd,
+                ReductionOperation::BitOr,
+                ReductionOperation::BitXor,
+            ] {
+                let reduced = communicator
+                    .all_reduce_int(input.clone().into_primitive(), operation)
+                    .unwrap();
+                let expected = values.map(|a| {
+                    let b = a + 1;
+                    match operation {
+                        ReductionOperation::Sum => a + b,
+                        ReductionOperation::Minimum => a.min(b),
+                        ReductionOperation::Maximum => a.max(b),
+                        ReductionOperation::BitAnd => a & b,
+                        ReductionOperation::BitOr => a | b,
+                        ReductionOperation::BitXor => a ^ b,
+                        _ => unreachable!(),
+                    }
+                });
+                let reduced = Tensor::<Host, 2, Int>::from_primitive(reduced);
+                assert_eq!(reduced.dtype(), dtype.into());
+                assert_eq!(reduced.dims(), [2, 2]);
+                assert_eq!(
+                    reduced
+                        .cast(IntDType::I64)
+                        .into_data()
+                        .to_vec::<i64>()
+                        .unwrap(),
+                    expected.to_vec()
+                );
+            }
+            assert_eq!(
+                input
+                    .cast(IntDType::I64)
+                    .into_data()
+                    .to_vec::<i64>()
+                    .unwrap(),
+                values.map(|value| value + rank as i64).to_vec()
+            );
+            let input = tensor(if rank == 0 {
+                [-9, 7, 3, 4]
+            } else {
+                [2, -1, 5, -6]
+            });
+            let reduced = communicator
+                .all_reduce_int(input.into_primitive(), ReductionOperation::Product)
+                .unwrap();
+            assert_eq!(
+                Tensor::<Host, 2, Int>::from_primitive(reduced)
+                    .cast(IntDType::I64)
+                    .into_data()
+                    .to_vec::<i64>()
+                    .unwrap(),
+                vec![-18, -7, 15, -24]
+            );
+            let empty = Tensor::<Host, 2, Int>::empty([2, 0], &device).cast(dtype);
+            let reduced = communicator
+                .all_reduce_int(empty.into_primitive(), ReductionOperation::Sum)
+                .unwrap();
+            assert_eq!(
+                Tensor::<Host, 2, Int>::from_primitive(reduced).dims(),
+                [2, 0]
+            );
+        });
+    }
+}
+
 fn model(rank: u32) -> Linear<B> {
     let device = Default::default();
     Linear {

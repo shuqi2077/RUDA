@@ -10,10 +10,10 @@ impl<B: Backend> TensorDevice<B> {
         operation: ReductionOperation,
     ) -> Result<ReductionOperation, TensorDeviceError> {
         self.validate_type::<T>()?;
-        if T::dtype() != DType::I32 && matches!(operation,
+        if !matches!(T::dtype(), DType::I32 | DType::I64) && matches!(operation,
             ReductionOperation::BitAnd | ReductionOperation::BitOr | ReductionOperation::BitXor)
         {
-            return Err(TensorDeviceError::InvalidOperation("bitwise reductions require I32 elements"));
+            return Err(TensorDeviceError::InvalidOperation("bitwise reductions require I32 or I64 elements"));
         }
         Ok(operation)
     }
