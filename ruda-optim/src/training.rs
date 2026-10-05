@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 use ruda_model::{
-    module::AutodiffModule,
+    module::{AutodiffModule, ModuleDTypeRecord},
     record::{PrecisionSettings, Record, Recorder, RecorderError},
     tensor::backend::AutodiffBackend,
 };
@@ -92,6 +92,47 @@ where
         })
     }
 
+    /// Capture with opt-in per-parameter floating storage dtype metadata.
+    ///
+    /// The metadata is recorded with caller state; ordinary captures and their
+    /// serialization format are unchanged. Use `restore_with_dtypes` to restore
+    /// mixed storage dtypes independently from the recorder's value precision.
+    pub fn capture_with_dtypes(
+        model: &M,
+        optimizer: &O,
+        scheduler: &S,
+        accumulator: &GradientsAccumulator<M>,
+        state: U,
+    ) -> Result<TrainingRecord<B, M, O, S, (ModuleDTypeRecord, U)>, RecorderError> {
+        let dtypes = ModuleDTypeRecord::capture(model)?;
+        TrainingRecord::<B, M, O, S, (ModuleDTypeRecord, U)>::capture(
+            model,
+            optimizer,
+            scheduler,
+            accumulator,
+            (dtypes, state),
+        )
+    }
+
+    /// Asynchronously capture pending gradients and per-parameter storage dtypes.
+    pub async fn capture_async_with_dtypes(
+        model: &M,
+        optimizer: &O,
+        scheduler: &S,
+        accumulator: &GradientsAccumulator<M>,
+        state: U,
+    ) -> Result<TrainingRecord<B, M, O, S, (ModuleDTypeRecord, U)>, RecorderError> {
+        let dtypes = ModuleDTypeRecord::capture(model)?;
+        TrainingRecord::<B, M, O, S, (ModuleDTypeRecord, U)>::capture_async(
+            model,
+            optimizer,
+            scheduler,
+            accumulator,
+            (dtypes, state),
+        )
+        .await
+    }
+
     /// Save all components in one recorder payload.
     pub fn save<R: Recorder<B>>(
         self,
@@ -132,6 +173,35 @@ where
             scheduler,
             accumulator,
             state: self.state,
+        })
+    }
+}
+
+impl<B, M, O, S, U> TrainingRecord<B, M, O, S, (ModuleDTypeRecord, U)>
+where
+    B: AutodiffBackend,
+    M: AutodiffModule<B>,
+    O: Optimizer<M, B>,
+    S: LrScheduler,
+    U: Record<B>,
+{
+    /// Restore captured floating storage dtypes, pending gradients and trainable state.
+    /// No update, scheduler step, gradient reset or requantization is performed.
+    pub fn restore_with_dtypes(
+        self,
+        model: M,
+        optimizer: O,
+        scheduler: S,
+        device: &B::Device,
+    ) -> Result<RestoredTraining<M, O, S, U>, RecorderError> {
+        let restored = self.restore(model, optimizer, scheduler, device)?;
+        let (dtypes, state) = restored.state;
+        Ok(RestoredTraining {
+            model: dtypes.apply(restored.model)?,
+            optimizer: restored.optimizer,
+            scheduler: restored.scheduler,
+            accumulator: restored.accumulator,
+            state,
         })
     }
 }
