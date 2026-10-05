@@ -259,7 +259,9 @@ impl<B: AutodiffBackend> ModuleVisitor<B> for Schema {
 #[derive(Debug)]
 pub struct DataParallel<
     B: AutodiffBackend,
-    C: DataParallelCommunicator<B::InnerBackend> = RankCommunicator<TensorDevice<B::InnerBackend>>,
+    C: DataParallelCommunicator<B::InnerBackend> = RankCommunicator<
+        TensorDevice<<B as AutodiffBackend>::InnerBackend>,
+    >,
 > {
     communicator: C,
     contract: Vec<ParameterContract>,
