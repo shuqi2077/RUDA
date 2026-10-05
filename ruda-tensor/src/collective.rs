@@ -14,3 +14,9 @@ pub trait TensorCollective<B: Backend>: Clone + Debug + Send + 'static {
     /// Sum tensors across ranks and return this rank's equal leading-axis shard.
     fn reduce_scatter_sum(&self, value: FloatTensor<B>) -> Result<FloatTensor<B>, Self::Error>;
 }
+
+/// Replicated reductions in addition to leading-axis shard collectives.
+pub trait ReplicatedTensorCollective<B: Backend>: TensorCollective<B> {
+    /// Sum corresponding tensor elements across ranks, retaining shape and dtype.
+    fn all_reduce_sum(&self, value: FloatTensor<B>) -> Result<FloatTensor<B>, Self::Error>;
+}

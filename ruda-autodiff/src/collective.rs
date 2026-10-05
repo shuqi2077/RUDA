@@ -7,11 +7,29 @@ use crate::{
 };
 use core::marker::PhantomData;
 use ruda_tensor::{
-    AsIndex, Backend, api::Tensor, collective::TensorCollective, primitive::TensorPrimitive,
+    AsIndex, Backend,
+    api::Tensor,
+    collective::{ReplicatedTensorCollective, TensorCollective},
+    primitive::TensorPrimitive,
 };
 
 #[derive(Debug)]
 struct Collective<C>(PhantomData<C>);
+
+#[derive(Debug)]
+struct AllReduce<C>(PhantomData<C>);
+
+impl<B: Backend, C: ReplicatedTensorCollective<B>> Backward<B, 1> for AllReduce<C> {
+    type State = C;
+
+    fn backward(self, ops: Ops<Self::State, 1>, grads: &mut Gradients, _: &mut Checkpointer) {
+        unary::<B, _>(ops.parents, ops.node, grads, |grad| {
+            ops.state
+                .all_reduce_sum(grad)
+                .unwrap_or_else(|error| panic!("all-reduce backward failed: {error:?}"))
+        });
+    }
+}
 
 impl<B: Backend, C: TensorCollective<B>> Backward<B, 1> for Collective<C> {
     type State = (C, bool);
@@ -144,4 +162,42 @@ where
     let dim = dim.expect_dim_index(D);
     reduce_scatter_mean(tensor.swap_dims(0, dim), communicator)
         .map(|tensor| tensor.swap_dims(0, dim))
+}
+
+/// Sum replicated tensor elements; backward sums gradients from all rank-local losses.
+/// All ranks use matching shapes, dtypes, gradient tracking and collective order.
+pub fn all_reduce_sum<B, S, C, const D: usize>(
+    tensor: Tensor<Autodiff<B, S>, D>,
+    communicator: C,
+) -> Result<Tensor<Autodiff<B, S>, D>, C::Error>
+where
+    B: Backend,
+    S: CheckpointStrategy,
+    C: ReplicatedTensorCollective<B>,
+{
+    let tensor = tensor.into_primitive().tensor();
+    let output = communicator.all_reduce_sum(tensor.primitive)?;
+    let output = match AllReduce::<C>(PhantomData)
+        .prepare::<S>([tensor.node])
+        .compute_bound()
+        .stateful()
+    {
+        OpsKind::Tracked(prep) => prep.finish(communicator, output),
+        OpsKind::UnTracked(prep) => prep.finish(output),
+    };
+    Ok(Tensor::from_primitive(TensorPrimitive::Float(output)))
+}
+
+/// Average replicated tensor elements, including original scalar-division backward.
+pub fn all_reduce_mean<B, S, C, const D: usize>(
+    tensor: Tensor<Autodiff<B, S>, D>,
+    communicator: C,
+) -> Result<Tensor<Autodiff<B, S>, D>, C::Error>
+where
+    B: Backend,
+    S: CheckpointStrategy,
+    C: ReplicatedTensorCollective<B>,
+{
+    let world_size = communicator.world_size();
+    all_reduce_sum(tensor, communicator).map(|tensor| tensor.div_scalar(world_size))
 }

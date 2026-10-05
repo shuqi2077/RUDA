@@ -26,6 +26,17 @@ impl<B: Backend> ruda_tensor::collective::TensorCollective<B> for RankCommunicat
     }
 }
 
+impl<B: Backend> ruda_tensor::collective::ReplicatedTensorCollective<B>
+    for RankCommunicator<TensorDevice<B>>
+{
+    fn all_reduce_sum(
+        &self,
+        value: B::FloatTensorPrimitive,
+    ) -> Result<B::FloatTensorPrimitive, Self::Error> {
+        RankCommunicator::all_reduce_float(self, value, ReduceOperation::Sum)
+    }
+}
+
 impl<B: Backend> RankCommunicator<TensorDevice<B>> {
     /// Gather equal-size floating tensors along axis zero in rank order.
     /// Retains dtype, remaining axes and input snapshots; transfers are host-staged.
