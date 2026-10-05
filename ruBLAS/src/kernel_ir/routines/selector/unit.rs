@@ -169,15 +169,19 @@ pub fn infer_blueprint_unit<R: Runtime>(
     };
     while shared_bytes(&blueprint.tiling_scheme) > max_bytes {
         let scheme = blueprint.tiling_scheme;
-        let candidate = [0, 1, 2].into_iter().filter_map(|axis| {
+        let candidate = [0, 1, 2, 3, 4].into_iter().filter_map(|axis| {
             let mut smaller = scheme;
             let value = match axis {
-                0 => &mut smaller.partition_size.m,
-                1 => &mut smaller.partition_size.n,
-                _ => &mut smaller.partition_size.k,
+                0 => &mut smaller.stage_size.m,
+                1 => &mut smaller.stage_size.n,
+                2 => &mut smaller.partition_size.k,
+                3 => &mut smaller.partition_size.m,
+                _ => &mut smaller.partition_size.n,
             };
             if *value <= 1 { return None; }
             *value /= 2;
+            let units = smaller.stage_size.m() * smaller.stage_size.n();
+            if units < plane_dim || !units.is_multiple_of(plane_dim) { return None; }
             Some(smaller)
         }).min_by_key(shared_bytes);
         let Some(smaller) = candidate else { break; };
