@@ -69,7 +69,7 @@ pub(crate) fn into_tensor_handle_tma<R: Runtime>(
     dtype: StorageType,
     operation: ConvolutionOperation,
 ) -> Result<TensorBinding<R>, LaunchError> {
-    if !client.properties().features.tma.contains(&Tma::Base) {
+    if !client.properties().features.tma.contains(Tma::Base) {
         return Err(CompilationError::UnsupportedInstruction {
             reason: "TMA convolution requires tensor-map support on this device".into(),
             backtrace: BackTrace::capture(),

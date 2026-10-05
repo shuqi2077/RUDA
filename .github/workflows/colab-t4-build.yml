@@ -1,0 +1,150 @@
+name: Colab T4 compiled bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_revision:
+        description: Full main commit to compile
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  SOURCE_REVISION: ${{ inputs.source_revision }}
+  CARGO_BUILD_JOBS: '2'
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+  CARGO_PROFILE_RELEASE_DEBUG: '0'
+  CARGO_TERM_COLOR: never
+  RUST_MIN_STACK: '16777216'
+  MAX_JOBS: '1'
+  PYTHONUNBUFFERED: '1'
+  PIP_NO_CACHE_DIR: '1'
+
+jobs:
+  rust:
+    name: Compile ${{ matrix.label }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        label:
+          - native-library
+          - cuda-gap-rublas-kernel_ir
+          - cuda-gap-ruDNN-attention
+          - cuda-gap-ruDNN-convolution
+          - cuda-gap-ruSPARSE-tensor
+          - cuda-gap-ruSPARSE-tensor_level1
+          - cuda-gap-ruSPARSE-tensor_binary
+          - cuda-gap-ruda-nn-ruda_nn
+          - cuda-gap-ruda-llm-stack_autotune_gpu
+          - cuda-gap-ruCCL-tensor_collectives
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.source_revision }}
+          persist-credentials: false
+      - name: Install build dependencies
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup override set 1.97.1
+          python3 -m pip install --quiet psutil
+      - name: Restore compatible Cargo cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: Linux-rust-1.97.1-colab-${{ matrix.label }}-${{ hashFiles('Cargo.lock') }}-${{ inputs.source_revision }}
+          restore-keys: |
+            Linux-rust-1.97.1-colab-${{ matrix.label }}-${{ hashFiles('Cargo.lock') }}-
+            Linux-rust-1.97.1-v36-native-${{ hashFiles('Cargo.lock') }}-
+      - name: Build one independent native artifact
+        run: python3 .github/scripts/colab_bundle.py --label '${{ matrix.label }}' --output 'bundle/${{ matrix.label }}'
+      - name: Save compiled artifact checkpoint only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ matrix.label }}
+          path: bundle/${{ matrix.label }}/*
+          if-no-files-found: error
+          retention-days: 14
+
+  cpp:
+    name: Compile Python 3.13 Torch cu126 bridge
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.source_revision }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13'
+      - name: Install matching Python and Torch dependencies
+        run: |
+          python -m pip install --quiet setuptools wheel psutil
+          python -m pip install --quiet torch==2.10.0 --index-url https://download.pytorch.org/whl/cu126
+      - name: Compile actual bridge
+        run: python .github/scripts/colab_bundle.py --label cpp-extension --output bundle/cpp-extension
+      - name: Save compiled artifact checkpoint only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cpp-extension
+          path: bundle/cpp-extension/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish compiled bundle after main CI
+    needs: [rust, cpp]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.source_revision }}
+          persist-credentials: false
+      - name: Require successful main CI for this exact source
+        shell: bash
+        run: |
+          for attempt in $(seq 1 150); do
+            result=$(gh api "repos/$GH_REPO/actions/workflows/ci.yml/runs?head_sha=$SOURCE_REVISION&per_page=10" --jq '.workflow_runs[0] | [.status, .conclusion] | @tsv')
+            echo "Matching main CI: $result"
+            [[ "$result" == $'completed\tsuccess' ]] && exit 0
+            [[ "$result" == completed* ]] && exit 1
+            sleep 60
+          done
+          echo 'Matching main CI did not complete successfully; no Release created.'
+          exit 1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: compiled
+      - name: Assemble only compiled files and compatibility manifest
+        run: python3 .github/scripts/colab_bundle.py --artifacts compiled --output release
+      - name: Publish compiled bundle
+        shell: bash
+        run: |
+          tag="colab-t4-$SOURCE_REVISION"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo 'This source already has a bundle; existing Release is not overwritten.'
+            exit 1
+          fi
+          gh release create "$tag" release/* --target "$SOURCE_REVISION" --prerelease --latest=false \
+            --title "Colab T4 native bundle ${SOURCE_REVISION:0:7}" \
+            --notes 'Linux x86_64 compiled artifacts for CPython 3.13 and PyTorch 2.10.0+cu126.'
