@@ -6,7 +6,7 @@ use ruda_model::module::Initializer;
 use ruda_model::module::Module;
 use ruda_model::module::ModuleDisplay;
 use ruda_model::module::Param;
-use ruda_model::tensor::Tensor;
+use ruda_model::tensor::{DType, FloatDType, Tensor};
 use ruda_model::tensor::TensorPrimitive;
 use ruda_model::tensor::backend::Backend;
 
@@ -64,6 +64,24 @@ impl LayerNormConfig {
 }
 
 impl<B: Backend> LayerNorm<B> {
+    pub fn forward_with_compute_dtype<const D: usize>(
+        &self,
+        input: Tensor<B, D>,
+        dtype: FloatDType,
+    ) -> Tensor<B, D> {
+        let output_dtype = input.dtype();
+        let dtype: DType = dtype.into();
+        let gamma = self.gamma.val().cast(dtype).into_primitive().tensor();
+        let beta = self.beta.as_ref()
+            .map(|b| b.val().cast(dtype).into_primitive().tensor());
+        Tensor::from_primitive(TensorPrimitive::Float(B::layer_norm(
+            input.cast(dtype).into_primitive().tensor(),
+            gamma,
+            beta,
+            self.epsilon,
+        )))
+        .cast(output_dtype)
+    }
     /// Applies the forward pass on the input tensor.
     ///
     /// See the [LayerNorm](LayerNorm) documentation for more information.
@@ -262,6 +280,31 @@ mod tests {
             module.gamma.val().grad(&gradients).unwrap().to_data().assert_approx_eq::<FT>(&TensorData::from(dw), Tolerance::default());
             if let Some(beta) = &module.beta {
                 beta.val().grad(&gradients).unwrap().to_data().assert_approx_eq::<FT>(&TensorData::from(db), Tolerance::default());
+            }
+        }
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn layer_norm_compute_dtype_preserves_storage_and_original_gradients() {
+        let device = Default::default();
+        for dtype in [DType::F16, DType::BF16] {
+            let module = LayerNormConfig::new(3).init::<TestAutodiffBackend>(&device);
+            let input = Tensor::<TestAutodiffBackend, 2>::from_floats([[1., 2., 4.], [3., -1., 2.]], &device)
+                .cast(dtype).require_grad();
+            let reference = module.forward(input.clone().cast(DType::F32)).cast(dtype);
+            let output = module.forward_with_compute_dtype(input.clone(), FloatDType::F32);
+            assert_eq!(output.dtype(), dtype);
+            assert_eq!(output.dims(), input.dims());
+            output.clone().cast(DType::F32).to_data().assert_approx_eq::<f32>(
+                &reference.clone().cast(DType::F32).to_data(), Tolerance::absolute(1e-6));
+            let expected_grads = reference.square().sum().backward();
+            let grads = output.square().sum().backward();
+            input.grad(&grads).unwrap().cast(DType::F32).to_data().assert_approx_eq::<f32>(
+                &input.grad(&expected_grads).unwrap().cast(DType::F32).to_data(), Tolerance::absolute(1e-6));
+            for param in [module.gamma.val(), module.beta.as_ref().unwrap().val()] {
+                param.grad(&grads).unwrap().to_data().assert_approx_eq::<f32>(
+                    &param.grad(&expected_grads).unwrap().to_data(), Tolerance::absolute(1e-6));
             }
         }
     }

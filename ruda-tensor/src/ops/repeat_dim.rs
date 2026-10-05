@@ -5,7 +5,7 @@ use crate::{
 use alloc::vec::Vec;
 use ruda_core::tensor::Slice;
 
-pub(crate) fn repeat_with_slice_assign<B: Backend, K: TensorKind<B> + BasicOps<B>>(
+pub fn repeat_with_slice_assign<B: Backend, K: TensorKind<B> + BasicOps<B>>(
     tensor: K::Primitive,
     dim: usize,
     times: usize,

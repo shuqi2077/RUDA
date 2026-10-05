@@ -18,5 +18,6 @@ pub use int_tensor::*;
 pub use modules::*;
 pub use qtensor::*;
 pub use tensor::*;
-pub use transaction::*;
+pub use repeat_dim::repeat_with_slice_assign;
 pub use sparse::*;
+pub use transaction::*;

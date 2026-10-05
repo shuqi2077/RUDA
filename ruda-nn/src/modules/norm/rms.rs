@@ -1,4 +1,4 @@
-use ruda_model::tensor::DType;
+use ruda_model::tensor::{DType, FloatDType};
 
 
 use ruda_model::config::Config;
@@ -59,6 +59,17 @@ pub struct RmsNorm<B: Backend> {
 }
 
 impl<B: Backend> RmsNorm<B> {
+    pub fn forward_with_compute_dtype<const D: usize>(
+        &self,
+        input: Tensor<B, D>,
+        dtype: FloatDType,
+    ) -> Tensor<B, D> {
+        let output_dtype = input.dtype();
+        let dtype: DType = dtype.into();
+        let input = input.cast(dtype);
+        let rms = (input.clone().square().mean_dim(D - 1) + self.epsilon).sqrt();
+        ((input / rms) * self.gamma.val().cast(dtype).unsqueeze()).cast(output_dtype)
+    }
     /// Applies the forward pass on the input tensor.
     ///
     /// See the [RmsNorm](RmsNorm) documentation for more information.
@@ -118,6 +129,29 @@ mod tests {
         output
             .to_data()
             .assert_approx_eq::<FT>(&expected, Tolerance::default());
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn rms_norm_compute_dtype_preserves_storage_and_original_gradients() {
+        use crate::TestAutodiffBackend as B;
+        let device = Default::default();
+        for dtype in [DType::F16, DType::BF16] {
+            let module = RmsNormConfig::new(3).init::<B>(&device);
+            let input = Tensor::<B, 2>::from_floats([[1., 2., 4.], [3., -1., 2.]], &device)
+                .cast(dtype).require_grad();
+            let reference = module.forward(input.clone().cast(DType::F32)).cast(dtype);
+            let output = module.forward_with_compute_dtype(input.clone(), FloatDType::F32);
+            assert_eq!(output.dtype(), dtype);
+            output.clone().cast(DType::F32).to_data().assert_approx_eq::<f32>(
+                &reference.clone().cast(DType::F32).to_data(), Tolerance::absolute(1e-6));
+            let expected_grads = reference.square().sum().backward();
+            let grads = output.square().sum().backward();
+            input.grad(&grads).unwrap().cast(DType::F32).to_data().assert_approx_eq::<f32>(
+                &input.grad(&expected_grads).unwrap().cast(DType::F32).to_data(), Tolerance::absolute(1e-6));
+            module.gamma.val().grad(&grads).unwrap().to_data().assert_approx_eq::<f32>(
+                &module.gamma.val().grad(&expected_grads).unwrap().to_data(), Tolerance::absolute(1e-6));
+        }
     }
 
     #[test]
