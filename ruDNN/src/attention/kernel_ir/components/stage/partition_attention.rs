@@ -9,7 +9,7 @@ use std::marker::PhantomData;
 
 use crate::attention::kernel_ir::components::stage::partition::init_running_state;
 use crate::attention::kernel_ir::components::stage::{QueryPartition, SoftmaxPartition};
-use crate::attention::kernel_ir::components::tile::MaskConfig;
+use crate::attention::kernel_ir::components::tile::{AttentionTileMatmul, MaskConfig};
 use crate::attention::kernel_ir::components::{
     global::simple::{MaskReader, QueryReader},
     stage::{MaskPartition, OutputPartition, partitioner::AttentionPartitioner},
@@ -256,12 +256,21 @@ impl<
             #[unroll]
             for hd in 0..partition_head_dim as usize {
                 let tile_to_write = registers.get_mut(q, hd, partition_head_dim as usize);
-                let tile_read = reader.get_tile::<P>(
-                    (q as u32, hd as u32).runtime(),
-                    attention_tile_size,
-                    partition_seq_q,
-                    partition_head_dim,
-                );
+                let tile_read = match comptime!(config.tile_attention().score_matmul()) {
+                    AttentionTileMatmul::Cmma(_) => reader.get_staged_tile::<P>(
+                        (q as u32, hd as u32).runtime(),
+                        attention_tile_size,
+                        partition_seq_q,
+                        config.plane_dim(),
+                        config.num_planes(),
+                    ),
+                    AttentionTileMatmul::Register(_) => reader.get_tile::<P>(
+                        (q as u32, hd as u32).runtime(),
+                        attention_tile_size,
+                        partition_seq_q,
+                        partition_head_dim,
+                    ),
+                };
 
                 tile_to_write
                     .tile
@@ -269,6 +278,9 @@ impl<
                         &Tile::new_SharedMemory(SharedTile::wrap::<QGS<AP>>(tile_read)),
                         ruda_kernel::tiling::StageIdent::Lhs,
                     );
+                if comptime!(matches!(config.tile_attention().score_matmul(), AttentionTileMatmul::Cmma(_))) {
+                    sync_ruda();
+                }
             }
         }
     }

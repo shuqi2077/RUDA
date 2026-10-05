@@ -70,4 +70,44 @@ impl<AP: AttentionPrecision> QueryReader<AP> {
     pub fn head_dim(&self) -> u32 {
         self.query.shape().1
     }
+
+    pub fn get_staged_tile<P: AttentionPartitioner>(
+        &self,
+        tile: Coords2d,
+        #[comptime] tile_size: AttentionTileSize,
+        #[comptime] partition_seq_q: u32,
+        #[comptime] plane_dim: u32,
+        #[comptime] num_planes: u32,
+    ) -> StridedTile<QG<AP>, QGS<AP>> {
+        #[comptime]
+        let vector_size = self.gmem_config.vector_size;
+        #[comptime]
+        let vectors_per_row = tile_size.head_dim / vector_size as u32;
+        #[comptime]
+        let vectors_per_tile = tile_size.seq_q * vectors_per_row;
+        let start = UNIT_POS_Y * vectors_per_tile;
+        let mut storage = SharedMemory::<Vector<QG<AP>, QGS<AP>>>::new(
+            (vectors_per_tile * num_planes) as usize,
+        );
+        let mut data = storage.slice_mut(start as usize, (start + vectors_per_tile) as usize);
+        let row = (tile.0 + P::seq_q_index() * partition_seq_q) * tile_size.seq_q;
+        let col = tile.1 * tile_size.head_dim;
+        let mut index = UNIT_POS_X;
+        while index < vectors_per_tile {
+            data[index as usize] = self.query.read_checked((
+                row + index / vectors_per_row,
+                col + (index % vectors_per_row) * vector_size as u32,
+            ));
+            index += plane_dim;
+        }
+        sync_ruda();
+        StridedTile::<QG<AP>, QGS<AP>>::new_strided(
+            data.to_slice(),
+            0,
+            vectors_per_tile,
+            vectors_per_row,
+            Swizzle::none(),
+            self.gmem_config.matrix_layout,
+        )
+    }
 }

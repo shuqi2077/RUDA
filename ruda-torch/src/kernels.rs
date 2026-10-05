@@ -904,6 +904,33 @@ pub fn reduce_sum_storage<F: Float + RudaElement, O: Float + RudaElement>(
     }
 }
 
+#[ruda(launch)]
+pub fn transposed_bias_backward<F: Float + RudaElement>(a: &Tensor<F>, out: &mut Tensor<F>) {
+    let channel = ABSOLUTE_POS as usize;
+    if channel < out.len() {
+        let mut spatial_size = 1usize;
+        for dim in 2..a.rank() { spatial_size *= a.shape(dim); }
+        let mut value = 0.0f32;
+        for batch in 0..a.shape(0) {
+            let base = batch * a.stride(0) + channel * a.stride(1);
+            let mut partial = 0.0f32;
+            for position in 0..spatial_size {
+                let mut remaining = position;
+                let mut source = base;
+                let mut dim = a.rank();
+                while dim > 2 {
+                    dim -= 1;
+                    source += (remaining % a.shape(dim)) * a.stride(dim);
+                    remaining /= a.shape(dim);
+                }
+                partial += f32::cast_from(a[source]);
+            }
+            value += partial;
+        }
+        out[offset(out, channel)] = F::cast_from(value);
+    }
+}
+
 // Fast path for the reduction shape used by transformer statistics:
 // contiguous [..., width] -> [..., 1]. One warp reduces one row in F32.
 #[ruda(launch)]

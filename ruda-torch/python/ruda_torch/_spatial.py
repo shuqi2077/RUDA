@@ -114,7 +114,12 @@ def convolution_backward(grad, a, weight, bias_sizes, stride, padding, dilation,
         value = _run_conv(2, dy if transposed else x, x if transposed else dy, weight.shape, params)
         dw = value.to(weight.dtype).contiguous(memory_format=suggest_memory_format(weight))
     if output_mask[2]:
-        db = sum_dim(dy, (0, *range(2, dy.ndim))).to(a.dtype)
+        if transposed:
+            db = torch.empty((shape[1],), device=a.device, dtype=dy.dtype)
+            _C.spatial(8, dy, dy, db, (0,))
+            db = db.to(a.dtype)
+        else:
+            db = sum_dim(dy, (0, *range(2, dy.ndim))).to(a.dtype)
     return dx, dw, db
 
 

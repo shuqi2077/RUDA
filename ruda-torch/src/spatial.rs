@@ -3,6 +3,8 @@ use ruda_core::tensor::{Shape, spatial::{ConvOptions, ConvTransposeOptions}};
 use ruda_kernel::tensor::{RudaTensor, reshape::reshape};
 use rudnn::convolution::tensor::{conv_forward, conv_data_backward, conv_weight_backward,
     conv_transpose2d, conv_transpose3d};
+use ruda_kernel::dsl::prelude::{RudaCount, RudaDim};
+use super::{client, finish_dispatch, kernels, LAUNCHES, Ordering, bf16, f16};
 
 fn array<const N: usize>(params: &[i64]) -> [usize; N] {
     std::array::from_fn(|i| usize::try_from(params[i]).expect("negative spatial parameter"))
@@ -56,6 +58,24 @@ fn convolution<const N: usize>(op: u32, a: &View, b: &View, out: &View, p: &[i64
 pub(super) fn launch(op: u32, a: &View, b: &View, out: &View, p: &[i64]) {
     assert!(a.dtype <= 2);
     assert_eq!(a.dtype, out.dtype);
+    if op == 8 {
+        assert_eq!(p, &[0]);
+        assert!((3..=5).contains(&a.shape.len()));
+        assert_eq!(out.shape, vec![a.shape[1]]);
+        if out.len == 0 { return; }
+        let client = client();
+        let count = u32::try_from(out.len.div_ceil(128)).expect("bias gradient grid overflow");
+        macro_rules! launch {
+            ($dtype:ty) => { kernels::transposed_bias_backward::launch::<$dtype, CudaRuntime>(
+                &client, RudaCount::Static(count, 1, 1), RudaDim::new_1d(128), a.arg(), out.arg()) };
+        }
+        unsafe { match a.dtype {
+            0 => launch!(f32), 1 => launch!(f16), 2 => launch!(bf16), _ => unreachable!(),
+        } }
+        finish_dispatch(&client);
+        LAUNCHES.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
     if op == 6 || op == 7 {
         assert_eq!(b.dtype, 4);
         assert_eq!(p.len(), 10);
