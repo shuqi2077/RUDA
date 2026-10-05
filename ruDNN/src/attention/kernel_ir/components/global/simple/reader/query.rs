@@ -79,12 +79,9 @@ impl<AP: AttentionPrecision> QueryReader<AP> {
         #[comptime] plane_dim: u32,
         #[comptime] num_planes: u32,
     ) -> StridedTile<QG<AP>, QGS<AP>> {
-        #[comptime]
-        let vector_size = self.gmem_config.vector_size;
-        #[comptime]
-        let vectors_per_row = tile_size.head_dim / vector_size as u32;
-        #[comptime]
-        let vectors_per_tile = tile_size.seq_q * vectors_per_row;
+        let vector_size = comptime!(self.gmem_config.vector_size as u32);
+        let vectors_per_row = comptime!(tile_size.head_dim / vector_size);
+        let vectors_per_tile = comptime!(tile_size.seq_q * vectors_per_row);
         let start = UNIT_POS_Y * vectors_per_tile;
         let smem_size = comptime!((vectors_per_tile * num_planes) as usize);
         let mut storage = SharedMemory::<Vector<QG<AP>, QGS<AP>>>::new(smem_size);
@@ -95,7 +92,7 @@ impl<AP: AttentionPrecision> QueryReader<AP> {
         while index < vectors_per_tile {
             data[index as usize] = self.query.read_checked((
                 row + index / vectors_per_row,
-                col + (index % vectors_per_row) * vector_size as u32,
+                col + (index % vectors_per_row) * vector_size,
             ));
             index += plane_dim;
         }
