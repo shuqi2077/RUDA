@@ -157,6 +157,171 @@ fn integer_collectives_preserve_wide_values_shapes_and_backend_reductions() {
     }
 }
 
+#[test]
+fn sharded_tensor_collectives_retain_rank_order_dtypes_views_and_input_values() {
+    use ruccl::rank::ReductionOperation;
+    use ruda_model::tensor::{FloatDType, IntDType, Shape, TensorCreationOptions};
+    for dtype in [FloatDType::F32, FloatDType::F16, FloatDType::BF16] {
+        world(move |rank, communicator| {
+            let device: <Host as ruda_model::tensor::backend::BackendTypes>::Device =
+                Default::default();
+            let input = Tensor::<Host, 2>::from_data([[1., 2.], [3., 4.]], &device)
+                .cast(dtype)
+                .add_scalar(rank as f32)
+                .swap_dims(0, 1);
+            let gathered = Tensor::<Host, 2>::from_primitive(TensorPrimitive::Float(
+                communicator
+                    .all_gather_float(input.clone().into_primitive().tensor())
+                    .unwrap(),
+            ));
+            assert_eq!(gathered.dims(), [4, 2]);
+            assert_eq!(gathered.dtype(), dtype.into());
+            assert_eq!(
+                gathered
+                    .clone()
+                    .cast(FloatDType::F32)
+                    .into_data()
+                    .to_vec::<f32>()
+                    .unwrap(),
+                vec![1., 3., 2., 4., 2., 4., 3., 5.]
+            );
+            for operation in [ReduceOperation::Sum, ReduceOperation::Mean] {
+                let output = Tensor::<Host, 2>::from_primitive(TensorPrimitive::Float(
+                    communicator
+                        .reduce_scatter_float(gathered.clone().into_primitive().tensor(), operation)
+                        .unwrap(),
+                ));
+                assert_eq!(output.dims(), [2, 2]);
+                assert_eq!(output.dtype(), dtype.into());
+                let scale = if operation == ReduceOperation::Sum {
+                    2.
+                } else {
+                    1.
+                };
+                let expected = [1., 3., 2., 4.].map(|value| (value + rank as f32) * scale);
+                assert_eq!(
+                    output
+                        .cast(FloatDType::F32)
+                        .into_data()
+                        .to_vec::<f32>()
+                        .unwrap(),
+                    expected.to_vec()
+                );
+            }
+            assert_eq!(
+                input
+                    .cast(FloatDType::F32)
+                    .into_data()
+                    .to_vec::<f32>()
+                    .unwrap(),
+                [1., 3., 2., 4.].map(|value| value + rank as f32).to_vec()
+            );
+            assert!(
+                communicator
+                    .reduce_scatter_float(
+                        Tensor::<Host, 2>::zeros([3, 2], &device)
+                            .cast(dtype)
+                            .into_primitive()
+                            .tensor(),
+                        ReduceOperation::Sum
+                    )
+                    .is_err()
+            );
+            let empty = Tensor::<Host, 2>::empty([2, 0], &device).cast(dtype);
+            let gathered = communicator
+                .all_gather_float(empty.into_primitive().tensor())
+                .unwrap();
+            assert_eq!(gathered.shape(), Shape::new([4, 0]));
+            assert_eq!(
+                communicator
+                    .reduce_scatter_float(gathered, ReduceOperation::Sum)
+                    .unwrap()
+                    .shape(),
+                Shape::new([2, 0])
+            );
+        });
+    }
+    for dtype in [IntDType::I32, IntDType::I64] {
+        world(move |rank, communicator| {
+            let device: <Host as ruda_model::tensor::backend::BackendTypes>::Device =
+                Default::default();
+            let large = if dtype == IntDType::I64 {
+                9_007_199_254_740_993_i64
+            } else {
+                16_777_217_i64
+            };
+            let input = Tensor::<Host, 2, Int>::from_data(
+                TensorData::new(vec![large + rank as i64, -3, 7, 2], [2, 2]),
+                TensorCreationOptions::<Host>::new(device.clone()).with_dtype(dtype.into()),
+            )
+            .swap_dims(0, 1);
+            let gathered = Tensor::<Host, 2, Int>::from_primitive(
+                communicator
+                    .all_gather_int(input.clone().into_primitive())
+                    .unwrap(),
+            );
+            assert_eq!(gathered.dims(), [4, 2]);
+            assert_eq!(gathered.dtype(), dtype.into());
+            assert_eq!(
+                gathered
+                    .clone()
+                    .cast(IntDType::I64)
+                    .into_data()
+                    .to_vec::<i64>()
+                    .unwrap(),
+                vec![large, 7, -3, 2, large + 1, 7, -3, 2]
+            );
+            for operation in [
+                ReductionOperation::Sum,
+                ReductionOperation::Minimum,
+                ReductionOperation::Maximum,
+                ReductionOperation::BitAnd,
+                ReductionOperation::BitOr,
+                ReductionOperation::BitXor,
+            ] {
+                let output = Tensor::<Host, 2, Int>::from_primitive(
+                    communicator
+                        .reduce_scatter_int(gathered.clone().into_primitive(), operation)
+                        .unwrap(),
+                );
+                let expected = [large + rank as i64, 7, -3, 2].map(|value| match operation {
+                    ReductionOperation::Sum => value * 2,
+                    ReductionOperation::BitXor => 0,
+                    _ => value,
+                });
+                assert_eq!(output.dims(), [2, 2]);
+                assert_eq!(output.dtype(), dtype.into());
+                assert_eq!(
+                    output
+                        .cast(IntDType::I64)
+                        .into_data()
+                        .to_vec::<i64>()
+                        .unwrap(),
+                    expected.to_vec()
+                );
+            }
+            assert_eq!(
+                input
+                    .cast(IntDType::I64)
+                    .into_data()
+                    .to_vec::<i64>()
+                    .unwrap(),
+                vec![large + rank as i64, 7, -3, 2]
+            );
+            let empty = Tensor::<Host, 2, Int>::empty([2, 0], &device).cast(dtype);
+            let gathered = communicator.all_gather_int(empty.into_primitive()).unwrap();
+            assert_eq!(gathered.shape(), Shape::new([4, 0]));
+            assert_eq!(
+                communicator
+                    .reduce_scatter_int(gathered, ReductionOperation::Sum)
+                    .unwrap()
+                    .shape(),
+                Shape::new([2, 0])
+            );
+        });
+    }
+}
+
 fn model(rank: u32) -> Linear<B> {
     let device = Default::default();
     Linear {

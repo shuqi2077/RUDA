@@ -30,6 +30,7 @@ pub(crate) const INLINE_DIMS: usize = 5;
 pub mod metadata;
 pub use metadata::Metadata;
 pub mod shape;
+pub mod collective;
 mod strides;
 
 /// Reexport to avoid annoying rust-analyzer bug where it imports the module instead of the macro
