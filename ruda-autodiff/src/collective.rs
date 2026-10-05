@@ -1,4 +1,4 @@
-//! Differentiable leading-axis collectives over an explicit rank communicator.
+//! Differentiable tensor collectives over an explicit rank communicator.
 use crate::{
     Autodiff,
     checkpoint::{base::Checkpointer, strategy::CheckpointStrategy},
@@ -6,7 +6,9 @@ use crate::{
     ops::{Backward, Ops, OpsKind, unary},
 };
 use core::marker::PhantomData;
-use ruda_tensor::{Backend, api::Tensor, collective::TensorCollective, primitive::TensorPrimitive};
+use ruda_tensor::{
+    AsIndex, Backend, api::Tensor, collective::TensorCollective, primitive::TensorPrimitive,
+};
 
 #[derive(Debug)]
 struct Collective<C>(PhantomData<C>);
@@ -94,4 +96,52 @@ where
 {
     let world_size = communicator.world_size();
     reduce_scatter_sum(tensor, communicator).map(|tensor| tensor.div_scalar(world_size))
+}
+
+/// Gather shards along the selected axis, retaining the original tensor axis order.
+/// Uses the original tensor swap-dims operations and shared collective backward.
+pub fn all_gather_dim<B, S, C, const D: usize>(
+    tensor: Tensor<Autodiff<B, S>, D>,
+    communicator: C,
+    dim: impl AsIndex,
+) -> Result<Tensor<Autodiff<B, S>, D>, C::Error>
+where
+    B: Backend,
+    S: CheckpointStrategy,
+    C: TensorCollective<B>,
+{
+    let dim = dim.expect_dim_index(D);
+    all_gather(tensor.swap_dims(0, dim), communicator).map(|tensor| tensor.swap_dims(0, dim))
+}
+
+/// Sum and scatter equal shards along the selected axis, with shared gather backward.
+pub fn reduce_scatter_sum_dim<B, S, C, const D: usize>(
+    tensor: Tensor<Autodiff<B, S>, D>,
+    communicator: C,
+    dim: impl AsIndex,
+) -> Result<Tensor<Autodiff<B, S>, D>, C::Error>
+where
+    B: Backend,
+    S: CheckpointStrategy,
+    C: TensorCollective<B>,
+{
+    let dim = dim.expect_dim_index(D);
+    reduce_scatter_sum(tensor.swap_dims(0, dim), communicator)
+        .map(|tensor| tensor.swap_dims(0, dim))
+}
+
+/// Average and scatter equal shards along the selected axis, including gradient scaling.
+pub fn reduce_scatter_mean_dim<B, S, C, const D: usize>(
+    tensor: Tensor<Autodiff<B, S>, D>,
+    communicator: C,
+    dim: impl AsIndex,
+) -> Result<Tensor<Autodiff<B, S>, D>, C::Error>
+where
+    B: Backend,
+    S: CheckpointStrategy,
+    C: TensorCollective<B>,
+{
+    let dim = dim.expect_dim_index(D);
+    reduce_scatter_mean(tensor.swap_dims(0, dim), communicator)
+        .map(|tensor| tensor.swap_dims(0, dim))
 }

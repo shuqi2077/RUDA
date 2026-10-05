@@ -273,6 +273,135 @@ fn sharded_collectives_backward_exchanges_rank_gradients_and_preserves_leaf_view
 }
 
 #[test]
+fn sharded_collectives_support_hidden_axes_and_restore_strided_leaf_gradients() {
+    use ruda_autodiff::collective::{
+        all_gather_dim, reduce_scatter_mean_dim, reduce_scatter_sum_dim,
+    };
+    use ruda_model::tensor::FloatDType;
+    for dtype in [FloatDType::F32, FloatDType::F16, FloatDType::BF16] {
+        world(move |rank, communicator| {
+            let device = Default::default();
+            let input = Tensor::<B, 3>::from_data(
+                TensorData::new(
+                    (1..=8).map(|n| n as f32 + 8. * rank as f32).collect(),
+                    [2, 2, 2],
+                ),
+                &device,
+            )
+            .cast(dtype)
+            .swap_dims(0, 2)
+            .detach()
+            .require_grad();
+            let output = all_gather_dim(input.clone(), communicator.clone(), -1i64).unwrap();
+            assert_eq!(output.dims(), [2, 2, 4]);
+            assert_eq!(output.dtype(), dtype.into());
+            assert_eq!(
+                output
+                    .clone()
+                    .cast(FloatDType::F32)
+                    .into_data()
+                    .to_vec::<f32>()
+                    .unwrap(),
+                vec![
+                    1., 5., 9., 13., 3., 7., 11., 15., 2., 6., 10., 14., 4., 8., 12., 16.
+                ]
+            );
+            let weights = Tensor::<B, 3>::from_data(
+                TensorData::new(
+                    (1..=16).map(|n| n as f32 * (rank + 1) as f32).collect(),
+                    [2, 2, 4],
+                ),
+                &device,
+            )
+            .cast(dtype);
+            let gradients = (output * weights).sum().backward();
+            let gradient = input.grad(&gradients).unwrap();
+            assert_eq!(gradient.dtype(), dtype.into());
+            assert_eq!(gradient.dims(), [2, 2, 2]);
+            let expected = if rank == 0 {
+                [1., 2., 5., 6., 9., 10., 13., 14.]
+            } else {
+                [3., 4., 7., 8., 11., 12., 15., 16.]
+            };
+            assert_eq!(
+                gradient
+                    .cast(FloatDType::F32)
+                    .into_data()
+                    .to_vec::<f32>()
+                    .unwrap(),
+                expected.map(|value| value * 3.).to_vec()
+            );
+            for mean in [false, true] {
+                let input = Tensor::<B, 3>::from_data(
+                    TensorData::new(
+                        (1..=16).map(|n| n as f32 * (rank + 1) as f32).collect(),
+                        [4, 2, 2],
+                    ),
+                    &device,
+                )
+                .cast(dtype)
+                .swap_dims(0, 2)
+                .detach()
+                .require_grad();
+                let output = if mean {
+                    reduce_scatter_mean_dim(input.clone(), communicator.clone(), 2).unwrap()
+                } else {
+                    reduce_scatter_sum_dim(input.clone(), communicator.clone(), 2).unwrap()
+                };
+                let scale = if mean { 0.5 } else { 1. };
+                assert_eq!(output.dtype(), dtype.into());
+                assert_eq!(output.dims(), [2, 2, 2]);
+                let expected = if rank == 0 {
+                    [1., 5., 3., 7., 2., 6., 4., 8.]
+                } else {
+                    [9., 13., 11., 15., 10., 14., 12., 16.]
+                };
+                assert_eq!(
+                    output
+                        .clone()
+                        .cast(FloatDType::F32)
+                        .into_data()
+                        .to_vec::<f32>()
+                        .unwrap(),
+                    expected.map(|value| value * 3. * scale).to_vec()
+                );
+                let weights = Tensor::<B, 3>::from_data(
+                    TensorData::new(
+                        (1..=8).map(|n| n as f32 * (rank + 1) as f32).collect(),
+                        [2, 2, 2],
+                    ),
+                    &device,
+                )
+                .cast(dtype);
+                let gradients = (output * weights).sum().backward();
+                let gradient = input.grad(&gradients).unwrap();
+                assert_eq!(gradient.dims(), [2, 2, 4]);
+                assert_eq!(gradient.dtype(), dtype.into());
+                assert_eq!(
+                    gradient
+                        .cast(FloatDType::F32)
+                        .into_data()
+                        .to_vec::<f32>()
+                        .unwrap(),
+                    [
+                        1., 2., 2., 4., 3., 4., 6., 8., 5., 6., 10., 12., 7., 8., 14., 16.
+                    ]
+                    .map(|value| value * scale)
+                    .to_vec()
+                );
+            }
+            let empty = Tensor::<B, 2>::empty([0, 2], &device)
+                .cast(dtype)
+                .require_grad();
+            let output = all_gather_dim(empty.clone(), communicator, 1).unwrap();
+            assert_eq!(output.dims(), [0, 4]);
+            let gradients = output.sum().backward();
+            assert_eq!(empty.grad(&gradients).unwrap().dims(), [0, 2]);
+        });
+    }
+}
+
+#[test]
 fn sharded_tensor_collectives_retain_rank_order_dtypes_views_and_input_values() {
     use ruccl::rank::ReductionOperation;
     use ruda_model::tensor::{FloatDType, IntDType, Shape, TensorCreationOptions};
