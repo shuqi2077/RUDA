@@ -10,13 +10,13 @@ use ruda_model::{
     module::{AutodiffModule, ModuleMapper, ModuleVisitor, Param, ParamId},
     tensor::{
         Bool, BoolDType, DType, Int, Tensor, TensorMetadata, TensorPrimitive,
-        backend::AutodiffBackend,
+        backend::{AutodiffBackend, Backend},
         container::TensorContainer,
         ops::{BoolTensorOps, FloatTensorOps, IntTensorOps},
     },
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use std::{collections::HashMap, error::Error, fmt};
+use std::{collections::HashMap, error::Error, fmt, marker::PhantomData};
 
 /// An explicit policy for trainable parameters unused by a local backward pass.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,6 +55,96 @@ impl Error for DataParallelError {
 impl From<TensorDeviceError> for DataParallelError {
     fn from(e: TensorDeviceError) -> Self {
         Self::Collective(e)
+    }
+}
+
+/// Transport for replicated parameters and gradients on an explicitly owned device.
+/// Metadata must be returned in rank order. Tensor operations must preserve shape,
+/// dtype and the input value, and finish before returning their output.
+pub trait DataParallelCommunicator<B: Backend> {
+    /// This communicator's rank.
+    fn rank(&self) -> u32;
+    /// Number of participating ranks.
+    fn world_size(&self) -> u32;
+    /// Device owned by this rank.
+    fn device(&self) -> &B::Device;
+    /// Gather variable-length training metadata, in rank order.
+    fn all_gather_bytes(&self, payload: Vec<u8>) -> Result<Vec<Vec<u8>>, DataParallelError>;
+    /// Broadcast a floating tensor without changing its dtype or shape.
+    fn broadcast_float(
+        &self,
+        value: B::FloatTensorPrimitive,
+        root: u32,
+    ) -> Result<B::FloatTensorPrimitive, TensorDeviceError>;
+    /// Broadcast an I32/I64 parameter buffer without floating conversion.
+    fn broadcast_int(
+        &self,
+        value: B::IntTensorPrimitive,
+        root: u32,
+    ) -> Result<B::IntTensorPrimitive, TensorDeviceError>;
+    /// Reduce floating gradients using the caller's operation.
+    fn all_reduce_float(
+        &self,
+        value: B::FloatTensorPrimitive,
+        operation: ReduceOperation,
+    ) -> Result<B::FloatTensorPrimitive, TensorDeviceError>;
+}
+
+impl<B: Backend> DataParallelCommunicator<B> for RankCommunicator<TensorDevice<B>> {
+    fn rank(&self) -> u32 {
+        RankCommunicator::rank(self)
+    }
+    fn world_size(&self) -> u32 {
+        RankCommunicator::world_size(self)
+    }
+    fn device(&self) -> &B::Device {
+        self.execution().device()
+    }
+    fn all_gather_bytes(&self, mut payload: Vec<u8>) -> Result<Vec<Vec<u8>>, DataParallelError> {
+        let host = self.host();
+        let (lengths, _) = host
+            .all_gather_host_staged(
+                ElementType::U64,
+                1,
+                (payload.len() as u64).to_le_bytes().to_vec(),
+            )
+            .map_err(TensorDeviceError::from)?;
+        let lengths = lengths
+            .chunks_exact(8)
+            .map(|bytes| u64::from_le_bytes(bytes.try_into().unwrap()))
+            .map(|size| usize::try_from(size).map_err(|_| contract("metadata size overflow")))
+            .collect::<Result<Vec<_>, _>>()?;
+        let stride = lengths.iter().copied().max().unwrap_or(1).max(1);
+        payload.resize(stride, 0);
+        let (payload, _) = host
+            .all_gather_host_staged(ElementType::U8, stride, payload)
+            .map_err(TensorDeviceError::from)?;
+        Ok(payload
+            .chunks_exact(stride)
+            .zip(lengths)
+            .map(|(bytes, size)| bytes[..size].to_vec())
+            .collect())
+    }
+    fn broadcast_float(
+        &self,
+        value: B::FloatTensorPrimitive,
+        root: u32,
+    ) -> Result<B::FloatTensorPrimitive, TensorDeviceError> {
+        RankCommunicator::broadcast_float(self, value, root)
+    }
+    fn broadcast_int(
+        &self,
+        value: B::IntTensorPrimitive,
+        root: u32,
+    ) -> Result<B::IntTensorPrimitive, TensorDeviceError> {
+        RankCommunicator::broadcast_int(self, value, root)
+    }
+    fn all_reduce_float(
+        &self,
+        value: B::FloatTensorPrimitive,
+        operation: ReduceOperation,
+    ) -> Result<B::FloatTensorPrimitive, TensorDeviceError> {
+        RankCommunicator::all_reduce_float(self, value, operation)
     }
 }
 
@@ -161,16 +251,21 @@ impl<B: AutodiffBackend> ModuleVisitor<B> for Schema {
 
 /// A rank-local replicated training session, independent of model family.
 ///
-/// Uses ruCCL's existing host-staged tensor transport, not NCCL or model sharding.
+/// Defaults to ruCCL's host-staged tensor transport. A device-native communicator
+/// can reuse the same replica, gradient-weighting and optimizer contracts.
 /// Local parameter IDs may differ between ranks; module paths and alias topology
 /// determine collective order. Keep each rank's optimizer and continuation state
 /// with its own model record when checkpointing.
 #[derive(Debug)]
-pub struct DataParallel<B: AutodiffBackend> {
-    communicator: RankCommunicator<TensorDevice<B::InnerBackend>>,
+pub struct DataParallel<
+    B: AutodiffBackend,
+    C: DataParallelCommunicator<B::InnerBackend> = RankCommunicator<TensorDevice<B::InnerBackend>>,
+> {
+    communicator: C,
     contract: Vec<ParameterContract>,
     ids: Vec<ParamId>,
     synchronize_buffers: bool,
+    backend: PhantomData<B>,
 }
 
 /// Globally token-weighted gradients for one accumulation window.
@@ -198,14 +293,14 @@ struct Window {
     error: Option<String>,
 }
 
-impl<B: AutodiffBackend> DataParallel<B> {
+impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> DataParallel<B, C> {
     /// Validate replica structure, then broadcast floating parameters from `root`.
     ///
     /// Call before constructing an optimizer or after restoring matching rank
     /// checkpoints. The returned model retains local IDs, tied parameter aliases,
     /// frozen flags and record mappers. All ranks must enter the same operation.
     pub fn initialize<M: AutodiffModule<B>>(
-        communicator: RankCommunicator<TensorDevice<B::InnerBackend>>,
+        communicator: C,
         model: M,
         root: u32,
     ) -> Result<(Self, M), DataParallelError> {
@@ -217,7 +312,7 @@ impl<B: AutodiffBackend> DataParallel<B> {
     /// Buffers retain local IDs and aliases and never enter gradient reduction or optimization.
     /// This synchronizes buffers once, not automatically before each forward pass.
     pub fn initialize_with_buffers<M: AutodiffModule<B>>(
-        communicator: RankCommunicator<TensorDevice<B::InnerBackend>>,
+        communicator: C,
         model: M,
         root: u32,
     ) -> Result<(Self, M), DataParallelError> {
@@ -225,7 +320,7 @@ impl<B: AutodiffBackend> DataParallel<B> {
     }
 
     fn initialize_inner<M: AutodiffModule<B>>(
-        communicator: RankCommunicator<TensorDevice<B::InnerBackend>>,
+        communicator: C,
         model: M,
         root: u32,
         synchronize_buffers: bool,
@@ -239,11 +334,11 @@ impl<B: AutodiffBackend> DataParallel<B> {
         if model
             .devices()
             .iter()
-            .any(|device| device != communicator.execution().device())
+            .any(|device| device != communicator.device())
         {
             error = Some("each replica must reside on its communicator's device".into());
         }
-        let requests = gather(
+        let requests = gather::<B::InnerBackend, C, _>(
             &communicator,
             &Initialization {
                 contract: schema.contract.clone(),
@@ -265,7 +360,7 @@ impl<B: AutodiffBackend> DataParallel<B> {
                 ));
             }
         }
-        let mut mapper = Broadcast::<B> {
+        let mut mapper = Broadcast::<B, C> {
             communicator: &communicator,
             root,
             tensors: TensorContainer::new(),
@@ -283,6 +378,7 @@ impl<B: AutodiffBackend> DataParallel<B> {
                 contract: schema.contract,
                 ids: schema.ids,
                 synchronize_buffers,
+                backend: PhantomData,
             },
             model,
         ))
@@ -346,7 +442,7 @@ impl<B: AutodiffBackend> DataParallel<B> {
             ids: Vec::new(),
             present: Vec::new(),
             error: schema.device_error,
-            device: self.communicator.execution().device(),
+            device: self.communicator.device(),
             fp32_gradients,
         };
         model.visit(&mut check);
@@ -360,7 +456,7 @@ impl<B: AutodiffBackend> DataParallel<B> {
         if model
             .devices()
             .iter()
-            .any(|device| device != self.communicator.execution().device())
+            .any(|device| device != self.communicator.device())
         {
             check.error = Some("replica moved off its communicator's device".into());
         }
@@ -370,7 +466,7 @@ impl<B: AutodiffBackend> DataParallel<B> {
         {
             check.error = Some("a trainable parameter is missing its local gradient".into());
         }
-        let windows = gather(
+        let windows = gather::<B::InnerBackend, C, _>(
             &self.communicator,
             &Window {
                 weight: local_weight,
@@ -404,7 +500,7 @@ impl<B: AutodiffBackend> DataParallel<B> {
         if global_weight == 0 {
             return Err(contract("cannot normalize a zero-weight global window"));
         }
-        let mut reducer = Reduce::<B> {
+        let mut reducer = Reduce::<B, C> {
             communicator: &self.communicator,
             input: gradients,
             output: GradientsParams::new(),
@@ -415,6 +511,7 @@ impl<B: AutodiffBackend> DataParallel<B> {
             global_weight,
             fp32_gradients,
             error: None,
+            backend: PhantomData,
         };
         model.visit(&mut reducer);
         if let Some(error) = reducer.error {
@@ -431,47 +528,29 @@ fn contract(message: impl Into<String>) -> DataParallelError {
     DataParallelError::Contract(message.into())
 }
 
-fn gather<B: ruda_model::tensor::backend::Backend, T: Serialize + DeserializeOwned>(
-    communicator: &RankCommunicator<TensorDevice<B>>,
+fn gather<B: Backend, C: DataParallelCommunicator<B>, T: Serialize + DeserializeOwned>(
+    communicator: &C,
     value: &T,
 ) -> Result<Vec<T>, DataParallelError> {
-    let mut payload = serde_json::to_vec(value).map_err(|e| contract(e.to_string()))?;
-    let host = communicator.host();
-    let (lengths, _) = host
-        .all_gather_host_staged(
-            ElementType::U64,
-            1,
-            (payload.len() as u64).to_le_bytes().to_vec(),
-        )
-        .map_err(TensorDeviceError::from)?;
-    let lengths = lengths
-        .chunks_exact(8)
-        .map(|bytes| u64::from_le_bytes(bytes.try_into().unwrap()))
-        .map(|size| usize::try_from(size).map_err(|_| contract("metadata size overflow")))
-        .collect::<Result<Vec<_>, _>>()?;
-    let stride = lengths.iter().copied().max().unwrap_or(1).max(1);
-    payload.resize(stride, 0);
-    let (payload, _) = host
-        .all_gather_host_staged(ElementType::U8, stride, payload)
-        .map_err(TensorDeviceError::from)?;
-    payload
-        .chunks_exact(stride)
-        .zip(lengths)
-        .map(|(bytes, size)| {
-            serde_json::from_slice(&bytes[..size]).map_err(|e| contract(e.to_string()))
-        })
+    let payload = serde_json::to_vec(value).map_err(|e| contract(e.to_string()))?;
+    communicator
+        .all_gather_bytes(payload)?
+        .into_iter()
+        .map(|bytes| serde_json::from_slice(&bytes).map_err(|e| contract(e.to_string())))
         .collect()
 }
 
-struct Broadcast<'a, B: AutodiffBackend> {
-    communicator: &'a RankCommunicator<TensorDevice<B::InnerBackend>>,
+struct Broadcast<'a, B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> {
+    communicator: &'a C,
     root: u32,
     tensors: TensorContainer<(ParamId, bool)>,
     integers: HashMap<ParamId, B::IntTensorPrimitive>,
     booleans: HashMap<ParamId, B::BoolTensorPrimitive>,
     error: Option<TensorDeviceError>,
 }
-impl<B: AutodiffBackend> ModuleMapper<B> for Broadcast<'_, B> {
+impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> ModuleMapper<B>
+    for Broadcast<'_, B, C>
+{
     fn map_int<const D: usize>(
         &mut self,
         param: Param<Tensor<B, D, Int>>,
@@ -610,8 +689,8 @@ impl<B: AutodiffBackend> ModuleVisitor<B> for Check<'_, B> {
     }
 }
 
-struct Reduce<'a, B: AutodiffBackend> {
-    communicator: &'a RankCommunicator<TensorDevice<B::InnerBackend>>,
+struct Reduce<'a, B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> {
+    communicator: &'a C,
     input: GradientsParams,
     output: GradientsParams,
     visited: Vec<ParamId>,
@@ -621,8 +700,11 @@ struct Reduce<'a, B: AutodiffBackend> {
     global_weight: u64,
     fp32_gradients: bool,
     error: Option<TensorDeviceError>,
+    backend: PhantomData<B>,
 }
-impl<B: AutodiffBackend> ModuleVisitor<B> for Reduce<'_, B> {
+impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> ModuleVisitor<B>
+    for Reduce<'_, B, C>
+{
     fn visit_float<const D: usize>(&mut self, param: &Param<Tensor<B, D>>) {
         let value = param.val();
         if !value.is_require_grad() || self.visited.contains(&param.id) || self.error.is_some() {
