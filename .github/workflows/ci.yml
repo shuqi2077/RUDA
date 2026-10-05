@@ -100,6 +100,7 @@ jobs:
               cargo test --locked -p ruda-nn --lib rms_norm
               cargo test --locked -p ruda-nn --lib embedding
               cargo test --locked -p ruda-nn --lib activation::gelu
+              cargo test --locked -p ruda-nn --lib rotary_encoding
               cargo test --locked -p ruda-autodiff --lib ops::qtensor::tests::transaction_readback
           - name: ruLLM host regression tests
             key: rullm-host

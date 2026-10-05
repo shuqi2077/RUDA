@@ -2,7 +2,7 @@
 use alloc::vec;
 use ruda_model::config::Config;
 use ruda_model::module::{Content, DisplaySettings, Module, ModuleDisplay};
-use ruda_model::tensor::Int;
+use ruda_model::tensor::{FloatDType, Int};
 use ruda_model::tensor::Tensor;
 use ruda_model::tensor::backend::Backend;
 use core::ops::Range;
@@ -148,6 +148,24 @@ impl<B: Backend> RotaryEncoding<B> {
         self.apply(x, 0)
     }
 
+    pub fn forward_with_compute_dtype<const D: usize>(
+        &self,
+        x: Tensor<B, D>,
+        dtype: FloatDType,
+    ) -> Tensor<B, D> {
+        self.apply_with_compute_dtype(x, 0, dtype)
+    }
+
+    pub fn apply_with_compute_dtype<const D: usize>(
+        &self,
+        x: Tensor<B, D>,
+        start: usize,
+        dtype: FloatDType,
+    ) -> Tensor<B, D> {
+        let storage_dtype = x.dtype();
+        self.apply(x.cast(dtype.into()), start).cast(storage_dtype)
+    }
+
     /// Applies rotary positional encoding to a tensor of dimensions (..., seq_len, d_model)
     ///
     /// # Arguments:
@@ -169,6 +187,7 @@ impl<B: Backend> RotaryEncoding<B> {
 
         let device = x.device();
         let input_shape = x.shape();
+        let dtype = x.dtype();
 
         // Extract the sequence length and embedding dimension, other dimensions are kept generic
         // to allow both 3D and 4D tensors i.e. batch_size or (batch_size, num_heads)
@@ -178,7 +197,8 @@ impl<B: Backend> RotaryEncoding<B> {
         // Create a dummy tensor with signed ones based on the 2D rotation matrix
         // [[cos, -sin], [sin, cos]]
         let sign_tensor =
-            Tensor::<B, 2>::from_floats([[1.0, 0.0, 0.0, 1.0], [0.0, -1.0, 1.0, 0.0]], &device);
+            Tensor::<B, 2>::from_floats([[1.0, 0.0, 0.0, 1.0], [0.0, -1.0, 1.0, 0.0]], &device)
+                .cast(dtype);
 
         // Rotate input using the frequency tensor. Slice the frequencies till input sequence length
         let out: Tensor<B, 4> = x
@@ -189,6 +209,7 @@ impl<B: Backend> RotaryEncoding<B> {
                 .freq_complex
                 .clone()
                 .slice([start..start + seq_len])
+                .cast(dtype)
                 .unsqueeze();
 
         // Sum the real and imaginary components to get output tensor and reshape to original shape
@@ -272,6 +293,37 @@ mod tests {
     use crate::TestBackend;
     use ruda_model::tensor::{Tolerance, ops::FloatElem};
     type FT = FloatElem<TestBackend>;
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn rotary_encoding_half_storage_and_fp32_compute_preserve_shifted_gradients() {
+        use crate::TestAutodiffBackend as B;
+        use ruda_model::tensor::DType;
+        let device = Default::default();
+        let mut module = RotaryEncodingConfig::new(10, 4).init::<B>(&device);
+        module.shift(2);
+        for dtype in [DType::F16, DType::BF16] {
+            let input = Tensor::<B, 3>::from_floats(
+                [[[1., 2., 3., 4.], [5., 6., 7., 8.]]], &device,
+            ).cast(dtype).require_grad();
+            let native = module.apply(input.clone(), 1);
+            assert_eq!(native.dtype(), dtype);
+            assert_eq!(native.dims(), input.dims());
+            let reference = module.apply(input.clone().cast(DType::F32), 1).cast(dtype);
+            native.cast(DType::F32).to_data().assert_approx_eq::<f32>(
+                &reference.clone().cast(DType::F32).to_data(), Tolerance::absolute(0.125));
+            let output = module.apply_with_compute_dtype(input.clone(), 1, FloatDType::F32);
+            assert_eq!(output.dtype(), dtype);
+            output.clone().cast(DType::F32).to_data().assert_approx_eq::<f32>(
+                &reference.clone().cast(DType::F32).to_data(), Tolerance::absolute(0.));
+            let expected_grads = reference.square().sum().backward();
+            let grads = output.square().sum().backward();
+            input.grad(&grads).unwrap().cast(DType::F32).to_data().assert_approx_eq::<f32>(
+                &input.grad(&expected_grads).unwrap().cast(DType::F32).to_data(), Tolerance::absolute(0.));
+            assert_eq!(module.freq_complex.dtype(), DType::F32);
+            assert_eq!(module.theta.dtype(), DType::F32);
+        }
+    }
 
     #[test]
     fn test_rotary_encoding_forward() {
