@@ -35,7 +35,7 @@ extended = ["heavy"]
 full = ["extended"]
 
 [dependencies]
-ruda-driver-cann = { version = "0.1.18", path = "../ruda-driver-cann", optional = true }
+ruda-driver-cann = { version = "0.1.23", path = "../ruda-driver-cann", optional = true }
 rublas = { version = "0.1.18", path = "../ruBLAS", default-features = false, optional = true }
 ruda-kernel = { version = "0.1.7", path = "../ruda-kernel", default-features = false, features = ["kernel-ir"], optional = true }
 bytemuck = { version = "1.16.1", optional = true }
