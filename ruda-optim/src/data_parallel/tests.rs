@@ -355,6 +355,7 @@ fn explicit_buffer_initialization_preserves_aliases_and_excludes_buffers_from_up
         let module = buffered_replica(rank);
         let counter_id = module.counter.id;
         let flags_id = module.flags.id;
+        let flags_dtype = module.flags.val().dtype();
         let (ddp, replica) =
             DataParallel::<B>::initialize_with_buffers(communicator, module, 1).unwrap();
         assert_eq!(replica.counter.id, counter_id);
@@ -385,6 +386,7 @@ fn explicit_buffer_initialization_preserves_aliases_and_excludes_buffers_from_up
         }
         for param in [updated.flags, updated.flags_alias] {
             assert_eq!(param.id, flags_id);
+            assert_eq!(param.val().dtype(), flags_dtype);
             assert_eq!(
                 param.val().into_data().to_vec::<bool>().unwrap(),
                 vec![true, false]

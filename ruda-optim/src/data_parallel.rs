@@ -10,7 +10,9 @@ use ruda_model::{
     module::{AutodiffModule, ModuleMapper, ModuleVisitor, Param, ParamId},
     tensor::{
         Bool, BoolDType, DType, Int, Tensor, TensorMetadata, TensorPrimitive,
-        backend::AutodiffBackend, container::TensorContainer, ops::FloatTensorOps,
+        backend::AutodiffBackend,
+        container::TensorContainer,
+        ops::{BoolTensorOps, FloatTensorOps, IntTensorOps},
     },
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -520,10 +522,11 @@ impl<B: AutodiffBackend> ModuleMapper<B> for Broadcast<'_, B> {
                 .broadcast_int(integers.into_primitive(), self.root)
             {
                 Ok(value) => {
+                    let zeros = B::InnerBackend::int_equal_elem(value, 0.into(), dtype);
                     let tensor = Tensor::<B, D, Bool>::from_inner(
-                        Tensor::<B::InnerBackend, D, Int>::from_primitive(value)
-                            .bool()
-                            .cast(dtype),
+                        Tensor::<B::InnerBackend, D, Bool>::from_primitive(
+                            B::InnerBackend::bool_not(zeros),
+                        ),
                     );
                     self.booleans
                         .insert(param.id, tensor.clone().into_primitive());
