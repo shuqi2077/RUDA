@@ -9,8 +9,8 @@ use ruccl::{
 use ruda_model::{
     module::{AutodiffModule, ModuleMapper, ModuleVisitor, Param, ParamId},
     tensor::{
-        Bool, DType, Int, Tensor, TensorMetadata, TensorPrimitive, backend::AutodiffBackend,
-        container::TensorContainer, ops::FloatTensorOps,
+        Bool, BoolDType, DType, Int, Tensor, TensorMetadata, TensorPrimitive,
+        backend::AutodiffBackend, container::TensorContainer, ops::FloatTensorOps,
     },
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -72,19 +72,46 @@ struct Schema {
     path: Vec<String>,
     aliases: HashMap<ParamId, usize>,
     storage_aliases: HashMap<(ParamId, bool), usize>,
+    synchronize_buffers: bool,
     device_error: Option<String>,
 }
 
 impl Schema {
-    fn new() -> Self {
+    fn new(synchronize_buffers: bool) -> Self {
         Self {
             contract: Vec::new(),
             ids: Vec::new(),
             path: Vec::new(),
             aliases: HashMap::new(),
             storage_aliases: HashMap::new(),
+            synchronize_buffers,
             device_error: None,
         }
+    }
+
+    fn register(&mut self, id: ParamId, shape: Vec<usize>, dtype: DType, trainable: bool) {
+        let position = self.contract.len();
+        let alias = *self.aliases.entry(id).or_insert(position);
+        let storage_alias = *self
+            .storage_aliases
+            .entry((id, trainable))
+            .or_insert(position);
+        let dtype = format!("{dtype:?}");
+        if storage_alias != position {
+            let previous = &self.contract[storage_alias];
+            if previous.shape != shape || previous.dtype != dtype {
+                self.device_error =
+                    Some("one parameter ID has inconsistent tied tensor metadata".into());
+            }
+        }
+        self.ids.push(id);
+        self.contract.push(ParameterContract {
+            path: self.path.clone(),
+            shape,
+            dtype,
+            trainable,
+            alias,
+        });
     }
 }
 impl<B: AutodiffBackend> ModuleVisitor<B> for Schema {
@@ -100,36 +127,33 @@ impl<B: AutodiffBackend> ModuleVisitor<B> for Schema {
             self.device_error =
                 Some("data parallelism supports F32, F16 and BF16 parameters".into());
         }
-        let position = self.contract.len();
-        let alias = *self.aliases.entry(param.id).or_insert(position);
-        let storage_alias = *self
-            .storage_aliases
-            .entry((param.id, tensor.is_require_grad()))
-            .or_insert(position);
-        if storage_alias != position {
-            let previous = &self.contract[storage_alias];
-            if previous.shape != tensor.dims().to_vec()
-                || previous.dtype != format!("{:?}", tensor.dtype())
-            {
-                self.device_error =
-                    Some("one parameter ID has inconsistent tied tensor metadata".into());
-            }
+        self.register(
+            param.id,
+            tensor.dims().to_vec(),
+            tensor.dtype(),
+            tensor.is_require_grad(),
+        );
+    }
+    fn visit_int<const D: usize>(&mut self, param: &Param<Tensor<B, D, Int>>) {
+        if !self.synchronize_buffers {
+            self.device_error =
+                Some("integer parameter buffers require explicit synchronization".into());
+            return;
         }
-        self.ids.push(param.id);
-        self.contract.push(ParameterContract {
-            path: self.path.clone(),
-            shape: tensor.dims().to_vec(),
-            dtype: format!("{:?}", tensor.dtype()),
-            trainable: tensor.is_require_grad(),
-            alias,
-        });
+        let tensor = param.val();
+        if !matches!(tensor.dtype(), DType::I32 | DType::I64) {
+            self.device_error = Some("data parallel buffers support I32 and I64 integers".into());
+        }
+        self.register(param.id, tensor.dims().to_vec(), tensor.dtype(), false);
     }
-    fn visit_int<const D: usize>(&mut self, _: &Param<Tensor<B, D, Int>>) {
-        self.device_error =
-            Some("integer parameter buffers require explicit synchronization".into());
-    }
-    fn visit_bool<const D: usize>(&mut self, _: &Param<Tensor<B, D, Bool>>) {
-        self.device_error = Some("Bool parameter buffers require explicit synchronization".into());
+    fn visit_bool<const D: usize>(&mut self, param: &Param<Tensor<B, D, Bool>>) {
+        if !self.synchronize_buffers {
+            self.device_error =
+                Some("Bool parameter buffers require explicit synchronization".into());
+            return;
+        }
+        let tensor = param.val();
+        self.register(param.id, tensor.dims().to_vec(), tensor.dtype(), false);
     }
 }
 
@@ -144,6 +168,7 @@ pub struct DataParallel<B: AutodiffBackend> {
     communicator: RankCommunicator<TensorDevice<B::InnerBackend>>,
     contract: Vec<ParameterContract>,
     ids: Vec<ParamId>,
+    synchronize_buffers: bool,
 }
 
 /// Globally token-weighted gradients for one accumulation window.
@@ -159,6 +184,7 @@ pub struct DataParallelGradients {
 struct Initialization {
     contract: Vec<ParameterContract>,
     root: u32,
+    synchronize_buffers: bool,
     error: Option<String>,
 }
 #[derive(Serialize, Deserialize)]
@@ -181,7 +207,28 @@ impl<B: AutodiffBackend> DataParallel<B> {
         model: M,
         root: u32,
     ) -> Result<(Self, M), DataParallelError> {
-        let mut schema = Schema::new();
+        Self::initialize_inner(communicator, model, root, false)
+    }
+
+    /// Initialize a replica and explicitly broadcast integer and Bool parameter buffers too.
+    /// I32/I64 buffers retain their width; Bool buffers are transported as integer 0/1.
+    /// Buffers retain local IDs and aliases and never enter gradient reduction or optimization.
+    /// This synchronizes buffers once, not automatically before each forward pass.
+    pub fn initialize_with_buffers<M: AutodiffModule<B>>(
+        communicator: RankCommunicator<TensorDevice<B::InnerBackend>>,
+        model: M,
+        root: u32,
+    ) -> Result<(Self, M), DataParallelError> {
+        Self::initialize_inner(communicator, model, root, true)
+    }
+
+    fn initialize_inner<M: AutodiffModule<B>>(
+        communicator: RankCommunicator<TensorDevice<B::InnerBackend>>,
+        model: M,
+        root: u32,
+        synchronize_buffers: bool,
+    ) -> Result<(Self, M), DataParallelError> {
+        let mut schema = Schema::new(synchronize_buffers);
         model.visit(&mut schema);
         let mut error = schema.device_error;
         if root >= communicator.world_size() {
@@ -199,6 +246,7 @@ impl<B: AutodiffBackend> DataParallel<B> {
             &Initialization {
                 contract: schema.contract.clone(),
                 root,
+                synchronize_buffers,
                 error,
             },
         )?;
@@ -206,7 +254,10 @@ impl<B: AutodiffBackend> DataParallel<B> {
             if let Some(error) = &request.error {
                 return Err(contract(format!("rank {rank}: {error}")));
             }
-            if request.root != root || request.contract != schema.contract {
+            if request.root != root
+                || request.contract != schema.contract
+                || request.synchronize_buffers != synchronize_buffers
+            {
                 return Err(contract(
                     "replica paths, shapes, dtypes, frozen flags or tied aliases differ",
                 ));
@@ -216,6 +267,8 @@ impl<B: AutodiffBackend> DataParallel<B> {
             communicator: &communicator,
             root,
             tensors: TensorContainer::new(),
+            integers: HashMap::new(),
+            booleans: HashMap::new(),
             error: None,
         };
         let model = model.map(&mut mapper);
@@ -227,6 +280,7 @@ impl<B: AutodiffBackend> DataParallel<B> {
                 communicator,
                 contract: schema.contract,
                 ids: schema.ids,
+                synchronize_buffers,
             },
             model,
         ))
@@ -283,7 +337,7 @@ impl<B: AutodiffBackend> DataParallel<B> {
         policy: MissingGradientPolicy,
         fp32_gradients: bool,
     ) -> Result<DataParallelGradients, DataParallelError> {
-        let mut schema = Schema::new();
+        let mut schema = Schema::new(self.synchronize_buffers);
         model.visit(&mut schema);
         let mut check = Check::<B> {
             gradients: &gradients,
@@ -411,9 +465,80 @@ struct Broadcast<'a, B: AutodiffBackend> {
     communicator: &'a RankCommunicator<TensorDevice<B::InnerBackend>>,
     root: u32,
     tensors: TensorContainer<(ParamId, bool)>,
+    integers: HashMap<ParamId, B::IntTensorPrimitive>,
+    booleans: HashMap<ParamId, B::BoolTensorPrimitive>,
     error: Option<TensorDeviceError>,
 }
 impl<B: AutodiffBackend> ModuleMapper<B> for Broadcast<'_, B> {
+    fn map_int<const D: usize>(
+        &mut self,
+        param: Param<Tensor<B, D, Int>>,
+    ) -> Param<Tensor<B, D, Int>> {
+        if self.error.is_some() {
+            return param;
+        }
+        let tensor = if let Some(value) = self.integers.get(&param.id) {
+            Tensor::<B, D, Int>::from_primitive(value.clone())
+        } else {
+            match self
+                .communicator
+                .broadcast_int(param.val().inner().into_primitive(), self.root)
+            {
+                Ok(value) => {
+                    let tensor = Tensor::<B, D, Int>::from_inner(
+                        Tensor::<B::InnerBackend, D, Int>::from_primitive(value),
+                    );
+                    self.integers
+                        .insert(param.id, tensor.clone().into_primitive());
+                    tensor
+                }
+                Err(error) => {
+                    self.error = Some(error);
+                    return param;
+                }
+            }
+        };
+        let (id, _, mapper) = param.consume();
+        Param::from_mapped_value(id, tensor, mapper)
+    }
+
+    fn map_bool<const D: usize>(
+        &mut self,
+        param: Param<Tensor<B, D, Bool>>,
+    ) -> Param<Tensor<B, D, Bool>> {
+        if self.error.is_some() {
+            return param;
+        }
+        let tensor = if let Some(value) = self.booleans.get(&param.id) {
+            Tensor::<B, D, Bool>::from_primitive(value.clone())
+        } else {
+            let value = param.val().inner();
+            let dtype: BoolDType = value.dtype().into();
+            let integers = value.int().cast(ruda_model::tensor::IntDType::I32);
+            match self
+                .communicator
+                .broadcast_int(integers.into_primitive(), self.root)
+            {
+                Ok(value) => {
+                    let tensor = Tensor::<B, D, Bool>::from_inner(
+                        Tensor::<B::InnerBackend, D, Int>::from_primitive(value)
+                            .bool()
+                            .cast(dtype),
+                    );
+                    self.booleans
+                        .insert(param.id, tensor.clone().into_primitive());
+                    tensor
+                }
+                Err(error) => {
+                    self.error = Some(error);
+                    return param;
+                }
+            }
+        };
+        let (id, _, mapper) = param.consume();
+        Param::from_mapped_value(id, tensor, mapper)
+    }
+
     fn map_float<const D: usize>(&mut self, param: Param<Tensor<B, D>>) -> Param<Tensor<B, D>> {
         if self.error.is_some() {
             return param;

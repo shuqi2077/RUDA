@@ -316,6 +316,98 @@ struct Tied<B: ruda_model::tensor::backend::Backend> {
 }
 
 #[derive(Module, Debug)]
+struct BufferedReplica<B: ruda_model::tensor::backend::Backend> {
+    weight: Param<Tensor<B, 1>>,
+    counter: Param<Tensor<B, 1, Int>>,
+    counter_alias: Param<Tensor<B, 1, Int>>,
+    flags: Param<Tensor<B, 1, Bool>>,
+    flags_alias: Param<Tensor<B, 1, Bool>>,
+}
+
+fn buffered_replica(rank: u32) -> BufferedReplica<B> {
+    let device = Default::default();
+    let counter = Param::initialized(
+        ParamId::new(),
+        Tensor::<B, 1, Int>::from_data(
+            TensorData::from([9_007_199_254_740_993_i64 + rank as i64]),
+            &device,
+        )
+        .cast(ruda_model::tensor::IntDType::I64),
+    );
+    let flags = Param::initialized(
+        ParamId::new(),
+        Tensor::<B, 1, Bool>::from_data([rank != 0, rank == 0], &device),
+    );
+    BufferedReplica {
+        weight: Param::from_tensor(Tensor::<B, 1>::full([2], rank + 1, &device)),
+        counter_alias: counter.clone(),
+        counter,
+        flags_alias: flags.clone(),
+        flags,
+    }
+}
+
+#[test]
+fn explicit_buffer_initialization_preserves_aliases_and_excludes_buffers_from_updates() {
+    world(|rank, communicator| {
+        let module = buffered_replica(rank);
+        let counter_id = module.counter.id;
+        let flags_id = module.flags.id;
+        let (ddp, replica) =
+            DataParallel::<B>::initialize_with_buffers(communicator, module, 1).unwrap();
+        assert_eq!(replica.counter.id, counter_id);
+        assert_eq!(replica.counter_alias.id, counter_id);
+        assert_eq!(replica.flags.id, flags_id);
+        assert_eq!(replica.flags_alias.id, flags_id);
+        let gradients =
+            GradientsParams::from_grads(replica.weight.val().sum().backward(), &replica);
+        let reduced = ddp
+            .reduce_fp32(&replica, gradients, 1, MissingGradientPolicy::Error)
+            .unwrap();
+        assert_eq!(reduced.gradients.len(), 1);
+        let updated = SgdConfig::new()
+            .init()
+            .step(0.5, replica, reduced.gradients);
+        updated
+            .weight
+            .val()
+            .to_data()
+            .assert_eq(&TensorData::from([1.5, 1.5]), false);
+        for param in [updated.counter, updated.counter_alias] {
+            assert_eq!(param.id, counter_id);
+            assert_eq!(param.val().dtype(), DType::I64);
+            assert_eq!(
+                param.val().into_data().to_vec::<i64>().unwrap(),
+                vec![9_007_199_254_740_994]
+            );
+        }
+        for param in [updated.flags, updated.flags_alias] {
+            assert_eq!(param.id, flags_id);
+            assert_eq!(
+                param.val().into_data().to_vec::<bool>().unwrap(),
+                vec![true, false]
+            );
+        }
+    });
+}
+
+#[test]
+fn implicit_buffer_initialization_and_rank_mode_mismatch_are_rejected_collectively() {
+    world(|rank, communicator| {
+        assert!(DataParallel::<B>::initialize(communicator, buffered_replica(rank), 0).is_err());
+    });
+    world(|rank, communicator| {
+        let replica = model(rank);
+        let result = if rank == 0 {
+            DataParallel::<B>::initialize(communicator, replica, 0)
+        } else {
+            DataParallel::<B>::initialize_with_buffers(communicator, replica, 0)
+        };
+        assert!(result.is_err());
+    });
+}
+
+#[derive(Module, Debug)]
 struct FrozenAliasReplica<B: ruda_model::tensor::backend::Backend> {
     frozen_alias: Param<Tensor<B, 1>>,
     first: Param<Tensor<B, 1>>,
