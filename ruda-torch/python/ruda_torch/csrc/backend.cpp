@@ -2,6 +2,7 @@
 #include <ATen/Context.h>
 #include <ATen/autocast_mode.h>
 #include <ATen/MemoryOverlap.h>
+#include <ATen/native/Resize.h>
 #include <ATen/detail/PrivateUse1HooksInterface.h>
 #include <ATen/ops/as_strided_native.h>
 #include <ATen/ops/view_native.h>
@@ -591,6 +592,21 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     at::assert_no_internal_overlap(out);
     at::assert_no_overlap(out, source);
     at::assert_no_overlap(out, index);
+  });
+  m.def("prepare_index_output", [](at::Tensor out, const std::vector<int64_t>& shape) {
+    validate(out.device());
+    if (at::native::resize_output_check(out, shape)) {
+      auto* impl = out.unsafeGetTensorImpl();
+      const auto bytes = at::detail::computeStorageNbytesContiguous(
+          shape, out.element_size(), out.storage_offset());
+      auto storage = out.storage();
+      if (bytes > storage.nbytes()) {
+        TORCH_CHECK(storage.resizable(), "index output storage is not resizable");
+        storage.set_data_ptr_noswap(allocator.allocate(bytes));
+        storage.set_nbytes(bytes);
+      }
+      impl->set_sizes_contiguous(shape);
+    }
   });
   m.def("fill", [](at::Tensor out, pybind11::object value) {
     static torch::PythonArgParser parser({"fill(Scalar value)"});

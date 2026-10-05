@@ -50,6 +50,60 @@ def index_select(a, dim, index):
     return result
 
 
+def index_tensor(a, indices, *, out=None):
+    if len(indices) > a.ndim:
+        raise IndexError("too many indices for tensor")
+    indices = list(indices) + [None] * (a.ndim - len(indices))
+    axes = [axis for axis, index in enumerate(indices) if index is not None]
+    if not axes:
+        result = clone(a)
+    else:
+        for axis in axes:
+            _indices(a, indices[axis])
+        broadcast_shape = torch.broadcast_shapes(*(indices[axis].shape for axis in axes))
+        contiguous = axes == list(range(axes[0], axes[-1] + 1))
+        remaining = [axis for axis in range(a.ndim) if axis not in axes]
+        before = [axis for axis in remaining if axis < axes[0]] if contiguous else []
+        after = [axis for axis in remaining if axis not in before]
+        shape = [a.shape[axis] for axis in before] + list(broadcast_shape) + [a.shape[axis] for axis in after]
+        index_view = [1] * len(before) + list(broadcast_shape) + [1] * len(after)
+        linear = fill_(torch.empty(shape, device=a.device, dtype=torch.int64), 0)
+        valid = fill_(torch.empty(shape, device=a.device, dtype=torch.bool), True)
+        stride = 1
+        strides = [0] * a.ndim
+        for axis in reversed(range(a.ndim)):
+            strides[axis] = stride
+            stride *= a.shape[axis]
+        if linear.numel():
+            for axis in axes:
+                raw = indices[axis].to(torch.int64).expand(broadcast_shape).reshape(index_view)
+                normalized = torch.where(raw < 0, raw + a.shape[axis], raw)
+                valid = valid & (normalized >= 0) & (normalized < a.shape[axis])
+                linear = linear + normalized * strides[axis]
+            for position, axis in enumerate(before + after):
+                output_axis = position if position < len(before) else position + len(broadcast_shape)
+                view = [1] * len(shape)
+                view[output_axis] = a.shape[axis]
+                coordinates = fill_(torch.empty((a.shape[axis],), device=a.device, dtype=torch.int64), 1).cumsum(0) - 1
+                linear = linear + coordinates.reshape(view) * strides[axis]
+            linear = torch.where(valid, linear, -1)
+            result = index_select(a.reshape(-1), 0, linear.reshape(-1)).reshape(shape)
+        else:
+            result = _out(shape, a)
+    if out is not None:
+        if out.device != a.device or out.dtype != a.dtype:
+            raise RuntimeError("index output must match the input device and dtype")
+        for index in indices:
+            if index is not None:
+                _C.check_index_output(out, a, index)
+        _C.check_index_output(out, a, a)
+        if out.shape != result.shape:
+            _C.prepare_index_output(out, list(result.shape))
+        out.copy_(result)
+        return out
+    return result
+
+
 def _scatter(a, dim, index, source, *, inplace=False, assign=False):
     axis = _dimension(dim, a.ndim)
     _indices(a, index, empty_dtype=True)
@@ -134,6 +188,8 @@ def embedding_dense_backward(grad, indices, num_weights, padding_idx, scale_grad
 for name, function in {
     "gather": gather,
     "index_select": index_select,
+    "index.Tensor": index_tensor,
+    "index.Tensor_out": index_tensor,
     "scatter_add": scatter_add,
     "scatter_add_": lambda a, dim, index, source: scatter_add(a, dim, index, source, inplace=True),
     "scatter.src": scatter,

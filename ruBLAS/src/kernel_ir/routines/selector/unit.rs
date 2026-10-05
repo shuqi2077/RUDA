@@ -75,7 +75,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
     let tile_size = u32::max(min_tile_size, 4);
     let dtypes = MatmulElems::from_globals(global_elems);
 
-    let blueprint = match kind {
+    let mut blueprint = match kind {
         MatmulKind::General => general_unit_selector(
             problem,
             plane_dim,
@@ -158,6 +158,47 @@ pub fn infer_blueprint_unit<R: Runtime>(
         ),
     };
 
+    let max_bytes = client.properties().hardware.max_shared_memory_size;
+    let shared_bytes = |scheme: &TilingScheme| {
+        let m = scheme.elements_per_stage_along_m() as usize;
+        let n = scheme.elements_per_stage_along_n() as usize;
+        let k = scheme.elements_per_stage_along_k() as usize;
+        (m * k * dtypes.lhs_stage.size() + k * n * dtypes.rhs_stage.size())
+            * if double_buffering { 2 } else { 1 }
+            + 2 * m * n * dtypes.acc_stage.size()
+    };
+    while shared_bytes(&blueprint.tiling_scheme) > max_bytes {
+        let scheme = blueprint.tiling_scheme;
+        let candidate = [0, 1, 2].into_iter().filter_map(|axis| {
+            let mut smaller = scheme;
+            let value = match axis {
+                0 => &mut smaller.partition_size.m,
+                1 => &mut smaller.partition_size.n,
+                _ => &mut smaller.partition_size.k,
+            };
+            if *value <= 1 { return None; }
+            *value /= 2;
+            Some(smaller)
+        }).min_by_key(shared_bytes);
+        let Some(smaller) = candidate else { break; };
+        blueprint.tiling_scheme = smaller;
+    }
+    let scheme = blueprint.tiling_scheme;
+    blueprint.check_m_bounds = !(problem.m as u32).is_multiple_of(scheme.elements_per_stage_along_m());
+    blueprint.check_n_bounds = !(problem.n as u32).is_multiple_of(scheme.elements_per_stage_along_n());
+    blueprint.check_k_bounds = !(problem.k as u32).is_multiple_of(scheme.elements_per_stage_along_k());
+    if options.swizzle {
+        let lhs_dim = match problem.lhs_layout {
+            MatrixLayout::RowMajor => scheme.elements_per_stage_along_k(),
+            MatrixLayout::ColMajor => scheme.elements_per_stage_along_m(),
+        };
+        let rhs_dim = match problem.rhs_layout {
+            MatrixLayout::RowMajor => scheme.elements_per_stage_along_n(),
+            MatrixLayout::ColMajor => scheme.elements_per_stage_along_k(),
+        };
+        blueprint.swizzle_modes.lhs = select_swizzle(lhs_dim as usize, dtypes.lhs_stage, vector_sizes.lhs);
+        blueprint.swizzle_modes.rhs = select_swizzle(rhs_dim as usize, dtypes.rhs_stage, vector_sizes.rhs);
+    }
     (blueprint, dtypes)
 }
 

@@ -223,6 +223,8 @@ impl Emitter {
             Arithmetic::Sinh(op) => return self.hyperbolic(out, op.input, false),
             Arithmetic::Cosh(op) => return self.hyperbolic(out, op.input, true),
             Arithmetic::Powi(op) => return self.integer_power(out, op.clone()),
+            Arithmetic::Powf(op) => return self.floating_power(out, op.clone()),
+            Arithmetic::Erf(op) => return self.error_function(out, op.input),
             Arithmetic::Recip(op) => return self.reciprocal(out, op.input),
             Arithmetic::InverseSqrt(op) => return self.emit_square_root(out, op.input, true),
             Arithmetic::Min(op) => return self.minmax(out, op.clone(), "min"),

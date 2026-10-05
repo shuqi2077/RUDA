@@ -184,7 +184,8 @@ pub fn matmul_autotune_with_precision<R: Runtime>(
         // First entry should always work, since it is considered the fallback.
         set = set.with(
             Tunable::new("matmul_naive", |(lhs, rhs, out)| {
-                launch_matmul_naive::<R>(&Strategy::Naive, lhs, rhs, out)
+                launch_matmul_naive::<R>(&Strategy::Naive, lhs, rhs, out.clone())
+                    .map(|()| out)
                     .map_err(|err| std::format!("{err:?}"))
             })
             .group(&unit, |key| {
@@ -219,7 +220,8 @@ pub fn matmul_autotune_with_precision<R: Runtime>(
         ] {
             set = set.with(
                 Tunable::new(&strategy.to_string(), move |(lhs, rhs, out)| {
-                    launch_matmul_with_precision::<R>(&strategy, lhs, rhs, out, f32_math)
+                    launch_matmul_with_precision::<R>(&strategy, lhs, rhs, out.clone(), f32_math)
+                        .map(|()| out)
                         .map_err(|err| std::format!("{err:?}"))
                 })
                 .group(&gemv, move |key| match double_buf {
@@ -250,7 +252,8 @@ pub fn matmul_autotune_with_precision<R: Runtime>(
             ] {
                 set = set.with(
                     Tunable::new(&strategy.to_string(), move |(lhs, rhs, out)| {
-                        launch_matmul_with_precision::<R>(&strategy, lhs, rhs, out, f32_math)
+                        launch_matmul_with_precision::<R>(&strategy, lhs, rhs, out.clone(), f32_math)
+                            .map(|()| out)
                             .map_err(|err| format!("{err:?}"))
                     })
                     .group(&unit, move |key| match double_buf {
@@ -446,7 +449,8 @@ pub fn matmul_autotune_with_precision<R: Runtime>(
                 true => double_buffering_priority(key, PRIORITY_MAX, PRIORITY_HIGH),
             };
             let mut tunable = Tunable::new(&strategy.to_string(), move |(lhs, rhs, out)| {
-                launch_matmul_with_precision::<R>(&strategy, lhs, rhs, out, f32_math).map_err(|err| format!("{err:?}"))
+                launch_matmul_with_precision::<R>(&strategy, lhs, rhs, out.clone(), f32_math)
+                    .map(|()| out).map_err(|err| format!("{err:?}"))
             });
 
             // tile group
@@ -469,9 +473,7 @@ pub fn matmul_autotune_with_precision<R: Runtime>(
         &client,
         tunables,
         (lhs, rhs, output.clone()),
-    );
-
-    output
+    )
 }
 
 fn create_key<R: Runtime>(

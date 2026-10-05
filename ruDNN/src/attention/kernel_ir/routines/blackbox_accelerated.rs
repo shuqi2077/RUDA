@@ -169,8 +169,8 @@ fn blueprint<R: Runtime>(
                 val_dim: values_matmul.n,
             };
 
-            let partition_head_dim = problem.dims.head_dim as u32 / tile_size.head_dim;
-            let partition_val_dim = problem.dims.val_dim as u32 / tile_size.val_dim;
+            let partition_head_dim = (problem.dims.head_dim as u32).div_ceil(tile_size.head_dim);
+            let partition_val_dim = (problem.dims.val_dim as u32).div_ceil(tile_size.val_dim);
 
             let tiling_scheme = AttentionTilingScheme {
                 tile_size,
@@ -205,22 +205,23 @@ fn validate(
     problem: &AttentionProblem,
     blueprint: AttentionBlueprint,
 ) -> Result<AttentionBlueprint, AttentionSetupError> {
-    if !(problem.dims.seq_q as u32)
-        .is_multiple_of(blueprint.tiling_scheme.elements_in_stage_seq_q())
-    {
+    if !(problem.dims.seq_q as u32).is_multiple_of(blueprint.tiling_scheme.elements_in_stage_seq_q())
+        && !blueprint.check_bounds.seq_q {
         return Err(AttentionSetupError::InvalidConfig(Box::new(
             "Stage seq_q must divide problem seq_q".to_string(),
         )));
     }
 
-    if !(problem.dims.head_dim as u32).is_multiple_of(blueprint.tiling_scheme.tile_size.head_dim) {
+    if !(problem.dims.head_dim as u32).is_multiple_of(blueprint.tiling_scheme.tile_size.head_dim)
+        && !blueprint.check_bounds.head_dim {
         return Err(AttentionSetupError::InvalidConfig(Box::new(
             "Tile size head dim must divide problem head dim".to_string(),
         )));
     }
 
-    if blueprint.tiling_scheme.partition_size.head_dim * blueprint.tiling_scheme.tile_size.head_dim
-        != problem.dims.head_dim as u32
+    let head_span = blueprint.tiling_scheme.elements_in_partition_head_dim();
+    if head_span < problem.dims.head_dim as u32
+        || head_span != problem.dims.head_dim as u32 && !blueprint.check_bounds.head_dim
     {
         return Err(AttentionSetupError::InvalidConfig(Box::new(format!(
             "Tiling scheme's total head dim ({}) does not match problem's head dim ({})",

@@ -31,6 +31,7 @@ mod atanh;
 mod inverse_hyperbolic;
 mod hyperbolic;
 mod power;
+mod erf;
 mod vector;
 mod half;
 mod fp8;
@@ -99,7 +100,7 @@ impl fmt::Display for PtxKernel {
 pub struct PtxCompiler;
 
 impl PtxCompiler {
-    pub const CACHE_VERSION: u32 = 40;
+    pub const CACHE_VERSION: u32 = 41;
 }
 
 impl Compiler for PtxCompiler {

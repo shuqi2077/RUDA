@@ -27,14 +27,8 @@ impl LoadingValidation for SyncFullStridedLoading {
     ) -> Result<(), InvalidConfigError> {
         let vector_size = config.gmem_config.vector_size;
 
-        let num_stage_vectors = config.smem_config.elements_per_stage() / vector_size as u32;
-        let total_units = config.loading_units_count();
-
-        if !num_stage_vectors.is_multiple_of(total_units) {
-            return Err(Box::new(format!(
-                "Too many data will be loaded, resulting in out of bounds.
-        Try setting vector size and number of planes so that total unit count {total_units:?} divides number of vectors in stage.",
-            )));
+        if !config.smem_config.elements_per_stage().is_multiple_of(vector_size as u32) {
+            return Err(Box::new("Stage size must be divisible by the load vector size"));
         }
 
         validate_swizzle_atom_size(config.smem_config)?;
@@ -81,7 +75,7 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullStridedLoading {
         let vector_size = NG::value().comptime() as u32;
         let num_stage_vectors = config.smem_config.elements_per_stage() / vector_size;
         let unit_count = config.loading_planes_count() * config.plane_dim;
-        let num_tasks_per_unit = num_stage_vectors / unit_count;
+        let num_tasks_per_unit = num_stage_vectors.div_ceil(unit_count);
 
         let unit_position_base = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
             .load_index(config.input_load_flow)
@@ -121,6 +115,9 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
         #[comptime] config: GlobalReaderConfig,
     ) {
         let unit_position = this.unit_position_base + task_id * this.unit_count;
+        if unit_position >= config.smem_config.elements_per_stage() / NG::value() as u32 {
+            return;
+        }
 
         let layout = FullStageLayout::new(config.smem_config);
         let view = global_iter.view().view(layout);

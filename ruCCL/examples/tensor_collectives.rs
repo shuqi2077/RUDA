@@ -4,6 +4,7 @@ use ruccl::{
     tensor_device::{TensorDevice, TensorDeviceError},
 };
 use ruda_tensor::{Backend, TensorData, read_sync};
+use ruda_tensor::ops::FloatTensorOps;
 
 #[cfg(feature = "cuda")]
 type Compute = ruda_tensor_device::cuda::Cuda<f32>;

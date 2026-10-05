@@ -9,6 +9,7 @@ mod shared;
 mod half_precision;
 mod bitwise;
 mod native_memory;
+mod training_math;
 
 fn options() -> PtxCompilationOptions {
     PtxCompilationOptions {

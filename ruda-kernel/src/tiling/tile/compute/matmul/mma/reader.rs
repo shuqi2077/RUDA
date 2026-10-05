@@ -233,9 +233,9 @@ pub(crate) fn ldmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
         MatrixIdent::Accumulator => (tile_size.m(), tile_size.n()),
     };
     // tile is treated as row-major, if col-major the tile shape is just inverted
-    let total_cols = match expected_layout {
-        MatrixLayout::RowMajor => total_cols,
-        MatrixLayout::ColMajor => total_rows,
+    let total_rows = match expected_layout {
+        MatrixLayout::RowMajor => total_rows,
+        MatrixLayout::ColMajor => total_cols,
     };
 
     //  Indices are wrapped for < 4 registers.
@@ -243,11 +243,11 @@ pub(crate) fn ldmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     let sub_lane = lane % height;
     let nth_matrix = lane / height % num_regs;
 
-    let tiles_col = total_cols / height;
+    let tiles_row = total_rows / height;
 
     // Tiles are arranged in column-major fashion
-    let row_offs = (nth_matrix % tiles_col) * 8;
-    let col_offs = (nth_matrix / tiles_col) * width;
+    let row_offs = (nth_matrix % tiles_row) * height;
+    let col_offs = (nth_matrix / tiles_row) * width;
 
     let (row, col) = match layout {
         MatrixLayout::RowMajor => (row_offs + sub_lane, col_offs),

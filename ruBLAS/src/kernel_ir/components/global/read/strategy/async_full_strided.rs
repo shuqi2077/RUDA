@@ -46,14 +46,8 @@ impl LoadingValidation for AsyncFullStridedLoading {
             return Err(Box::new("Stage size isn't divisible by copy vector size"));
         }
 
-        let num_stage_vectors = config.smem_config.elements_per_stage() / vector_size;
-        let total_units = config.loading_units_count();
-
-        if !num_stage_vectors.is_multiple_of(total_units) {
-            return Err(Box::new(format!(
-                "Too many data will be loaded, resulting in out of bounds.
-        Try setting vector size and number of planes so that total unit count {total_units:?} divides number of vectors in stage.",
-            )));
+        if !config.smem_config.elements_per_stage().is_multiple_of(vector_size) {
+            return Err(Box::new("Stage size must be divisible by the async copy vector size"));
         }
 
         validate_async_barrier(device_props)?;
@@ -108,7 +102,7 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullStridedLoading {
         let vector_size = ASYNC_COPY_WIDTH / type_size as u32;
         let num_stage_vectors = config.smem_config.elements_per_stage() / vector_size;
         let unit_count = config.loading_planes_count() * config.plane_dim;
-        let num_tasks_per_unit = num_stage_vectors / unit_count;
+        let num_tasks_per_unit = num_stage_vectors.div_ceil(unit_count);
 
         let unit_position_base = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
             .load_index(config.input_load_flow)
@@ -152,6 +146,9 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
     ) {
         let unit_position = this.unit_position_base + task_id * this.unit_count;
         let unit_position_abs = unit_position * this.copy_vector_size;
+        if unit_position_abs >= config.smem_config.elements_per_stage() {
+            return;
+        }
 
         let layout = FullStageLayout::new(config.smem_config);
         let view = global_iter.view();
