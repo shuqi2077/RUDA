@@ -4,6 +4,8 @@ pub mod conv;
 /// Module with linear operations.
 pub mod linear;
 
+pub mod embedding;
+
 /// Module with attention operations.
 pub mod attention;
 

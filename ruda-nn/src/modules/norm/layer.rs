@@ -74,7 +74,7 @@ impl<B: Backend> LayerNorm<B> {
         let gamma = self.gamma.val().cast(dtype).into_primitive().tensor();
         let beta = self.beta.as_ref()
             .map(|b| b.val().cast(dtype).into_primitive().tensor());
-        Tensor::from_primitive(TensorPrimitive::Float(B::layer_norm(
+        Tensor::<B, D>::from_primitive(TensorPrimitive::Float(B::layer_norm(
             input.cast(dtype).into_primitive().tensor(),
             gamma,
             beta,

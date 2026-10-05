@@ -1,4 +1,4 @@
-use super::{conv, ctc, linear, pool};
+use super::{conv, ctc, embedding, linear, pool};
 use crate::ops::unfold::unfold4d_using_conv2d;
 use crate::tensor::{BoolTensor, FloatTensor, IntTensor};
 use crate::{Backend, ElementConversion, TensorMetadata};
@@ -179,13 +179,7 @@ pub trait ModuleOps<B: Backend> {
     ///
     /// The output tensor.
     fn embedding(weights: FloatTensor<B>, indices: IntTensor<B>) -> FloatTensor<B> {
-        let [batch_size, seq_length] = indices.shape().dims();
-        let [_, d_model] = weights.shape().dims();
-
-        let indices = B::int_reshape(indices, Shape::new([batch_size * seq_length]));
-        let output = B::float_select(weights, 0, indices);
-
-        B::float_reshape(output, Shape::new([batch_size, seq_length, d_model]))
+        embedding::embedding::<B>(weights, indices)
     }
 
     /// Embedding backward operation.
@@ -204,17 +198,7 @@ pub trait ModuleOps<B: Backend> {
         output_grad: FloatTensor<B>,
         indices: IntTensor<B>,
     ) -> FloatTensor<B> {
-        let [batch_size, seq_length] = indices.shape().dims();
-        let [n_embeddings, d_model] = weights.shape().dims();
-        let device = B::float_device(&weights);
-        let dtype = output_grad.dtype();
-
-        let indices = B::int_reshape(indices, Shape::new([batch_size * seq_length]));
-        let output_grad =
-            B::float_reshape(output_grad, Shape::new([batch_size * seq_length, d_model]));
-        let grad = B::float_zeros(Shape::new([n_embeddings, d_model]), &device, dtype.into());
-
-        B::float_select_add(grad, 0, indices, output_grad)
+        embedding::embedding_backward::<B>(weights, output_grad, indices)
     }
 
     /// Linear transformation.

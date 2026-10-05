@@ -83,6 +83,34 @@ mod tests {
     type FT = FloatElem<TestBackend>;
 
     #[test]
+    fn shared_embedding_preserves_dtype_and_accumulates_repeated_tokens() {
+        use ruda_model::tensor::{DType, TensorPrimitive};
+        use ruda_tensor::ops::embedding as shared;
+        let device = Default::default();
+        let indices = Tensor::<TestBackend, 2, Int>::from_data([[2, 1, 2], [0, 1, 2]], &device);
+        for dtype in [DType::F32, DType::F16, DType::BF16] {
+            let weight = Tensor::<TestBackend, 2>::from_floats(
+                [[1., 2.], [3., 4.], [5., 6.]], &device).cast(dtype);
+            let output = Tensor::<TestBackend, 3>::from_primitive(TensorPrimitive::Float(
+                shared::embedding::<TestBackend>(
+                    weight.clone().into_primitive().tensor(), indices.clone().into_primitive())));
+            assert_eq!(output.dtype(), dtype);
+            assert_eq!(output.dims(), [2, 3, 2]);
+            output.cast(DType::F32).to_data().assert_approx_eq::<f32>(
+                &TensorData::from([[[5., 6.], [3., 4.], [5., 6.]], [[1., 2.], [3., 4.], [5., 6.]]]),
+                Tolerance::absolute(0.));
+            let grad = Tensor::<TestBackend, 3>::from_floats(
+                [[[1., 2.], [3., 4.], [5., 6.]], [[7., 8.], [9., 10.], [11., 12.]]], &device).cast(dtype);
+            let grad = Tensor::<TestBackend, 2>::from_primitive(TensorPrimitive::Float(
+                shared::embedding_backward::<TestBackend>(
+                    weight.into_primitive().tensor(), grad.into_primitive().tensor(), indices.clone().into_primitive())));
+            assert_eq!(grad.dtype(), dtype);
+            grad.cast(DType::F32).to_data().assert_approx_eq::<f32>(
+                &TensorData::from([[7., 8.], [12., 14.], [17., 20.]]), Tolerance::absolute(0.));
+        }
+    }
+
+    #[test]
     fn initializer_zeros() {
         let device = Default::default();
         TestBackend::seed(&device, 0);
