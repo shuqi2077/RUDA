@@ -1,5 +1,5 @@
 use super::{ModuleMapper, Param, ParamId};
-use ruda_tensor::{FloatDType, api::Tensor, backend::Backend, container::TensorContainer};
+use ruda_tensor::{FloatDType, api::Tensor, backend::Backend, tensor::TensorContainer};
 
 pub(super) struct DtypeMapper {
     dtype: FloatDType,
