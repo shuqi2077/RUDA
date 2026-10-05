@@ -8,6 +8,8 @@ mod int_tensor;
 mod fft;
 mod product;
 mod cumprod;
+#[cfg(test)]
+mod cross_tests;
 mod integer_power;
 mod interpolation;
 mod module;

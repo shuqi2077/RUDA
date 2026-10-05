@@ -637,7 +637,7 @@ impl<B: Backend, C: CheckpointStrategy> FloatTensorOps<Self> for Autodiff<B, C> 
         struct Cross;
 
         impl<B: Backend> Backward<B, 2> for Cross {
-            type State = (Option<NodeId>, Option<NodeId>, usize);
+            type State = (Option<NodeId>, Option<NodeId>, usize, BinaryOpsBroadcast);
 
             fn backward(
                 self,
@@ -645,7 +645,7 @@ impl<B: Backend, C: CheckpointStrategy> FloatTensorOps<Self> for Autodiff<B, C> 
                 grads: &mut Gradients,
                 checkpointer: &mut Checkpointer,
             ) {
-                let (lhs_id, rhs_id, dim) = ops.state;
+                let (lhs_id, rhs_id, dim, broadcast) = ops.state;
                 let lhs = lhs_id.map(|id| checkpointer.retrieve_node_output(id));
                 let rhs = rhs_id.map(|id| checkpointer.retrieve_node_output(id));
 
@@ -653,8 +653,8 @@ impl<B: Backend, C: CheckpointStrategy> FloatTensorOps<Self> for Autodiff<B, C> 
                     ops.parents,
                     ops.node,
                     grads,
-                    |grad| B::float_cross(rhs.unwrap(), grad, dim),
-                    |grad| B::float_cross(grad, lhs.unwrap(), dim),
+                    |grad| broadcast.backward_lhs::<B>(B::float_cross(rhs.unwrap(), grad, dim)),
+                    |grad| broadcast.backward_rhs::<B>(B::float_cross(grad, lhs.unwrap(), dim)),
                 );
             }
         }
@@ -670,8 +670,9 @@ impl<B: Backend, C: CheckpointStrategy> FloatTensorOps<Self> for Autodiff<B, C> 
             OpsKind::Tracked(mut prep) => {
                 let lhs_state = rhs_tracked.then(|| prep.checkpoint(&lhs));
                 let rhs_state = lhs_tracked.then(|| prep.checkpoint(&rhs));
+                let broadcast = BinaryOpsBroadcast::new::<B>(&lhs.primitive, &rhs.primitive);
                 prep.finish(
-                    (lhs_state, rhs_state, dim),
+                    (lhs_state, rhs_state, dim, broadcast),
                     B::float_cross(lhs.primitive, rhs.primitive, dim),
                 )
             }
