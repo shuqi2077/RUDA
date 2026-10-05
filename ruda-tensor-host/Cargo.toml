@@ -90,7 +90,7 @@ features = [ "tensor-host-storage", "serde", "shared-bytes", "tensor-data", "id"
 [dependencies.rufft-host]
 package = "ruFFT-host"
 path = "../ruFFT/host"
-version = "0.1.1"
+version = "0.1.23"
 default-features = false
 
 [dependencies.rublas-host]
