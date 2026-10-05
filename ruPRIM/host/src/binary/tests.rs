@@ -1,6 +1,48 @@
     use super::*;
     use alloc::vec;
     use ruda_core::tensor::data::{TensorData, Tolerance};
+    use ruda_core::tensor::element::Scalar;
+
+    #[test]
+    fn signed_remainder_handles_i64_limits_strides_and_broadcast() {
+        let input = HostTensor::from_data(TensorData::new(
+            vec![
+                i64::MAX - 1, i64::MIN + 1, i64::MIN, 17,
+                i64::MIN, i64::MAX - 1, i64::MAX, -17,
+            ],
+            vec![2, 4],
+        ))
+        .transpose(0, 1);
+        let original = input.clone().into_data();
+        let divisors = HostTensor::from_data(TensorData::new(
+            vec![i64::MAX, i64::MIN],
+            vec![1, 2],
+        ));
+        let output = dispatch_int::int_remainder(input.clone(), divisors);
+        output.into_data().assert_eq(
+            &TensorData::new(
+                vec![i64::MAX - 1, 0, 0, -2, i64::MAX - 1, -1, 17, -17],
+                vec![4, 2],
+            ),
+            true,
+        );
+        dispatch_int::int_remainder_scalar(input.clone(), Scalar::Int(-1))
+            .into_data()
+            .assert_eq(&TensorData::new(vec![0i64; 8], vec![4, 2]), true);
+        dispatch_int::int_remainder_scalar(input.clone(), Scalar::Int(i64::MAX))
+            .into_data()
+            .assert_eq(
+                &TensorData::new(
+                    vec![
+                        i64::MAX - 1, i64::MAX - 1, 0, i64::MAX - 1,
+                        i64::MAX - 1, 0, 17, i64::MAX - 17,
+                    ],
+                    vec![4, 2],
+                ),
+                true,
+            );
+        input.into_data().assert_eq(&original, true);
+    }
 
     // ===================
     // F16 tests

@@ -57,6 +57,18 @@ pub fn int_div_scalar(lhs: HostTensor, rhs: Scalar) -> HostTensor {
     int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a / b)
 }
 
+fn signed_remainder(a: i64, b: i64) -> i64 {
+    if b == -1 {
+        return 0;
+    }
+    let remainder = a % b;
+    if remainder != 0 && (remainder < 0) != (b < 0) {
+        remainder + b
+    } else {
+        remainder
+    }
+}
+
 pub fn int_remainder(lhs: HostTensor, rhs: HostTensor) -> HostTensor {
     // U64 values > i64::MAX produce wrong results through i64 cast
     if lhs.dtype() == DType::U64 {
@@ -64,7 +76,7 @@ pub fn int_remainder(lhs: HostTensor, rhs: HostTensor) -> HostTensor {
         return binary_op_typed(lhs, &rhs, |a: u64, b: u64| a % b);
     }
     // Python/PyTorch-style remainder: result has same sign as divisor
-    int_binary_op(lhs, rhs, |a, b| ((a % b) + b) % b)
+    int_binary_op(lhs, rhs, signed_remainder)
 }
 
 pub fn int_remainder_scalar(lhs: HostTensor, rhs: Scalar) -> HostTensor {
@@ -72,7 +84,7 @@ pub fn int_remainder_scalar(lhs: HostTensor, rhs: Scalar) -> HostTensor {
         return scalar_op_typed(lhs, rhs.to_u64().unwrap(), |a: u64, b: u64| a % b);
     }
     // Python/PyTorch-style remainder: result has same sign as divisor
-    int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| ((a % b) + b) % b)
+    int_scalar_op(lhs, rhs.to_i64().unwrap(), signed_remainder)
 }
 
 pub fn bitwise_and(lhs: HostTensor, rhs: HostTensor) -> HostTensor {
@@ -151,4 +163,3 @@ pub fn int_powi_scalar_impl(lhs: HostTensor, rhs: ruda_core::tensor::element::Sc
     }
     int_scalar_op(lhs, exp as i64, move |x, _| x.wrapping_pow(exp))
 }
-
