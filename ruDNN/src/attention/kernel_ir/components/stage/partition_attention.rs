@@ -9,7 +9,7 @@ use std::marker::PhantomData;
 
 use crate::attention::kernel_ir::components::stage::partition::init_running_state;
 use crate::attention::kernel_ir::components::stage::{QueryPartition, SoftmaxPartition};
-use crate::attention::kernel_ir::components::tile::{AttentionTileMatmul, MaskConfig};
+use crate::attention::kernel_ir::components::tile::{matmul::AttentionTileMatmul, MaskConfig};
 use crate::attention::kernel_ir::components::{
     global::simple::{MaskReader, QueryReader},
     stage::{MaskPartition, OutputPartition, partitioner::AttentionPartitioner},

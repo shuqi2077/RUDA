@@ -86,9 +86,8 @@ impl<AP: AttentionPrecision> QueryReader<AP> {
         #[comptime]
         let vectors_per_tile = tile_size.seq_q * vectors_per_row;
         let start = UNIT_POS_Y * vectors_per_tile;
-        let mut storage = SharedMemory::<Vector<QG<AP>, QGS<AP>>>::new(
-            (vectors_per_tile * num_planes) as usize,
-        );
+        let smem_size = comptime!((vectors_per_tile * num_planes) as usize);
+        let mut storage = SharedMemory::<Vector<QG<AP>, QGS<AP>>>::new(smem_size);
         let mut data = storage.slice_mut(start as usize, (start + vectors_per_tile) as usize);
         let row = (tile.0 + P::seq_q_index() * partition_seq_q) * tile_size.seq_q;
         let col = tile.1 * tile_size.head_dim;
