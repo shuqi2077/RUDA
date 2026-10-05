@@ -23,7 +23,7 @@ full = ["extended"]
 
 [dependencies]
 ruda-driver-cann = { version = "0.1.23", path = "../ruda-driver-cann", optional = true }
-ruda-kernel = { version = "0.1.8", path = "../ruda-kernel", default-features = false }
+ruda-kernel = { version = "0.1.9", path = "../ruda-kernel", default-features = false }
 ruda = { version = "0.1.9", path = "../ruda", default-features = false }
 half = { version = "=2.7.1", features = ["alloc", "num-traits", "serde", "bytemuck"] }
 
