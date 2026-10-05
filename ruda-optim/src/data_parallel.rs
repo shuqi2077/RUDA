@@ -71,6 +71,7 @@ struct Schema {
     ids: Vec<ParamId>,
     path: Vec<String>,
     aliases: HashMap<ParamId, usize>,
+    storage_aliases: HashMap<(ParamId, bool), usize>,
     device_error: Option<String>,
 }
 
@@ -81,6 +82,7 @@ impl Schema {
             ids: Vec::new(),
             path: Vec::new(),
             aliases: HashMap::new(),
+            storage_aliases: HashMap::new(),
             device_error: None,
         }
     }
@@ -100,11 +102,14 @@ impl<B: AutodiffBackend> ModuleVisitor<B> for Schema {
         }
         let position = self.contract.len();
         let alias = *self.aliases.entry(param.id).or_insert(position);
-        if alias != position {
-            let previous = &self.contract[alias];
+        let storage_alias = *self
+            .storage_aliases
+            .entry((param.id, tensor.is_require_grad()))
+            .or_insert(position);
+        if storage_alias != position {
+            let previous = &self.contract[storage_alias];
             if previous.shape != tensor.dims().to_vec()
                 || previous.dtype != format!("{:?}", tensor.dtype())
-                || previous.trainable != tensor.is_require_grad()
             {
                 self.device_error =
                     Some("one parameter ID has inconsistent tied tensor metadata".into());
@@ -405,7 +410,7 @@ fn gather<B: ruda_model::tensor::backend::Backend, T: Serialize + DeserializeOwn
 struct Broadcast<'a, B: AutodiffBackend> {
     communicator: &'a RankCommunicator<TensorDevice<B::InnerBackend>>,
     root: u32,
-    tensors: TensorContainer<ParamId>,
+    tensors: TensorContainer<(ParamId, bool)>,
     error: Option<TensorDeviceError>,
 }
 impl<B: AutodiffBackend> ModuleMapper<B> for Broadcast<'_, B> {
@@ -413,11 +418,12 @@ impl<B: AutodiffBackend> ModuleMapper<B> for Broadcast<'_, B> {
         if self.error.is_some() {
             return param;
         }
-        let tensor = if let Some(tensor) = self.tensors.get::<B>(&param.id) {
+        let value = param.val();
+        let trainable = value.is_require_grad();
+        let key = (param.id, trainable);
+        let tensor = if let Some(tensor) = self.tensors.get::<B>(&key) {
             Tensor::from_primitive(tensor)
         } else {
-            let value = param.val();
-            let trainable = value.is_require_grad();
             match self
                 .communicator
                 .broadcast_float(value.inner().into_primitive().tensor(), self.root)
@@ -428,7 +434,7 @@ impl<B: AutodiffBackend> ModuleMapper<B> for Broadcast<'_, B> {
                     ))
                     .set_require_grad(trainable);
                     self.tensors
-                        .register::<B>(param.id, tensor.clone().into_primitive());
+                        .register::<B>(key, tensor.clone().into_primitive());
                     tensor
                 }
                 Err(error) => {

@@ -206,6 +206,85 @@ struct Tied<B: ruda_model::tensor::backend::Backend> {
     second: Linear<B>,
 }
 
+#[derive(Module, Debug)]
+struct FrozenAliasReplica<B: ruda_model::tensor::backend::Backend> {
+    frozen_alias: Param<Tensor<B, 1>>,
+    first: Param<Tensor<B, 1>>,
+    alias: Param<Tensor<B, 1>>,
+}
+
+#[test]
+fn diverged_frozen_alias_broadcast_preserves_values_and_shared_master_updates() {
+    for dtype in [
+        ruda_model::tensor::FloatDType::F16,
+        ruda_model::tensor::FloatDType::BF16,
+    ] {
+        world(move |rank, communicator| {
+            let device = Default::default();
+            let first = Param::from_tensor(Tensor::<B, 1>::full([2], rank + 1, &device));
+            let frozen_alias = first.clone().no_grad();
+            let first = first.map(|tensor| (tensor + 1.).detach().require_grad());
+            let replica = FrozenAliasReplica {
+                frozen_alias,
+                first: first.clone(),
+                alias: first,
+            }
+            .to_dtype(dtype);
+            let id = replica.first.id;
+            let (ddp, replica) = DataParallel::<B>::initialize(communicator, replica, 0).unwrap();
+            assert_eq!(replica.first.id, id);
+            assert_eq!(replica.frozen_alias.id, id);
+            assert_eq!(replica.alias.id, id);
+            assert!(!replica.frozen_alias.val().is_require_grad());
+            assert!(replica.first.val().is_require_grad());
+            replica
+                .first
+                .val()
+                .cast(DType::F32)
+                .to_data()
+                .assert_eq(&TensorData::from([2., 2.]), false);
+            replica
+                .frozen_alias
+                .val()
+                .cast(DType::F32)
+                .to_data()
+                .assert_eq(&TensorData::from([1., 1.]), false);
+            let result = replica.first.val() + replica.alias.val() + replica.frozen_alias.val();
+            let gradients = result.sum().backward();
+            assert!(replica.frozen_alias.val().grad(&gradients).is_none());
+            let gradients = GradientsParams::from_grads(gradients, &replica);
+            let reduced = ddp
+                .reduce_fp32(&replica, gradients, 1, MissingGradientPolicy::Error)
+                .unwrap();
+            assert_eq!(reduced.global_weight, 2);
+            assert_eq!(reduced.gradients.len(), 1);
+            reduced
+                .gradients
+                .get::<Host, 1>(id)
+                .unwrap()
+                .to_data()
+                .assert_eq(&TensorData::from([2., 2.]), false);
+            let mut optimizer = crate::Fp32MasterOptimizer::new(SgdConfig::new().build::<Host>())
+                .init::<B, FrozenAliasReplica<B>>();
+            let updated = optimizer.step(0.125, replica, reduced.gradients);
+            for param in [updated.first, updated.alias] {
+                assert_eq!(param.val().dtype(), dtype.into());
+                param
+                    .val()
+                    .cast(DType::F32)
+                    .to_data()
+                    .assert_eq(&TensorData::from([1.75, 1.75]), false);
+            }
+            updated
+                .frozen_alias
+                .val()
+                .cast(DType::F32)
+                .to_data()
+                .assert_eq(&TensorData::from([1., 1.]), false);
+        });
+    }
+}
+
 #[test]
 fn tied_parameters_broadcast_and_reduce_once() {
     world(|rank, communicator| {
