@@ -115,18 +115,14 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
         #[comptime] config: GlobalReaderConfig,
     ) {
         let unit_position = this.unit_position_base + task_id * this.unit_count;
-        if unit_position >= config.smem_config.elements_per_stage() / NG::value() as u32 {
-            return;
+        if unit_position < config.smem_config.elements_per_stage() / NG::value() as u32 {
+            let layout = FullStageLayout::new(config.smem_config);
+            let view = global_iter.view().view(layout);
+            let vector_read = view.read_checked(unit_position * NG::value() as u32);
+            let type_size = Vector::<ES, NS>::type_size();
+            let stage_offs = stage.swizzle.apply(unit_position, type_size);
+            stage.as_slice_mut::<NS>()[stage_offs as usize] = Vector::cast_from(vector_read);
         }
-
-        let layout = FullStageLayout::new(config.smem_config);
-        let view = global_iter.view().view(layout);
-
-        let vector_read = view.read_checked(unit_position * NG::value() as u32);
-        let type_size = Vector::<ES, NS>::type_size();
-        let stage_offs = stage.swizzle.apply(unit_position, type_size);
-
-        stage.as_slice_mut::<NS>()[stage_offs as usize] = Vector::cast_from(vector_read);
     }
 
     fn task_count(this: &Self) -> comptime_type!(u32) {

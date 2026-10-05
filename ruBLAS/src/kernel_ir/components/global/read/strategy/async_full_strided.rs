@@ -146,24 +146,20 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
     ) {
         let unit_position = this.unit_position_base + task_id * this.unit_count;
         let unit_position_abs = unit_position * this.copy_vector_size;
-        if unit_position_abs >= config.smem_config.elements_per_stage() {
-            return;
+        if unit_position_abs < config.smem_config.elements_per_stage() {
+            let layout = FullStageLayout::new(config.smem_config);
+            let view = global_iter.view();
+            let pos = layout.to_source_pos(unit_position_abs);
+            let stage_offset = unit_position_abs / stage.smem.vector_size() as u32;
+            async_copy_from(
+                view,
+                pos,
+                stage,
+                stage_offset,
+                config,
+                this.copy_vector_size,
+            );
         }
-
-        let layout = FullStageLayout::new(config.smem_config);
-        let view = global_iter.view();
-
-        let pos = layout.to_source_pos(unit_position_abs);
-        let stage_offset = unit_position_abs / stage.smem.vector_size() as u32;
-
-        async_copy_from(
-            view,
-            pos,
-            stage,
-            stage_offset,
-            config,
-            this.copy_vector_size,
-        );
     }
 
     fn task_count(this: &Self) -> comptime_type!(u32) {
