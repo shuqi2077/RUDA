@@ -51,6 +51,21 @@ mod tests {
     type FT = FloatElem<TestBackend>;
 
     #[test]
+    fn shared_exact_gelu_backward_matches_original_host_derivative() {
+        use ruda_model::tensor::{TensorPrimitive, ops::ActivationOps};
+        let device = Default::default();
+        let input = Tensor::<TestBackend, 2>::from_floats([[-3., -1., 0.], [0.5, 1., 3.]], &device)
+            .into_primitive().tensor();
+        let upstream = Tensor::<TestBackend, 2>::from_floats([[0.25, -2., 3.], [0.125, 4., -0.5]], &device)
+            .into_primitive().tensor();
+        let expected = <TestBackend as ActivationOps<TestBackend>>::gelu_backward(input.clone(), upstream.clone());
+        let actual = ruda_model::tensor::ops::gelu_backward_exact::<TestBackend>(input, upstream);
+        Tensor::<TestBackend, 2>::from_primitive(TensorPrimitive::Float(actual)).to_data()
+            .assert_approx_eq::<f32>(&Tensor::<TestBackend, 2>::from_primitive(TensorPrimitive::Float(expected)).to_data(),
+                Tolerance::absolute(2e-6));
+    }
+
+    #[test]
     fn display() {
         let layer = Gelu::new();
 

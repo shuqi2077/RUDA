@@ -2,6 +2,25 @@ use crate::tensor::FloatTensor;
 use crate::{Backend, Scalar, TensorMetadata, get_device_settings};
 use core::f64::consts::SQRT_2;
 
+pub fn gelu_backward_exact<B: Backend>(x: FloatTensor<B>, grad: FloatTensor<B>) -> FloatTensor<B> {
+    let cdf = B::float_mul_scalar(
+        B::float_add_scalar(
+            B::float_erf(B::float_div_scalar(x.clone(), SQRT_2.into())),
+            1f32.into(),
+        ),
+        0.5f32.into(),
+    );
+    let pdf = B::float_exp(B::float_mul_scalar(
+        B::float_mul(x.clone(), x.clone()),
+        (-0.5f32).into(),
+    ));
+    let pdf = B::float_mul_scalar(
+        B::float_mul(x, pdf),
+        (core::f64::consts::FRAC_2_SQRT_PI / (2. * SQRT_2)).into(),
+    );
+    B::float_mul(B::float_add(cdf, pdf), grad)
+}
+
 /// Activation function operations.
 ///
 /// This trait let backend implementations override activation functions for better performance.
@@ -101,35 +120,7 @@ pub trait ActivationOps<B: Backend> {
     ///
     /// The output tensor.
     fn gelu_backward(x: FloatTensor<B>, grad: FloatTensor<B>) -> FloatTensor<B> {
-        // Derivative of the approximate gelu implementation based on tanh.
-
-        let constant_1 = 0.0356774;
-        let constant_2 = 0.797885;
-        let constant_3 = 0.0535161;
-        let constant_4 = 0.398942;
-
-        let x3 = B::float_powi_scalar(x.clone(), 3.into());
-
-        let c1 = B::float_mul_scalar(x3.clone(), constant_1.into());
-        let c2 = B::float_mul_scalar(x.clone(), constant_2.into());
-        let c3 = B::float_mul_scalar(x3, constant_3.into());
-        let c4 = B::float_mul_scalar(x, constant_4.into());
-
-        let inner1 = B::float_add(c1, c2);
-        let inner2 = B::float_add(c3, c4);
-
-        let tanh = B::float_tanh(inner1);
-
-        let sech = B::float_powi_scalar(tanh.clone(), 2.into());
-        let sech = B::float_neg(sech);
-        let sech = B::float_add_scalar(sech, 1.into());
-
-        let y1 = B::float_mul_scalar(tanh, 0.5.into());
-        let y2 = B::float_mul(inner2, sech);
-        let y2 = B::float_add_scalar(y2, 0.5.into());
-        let y = B::float_add(y1, y2);
-
-        B::float_mul(y, grad)
+        gelu_backward_exact::<B>(x, grad)
     }
 
     /// Applies the Sigmoid activation function.

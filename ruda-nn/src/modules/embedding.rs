@@ -85,7 +85,7 @@ mod tests {
     #[test]
     fn shared_embedding_preserves_dtype_and_accumulates_repeated_tokens() {
         use ruda_model::tensor::{DType, TensorPrimitive};
-        use ruda_tensor::ops::embedding as shared;
+        use ruda_model::tensor::ops::embedding as shared;
         let device = Default::default();
         let indices = Tensor::<TestBackend, 2, Int>::from_data([[2, 1, 2], [0, 1, 2]], &device);
         for dtype in [DType::F32, DType::F16, DType::BF16] {
