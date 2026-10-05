@@ -3,7 +3,7 @@ use ruda_tensor::{FloatDType, api::Tensor, backend::Backend, container::TensorCo
 
 pub(super) struct DtypeMapper {
     dtype: FloatDType,
-    converted: TensorContainer<ParamId>,
+    converted: TensorContainer<(ParamId, bool)>,
 }
 
 impl DtypeMapper {
@@ -18,13 +18,18 @@ impl DtypeMapper {
 impl<B: Backend> ModuleMapper<B> for DtypeMapper {
     fn map_float<const D: usize>(&mut self, param: Param<Tensor<B, D>>) -> Param<Tensor<B, D>> {
         let (id, tensor, mapper) = param.consume();
-        if let Some(converted) = self.converted.get::<B>(&id) {
+        let requires_grad = tensor.is_require_grad();
+        let key = (id, requires_grad);
+        if let Some(converted) = self.converted.get::<B>(&key) {
             return Param::from_mapped_value(id, Tensor::<B, D>::from_primitive(converted), mapper);
         }
-        let requires_grad = tensor.is_require_grad();
         let target_dtype: ruda_tensor::DType = self.dtype.into();
         let tensor = if tensor.dtype() == target_dtype {
             tensor
+        } else if let Some(converted) = self.converted.get::<B>(&(id, !requires_grad)) {
+            Tensor::<B, D>::from_primitive(converted)
+                .detach()
+                .set_require_grad(requires_grad)
         } else {
             tensor
                 .cast(self.dtype)
@@ -32,7 +37,7 @@ impl<B: Backend> ModuleMapper<B> for DtypeMapper {
                 .set_require_grad(requires_grad)
         };
         self.converted
-            .register::<B>(id, tensor.clone().into_primitive());
+            .register::<B>(key, tensor.clone().into_primitive());
         Param::from_mapped_value(id, tensor, mapper)
     }
 }
@@ -46,6 +51,7 @@ mod tests {
     struct SharedModule<B: Backend> {
         first: Param<Tensor<B, 1>>,
         alias: Param<Tensor<B, 1>>,
+        frozen_alias: Param<Tensor<B, 1>>,
         frozen: Param<Tensor<B, 1>>,
     }
 
@@ -61,19 +67,24 @@ mod tests {
             let frozen_id = frozen.id;
             let model = SharedModule {
                 first: first.clone(),
+                frozen_alias: first.clone().no_grad(),
                 alias: first,
                 frozen,
             }
             .to_dtype(dtype);
             assert_eq!(model.first.id, id);
             assert_eq!(model.alias.id, id);
+            assert_eq!(model.frozen_alias.id, id);
             assert_eq!(model.frozen.id, frozen_id);
             assert_eq!(model.first.val().dtype(), dtype.into());
             assert!(model.first.val().is_require_grad());
             assert!(!model.frozen.val().is_require_grad());
+            assert!(!model.frozen_alias.val().is_require_grad());
             let input = Tensor::<B, 1>::ones([2], &device).cast(dtype);
-            let output =
-                input.clone() * model.first.val() + input * model.alias.val() + model.frozen.val();
+            let output = input.clone() * model.first.val()
+                + input * model.alias.val()
+                + model.frozen.val()
+                + model.frozen_alias.val();
             let gradients = output.sum().backward();
             for param in [&model.first, &model.alias] {
                 let gradient = param
@@ -91,6 +102,7 @@ mod tests {
                 );
             }
             assert!(model.frozen.val().grad(&gradients).is_none());
+            assert!(model.frozen_alias.val().grad(&gradients).is_none());
             assert!(original.grad(&gradients).is_none());
         }
     }
