@@ -6,7 +6,7 @@ use crate::dsl::{
 };
 
 use crate::tiling::{
-    MatrixLayout, TileSize, as_cmma_layout, from_cmma_layout,
+    MatrixLayout, TileSize, as_cmma_layout,
     tile::data::{Filled, LoadMethod, MmaIOConfig, Strided, StridedTile, TileKind},
 };
 
@@ -215,7 +215,6 @@ pub(crate) fn ldmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
 ) -> u32 {
-    let expected_layout = from_cmma_layout(def.vector_layout(ident)).comptime();
     let (stride_row, stride_col) = match layout {
         MatrixLayout::RowMajor => (stride, 1),
         MatrixLayout::ColMajor => (1, stride),
@@ -227,15 +226,9 @@ pub(crate) fn ldmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     // Height is always 8, and lanes are divided into blocks of 8.
     let height = 8;
 
-    let (total_rows, total_cols) = match ident {
-        MatrixIdent::A => (tile_size.m(), tile_size.k()),
-        MatrixIdent::B => (tile_size.k(), tile_size.n()),
-        MatrixIdent::Accumulator => (tile_size.m(), tile_size.n()),
-    };
-    // tile is treated as row-major, if col-major the tile shape is just inverted
-    let total_rows = match expected_layout {
-        MatrixLayout::RowMajor => total_rows,
-        MatrixLayout::ColMajor => total_cols,
+    let total_rows = match ident {
+        MatrixIdent::A | MatrixIdent::Accumulator => tile_size.m(),
+        MatrixIdent::B => tile_size.k(),
     };
 
     //  Indices are wrapped for < 4 registers.
