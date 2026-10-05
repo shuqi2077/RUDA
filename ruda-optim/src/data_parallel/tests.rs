@@ -48,10 +48,10 @@ fn world<R: Send + 'static>(
 #[test]
 fn integer_collectives_preserve_wide_values_shapes_and_backend_reductions() {
     use ruccl::rank::ReductionOperation;
-    use ruda_model::tensor::IntDType;
+    use ruda_model::tensor::{IntDType, TensorCreationOptions};
     for dtype in [IntDType::I32, IntDType::I64] {
         world(move |rank, communicator| {
-            let device = Default::default();
+            let device: <Host as ruda_model::tensor::backend::Backend>::Device = Default::default();
             let large = if dtype == IntDType::I64 {
                 9_007_199_254_740_993_i64
             } else {
@@ -59,8 +59,10 @@ fn integer_collectives_preserve_wide_values_shapes_and_backend_reductions() {
             };
             let values = [large, -9, 7, large + 3];
             let tensor = |values: [i64; 4]| {
-                Tensor::<Host, 2, Int>::from_data(TensorData::new(values.to_vec(), [2, 2]), &device)
-                    .cast(dtype)
+                Tensor::<Host, 2, Int>::from_data(
+                    TensorData::new(values.to_vec(), [2, 2]),
+                    TensorCreationOptions::<Host>::new(device.clone()).with_dtype(dtype.into()),
+                )
             };
             let input = tensor([
                 large + rank as i64,
@@ -325,14 +327,14 @@ struct BufferedReplica<B: ruda_model::tensor::backend::Backend> {
 }
 
 fn buffered_replica(rank: u32) -> BufferedReplica<B> {
-    let device = Default::default();
+    let device: <B as ruda_model::tensor::backend::Backend>::Device = Default::default();
     let counter = Param::initialized(
         ParamId::new(),
         Tensor::<B, 1, Int>::from_data(
             TensorData::from([9_007_199_254_740_993_i64 + rank as i64]),
-            &device,
-        )
-        .cast(ruda_model::tensor::IntDType::I64),
+            ruda_model::tensor::TensorCreationOptions::<B>::new(device.clone())
+                .with_dtype(DType::I64),
+        ),
     );
     let flags = Param::initialized(
         ParamId::new(),
