@@ -163,7 +163,8 @@ impl<B: Backend> RotaryEncoding<B> {
         dtype: FloatDType,
     ) -> Tensor<B, D> {
         let storage_dtype = x.dtype();
-        self.apply(x.cast(dtype.into()), start).cast(storage_dtype)
+        let dtype: ruda_model::tensor::DType = dtype.into();
+        self.apply(x.cast(dtype), start).cast(storage_dtype)
     }
 
     /// Applies rotary positional encoding to a tensor of dimensions (..., seq_len, d_model)
