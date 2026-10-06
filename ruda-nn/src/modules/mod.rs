@@ -23,6 +23,9 @@ mod lora;
 /// Explicit tensor-parallel linear projections for replicated-loss model partitions.
 #[cfg(feature = "tensor-parallel")]
 pub mod tensor_parallel;
+/// Element-sharded parameters with differentiable gather/reduce-scatter.
+#[cfg(feature = "tensor-parallel")]
+pub mod fully_sharded;
 /// Manifold-constrained hyper-connections and residual mixing.
 pub mod mhc;
 #[cfg(feature = "sparse")]
