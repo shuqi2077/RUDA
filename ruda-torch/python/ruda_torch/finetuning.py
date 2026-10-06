@@ -357,6 +357,9 @@ def quantize_nf4(model, *, target_modules, block_size=64, tile_rows=128):
 
 def adapter_state_dict(model):
     """Portable CPU adapter tensors plus a strict, versioned layout contract."""
+    if __package__:
+        from .sharded_adapter_interop import has_sharded_units,sharded_adapter_state_dict
+        if has_sharded_units(model):return sharded_adapter_state_dict(model)
     layers = {}
     if __package__:
         from .parallel_adapters import _ParallelLoRA,adapter_base_kind,full_adapter_matrix
@@ -383,6 +386,9 @@ def adapter_state_dict(model):
 
 @torch.no_grad()
 def load_adapter_state_dict(model, state):
+    if __package__:
+        from .sharded_adapter_interop import has_sharded_units,load_sharded_adapter_state_dict
+        if has_sharded_units(model):return load_sharded_adapter_state_dict(model,state)
     if __package__:
         from .parallel_adapters import _ParallelLoRA,adapter_base_kind,local_adapter_matrix
     else:

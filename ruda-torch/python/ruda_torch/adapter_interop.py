@@ -50,6 +50,8 @@ def load_peft_adapter(model,directory,*,module_map=None,prefix='base_model.model
         entry[side]=value
     if not pairs:
         raise ValueError('adapter checkpoint has no linear A/B matrices')
+    from .sharded_adapter_interop import has_sharded_units,load_sharded_peft_adapter
+    if has_sharded_units(model):return load_sharded_peft_adapter(model,pairs,config,module_map=module_map)
     replacements,aliases={},{}
     plans={}
     modules=dict(model.named_modules(remove_duplicate=False))
@@ -115,15 +117,20 @@ def load_peft_adapter(model,directory,*,module_map=None,prefix='base_model.model
 
 
 def save_peft_adapter(model,directory,*,base_model_name_or_path,prefix='base_model.model.',
-                      task_type=None,module_map=None):
+                      task_type=None,module_map=None,replica_group=None):
     """Write full, PEFT-compatible matrices into a new directory.
 
-    All TP ranks participate in reconstruction; only rank zero writes files.
-    An export spans one TP group, not separate pipeline/model groups.
+    All DP/TP ranks participate in reconstruction; only the coordinator root
+    writes files. FSDP storage requires its actual replica_group coordinator.
+    An export spans one model/stage group, not separate pipeline namespaces.
     """
     from safetensors.torch import save_file
     from .parallel_adapters import _ParallelLoRA
-    layers={name:layer for name,layer in model.named_modules() if isinstance(layer,(LoRALinear,_ParallelLoRA))}
+    from .sharded_adapter_interop import adapter_layers,has_sharded_units
+    layers={name:entry[0] for name,entry in adapter_layers(model).items()}
+    if has_sharded_units(model) and replica_group is None:
+        raise ValueError('FSDP PEFT export requires the actual training coordinator')
+    if replica_group is not None:replica_group.validate_model(model)
     if not layers:
         raise ValueError('model contains no LoRA layers')
     first=next(iter(layers.values()))
@@ -135,6 +142,7 @@ def save_peft_adapter(model,directory,*,base_model_name_or_path,prefix='base_mod
     groups={id(layer.group):layer.group for layer in layers.values() if isinstance(layer,_ParallelLoRA)}
     if len(groups)>1:raise ValueError('PEFT export requires a single tensor-parallel group')
     group=next(iter(groups.values()),None)
+    if replica_group is not None:group=replica_group
     names=[]
     paths={}
     for name,layer in layers.items():

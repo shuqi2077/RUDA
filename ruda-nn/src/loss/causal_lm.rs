@@ -1,8 +1,17 @@
 use ruda_model::{
     config::Config,
     module::Module,
-    tensor::{DType, Int, Tensor, activation::log_softmax, backend::Backend},
+    tensor::{DType, Int, Bool, Tensor, activation::log_softmax, backend::Backend},
 };
+use crate::attention::PackedSequenceLayout;
+
+/// Caller-built decoder whose attention explicitly honors packed document boundaries.
+pub trait PackedCausalLanguageModel<B: Backend>: Module<B> {
+    /// Produce `[total_tokens, width]` without attention across document boundaries.
+    fn forward_packed_hidden(&self, tokens: Tensor<B, 1, Int>, layout: &PackedSequenceLayout) -> Tensor<B, 2>;
+    /// Project actual token rows against the complete vocabulary.
+    fn project(&self, hidden: Tensor<B, 2>) -> Tensor<B, 2>;
+}
 
 /// Hidden-state and vocabulary projection contract for decoder-only models.
 ///
@@ -52,6 +61,31 @@ impl<B: Backend> CausalLoss<B> {
 }
 
 impl CausalCrossEntropyConfig {
+    /// Train an explicit packed decoder, retaining the full-vocabulary chunk algorithm.
+    pub fn forward_packed_model<B: Backend, M: PackedCausalLanguageModel<B>>(
+        &self, model: &M, tokens: Tensor<B, 1, Int>, labels: Tensor<B, 1, Int>, layout: &PackedSequenceLayout,
+    ) -> CausalLoss<B> {
+        assert_eq!(tokens.dims(), labels.dims(), "packed tokens and labels differ");
+        assert_eq!(tokens.dims()[0], layout.tokens(), "packed model input differs from its document metadata");
+        self.forward_packed_hidden(model.forward_packed_hidden(tokens, layout), labels, layout, |rows| model.project(rows))
+    }
+
+    /// Use flat hidden states and labels; shifted supervision never crosses documents.
+    /// No truncation, padding examples or sampled vocabulary are introduced.
+    pub fn forward_packed_hidden<B: Backend>(
+        &self, hidden: Tensor<B, 2>, labels: Tensor<B, 1, Int>, layout: &PackedSequenceLayout,
+        project: impl Fn(Tensor<B, 2>) -> Tensor<B, 2>,
+    ) -> CausalLoss<B> {
+        let [tokens, width] = hidden.dims();
+        assert_eq!(tokens, layout.tokens(), "packed hidden states differ from document metadata");
+        assert_eq!(labels.dims(), [tokens], "packed hidden and label lengths differ");
+        assert_eq!(hidden.device(), labels.device(), "packed hidden and labels must share a device");
+        let labels = if self.shift {
+            labels.clone().mask_fill(layout.document_starts::<B>(&labels.device()), self.ignore_index)
+        } else { labels };
+        self.forward_hidden(hidden.reshape([1, tokens, width]), labels.reshape([1, tokens]), project)
+    }
+
     pub fn forward_logits<B: Backend>(
         &self,
         logits: Tensor<B, 3>,
@@ -111,8 +145,9 @@ impl CausalCrossEntropyConfig {
         };
         let count = batch.checked_mul(length).expect("token count overflow");
         if count == 0 {
+            let mask = Tensor::<B, 3, Bool>::zeros(hidden.dims(), &hidden.device()).bool_not();
             return CausalLoss {
-                loss_sum: Tensor::zeros([1], (&hidden.device(), DType::F32)),
+                loss_sum: hidden.cast(DType::F32).mask_fill(mask, 0).sum(),
                 valid_tokens: Tensor::zeros([1], &labels.device()),
             };
         }
