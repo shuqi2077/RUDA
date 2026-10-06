@@ -17,6 +17,7 @@ use crate::ruda_inference;
 
 pub(crate) mod awq;
 pub(crate) mod rope;
+mod packed_training;
 #[cfg(test)]
 mod causal_training_tests;
 use rope::qwen2_rope;
