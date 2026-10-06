@@ -242,12 +242,16 @@ where B:AutodiffBackend,O:ElementwiseShardOptimizer<B::InnerBackend>,C:ShardedCo
 }
 
 impl<B:AutodiffBackend,O:ElementwiseShardOptimizer<B::InnerBackend>> Record<B::InnerBackend> for Zero2Record<B,O> {
-    type Item<S:PrecisionSettings>=<(u32,u32,u32,Vec<u64>,HashMap<ParamId,O::State<1>>) as Record<B::InnerBackend>>::Item<S>;
+    type Item<S:PrecisionSettings>=<(u32,u32,u32,Vec<u64>,Vec<(u64,O::State<1>)>) as Record<B::InnerBackend>>::Item<S>;
     fn into_item<S:PrecisionSettings>(self)->Self::Item<S> {
-        (self.version,self.rank,self.world_size,self.ids,self.states).into_item::<S>()
+        let mut states=self.states.into_iter().map(|(id,state)|(id.val(),state)).collect::<Vec<_>>();
+        states.sort_by_key(|(id,_)|*id);
+        (self.version,self.rank,self.world_size,self.ids,states).into_item::<S>()
     }
-    fn from_item<S:PrecisionSettings>(item:Self::Item<S>,device:&<B::InnerBackend as Backend>::Device)->Self {
+    fn from_item<S:PrecisionSettings>(item:Self::Item<S>,device:&ruda_model::tensor::Device<B::InnerBackend>)->Self {
         let (version,rank,world_size,ids,states)=Record::<B::InnerBackend>::from_item::<S>(item,device);
+        let states:Vec<(u64,O::State<1>)>=states;
+        let states=states.into_iter().map(|(id,state)|(ParamId::from(id),state)).collect();
         Self{version,rank,world_size,ids,states}
     }
 }

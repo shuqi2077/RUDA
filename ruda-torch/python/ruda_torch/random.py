@@ -99,11 +99,12 @@ def native_dropout(input, p, train=True):
     if not train or p==0:
         return input.clone(),torch.ones_like(input,dtype=torch.bool)
     if p==1:
-        return torch.zeros_like(input),torch.zeros_like(input,dtype=torch.bool)
+        mask=torch.zeros_like(input,dtype=torch.bool)
+        return torch.where(mask,input,torch.zeros_like(input)),mask
     random = torch.empty(input.shape,dtype=torch.float32,device=input.device)
     uniform_(random)
     mask = random >= p
-    return input*mask/(1-p),mask
+    return input*mask.to(input.dtype)/(1-p),mask
 
 
 def register_random_ops():
@@ -120,4 +121,4 @@ def register_random_ops():
         return tensor
     _registry.impl('bernoulli_.Tensor',bernoulli_tensor)
     _registry.impl('native_dropout',native_dropout)
-    _registry.impl('native_dropout_backward',lambda grad,mask,scale: grad*mask*scale)
+    _registry.impl('native_dropout_backward',lambda grad,mask,scale: grad*mask.to(grad.dtype)*scale)

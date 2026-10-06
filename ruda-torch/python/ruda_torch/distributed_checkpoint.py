@@ -169,7 +169,13 @@ class DistributedCheckpoint:
         return {'directory': str(folder.resolve()), 'step': step, 'seconds': time.monotonic()-started}
 
     def load(self, model, optimizer, *, generation=None, scheduler=None, scaler=None,validate_application=None):
-        folder, manifest = self._manifest(generation)
+        folder,manifest,error=None,None,None
+        try:
+            folder,manifest=self._manifest(generation)
+        except Exception as failure:
+            error=f'{type(failure).__name__}: {failure}'
+        for failure in self.group.gather_metadata(error):
+            if failure:raise ValueError(failure)
         self.group.validate_training_options((str(folder.resolve()), manifest))
         if manifest['world_size'] != self.group.world_size:
             raise ValueError('world size changed; use consolidate() and load_consolidated() with an explicit data resharder')
@@ -181,6 +187,15 @@ class DistributedCheckpoint:
                 raise ValueError('rank checkpoint topology or layout differs')
             if (state['scheduler'] is None) != (scheduler is None) or (state['scaler'] is None) != (scaler is None):
                 raise ValueError('scheduler/scaler presence differs')
+            current=model.state_dict()
+            if set(current)!=set(state['model']):raise ValueError('checkpoint model keys differ')
+            for name,target in current.items():
+                value=state['model'][name]
+                if isinstance(target,torch.Tensor) and (not isinstance(value,torch.Tensor) or target.shape!=value.shape or target.dtype!=value.dtype):
+                    raise ValueError(f'checkpoint model shape/dtype differs: {name}')
+            live=_optimizer_description(model,optimizer,state['layout'])
+            if live['class']!=state['optimizer']['class'] or [g['params'] for g in live['groups']]!=[g['params'] for g in state['optimizer']['groups']]:
+                raise ValueError('checkpoint optimizer class/parameter layout differs')
             if validate_application is not None:
                 validate_application(state['application'])
         except Exception as failure:
