@@ -148,10 +148,12 @@ impl<B: Backend, S: CheckpointStrategy> ColumnParallelLoRA<Autodiff<B, S>> {
         let adapted = adapter_input.unwrap_or_else(|| input.clone());
         assert_eq!(adapted.dims(), input.dims(), "adapter input/dropout geometry differs");
         let base = self.base.forward(input, communicator.clone(), false)?;
-        let adapted = region::copy_to_region(adapted, communicator.clone())?;
+        let dtype = base.dtype();
         let weight = region::copy_to_region(self.adapter_a.weight.val(), communicator.clone())?;
+        let adapted = region::copy_to_region(adapted.cast(weight.dtype()), communicator.clone())?;
         let hidden = linear(adapted, weight, None);
-        let output = base + self.adapter_b.forward(hidden).mul_scalar(self.scale);
+        let hidden = hidden.cast(self.adapter_b.weight.val().dtype());
+        let output = base + self.adapter_b.forward(hidden).mul_scalar(self.scale).cast(dtype);
         if gather_output { region::gather_from_region(output, communicator, D - 1) } else { Ok(output) }
     }
 }
@@ -170,9 +172,11 @@ impl<B: Backend, S: CheckpointStrategy> RowParallelLoRA<Autodiff<B, S>> {
              region::scatter_to_region(adapted, communicator.clone(), D - 1)?)
         };
         let base = self.base.forward(input, communicator.clone(), true)?;
-        let hidden = self.adapter_a.forward(adapted);
+        let dtype = base.dtype();
+        let hidden = self.adapter_a.forward(adapted.cast(self.adapter_a.weight.val().dtype()));
         let hidden = region::reduce_from_region(hidden, communicator)?;
-        Ok(base + self.adapter_b.forward(hidden).mul_scalar(self.scale))
+        let hidden = hidden.cast(self.adapter_b.weight.val().dtype());
+        Ok(base + self.adapter_b.forward(hidden).mul_scalar(self.scale).cast(dtype))
     }
 }
 

@@ -26,6 +26,9 @@ pub mod tensor_parallel;
 /// Element-sharded parameters with differentiable gather/reduce-scatter.
 #[cfg(feature = "tensor-parallel")]
 pub mod fully_sharded;
+/// Joint data-sharded storage and tensor-parallel native projections.
+#[cfg(feature = "tensor-parallel")]
+pub mod hybrid_sharded;
 /// Manifold-constrained hyper-connections and residual mixing.
 pub mod mhc;
 #[cfg(feature = "sparse")]
