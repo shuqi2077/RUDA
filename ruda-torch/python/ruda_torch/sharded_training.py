@@ -11,12 +11,16 @@ from torch.autograd.function import once_differentiable
 
 class _GatherUnit(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, group, elements, *shards):
+    def forward(ctx, group, elements, ensure_backward, *shards):
         ctx.group, ctx.elements = group, elements
+        ctx.ensure_backward=ensure_backward
         ctx.specs = tuple((s.numel(), s.dtype, s.device, s.requires_grad) for s in shards)
         ctx.set_materialize_grads(False)
         outputs = tuple(group.all_gather(shard)[:count] for shard, count in zip(shards, elements, strict=True))
         ctx.mark_non_differentiable(*(output for output, shard in zip(outputs, shards) if not shard.requires_grad))
+        if ensure_backward:
+            sentinel=torch.zeros((),device=shards[0].device,dtype=torch.float32)
+            return (*outputs,sentinel)
         return outputs
 
     @staticmethod
@@ -24,6 +28,7 @@ class _GatherUnit(torch.autograd.Function):
     def backward(ctx, *gradients):
         # One autograd node per unit fixes collective order even when ranks use
         # different parameters inside that unit (for example expert routing).
+        if ctx.ensure_backward:gradients=gradients[:-1]
         flags = ctx.group.gather_metadata(tuple(g is not None for g in gradients))
         results = []
         for index, (gradient, count, spec) in enumerate(zip(gradients, ctx.elements, ctx.specs, strict=True)):
@@ -35,7 +40,35 @@ class _GatherUnit(torch.autograd.Function):
             if gradient is not None:
                 padded[:count].copy_(gradient.reshape(-1).float())
             results.append(ctx.group.reduce_scatter(padded).to(dtype))
-        return None, None, *results
+        return None, None, None, *results
+
+
+class _ParticipatingOutputs(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx,sentinel,*outputs):
+        # Reading this saved scalar in backward also enters checkpoint replay on
+        # ranks whose real output did not save any parameter-dependent tensors.
+        ctx.save_for_backward(sentinel)
+        ctx.set_materialize_grads(False)
+        # Owned output copies allow downstream in-place activations. Values and
+        # signed zeros are retained exactly, unlike adding a dummy zero loss.
+        return tuple(output.clone() for output in outputs)
+
+    @staticmethod
+    def backward(ctx,*gradients):
+        sentinel,=ctx.saved_tensors
+        return torch.zeros_like(sentinel),*gradients
+
+
+def _participating_outputs(outputs,sentinel):
+    from torch.utils._pytree import tree_flatten,tree_unflatten
+    flat,spec=tree_flatten(outputs)
+    positions=[index for index,value in enumerate(flat) if isinstance(value,torch.Tensor) and value.is_floating_point()]
+    if not positions:
+        raise TypeError('ensure_backward requires floating Tensor outputs in a registered PyTree')
+    attached=_ParticipatingOutputs.apply(sentinel,*(flat[index] for index in positions))
+    for index,value in zip(positions,attached,strict=True):flat[index]=value
+    return tree_unflatten(flat,spec)
 
 
 def _initial_shard(value, group, device, root):
@@ -65,13 +98,13 @@ class FullyShardedModule(nn.Module):
     A tied parameter belongs to one unit; use the root as a unit for cross-block
     ties, or keep tied modules together. No local-shard Muon approximation.
     """
-    def __init__(self, module, group, *, device=None, root=0, recompute=True, shard_buffers=None):
+    def __init__(self, module, group, *, device=None, root=0, recompute=True, shard_buffers=None,ensure_backward=False):
         super().__init__()
         from .distributed_checkpoint import model_shard_layout
         self._template_layout=model_shard_layout(module)
         device = torch.device(device or ('ruda:0' if group.device_type == 'ruda' else 'cpu'))
-        if device.type != group.device_type or type(recompute) is not bool:
-            raise ValueError('select the group device and a boolean recompute policy')
+        if device.type != group.device_type or type(recompute) is not bool or type(ensure_backward) is not bool:
+            raise ValueError('select the group device and boolean recompute/ensure_backward policies')
         named = list(module.named_parameters(remove_duplicate=False))
         schema, aliases, unique = [], {}, []
         error = None
@@ -102,13 +135,14 @@ class FullyShardedModule(nn.Module):
                 error='tied buffers must have the same sharding policy'
             buffer_aliases[identity]=name in shard_buffers
             buffer_schema.append((name,tuple(value.shape),str(value.dtype),name in shard_buffers))
-        requests = group.gather_metadata((schema, buffer_schema, root, recompute, error))
-        for other_schema, other_buffers, other_root, other_recompute, failure in requests:
+        requests = group.gather_metadata((schema, buffer_schema, root, recompute, ensure_backward, error))
+        for other_schema, other_buffers, other_root, other_recompute, other_backward, failure in requests:
             if failure:
                 raise ValueError(failure)
-            if (other_schema, other_buffers, other_root, other_recompute) != (schema, buffer_schema, root, recompute):
+            if (other_schema, other_buffers, other_root, other_recompute, other_backward) != (schema, buffer_schema, root, recompute, ensure_backward):
                 raise ValueError('FSDP structure, aliases or policy differs across ranks')
         self.group, self.recompute = group, recompute
+        self.ensure_backward=ensure_backward
         self.shards = nn.ParameterList()
         self._schema = tuple(schema)
         self._element_counts = tuple(p.numel() for p in unique)
@@ -163,7 +197,10 @@ class FullyShardedModule(nn.Module):
 
     def _invoke(self, shards, args, kwargs):
         values = {}
-        gathered = _GatherUnit.apply(self.group, self._element_counts, *shards) if shards else ()
+        gathered = _GatherUnit.apply(self.group, self._element_counts, self.ensure_backward, *shards) if shards else ()
+        sentinel=None
+        if shards and self.ensure_backward:
+            *gathered,sentinel=gathered
         for name, index, shape, dtype, trainable in self._schema:
             values[name] = gathered[index].view(shape)
         materialized={}
@@ -175,7 +212,8 @@ class FullyShardedModule(nn.Module):
                     value=self.group.all_gather(value)[:math.prod(shape)].view(shape)
                 materialized[key]=value
             values[name] = materialized[key]
-        return torch.func.functional_call(self._template, values, args, kwargs, tie_weights=True, strict=True)
+        output=torch.func.functional_call(self._template, values, args, kwargs, tie_weights=True, strict=True)
+        return _participating_outputs(output,sentinel) if sentinel is not None and sentinel.requires_grad else output
 
     def forward(self, *args, **kwargs):
         shards = self._local_shards()
@@ -264,10 +302,16 @@ class FullyShardedModule(nn.Module):
                         target.copy_(state[name])
 
 
-def fully_shard(model, group, *, unit_paths=None, device=None, root=0, recompute=True, shard_buffers=None):
-    """Shard the root or explicit nonoverlapping units without guessing model families."""
+def fully_shard(model, group, *, unit_paths=None, device=None, root=0, recompute=True, shard_buffers=None,ensure_backward=False):
+    """Shard the root or explicit nonoverlapping units without guessing model families.
+
+    ensure_backward=True keeps every entered unit in backward when a rank's actual
+    output does not use any of its weights. It preserves globally-unused grad=None
+    and uses owned floating output copies, costing one extra output allocation.
+    Select it before optimizer creation; unit/microbatch order must still match.
+    """
     if unit_paths is None:
-        return FullyShardedModule(model, group, device=device, root=root, recompute=recompute,shard_buffers=shard_buffers)
+        return FullyShardedModule(model, group, device=device, root=root, recompute=recompute,shard_buffers=shard_buffers,ensure_backward=ensure_backward)
     paths = tuple(unit_paths)
     modules = dict(model.named_modules(remove_duplicate=False))
     error = None
@@ -291,7 +335,7 @@ def fully_shard(model, group, *, unit_paths=None, device=None, root=0, recompute
             raise ValueError('FSDP unit paths differ across ranks')
     replacements = {identity: FullyShardedModule(modules[path], group, device=device, root=root,
                                                 recompute=recompute,shard_buffers=(shard_buffers.get(path)
-                                                if isinstance(shard_buffers,dict) else shard_buffers)) for identity, path in selected.items()}
+                                                if isinstance(shard_buffers,dict) else shard_buffers),ensure_backward=ensure_backward) for identity, path in selected.items()}
     for path, module in modules.items():
         if path and id(module) in replacements:
             parent, _, leaf = path.rpartition('.')
@@ -465,9 +509,9 @@ class ShardedReplicaGroup:
             raise ValueError('sharded training model changed after coordinator creation')
 
     def validate_microbatches(self, batches):
-        signatures = [tuple((name, tuple(value.shape), str(value.dtype)) if isinstance(value,torch.Tensor) else (name,value) for name, value in sorted(batch.items()))
-                      for batch in batches]
-        self.transport.validate_training_options(signatures)
+        # Parameter gather/reduce-scatter shapes are fixed by the unit schema;
+        # actual data replicas may carry different batch and sequence lengths.
+        self.transport.validate_training_options(len(batches))
         if not batches:
             raise ValueError('every FSDP rank must execute the collective-bearing microbatches')
 
