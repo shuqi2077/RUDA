@@ -550,8 +550,20 @@ class GradScaler:
         _tensor(loss, 'loss')
         if loss.numel() != 1 or loss.dtype != torch.float32:
             raise ValueError('use a one-element FP32 loss for explicit loss scaling')
-        self._scaled = True
-        return loss * self._scale
+        return loss * self.begin_backward()
+
+    def begin_backward(self):
+        """Reserve the current scale for an explicitly scaled pipeline backward."""
+        if self._stage!='ready':raise RuntimeError('call update() before scaling the next iteration')
+        self._scaled=True
+        return self._scale
+
+    def record_step(self,skipped):
+        """Record a completed external pipeline optimizer decision before update()."""
+        if self._stage!='ready' or not self._scaled or type(skipped) is not bool:
+            raise RuntimeError('an explicitly scaled backward and boolean step decision are required')
+        self._overflow=skipped
+        self._stage='stepped'
 
     def step(self, optimizer: AdamW, *args, **kwargs):
         supported = isinstance(optimizer, AdamW)
@@ -561,7 +573,8 @@ class GradScaler:
         if not supported and __package__:
             from .sharded_training import Zero2Optimizer
             from .sharded_optim import ShardedMuon
-            supported=isinstance(optimizer,(Zero2Optimizer,ShardedMuon))
+            from .tensor_parallel_optim import TensorParallelMuon
+            supported=isinstance(optimizer,(Zero2Optimizer,ShardedMuon,TensorParallelMuon))
         if not supported:
             raise TypeError('this GradScaler supports ruda_torch.AdamW, Muon and MuonAdamW')
         if args or kwargs:

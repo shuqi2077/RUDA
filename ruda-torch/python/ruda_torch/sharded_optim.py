@@ -8,13 +8,16 @@ from torch import nn
 from .optim import Muon, _validate_group, _number
 
 
-def distributed_grad_norm(parameters, group, *, loss_scale=1., replicated_ids=()):
+def distributed_grad_norm(parameters, group, *, loss_scale=1., replicated_ids=(),replication_factors=None):
     """Stable global L2 norm; count replicated parameters once, shards once each."""
     parameters=list(parameters)
-    if not parameters or not math.isfinite(loss_scale) or loss_scale<=0:
+    if not math.isfinite(loss_scale) or loss_scale<=0:
         raise ValueError('gradient norm requires parameters and a positive finite scale')
     replicated_ids=set(replicated_ids)
-    device=parameters[0].device
+    replication_factors={} if replication_factors is None else dict(replication_factors)
+    if any(type(factor) is not int or factor<1 or factor>group.world_size for factor in replication_factors.values()):
+        raise ValueError('gradient replication factors must be positive group counts')
+    device=parameters[0].device if parameters else torch.device('ruda:0' if group.device_type=='ruda' else 'cpu')
     magnitude=torch.zeros(1,device=device,dtype=torch.float32)
     for parameter in parameters:
         if parameter.grad is not None:
@@ -28,7 +31,8 @@ def distributed_grad_norm(parameters, group, *, loss_scale=1., replicated_ids=()
     for parameter in parameters:
         if parameter.grad is not None:
             contribution=(parameter.grad.detach().float()/largest).square().sum()
-            if id(parameter) in replicated_ids:contribution=contribution/group.world_size
+            factor=replication_factors.get(id(parameter),group.world_size if id(parameter) in replicated_ids else 1)
+            contribution=contribution/factor
             squares.add_(contribution)
     group.sum_(squares)
     return largest*math.sqrt(float(squares.item()))/loss_scale

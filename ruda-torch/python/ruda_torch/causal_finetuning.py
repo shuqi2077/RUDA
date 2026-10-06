@@ -223,6 +223,34 @@ class CausalLMFinetuner(nn.Module):
                                        token_chunk_size=self.token_chunk_size, reduction=reduction)
 
 
+class PackedCausalLMFinetuner(CausalLMFinetuner):
+    """Explicit flat-token backbone/head contract for document-isolated training.
+
+    The caller's backbone accepts input_ids, attention_mask, position_ids,
+    cu_seqlens and max_seqlen. It must actually honor document boundaries (for
+    example through varlen_scaled_dot_product_attention). No dense-model
+    attention path is automatically relabeled as packed/isolated attention.
+    """
+    packed_input=True
+
+    def forward(self,input_ids,attention_mask,labels,position_ids,cu_seqlens,max_seqlen,*,reduction='mean'):
+        from .varlen_attention import _boundaries
+        if input_ids.ndim!=1 or labels.shape!=input_ids.shape or position_ids.shape!=input_ids.shape or attention_mask.shape!=input_ids.shape:
+            raise ValueError('packed causal tensors must share the real flat token axis')
+        boundaries=_boundaries(cu_seqlens,input_ids.numel())
+        if type(max_seqlen) is not int or max_seqlen!=max(b-a for a,b in zip(boundaries,boundaries[1:])):
+            raise ValueError('max_seqlen must equal the actual document maximum')
+        kwargs={'input_ids':input_ids,'attention_mask':attention_mask,'position_ids':position_ids,
+                'cu_seqlens':cu_seqlens,'max_seqlen':max_seqlen}
+        if self._checkpoint_backbone and self.training and torch.is_grad_enabled():
+            def invoke(ids,mask,positions):return self.backbone(**dict(kwargs,input_ids=ids,attention_mask=mask,position_ids=positions))
+            result=checkpoint(invoke,input_ids,attention_mask,position_ids,use_reentrant=False,preserve_rng_state=self.preserve_rng_state)
+        else:result=self.backbone(**kwargs)
+        hidden=result if isinstance(result,torch.Tensor) else result.last_hidden_state
+        if tuple(hidden.shape[:-1])!=tuple(input_ids.shape):raise ValueError('packed backbone must preserve flat tokens, not return vocabulary logits')
+        return chunked_lm_cross_entropy(hidden,self.head,labels,token_chunk_size=self.token_chunk_size,reduction=reduction)
+
+
 def load_hf_nf4_model(directory, *, target_modules, device, dtype=torch.bfloat16,
                       auto_class=None, rank=16, alpha=16., block_size=64,
                       tile_rows=128, adapter_dtype=torch.float32, parameter_dtypes=None,
@@ -274,7 +302,7 @@ class SFTTrainer:
     """
     def __init__(self, model, optimizer, *, base_id, run_config,
                  scaler=None, scheduler=None, replica_group=None, gradient_overlap=False,
-                 bucket_bytes=25*1024*1024):
+                 bucket_bytes=25*1024*1024,sampler=None):
         from .compiler import CompiledModel
         from .sharded_training import FullyShardedModule
         original = model.original if isinstance(model, CompiledModel) else model
@@ -285,6 +313,11 @@ class SFTTrainer:
         self.base_id, self.run_config = base_id, copy.deepcopy(run_config)
         self.scaler, self.scheduler = scaler, scheduler
         self.replica_group = replica_group
+        self.packed_input=bool(getattr(template,'packed_input',False))
+        self.sampler=sampler
+        if sampler is not None:
+            from .training_data import StatefulShardSampler
+            if not isinstance(sampler,StatefulShardSampler):raise TypeError('sampler must provide committed StatefulShardSampler cursors')
         self.gradient_overlap, self.bucket_bytes = gradient_overlap, bucket_bytes
         if type(gradient_overlap) is not bool or type(bucket_bytes) is not int or bucket_bytes <= 0:
             raise ValueError('gradient_overlap must be bool and bucket_bytes positive')
@@ -310,15 +343,28 @@ class SFTTrainer:
         error = None
         try:
             for batch in microbatches:
-                if set(batch) != {'input_ids', 'attention_mask', 'labels'} or any(t.device.type != 'cpu' for t in batch.values()):
+                expected={'input_ids','attention_mask','labels'}|({'position_ids','cu_seqlens','max_seqlen'} if self.packed_input else set())
+                if set(batch) != expected or any(t.device.type != 'cpu' for t in batch.values() if isinstance(t,torch.Tensor)):
                     raise ValueError('supply collated CPU input_ids, attention_mask and labels')
                 if batch['labels'].shape != batch['input_ids'].shape or batch['attention_mask'].shape != batch['labels'].shape:
                     raise ValueError('SFT batch shapes must match')
                 if batch['attention_mask'].dtype != torch.bool or ((batch['labels'] != -100) & ~batch['attention_mask']).any():
                     raise ValueError('padding must not be supervised')
-                counts.append(int((batch['labels'][:, 1:] != -100).sum()))
+                if self.packed_input:
+                    from .varlen_attention import _boundaries
+                    boundaries=_boundaries(batch['cu_seqlens'],batch['input_ids'].numel())
+                    if batch['input_ids'].ndim!=1 or batch['position_ids'].shape!=batch['input_ids'].shape:
+                        raise ValueError('packed batches need flat tokens and corresponding positions')
+                    if any(int(batch['labels'][begin])!=-100 for begin,end in zip(boundaries,boundaries[1:]) if end>begin):
+                        raise ValueError('packed document starts cannot be cross-document next-token targets')
+                    counts.append(int((batch['labels'][1:]!=-100).sum()))
+                else:counts.append(int((batch['labels'][:, 1:] != -100).sum()))
             if self.replica_group is not None:
                 self.replica_group.validate_model(self.model)
+            if self.sampler is not None:
+                consumed=sum(batch['cu_seqlens'].numel()-1 if self.packed_input else batch['input_ids'].shape[0] for batch in microbatches)
+                if self.sampler.committed+consumed>self.sampler.issued:
+                    raise ValueError('microbatches were not issued by the attached sampler')
         except (ValueError, TypeError, AttributeError) as failure:
             if self.replica_group is None:
                 raise
@@ -347,7 +393,7 @@ class SFTTrainer:
         overlap = None
         loss_total = None
         for index, batch in enumerate(microbatches):
-            batch = {name: tensor.to(device) for name, tensor in batch.items()}
+            batch = {name: tensor.to(device) if isinstance(tensor,torch.Tensor) and name!='cu_seqlens' else tensor for name,tensor in batch.items()}
             loss = self.executable(**batch, reduction='sum')
             scaled = loss / count
             if self.scaler is not None:
@@ -383,6 +429,9 @@ class SFTTrainer:
         if self.scheduler is not None and not skipped:
             self.scheduler.step()
         self.optimizer.zero_grad(set_to_none=True)
+        if self.sampler is not None:
+            consumed=sum(batch['cu_seqlens'].numel()-1 if self.packed_input else batch['input_ids'].shape[0] for batch in microbatches)
+            self.sampler.commit(consumed)
         self.step += 1; self.cursor += len(microbatches); self.tokens += count
         loss_value = float(loss_total.cpu()) / count
         elapsed = time.monotonic() - started
@@ -402,6 +451,7 @@ class SFTTrainer:
                                    step=self.step, data_state={'cursor': self.cursor, 'tokens': self.tokens},
                                    scaler=self.scaler)
         state['run_config'] = self.run_config
+        if self.sampler is not None:state['data_state']['sampler']=self.sampler.state_dict()
         if self.replica_group is not None:
             state['replica'] = {'rank': self.replica_group.rank, 'world_size': self.replica_group.world_size}
         state['scheduler'] = None if self.scheduler is None else {
@@ -428,6 +478,9 @@ class SFTTrainer:
             raise ValueError('checkpoint rank/world size differs; explicit repartitioning is required')
         if state.get('run_config') != self.run_config:
             raise ValueError('resume requires the exact input/source/config snapshot')
+        saved_sampler=state['data_state'].get('sampler')
+        if (saved_sampler is None)!=(self.sampler is None):raise ValueError('checkpoint sampler presence differs')
+        if self.sampler is not None:self.sampler.validate_state_dict(saved_sampler)
         saved = state.get('scheduler')
         name = None if self.scheduler is None else type(self.scheduler).__module__ + '.' + type(self.scheduler).__qualname__
         if (saved is None) != (name is None) or saved is not None and saved['class'] != name:
@@ -437,6 +490,7 @@ class SFTTrainer:
         if saved is not None:
             self.scheduler.load_state_dict(saved['state'])
         self.cursor, self.tokens = data['cursor'], data['tokens']
+        if self.sampler is not None:self.sampler.load_state_dict(saved_sampler)
         self.elapsed_before_resume = state.get('elapsed_seconds', 0.)
         self.started = time.monotonic()
         self.last_checkpoint = {'path': str(Path(path).resolve()), 'saved_at': state['saved_at']}
@@ -449,6 +503,7 @@ class SFTTrainer:
             raise ValueError('save_distributed requires an explicit distributed coordinator')
         state = {'base_id': self.base_id, 'run_config': self.run_config, 'cursor': self.cursor,
                  'tokens': self.tokens, 'elapsed_seconds': self.elapsed_before_resume+time.monotonic()-self.started}
+        if self.sampler is not None:state['sampler']=self.sampler.state_dict()
         result = DistributedCheckpoint(self.replica_group, directory).save(self.model, self.optimizer,
             step=self.step, application_state=state, scheduler=self.scheduler, scaler=self.scaler)
         self.last_checkpoint = result
@@ -461,9 +516,12 @@ class SFTTrainer:
         def validate(state):
             if state['base_id'] != self.base_id or state['run_config'] != self.run_config:
                 raise ValueError('distributed checkpoint base/source/config differs')
+            if (state.get('sampler') is None)!=(self.sampler is None):raise ValueError('checkpoint sampler presence differs')
+            if self.sampler is not None:self.sampler.validate_state_dict(state['sampler'])
         step, state = DistributedCheckpoint(self.replica_group, directory).load(self.model, self.optimizer,
             generation=generation, scheduler=self.scheduler, scaler=self.scaler,validate_application=validate)
         self.step, self.cursor, self.tokens = step, state['cursor'], state['tokens']
+        if self.sampler is not None:self.sampler.load_state_dict(state['sampler'])
         self.elapsed_before_resume = state['elapsed_seconds']
         self.started = time.monotonic()
         self.optimizer.zero_grad(set_to_none=True)

@@ -32,6 +32,7 @@ class ParallelMesh:
         dist.all_gather_object(contracts,(shape,device_type,timeout_seconds))
         if any(value!=(shape,device_type,timeout_seconds) for value in contracts):
             raise ValueError('global ranks supplied different mesh configurations')
+        self.world=ReplicaGroup(device_type=device_type)
         self.groups={}
         self._owned=[]
         backend='nccl' if device_type=='ruda' else 'gloo'
@@ -50,6 +51,13 @@ class ParallelMesh:
                 if self.rank in ranks:
                     self.groups[name]=ReplicaGroup(process_group,device_type=device_type)
                     self._owned.append(process_group)
+        for pipeline_rank in range(pipeline_parallel):
+            ranks=[(d*pipeline_parallel+pipeline_rank)*tensor_parallel+t
+                   for d in range(data_parallel) for t in range(tensor_parallel)]
+            process_group=dist.new_group(ranks,backend=backend,timeout=timedelta(seconds=timeout_seconds))
+            if self.rank in ranks:
+                self.groups['stage']=ReplicaGroup(process_group,device_type=device_type)
+                self._owned.append(process_group)
 
     @property
     def data(self):return self.groups['data']
@@ -60,10 +68,27 @@ class ParallelMesh:
     @property
     def pipeline(self):return self.groups['pipeline']
 
+    @property
+    def stage(self):return self.groups['stage']
+
+    def stage_mesh(self):
+        """DP/TP view backed by the REAL current pipeline-stage process groups."""
+        return _StageMesh(self)
+
     def close(self):
         for process_group in reversed(self._owned):
             dist.destroy_process_group(process_group)
         self._owned.clear()
+
+
+class _StageMesh:
+    def __init__(self,parent):
+        self.parent=parent
+        self.shape=(parent.shape[0],1,parent.shape[2])
+        self.device_type=parent.device_type
+        self.world,self.data,self.tensor=parent.stage,parent.data,parent.tensor
+        self.rank=self.world.rank
+        self.coordinates=(parent.coordinates[0],0,parent.coordinates[2])
 
 
 class TensorParallelGroup:
@@ -98,7 +123,7 @@ class TensorParallelGroup:
     def validate_microbatches(self,batches):
         # Batches are CPU inputs to SFTTrainer, so exact equality does not cause
         # a GPU payload download or change rank-local compute placement.
-        prepared=[{name:value.tolist() for name,value in batch.items()} for batch in batches]
+        prepared=[{name:value.tolist() if isinstance(value,torch.Tensor) else value for name,value in batch.items()} for batch in batches]
         self.validate_training_options(prepared)
 
     def sum_(self,tensor):
@@ -120,6 +145,11 @@ class TensorParallelGroup:
         return weight
 
     def prepare_optimizer_step(self,optimizer,*,loss_scale=1.):
+        from .optim import Muon
+        if isinstance(optimizer,Muon) and any(getattr(p,'_ruda_tp_sharded',False) for options in optimizer.param_groups for p in options['params']):
+            raise ValueError('use TensorParallelMuon to orthogonalize complete TP matrices')
+        if getattr(optimizer,'complete_tensor_parallel_matrices',False):
+            return
         if not hasattr(optimizer,'last_step_skipped'):
             return
         parameters=[p for options in optimizer.param_groups for p in options['params']]

@@ -86,7 +86,14 @@ def model_shard_layout(model):
     return layout
 
 
+def _checkpoint_layout(model,group):
+    layout=model_shard_layout(model)
+    return group.checkpoint_layout(layout) if hasattr(group,'checkpoint_layout') else layout
+
+
 def _optimizer_description(model, optimizer, layout):
+    if optimizer is None:
+        return {'groups':[],'states':{},'extra':{},'layout':{},'class':None}
     from .sharded_training import Zero2Optimizer
     names = {id(parameter): name for name, parameter in model.named_parameters()}
     if isinstance(optimizer, Zero2Optimizer):
@@ -94,6 +101,15 @@ def _optimizer_description(model, optimizer, layout):
         optimizer_layout = {names[id(shard)]: {'name': names[id(shard)], 'aliases': [],
                             'shape': list(parameter.shape), 'axis': None}
                             for parameter, shard in optimizer.entries}
+        for parameter,shard in optimizer.entries:
+            name=names[id(shard)]
+            spec=layout.get(name)
+            if spec is not None and 'mesh' in spec:
+                optimizer_layout[name]=dict(spec,transform='zero2-tp-flat',local_shape=list(parameter.shape))
+            elif any('mesh' in entry for entry in layout.values()):
+                mesh=next(entry['mesh'] for entry in layout.values() if 'mesh' in entry)
+                optimizer_layout[name]=dict(name=name,aliases=[],shape=list(parameter.shape),axis=None,
+                    replicated=True,mesh=mesh,transform='zero2-tp-flat',local_shape=list(parameter.shape))
         actual = optimizer.optimizer
     else:
         optimizer_layout, actual = layout, optimizer
@@ -122,7 +138,7 @@ class DistributedCheckpoint:
         self.group, self.directory = group, Path(directory)
 
     def save(self, model, optimizer, *, step, application_state=None, scheduler=None, scaler=None):
-        layout = model_shard_layout(model)
+        layout = _checkpoint_layout(model,self.group)
         self.group.validate_training_options((step, layout))
         if type(step) is not int or step < 0:
             raise ValueError('checkpoint step must be a nonnegative integer')
@@ -192,7 +208,7 @@ class DistributedCheckpoint:
         try:
             state = torch.load(folder/manifest['files'][self.group.rank], map_location='cpu', weights_only=True)
             if (state['step'], state['rank'], state['world_size'], state['layout']) != (
-                    manifest['step'], self.group.rank, self.group.world_size, model_shard_layout(model)):
+                    manifest['step'], self.group.rank, self.group.world_size, _checkpoint_layout(model,self.group)):
                 raise ValueError('rank checkpoint topology or layout differs')
             if (state['scheduler'] is None) != (scheduler is None) or (state['scaler'] is None) != (scaler is None):
                 raise ValueError('scheduler/scaler presence differs')
@@ -275,6 +291,7 @@ class DistributedCheckpoint:
             for key, value in values[0].items():
                 shape = None if spec is None else spec['shape']
                 is_parameter_state = isinstance(value, torch.Tensor) and shape is not None and (
+                    spec.get('transform')=='zero2-tp-flat' and value.ndim==1 or
                     local_parameter is not None and value.shape == local_parameter.shape or
                     spec.get('axis') is None and value.ndim == 1 and value.numel() == math.ceil(math.prod(shape)/len(ranks)))
                 fields[key] = _join([entry[key] for entry in values], spec if is_parameter_state else None)
@@ -293,7 +310,7 @@ class DistributedCheckpoint:
         reshard_application(old_rank_states, new_rank, new_world) returns the
         application state and must explicitly restore any run-specific RNG.
         """
-        layout = model_shard_layout(model)
+        layout = _checkpoint_layout(model,self.group)
         local = {}
         for name, target in model.state_dict().items():
             spec = layout.get(name)
@@ -314,6 +331,9 @@ class DistributedCheckpoint:
 
 
 def _join(values, spec):
+    if spec is not None and 'mesh' in spec:
+        from .hybrid_parallel import join_mesh_field
+        return join_mesh_field(values,spec)
     if spec is not None and spec.get('transform','').startswith('nf4-'):
         from .parallel_adapters import join_nf4_field
         return join_nf4_field(values,spec)
@@ -328,6 +348,9 @@ def _join(values, spec):
 
 
 def _slice(value, spec, rank, world):
+    if spec is not None and 'mesh' in spec:
+        from .hybrid_parallel import slice_mesh_field
+        return slice_mesh_field(value,spec,rank,world)
     if spec is not None and spec.get('transform','').startswith('nf4-'):
         from .parallel_adapters import slice_nf4_field
         return slice_nf4_field(value,spec,rank,world)
@@ -346,6 +369,9 @@ def _slice(value, spec, rank, world):
 
 
 def _restore_optimizer(model, optimizer, description, layout, group, *, consolidated):
+    if optimizer is None:
+        if description['class'] is not None:raise ValueError('checkpoint has an optimizer but this stage does not')
+        return
     from .sharded_training import Zero2Optimizer
     live_description = _optimizer_description(model, optimizer, layout)
     if description['class'] != live_description['class']:
@@ -370,7 +396,7 @@ def _restore_optimizer(model, optimizer, description, layout, group, *, consolid
             fields = {}
             spec = specs.get(name)
             for key, value in entry.items():
-                if consolidated and spec is not None and not spec.get('replicated') and isinstance(value, torch.Tensor) and tuple(value.shape) == tuple(spec['shape']):
+                if consolidated and spec is not None and (not spec.get('replicated') or spec.get('transform')=='zero2-tp-flat') and isinstance(value, torch.Tensor) and tuple(value.shape) == tuple(spec['shape']):
                     value = _slice(value, spec, group.rank, group.world_size)
                 fields[key] = value
             states[identity] = fields
@@ -378,5 +404,5 @@ def _restore_optimizer(model, optimizer, description, layout, group, *, consolid
     if isinstance(optimizer, Zero2Optimizer):
         with torch.no_grad():
             for parameter, shard in optimizer.entries:
-                value = _slice(parameter.detach(), {'axis': None, 'shape': list(parameter.shape)}, group.rank, group.world_size)
+                value = _slice(parameter.detach(), {'axis': None, 'shape': list(parameter.shape)}, optimizer.group.rank, optimizer.group.world_size)
                 shard.copy_(value)

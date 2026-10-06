@@ -332,6 +332,7 @@ class Zero2Optimizer:
         self.param_groups = self.optimizer.param_groups
         self.last_step_skipped = False
         self._weight = None
+        self._mesh_grad_norm = None
 
     def synchronize_gradients(self, *, local_weight, normalized=False, missing='zero'):
         flags = [p.grad is not None for p, shard in self.entries]
@@ -380,8 +381,8 @@ class Zero2Optimizer:
         if not self.last_step_skipped:
             if getattr(self.optimizer,'max_grad_norm',None) is not None and hasattr(self.optimizer,'_distributed_grad_norm'):
                 from .sharded_optim import distributed_grad_norm
-                self.optimizer._distributed_grad_norm=distributed_grad_norm([shard for parameter,shard in self.entries],
-                    self.group,loss_scale=kwargs.get('loss_scale',1.))
+                self.optimizer._distributed_grad_norm=(self._mesh_grad_norm if self._mesh_grad_norm is not None else
+                    distributed_grad_norm([shard for parameter,shard in self.entries],self.group,loss_scale=kwargs.get('loss_scale',1.)))
             self.optimizer.step(**kwargs)
             self.last_step_skipped = bool(getattr(self.optimizer, 'last_step_skipped', False))
             statuses = self.group.gather_metadata(self.last_step_skipped)
@@ -391,6 +392,7 @@ class Zero2Optimizer:
                 for parameter, shard in self.entries:
                     parameter.copy_(self.group.all_gather(shard)[:parameter.numel()].view_as(parameter))
         self._weight = None
+        self._mesh_grad_norm = None
 
     def zero_grad(self, set_to_none=True):
         self.optimizer.zero_grad(set_to_none=set_to_none)
@@ -416,6 +418,7 @@ class Zero2Optimizer:
                 if end > begin:
                     shard[:end-begin].copy_(parameter.detach().reshape(-1)[begin:end])
         self._weight = None
+        self._mesh_grad_norm = None
 
 
 class ShardedReplicaGroup:

@@ -160,6 +160,7 @@ class Muon(torch.optim.Optimizer):
         self.max_grad_norm = None if max_grad_norm is None else positive_float(max_grad_norm, 'max_grad_norm')
         self.last_step_skipped = False
         self._expected_versions = {}
+        self._distributed_grad_norm = None
         defaults = dict(lr=lr, momentum=momentum, weight_decay=weight_decay, nesterov=nesterov,
             momentum_mode=momentum_mode, dampening=dampening, ns_steps=ns_steps,
             ns_coefficients=tuple(ns_coefficients), eps=eps, adjust_lr=adjust_lr,
@@ -209,6 +210,8 @@ class Muon(torch.optim.Optimizer):
 
     @torch.no_grad()
     def step(self, closure=None, *, loss_scale=1.0):
+        global_grad_norm=self._distributed_grad_norm
+        self._distributed_grad_norm=None
         loss = None
         if closure is not None:
             with torch.enable_grad():
@@ -240,11 +243,16 @@ class Muon(torch.optim.Optimizer):
             return loss
         clip = None
         if self.max_grad_norm is not None:
-            scales = torch.stack([maximum_abs(g) for _, _, _, g in prepared])
-            largest = _lower_bound(maximum_abs(scales), torch.finfo(scales.dtype).tiny)
-            normalized_norm = torch.stack([(g / largest).square().sum() for _, _, _, g in prepared]).sum().sqrt()
-            raw = (self.max_grad_norm / largest) / _lower_bound(normalized_norm, torch.finfo(scales.dtype).tiny)
+            if global_grad_norm is not None:
+                norm=_number(global_grad_norm,'global_grad_norm',nonnegative=True)
+                raw=torch.tensor(1. if norm==0 else self.max_grad_norm/norm,device=prepared[0][0].device,dtype=work_dtype(prepared[0][0]))
+            else:
+                scales = torch.stack([maximum_abs(g) for _, _, _, g in prepared])
+                largest = _lower_bound(maximum_abs(scales), torch.finfo(scales.dtype).tiny)
+                normalized_norm = torch.stack([(g / largest).square().sum() for _, _, _, g in prepared]).sum().sqrt()
+                raw = (self.max_grad_norm / largest) / _lower_bound(normalized_norm, torch.finfo(scales.dtype).tiny)
             clip = torch.where(raw < 1, raw, torch.ones_like(raw))
+        self._distributed_grad_norm=None
         proposals, flags = [], []
         for p, group, old, g in prepared:
             with precision_context(p):
@@ -326,6 +334,7 @@ class Muon(torch.optim.Optimizer):
         self.max_grad_norm = norm
         self._expected_versions = {id(p): p._version for p in restored}
         self.last_step_skipped = False
+        self._distributed_grad_norm=None
 
 
 class MuonAdamW(Muon):
