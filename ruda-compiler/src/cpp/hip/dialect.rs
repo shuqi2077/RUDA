@@ -450,24 +450,47 @@ impl<M: DialectWmmaCompiler<Self>> DialectInstructions<Self> for HipDialect<M> {
 
     fn compile_saturating_add(
         f: &mut std::fmt::Formatter<'_>,
-        _lhs: impl Display,
-        _rhs: impl Display,
-        _item: Item<Self>,
+        lhs: impl Display,
+        rhs: impl Display,
+        item: Item<Self>,
     ) -> std::fmt::Result {
-        f.write_str(
-            "#error No native saturating add exists, TODO: Should be replaced in a preprocessor\n",
-        )
+        let elem = item.elem();
+        match elem {
+            Elem::I32 => write!(f, r#"[&]() -> {elem} {{
+    const long long result = static_cast<long long>({lhs}) + static_cast<long long>({rhs});
+    if (result > 2147483647LL) return static_cast<{elem}>(2147483647LL);
+    if (result < (-2147483647LL - 1LL)) return static_cast<{elem}>(-2147483647LL - 1LL);
+    return static_cast<{elem}>(result);
+}}()"#),
+            Elem::U32 => write!(f, r#"[&]() -> {elem} {{
+    const unsigned long long result = static_cast<unsigned long long>({lhs}) + static_cast<unsigned long long>({rhs});
+    return static_cast<{elem}>(result > 4294967295ULL ? 4294967295ULL : result);
+}}()"#),
+            _ => unreachable!("Non-32-bit saturating arithmetic must be replaced by its polyfill"),
+        }
     }
 
     fn compile_saturating_sub(
         f: &mut std::fmt::Formatter<'_>,
-        _lhs: impl Display,
-        _rhs: impl Display,
-        _item: Item<Self>,
+        lhs: impl Display,
+        rhs: impl Display,
+        item: Item<Self>,
     ) -> std::fmt::Result {
-        f.write_str(
-            "#error No native saturating sub exists, TODO: Should be replaced in a preprocessor\n",
-        )
+        let elem = item.elem();
+        match elem {
+            Elem::I32 => write!(f, r#"[&]() -> {elem} {{
+    const long long result = static_cast<long long>({lhs}) - static_cast<long long>({rhs});
+    if (result > 2147483647LL) return static_cast<{elem}>(2147483647LL);
+    if (result < (-2147483647LL - 1LL)) return static_cast<{elem}>(-2147483647LL - 1LL);
+    return static_cast<{elem}>(result);
+}}()"#),
+            Elem::U32 => write!(f, r#"[&]() -> {elem} {{
+    const unsigned int left = static_cast<unsigned int>({lhs});
+    const unsigned int right = static_cast<unsigned int>({rhs});
+    return static_cast<{elem}>(left < right ? 0U : left - right);
+}}()"#),
+            _ => unreachable!("Non-32-bit saturating arithmetic must be replaced by its polyfill"),
+        }
     }
 
     // others
