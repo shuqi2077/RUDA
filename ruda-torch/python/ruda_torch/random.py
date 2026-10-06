@@ -96,6 +96,7 @@ def bernoulli_(tensor, p=.5, *, generator=None):
 def native_dropout(input, p, train=True):
     if not 0<=p<=1:
         raise ValueError('dropout probability must be in [0,1]')
+    if train is None:train=True
     if not train or p==0:
         return input.clone(),torch.ones_like(input,dtype=torch.bool)
     if p==1:
@@ -115,9 +116,10 @@ def register_random_ops():
     def bernoulli_tensor(tensor,p,generator=None):
         if p.device!=tensor.device or not p.is_floating_point() or ((p<0)|(p>1)|torch.isnan(p)).any().item():
             raise ValueError('Bernoulli probabilities must be finite and in [0,1] on the output device')
-        random=torch.empty(p.shape,dtype=torch.float32,device=p.device)
+        probabilities=p.expand(tensor.shape)
+        random=torch.empty(tensor.shape,dtype=torch.float32,device=p.device)
         uniform_(random,generator=generator)
-        tensor.copy_((random<p).to(tensor.dtype))
+        tensor.copy_((random<probabilities).to(tensor.dtype))
         return tensor
     _registry.impl('bernoulli_.Tensor',bernoulli_tensor)
     _registry.impl('native_dropout',native_dropout)
