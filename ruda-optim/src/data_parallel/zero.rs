@@ -138,7 +138,7 @@ where
         let model = self.optimizer.step(lr, model, filter.output);
         let mut broadcast = OwnedBroadcast::<B, C> {
             communicator: &self.session.communicator, ownership: &ownership,
-            updated: TensorContainer::new(), error: None,
+            updated: TensorContainer::new(), error: None, backend: PhantomData,
         };
         let model = model.map(&mut broadcast);
         if let Some(error) = broadcast.error { return Err(error.into()); }
@@ -222,6 +222,7 @@ struct OwnedBroadcast<'a, B: AutodiffBackend, C: DataParallelCommunicator<B::Inn
     ownership: &'a HashMap<ParamId, u32>,
     updated: TensorContainer<ParamId>,
     error: Option<TensorDeviceError>,
+    backend: PhantomData<B>,
 }
 impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> ModuleMapper<B>
     for OwnedBroadcast<'_, B, C>
