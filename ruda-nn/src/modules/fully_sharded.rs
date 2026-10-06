@@ -191,6 +191,18 @@ impl<B:Backend,S:CheckpointStrategy> FullyShardedLinear<Autodiff<B,S>> {
         let bias=match &self.bias {Some(bias)=>Some(bias.gather::<C,1>(communicator)?),None=>None};
         Ok(linear(input,weight,bias))
     }
+
+    /// Explicit gather/projection precision for mixed parameter/activation
+    /// storage. Persistent weights and output activation dtype are unchanged.
+    pub fn forward_with_compute_dtype<C:BroadcastTensorCollective<B>,const D:usize>(
+        &self,input:Tensor<Autodiff<B,S>,D>,communicator:C,dtype:FloatDType)->Result<Tensor<Autodiff<B,S>,D>,C::Error> {
+        let output_dtype=input.dtype();
+        let weight=self.weight.gather_with_compute_dtype::<C,2>(communicator.clone(),dtype)?;
+        let bias=match &self.bias {
+            Some(bias)=>Some(bias.gather_with_compute_dtype::<C,1>(communicator,dtype)?),None=>None,
+        };
+        Ok(linear(input.cast(dtype),weight,bias).cast(output_dtype))
+    }
 }
 
 /// Embedding with local flattened table slices and globally indexed token lookup.
@@ -306,6 +318,20 @@ impl<B:Backend,S:CheckpointStrategy> FullyShardedGatedMLP<Autodiff<B,S>> {
         let gate=self.gate.forward(input.clone(),communicator.clone())?;
         let up=self.up.forward(input,communicator.clone())?;
         self.down.forward(activation(gate)*up,communicator)
+    }
+
+    /// Explicit whole-block arithmetic precision, including gate activation and
+    /// intermediate multiplication. Different affine storage dtypes may coexist;
+    /// only the final activation is cast back to the input's storage dtype.
+    pub fn forward_with_compute_dtype<C:BroadcastTensorCollective<B>,F,const D:usize>(
+        &self,input:Tensor<Autodiff<B,S>,D>,communicator:C,dtype:FloatDType,activation:F)
+        ->Result<Tensor<Autodiff<B,S>,D>,C::Error>
+    where F:FnOnce(Tensor<Autodiff<B,S>,D>)->Tensor<Autodiff<B,S>,D> {
+        let output_dtype=input.dtype();
+        let input=input.cast(dtype);
+        let gate=self.gate.forward_with_compute_dtype(input.clone(),communicator.clone(),dtype)?;
+        let up=self.up.forward_with_compute_dtype(input,communicator.clone(),dtype)?;
+        self.down.forward_with_compute_dtype(activation(gate)*up,communicator,dtype).map(|output|output.cast(output_dtype))
     }
 }
 
