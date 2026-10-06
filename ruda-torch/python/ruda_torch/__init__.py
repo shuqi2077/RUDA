@@ -188,7 +188,8 @@ from .sparse_attention import (LightningIndexer, DSAIndexer, indexer_kl_loss,
     LearnedKVCompressor, CompressedSparseAttention, HeavilyCompressedAttention,
     CSA, HCA, AttentionOutput, IndexerOutput, CompressedAttentionCache, CompressionState, RotaryEmbedding)
 from .optim import Muon, MuonAdamW, muon_orthogonalize
-from .hybrid_model import MHCTransformerBlock, HybridAttentionLanguageModel, next_token_loss
+from .hybrid_model import (MHCTransformerBlock, HybridAttentionLanguageModel,
+                          HybridAttentionBackbone, HybridAttentionCache, next_token_loss)
 
 _sequence_available = False
 if hasattr(_native, "ruda_torch_sequence_api_version") and hasattr(_C, "initialize_sequence"):
