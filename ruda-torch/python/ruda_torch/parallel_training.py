@@ -245,11 +245,11 @@ def tensor_parallelize(model, group, plan):
                     else:weight_shards[key]=(weight_signature,parameter)
                 replacement.train(source.training)
                 replacements[id(source)] = replacement
-        selected={id(child) for name,module in modules.items() if id(module) in replacements for child in module.modules()}
+        selected=[name for name,module in modules.items() if id(module) in replacements]
         selected_weights = set(weight_shards)
         for name, module in modules.items():
             for parameter in module.parameters(recurse=False):
-                if id(parameter) in selected_weights and id(module) not in selected:
+                if id(parameter) in selected_weights and not any(name==path or name.startswith(path+'.') for path in selected):
                     raise ValueError('include every consumer of a tied weight in the parallel plan')
     except (KeyError, TypeError, ValueError) as failure:
         error = str(failure)

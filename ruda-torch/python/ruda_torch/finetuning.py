@@ -292,9 +292,13 @@ def inject_lora(model, *, target_modules, rank=16, alpha=16., adapter_dtype=torc
     Names are exact qualified module paths. No model family or head-selection
     heuristic is used. Construct the optimizer AFTER injection.
     """
-    from .parallel_adapters import (_ParallelLoRA,_ParallelNF4,lora_from_parallel_base)
-    from .parallel_training import ColumnParallelLinear,RowParallelLinear
-    parallel_types=(ColumnParallelLinear,RowParallelLinear,_ParallelNF4)
+    if __package__:
+        from .parallel_adapters import (_ParallelLoRA,_ParallelNF4,lora_from_parallel_base)
+        from .parallel_training import ColumnParallelLinear,RowParallelLinear
+        parallel_types=(ColumnParallelLinear,RowParallelLinear,_ParallelNF4)
+    else:
+        _ParallelLoRA=()
+        parallel_types=()
     if any(isinstance(m, (LoRALinear,_ParallelLoRA)) for m in model.modules()):
         raise ValueError('model already contains LoRA adapters')
     selected = _selected(model, target_modules, (nn.Linear, NF4Linear)+parallel_types)
@@ -354,7 +358,11 @@ def quantize_nf4(model, *, target_modules, block_size=64, tile_rows=128):
 def adapter_state_dict(model):
     """Portable CPU adapter tensors plus a strict, versioned layout contract."""
     layers = {}
-    from .parallel_adapters import _ParallelLoRA,adapter_base_kind,full_adapter_matrix
+    if __package__:
+        from .parallel_adapters import _ParallelLoRA,adapter_base_kind,full_adapter_matrix
+    else:
+        _ParallelLoRA=()
+        adapter_base_kind=lambda layer:'nf4' if isinstance(layer.base,NF4Linear) else 'dense'
     for name, layer in model.named_modules():
         if isinstance(layer, (LoRALinear,_ParallelLoRA)):
             layers[name] = {'rank': layer.rank, 'alpha': layer.alpha,
@@ -375,13 +383,18 @@ def adapter_state_dict(model):
 
 @torch.no_grad()
 def load_adapter_state_dict(model, state):
-    from .parallel_adapters import _ParallelLoRA,adapter_base_kind,local_adapter_matrix
+    if __package__:
+        from .parallel_adapters import _ParallelLoRA,adapter_base_kind,local_adapter_matrix
+    else:
+        _ParallelLoRA=()
+        adapter_base_kind=lambda layer:'nf4' if isinstance(layer.base,NF4Linear) else 'dense'
     if not isinstance(state, dict) or set(state) != {'format', 'version', 'layers'} or state['format'] != 'ruda-lora' or state['version'] not in (1,2):
         raise ValueError('unsupported adapter checkpoint')
     layers = {name: layer for name, layer in model.named_modules() if isinstance(layer, (LoRALinear,_ParallelLoRA))}
     if not layers or not isinstance(state['layers'], dict) or set(layers) != set(state['layers']):
         raise ValueError('adapter target names mismatch')
     copies = []
+    shared = {}
     for name, layer in layers.items():
         entry = state['layers'][name]
         metadata = {'rank': layer.rank, 'alpha': layer.alpha, 'in_features': layer.in_features,
@@ -397,7 +410,11 @@ def load_adapter_state_dict(model, state):
             shape=(layer.rank,layer.in_features) if key=='lora_A' else (layer.out_features,layer.rank)
             if not isinstance(src, torch.Tensor) or src.shape != shape or src.dtype not in _FLOATS:
                 raise ValueError(f'adapter tensor mismatch: {name}.{key}')
-            copies.append((dst,local_adapter_matrix(layer,key,src) if isinstance(layer,_ParallelLoRA) else src))
+            value=local_adapter_matrix(layer,key,src) if isinstance(layer,_ParallelLoRA) else src
+            if id(dst) in shared and not torch.equal(shared[id(dst)],value):
+                raise ValueError('shared adapter parameters have different checkpoint values')
+            shared[id(dst)]=value
+            copies.append((dst,value))
     for dst, src in copies:
         dst.copy_(src)
 
@@ -409,8 +426,13 @@ def merge_lora(model):
     Packed bases are not silently expanded or requantized. Keep adapters for
     NF4 deployment. Shared base weights are rejected to preserve tie semantics.
     """
-    from .parallel_adapters import _ParallelLoRA,merge_parallel_lora
-    from .parallel_training import ColumnParallelLinear,RowParallelLinear
+    dense_types=(nn.Linear,)
+    if __package__:
+        from .parallel_adapters import _ParallelLoRA,merge_parallel_lora
+        from .parallel_training import ColumnParallelLinear,RowParallelLinear
+        dense_types+=(ColumnParallelLinear,RowParallelLinear)
+    else:
+        _ParallelLoRA=()
     layers = [(name, layer) for name, layer in model.named_modules(remove_duplicate=False) if isinstance(layer, (LoRALinear,_ParallelLoRA))]
     if not layers:
         raise ValueError('model has no adapters')
@@ -419,7 +441,7 @@ def merge_lora(model):
         for parameter in module.parameters(recurse=False):
             owners.setdefault(id(parameter), set()).add(id(module))
     for name, layer in layers:
-        if not name or layer.training or not isinstance(layer.base, (nn.Linear,ColumnParallelLinear,RowParallelLinear)):
+        if not name or layer.training or not isinstance(layer.base, dense_types):
             raise ValueError('merge requires non-root, eval-mode dense LoRA layers')
         if len(owners[id(layer.base.weight)]) != 1:
             raise ValueError('cannot merge a base weight shared with another module')
