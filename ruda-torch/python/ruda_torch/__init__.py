@@ -239,4 +239,4 @@ from .sharded_optim import ShardedMuon, distributed_grad_norm
 from .quantization_interop import bnb_nf4_linear, load_bnb_nf4_safetensors
 from .parallel_adapters import (ColumnParallelLoRALinear,RowParallelLoRALinear,
     ColumnParallelNF4Linear,RowParallelNF4Linear,shard_nf4_linear)
-from .parallel_checkpoint_io import load_tensor_parallel_safetensors
+from .parallel_checkpoint_io import load_tensor_parallel_safetensors,load_tensor_parallel_bnb_nf4_safetensors
