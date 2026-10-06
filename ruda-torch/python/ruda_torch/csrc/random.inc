@@ -10,5 +10,6 @@ at::Tensor random_fill(const at::Tensor& output,uint64_t seed,uint64_t counter,u
   TORCH_CHECK(distribution!=2 || (first>=0 && first<=1),"invalid Bernoulli probability");
   Argument argument(output);
   check(random_fill_native(&argument.desc,seed,counter,distribution,float(first),float(second)));
+  output.unsafeGetTensorImpl()->bump_version();
   return output;
 }

@@ -5,7 +5,7 @@ use ruda_model::{
     module::{Module,Param},
     tensor::{Tensor,Int,DType,FloatDType,backend::Backend,module::{linear,embedding}},
 };
-use ruda_model::tensor::collective::BroadcastTensorCollective;
+use ruda_autodiff::tensor_parallel::BroadcastTensorCollective;
 
 /// A logical parameter backed only by this rank's padded element slice.
 ///
