@@ -31,6 +31,7 @@ jobs:
             ruda-torch/python/tests/test_model_compile.py \
             ruda-torch/python/tests/test_finetuning.py \
             ruda-torch/python/tests/test_causal_finetuning.py \
+            ruda-torch/python/tests/test_replica_training.py \
             ruda-torch/python/tests/test_sequence_training.py \
             ruda-torch/python/tests/test_native_training_contracts.py \
             ruda-torch/python/tests/test_compile_native.py \

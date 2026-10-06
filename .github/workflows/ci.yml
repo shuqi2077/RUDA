@@ -107,6 +107,7 @@ jobs:
               cargo test --locked -p ruda-nn --lib lora
               cargo test --locked -p ruda-nn --lib causal_lm
               cargo check --locked -p ruda-nn --no-default-features --lib
+              cargo check --locked -p ruda-nn --no-default-features --features tensor-parallel --lib
               cargo test --locked -p ruda-nn --lib layer_norm
               cargo test --locked -p ruda-nn --lib rms_norm
               cargo test --locked -p ruda-nn --lib embedding

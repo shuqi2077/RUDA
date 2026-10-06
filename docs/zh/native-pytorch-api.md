@@ -80,6 +80,8 @@ Python Muon 分组、Newton–Schulz 选项及存档规则见[架构与 Python M
 
 ## 编译、图与模型
 
+- [多进程副本训练](distributed-training.md#python-多进程副本训练与-nccl)：`ReplicaGroup`、显式 CUDA ordinal、NCCL 存储互操作、token 加权同步及 SFT 接入。
+
 - [架构训练指南](architecture-training.md)：mHC、DSA／CSA／HCA、函数式压缩 KV 缓存、混合模型构造及 Python Muon 分组。
 
 - [通用模型编译](model-compiler.md)：`compile`、`make_backend`、`CompiledModel`、`CompiledFunction`，准确原生重载、shape／stream 缓存及错误策略。

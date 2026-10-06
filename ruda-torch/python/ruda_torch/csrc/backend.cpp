@@ -9,6 +9,7 @@
 #include <ATen/ops/_reshape_alias_native.h>
 #include <c10/core/impl/DeviceGuardImplInterface.h>
 #include <ATen/ops/empty.h>
+#include <ATen/ops/from_blob.h>
 #include <torch/csrc/utils/pybind.h> // Tensor caster without the full C++ frontend
 #include <torch/csrc/utils/python_arg_parser.h>
 #include <torch/library.h>
@@ -484,6 +485,16 @@ TORCH_LIBRARY_IMPL(aten, AutocastPrivateUse1, m) {
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.attr("abi_version") = 10;
+  m.def("_cuda_alias", [](const at::Tensor& tensor, int64_t device_index) {
+    validate(tensor.device());
+    TORCH_CHECK(tensor.layout() == c10::Layout::Strided && tensor.is_contiguous(), "NCCL alias requires contiguous RUDA storage");
+    TORCH_CHECK(!tensor.is_conj() && !tensor.is_neg(), "NCCL alias cannot use unresolved views");
+    TORCH_CHECK(tensor.storage().data_ptr().get_deleter() == release, "NCCL alias requires RUDA allocation ownership");
+    TORCH_CHECK(device_index >= 0 && device_index <= std::numeric_limits<c10::DeviceIndex>::max(), "invalid CUDA ordinal");
+    // Alias, not a transfer: keep RUDA storage alive until NCCL has completed.
+    return at::from_blob(tensor.data_ptr(), tensor.sizes(), tensor.strides(),
+      [owner=tensor](void*) {}, tensor.options().device(c10::Device(c10::DeviceType::CUDA, device_index)).requires_grad(false));
+  });
   m.attr("nf4_matmul_api_version") = 1;
   m.def("initialize_nf4_matmul", [](uintptr_t address) {
     TORCH_CHECK(allocate_native && address && !nf4_matmul_native, "invalid or repeated NF4 matmul initialization");

@@ -12,7 +12,7 @@
 | `ruda_optim::data_parallel::DataParallel` | 调用者拥有 communicator 的副本模型／梯度语义，默认张量传输经过主机暂存。 |
 | `DataParallel<B,C>` | 通过明确实现的设备原生 communicator 复用训练语义，例如 rust-ascend HCCL 适配器。 |
 
-rank 数不是 GPU 数。PyTorch `ruda:0` 只暴露一个原生设备，不是可直接替换 torch.distributed 的多设备 launcher；这里描述 Rust 张量／自动微分训练。接口不自动分片模型、不实现 TP／PP／FSDP／ZeRO、不安装 scheduler，也不自动决定 rank／设备映射。
+rank 数不是 GPU 数。PyTorch 每个 `ruda:0` 进程只暴露一个原生设备，下面的 `ReplicaGroup` 通过显式 NCCL 互操作连接不同进程。Rust 数据并行入口不自动分片模型或选择设备；下文提供显式 TP 投影与 ZeRO-1 状态分片，完整流水线调度、FSDP、ZeRO-2/3 仍是独立能力。
 
 ## 将 rank 映射到实际设备
 
@@ -106,6 +106,48 @@ cargo run --locked -p ruda-optim --features collective,cuda \
 
 run 要求新目录，第一步后保存各 rank 模型／优化器再执行第二步；resume 恢复第一步边界再执行第二步。未改动示例的两个 rank 使用同一默认设备；[进程内张量示例](../../ruCCL/examples/tensor_collectives.rs)也创建三个默认设备上下文，都不是多 GPU 性能基线。
 
-## 错误与长任务准备
+## ZeRO-1 优化器状态分片
+
+`ruda_optim::data_parallel::zero::Zero1::new(session,&model,optimizer,owners)` 接收已初始化的 `DataParallel` 和 `SimpleOptimizer`，可用 AdamW 或 FP32 主参数 wrapper。`owners` 按模型首次遍历顺序为每个不同可训练参数指定一个 rank，各 rank 提供相同分配；共享参数仅有一个 owner。只有 owner 保存动量／主参数状态并更新完整张量，每次更新后向副本广播新参数。
+
+`step(lr,model,gradients,local_weight,policy)` 返回 `Zero1Step { model,global_weight }`。输入为本地损失和的梯度，沿用全局 token 加权及缺失梯度语义；兼容优化器使用 `step_fp32` 保留 FP32 归约梯度，各 rank 学习率一致。每个 rank 的 `to_record()` 生成 `Zero1Record`，与其模型、scheduler、数据／RNG 状态一起保存；`load_record` 检查 rank、world size、owners 和本地模型 ID。记录精度须保留优化器／主参数值，优化器选项由调用者重新创建，不从存档推测。
+
+这里只分片**优化器状态**，参数与梯度仍为副本。状态内存取决于实际 owners，不保证平均分配；不自动改变 world size 或重分片，不等于 ZeRO-2/3 或 FSDP。源码：[状态分片](../../ruda-optim/src/data_parallel/zero.rs)。
+
+## 张量并行投影
+
+启用 `ruda-nn/tensor-parallel`，通过 `modules::tensor_parallel::{ColumnParallelLinear,RowParallelLinear}` 的 `from_shard` 提供明确的本地 `Linear` 分片。列并行权重为 `[全局输入,本地输出]`、bias 为本地输出；行并行权重为 `[本地输入,全局输出]`、bias 为各 rank 相同的完整输出向量。各分片保留自己的本地参数 ID、优化器及存档；预训练全局权重的加载／切分由应用提供。
+
+`column.forward(input,communicator,gather_output)` 汇总列分片的输入梯度，可选聚合输出特征。`row.forward(input,communicator,input_is_parallel)` 只在明确请求时切分完整输入，汇总部分输出后**仅加一次 bias**。未聚合的列输出可直接接行并行输入。TP group 使用相同逻辑损失，不能混用数据并行的独立 rank 损失。
+
+[模型并行区域](../../ruda-autodiff/src/tensor_parallel.rs)区别于普通可微分 collective：复制前向→求和反向、求和前向→恒等反向、切分前向→聚合反向、聚合前向→本地切片反向，避免副本损失的梯度额外乘 world size。分片须非空、等宽，前后向调用顺序一致。源码：[投影层](../../ruda-nn/src/modules/tensor_parallel.rs)。不自动转换整个 attention／MoE 模型，也不调度流水线阶段。
+
+## Python 多进程副本训练与 NCCL
+
+匹配原生组件须提供 `_cuda_alias` 和 `ruda_torch_cuda_device_index`。调用方为每张选定 GPU 启动 worker，在原生操作前设置对应 CUDA ordinal，并初始化 PyTorch NCCL group：
+
+```python
+import os
+import torch
+import torch.distributed as dist
+
+ordinal = int(os.environ['LOCAL_RANK'])
+os.environ['RUDA_TORCH_CUDA_DEVICE'] = str(ordinal)
+torch.cuda.set_device(ordinal)
+dist.init_process_group('nccl')
+import ruda_torch as r
+
+group = r.ReplicaGroup()
+```
+
+对已经准备在 `ruda:0` 上的模型，**注入适配器／修改 dtype 之后、创建优化器之前**执行 `group.initialize(model)`。检查参数路径、shape／dtype／冻结配置和别名，一次性广播参数与 buffer。NCCL 直接引用 RUDA 拥有的 CUDA 存储，不经 CPU 复制张量载荷；显式设备 fence 保证两个运行时的顺序。当前不重叠反向／通信，也不把 NCCL 声称为 RUDA 自研原生通信。
+
+手动训练循环对本地损失和反传，在累积边界、优化器更新前调用 `group.synchronize_gradients(local_weight=...,missing='error')`，返回全局权重并提供全局 token 平均梯度。`missing='zero'` 明确允许缺失局部梯度，全局未用参数保留 `grad=None`。半精度梯度在 FP32 中通信，最后转回参数类型。各 rank 优化器／scaler 配置及 collective 顺序须一致。
+
+因果微调先初始化最终 `CausalLMFinetuner`，创建优化器，再给 `SFTTrainer` 传 `replica_group=group`。训练器按全局 token 归一化，累积后、更新前同步梯度，报告全局 loss／token，并检查 step／base／优化器／scaler 一致性。某个 rank 可以没有微批次，只要其他 rank 有监督 token。每个 rank 使用独立存档目录，重启须匹配 rank／world size 与共同完成的边界。这仍是副本训练，不是参数分片，也不是直接替换 `torch.nn.parallel.DistributedDataParallel`。
+
+`ReplicaGroup(device_type='cpu')` 要求明确初始化的 Gloo group，仅为 CPU 参考；原生／NCCL 缺失时不会自动选它。源码：[副本通信](../../ruda-torch/python/ruda_torch/distributed_training.py)。
+
+## 故障处理
 
 契约／网络／设备错误明确传播，应用不能悄悄只对某个 rank 重跑有状态 step。保持端点／timeout 配置一致，终止或重启前核实最近有效 checkpoint。长任务前评估实际模型／batch／sequence 内存及可比较 step 耗时，准备边界恢复和持久可见进度；日志／进程存活不能代替工作量信息和恢复方案。checkpoint／进度／结果留在 Git 外。

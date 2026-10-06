@@ -11,6 +11,8 @@ use ruda_tensor_host::Host;
 use std::{sync::Arc, thread, time::Duration};
 type B = Autodiff<Host>;
 
+mod parallel_training;
+
 fn world<R: Send + 'static>(
     run: impl Fn(u32, RankCommunicator<TensorDevice<Host>>) -> R + Send + Sync + 'static,
 ) -> Vec<R> {

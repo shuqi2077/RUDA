@@ -259,7 +259,7 @@ class SFTTrainer:
     `base_id` and `run_config`. A checkpoint never contains the frozen model.
     """
     def __init__(self, model, optimizer, *, base_id, run_config,
-                 scaler=None, scheduler=None):
+                 scaler=None, scheduler=None, replica_group=None):
         from .compiler import CompiledModel
         original = model.original if isinstance(model, CompiledModel) else model
         if not isinstance(original, CausalLMFinetuner):
@@ -267,6 +267,9 @@ class SFTTrainer:
         self.model, self.executable, self.optimizer = original, model, optimizer
         self.base_id, self.run_config = base_id, copy.deepcopy(run_config)
         self.scaler, self.scheduler = scaler, scheduler
+        self.replica_group = replica_group
+        if replica_group is not None:
+            replica_group.validate_model(original)
         if scaler is not None and not hasattr(optimizer, 'last_step_skipped'):
             raise TypeError('scaled SFT requires an optimizer exposing last_step_skipped')
         self.step = self.cursor = self.tokens = 0
@@ -280,16 +283,35 @@ class SFTTrainer:
     def train_step(self, microbatches):
         microbatches = list(microbatches)
         counts = []
-        for batch in microbatches:
-            if set(batch) != {'input_ids', 'attention_mask', 'labels'} or any(t.device.type != 'cpu' for t in batch.values()):
-                raise ValueError('supply collated CPU input_ids, attention_mask and labels')
-            if batch['labels'].shape != batch['input_ids'].shape or batch['attention_mask'].shape != batch['labels'].shape:
-                raise ValueError('SFT batch shapes must match')
-            if batch['attention_mask'].dtype != torch.bool or ((batch['labels'] != -100) & ~batch['attention_mask']).any():
-                raise ValueError('padding must not be supervised')
-            counts.append(int((batch['labels'][:, 1:] != -100).sum()))
-        count = sum(counts)
-        if not microbatches or count == 0:
+        error = None
+        try:
+            for batch in microbatches:
+                if set(batch) != {'input_ids', 'attention_mask', 'labels'} or any(t.device.type != 'cpu' for t in batch.values()):
+                    raise ValueError('supply collated CPU input_ids, attention_mask and labels')
+                if batch['labels'].shape != batch['input_ids'].shape or batch['attention_mask'].shape != batch['labels'].shape:
+                    raise ValueError('SFT batch shapes must match')
+                if batch['attention_mask'].dtype != torch.bool or ((batch['labels'] != -100) & ~batch['attention_mask']).any():
+                    raise ValueError('padding must not be supervised')
+                counts.append(int((batch['labels'][:, 1:] != -100).sum()))
+            if self.replica_group is not None:
+                self.replica_group.validate_model(self.model)
+        except (ValueError, TypeError, AttributeError) as failure:
+            if self.replica_group is None:
+                raise
+            error = str(failure)
+        if self.replica_group is not None:
+            for error in self.replica_group.gather_metadata(error):
+                if error:
+                    raise ValueError(error)
+            self.replica_group.validate_training_options((
+                self.step, self.base_id,
+                None if self.scaler is None else self.scaler.state_dict(),
+                [(type(self.optimizer).__module__, type(self.optimizer).__qualname__),
+                 [{k: v for k, v in group.items() if k != 'params'} for group in self.optimizer.param_groups]],
+            ))
+        local_count = sum(counts)
+        count = local_count if self.replica_group is None else self.replica_group.total_weight(local_count)
+        if self.replica_group is None and (not microbatches or count == 0):
             raise ValueError('optimizer step requires at least one supervised next-token target')
         device = next(self.model.parameters()).device
         started = time.monotonic()
@@ -304,6 +326,13 @@ class SFTTrainer:
                 scaled = self.scaler.scale(scaled)
             scaled.backward()
             loss_total = loss.detach() if loss_total is None else loss_total + loss.detach()
+        if self.replica_group is not None:
+            if loss_total is None:
+                loss_total = torch.zeros((), dtype=torch.float32, device=device)
+                if self.scaler is not None:
+                    self.scaler.scale(loss_total)
+            self.replica_group.synchronize_gradients(local_weight=local_count, normalized=True, missing='zero')
+            self.replica_group.sum_(loss_total)
         if self.scaler is None:
             self.optimizer.step()
         else:
@@ -331,6 +360,8 @@ class SFTTrainer:
                                    step=self.step, data_state={'cursor': self.cursor, 'tokens': self.tokens},
                                    scaler=self.scaler)
         state['run_config'] = self.run_config
+        if self.replica_group is not None:
+            state['replica'] = {'rank': self.replica_group.rank, 'world_size': self.replica_group.world_size}
         state['scheduler'] = None if self.scheduler is None else {
             'class': type(self.scheduler).__module__ + '.' + type(self.scheduler).__qualname__,
             'state': self.scheduler.state_dict()}
@@ -349,6 +380,10 @@ class SFTTrainer:
 
     def resume(self, path):
         state = torch.load(path, map_location='cpu', weights_only=True)
+        expected_replica = None if self.replica_group is None else {
+            'rank': self.replica_group.rank, 'world_size': self.replica_group.world_size}
+        if state.get('replica') != expected_replica:
+            raise ValueError('checkpoint rank/world size differs; explicit repartitioning is required')
         if state.get('run_config') != self.run_config:
             raise ValueError('resume requires the exact input/source/config snapshot')
         saved = state.get('scheduler')

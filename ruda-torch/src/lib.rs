@@ -104,7 +104,15 @@ impl View {
     }
 }
 
-fn client() -> ComputeClient<CudaRuntime> { let mut c=CudaRuntime::client(&CudaDevice::default()); streams::bind(&mut c); c }
+fn cuda_device() -> CudaDevice {
+    static INDEX: OnceLock<usize> = OnceLock::new();
+    CudaDevice { index: *INDEX.get_or_init(|| match std::env::var("RUDA_TORCH_CUDA_DEVICE") {
+        Ok(value) => value.parse::<usize>().expect("RUDA_TORCH_CUDA_DEVICE must be a nonnegative CUDA ordinal"),
+        Err(std::env::VarError::NotPresent) => 0,
+        Err(_) => panic!("RUDA_TORCH_CUDA_DEVICE must be valid Unicode"),
+    }) }
+}
+fn client() -> ComputeClient<CudaRuntime> { let mut c=CudaRuntime::client(&cuda_device()); streams::bind(&mut c); c }
 fn sync(client: &ComputeClient<CudaRuntime>) { block_on(client.sync()).expect("RUDA CUDA synchronization failed"); }
 fn async_dispatch_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -130,6 +138,16 @@ pub extern "C" fn ruda_torch_error() -> *const std::ffi::c_char { ERROR.with(|v|
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ruda_torch_abi_version() -> u32 { 10 }
+
+/// Optional process-local CUDA ordinal query; errors use the existing bridge error channel.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruda_torch_cuda_device_index(index: *mut u32) -> i32 {
+    checked(|| {
+        assert!(!index.is_null(), "null CUDA device-index output");
+        let device = u32::try_from(cuda_device().index).expect("CUDA ordinal exceeds uint32");
+        unsafe { *index = device; }
+    })
+}
 
 // All pointer arguments below are valid, aligned, and held alive by the in-process C++ adapter.
 #[unsafe(no_mangle)]

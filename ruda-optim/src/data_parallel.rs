@@ -18,6 +18,9 @@ use ruda_model::{
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{collections::HashMap, error::Error, fmt, marker::PhantomData};
 
+/// Optimizer-state partitioning with replicated parameters and gradients.
+pub mod zero;
+
 /// An explicit policy for trainable parameters unused by a local backward pass.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MissingGradientPolicy {

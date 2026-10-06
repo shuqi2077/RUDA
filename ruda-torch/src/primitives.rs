@@ -1,4 +1,4 @@
-use super::{CudaDevice, CudaRuntime, DOWNLOAD, LAUNCHES, TRUSTED_INDEX_CALLS, Ordering, View, client, convert, finish_dispatch, sync};
+use super::{CudaRuntime, DOWNLOAD, LAUNCHES, TRUSTED_INDEX_CALLS, Ordering, View, client, cuda_device, convert, finish_dispatch, sync};
 use ruda_core::tensor::{DType, Metadata};
 use ruda_kernel::dsl::prelude::InputScalar;
 use ruda_kernel::tensor::RudaTensor;
@@ -16,7 +16,7 @@ fn dtype(code: u32) -> DType {
 pub(super) fn tensor(view: &View) -> RudaTensor<CudaRuntime> {
     RudaTensor::new(client(), view.handle.clone(),
         Metadata::new(view.shape.clone(), view.strides.clone()),
-        CudaDevice::default(), dtype(view.dtype))
+        cuda_device(), dtype(view.dtype))
 }
 
 fn check_indices(indices: &View, bound: usize) {

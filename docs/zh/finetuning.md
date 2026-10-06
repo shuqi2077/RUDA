@@ -78,7 +78,9 @@ RUDA 上具备 NF4 matmul API 1 时，FP16／BF16 使用融合分块反量化 GE
 | `CausalLMFinetuner.forward(input_ids, attention_mask, labels, reduction='mean')` | 标量错位完整词表损失，reduction 为 mean 或 sum。 |
 | `activation_checkpoint_modules(model, target_modules, preserve_rng_state=True)` | 原地修改并返回模型，重复 checkpoint 或路径嵌套均报错。 |
 
-`SFTTrainer(model, optimizer, base_id=..., run_config=..., scaler=None, scheduler=None)` 接收该 wrapper 或其 RUDA 编译 wrapper。`train_step(microbatches)` 要求 CPU 整理后的批次，整个窗口至少有一个有效错位标签。它逐批搬到模型设备，每批损失和除以**整个窗口的有效 token 总数**后反传，再执行一次优化器 step 并清空梯度；不是对不同长度 microbatch 的均值再平均。scaler 要求优化器暴露 `last_step_skipped`；scheduler 仅在更新未跳过时推进。
+`SFTTrainer(model, optimizer, base_id=..., run_config=..., scaler=None, scheduler=None, replica_group=None)` 接收该 wrapper 或其 RUDA 编译 wrapper。`train_step(microbatches)` 要求 CPU 整理后的批次，整个窗口至少有一个有效错位标签。它逐批搬到模型设备，每批损失和除以**整个窗口的有效 token 总数**后反传，再执行一次优化器 step 并清空梯度；不是对不同长度 microbatch 的均值再平均。scaler 要求优化器暴露 `last_step_skipped`；scheduler 仅在更新未跳过时推进。
+
+传入明确初始化的 [ReplicaGroup](distributed-training.md#python-多进程副本训练与-nccl) 后，按全局 token 归一化／报告损失，并在更新前同步累计梯度；其他 rank 有监督时允许本地空窗口。先初始化最终模型再创建优化器，各 rank 分开存档，恢复须匹配 rank／world size。默认仍为单进程。
 
 指标包括尝试的 step／窗口编号、microbatch 游标、监督 token 数、平均损失、耗时、速率与是否跳过更新。跳过更新仍推进 step／cursor。`write_progress(directory, metrics, total_steps=...)` 在本地写 `progress.json`，ETA 来自近期可比较 step 耗时；RUDA GPU 峰值内存明确为未知，不从 CUDA 分配统计推断。
 

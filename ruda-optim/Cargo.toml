@@ -163,7 +163,7 @@ default-features = false
 path = "../ruda-autodiff"
 
 [dev-dependencies.ruda-nn]
-features = [ "default",]
+features = [ "default", "tensor-parallel",]
 default-features = false
 path = "../ruda-nn"
 

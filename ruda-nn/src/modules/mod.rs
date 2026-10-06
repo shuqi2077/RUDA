@@ -20,6 +20,9 @@ mod dropout;
 mod embedding;
 mod linear;
 mod lora;
+/// Explicit tensor-parallel linear projections for replicated-loss model partitions.
+#[cfg(feature = "tensor-parallel")]
+pub mod tensor_parallel;
 /// Manifold-constrained hyper-connections and residual mixing.
 pub mod mhc;
 #[cfg(feature = "sparse")]

@@ -18,6 +18,8 @@ extern crate alloc;
 pub mod checkpoint;
 /// Explicit differentiable rank collectives.
 pub mod collective;
+/// Model-parallel regions with replicated-loss, rather than independent-loss, derivatives.
+pub mod tensor_parallel;
 #[cfg(feature = "distributed")]
 /// Distributed utils.
 pub mod distributed;

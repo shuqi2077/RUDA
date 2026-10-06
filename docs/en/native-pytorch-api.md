@@ -80,6 +80,8 @@ Set `RUDA_TORCH_ASYNC=1` before first native submission to select asynchronous d
 
 ## Compilation, graphs and models
 
+- [Replicated multi-process training](distributed-training.md#python-replicated-training-with-nccl): `ReplicaGroup`, explicit CUDA ordinal, NCCL storage interop, token-weighted synchronization and SFT integration.
+
 - [General model compiler](model-compiler.md): `compile`, `make_backend`, `CompiledModel`, `CompiledFunction`, exact native overloads, shape/stream cache and error policies.
 - [Fixed-address static graphs](static-pytorch-graphs.md): `StaticGraph`, `GraphOp`, replay/output lifetime and explicit first-order training.
 - [Fine-tuning API](finetuning.md): all public packing, LoRA/NF4 loading, causal supervision, adapter and training-checkpoint entry points.

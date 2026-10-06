@@ -177,3 +177,4 @@ from .finetuning import (LoRALinear, NF4Linear, inject_lora, quantize_nf4,
                          load_nf4_safetensors, finetune_state_dict, load_finetune_state_dict)
 from .causal_finetuning import (chunked_lm_cross_entropy, SFTCollator, CausalLMFinetuner,
                                SFTTrainer, load_hf_nf4_model, activation_checkpoint_modules)
+from .distributed_training import ReplicaGroup
