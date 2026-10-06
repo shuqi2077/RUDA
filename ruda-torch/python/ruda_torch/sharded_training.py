@@ -67,6 +67,8 @@ class FullyShardedModule(nn.Module):
     """
     def __init__(self, module, group, *, device=None, root=0, recompute=True, shard_buffers=None):
         super().__init__()
+        from .distributed_checkpoint import model_shard_layout
+        self._template_layout=model_shard_layout(module)
         device = torch.device(device or ('ruda:0' if group.device_type == 'ruda' else 'cpu'))
         if device.type != group.device_type or type(recompute) is not bool:
             raise ValueError('select the group device and a boolean recompute policy')
@@ -121,6 +123,10 @@ class FullyShardedModule(nn.Module):
                 shard=nn.Parameter(local)
                 shard._ruda_full_shape=tuple(parameter.shape)
                 shard._ruda_tp_sharded=getattr(parameter,'_ruda_tp_sharded',False)
+                name=next(name for name,identity,shape,dtype,trainable in schema if identity==index)
+                spec=self._template_layout.get(name,{})
+                shard._ruda_logical_shape=tuple(spec.get('shape',parameter.shape))
+                shard._ruda_tp_axis=None if spec.get('replicated') else spec.get('axis')
                 self.shards.append(shard)
             else:
                 self.register_buffer(key, local)

@@ -77,6 +77,14 @@ class TensorParallelMuon(torch.optim.Optimizer):
     def _local(self,value,axis):
         return value.detach().clone() if axis is None else value.chunk(self.transport.world_size,dim=axis)[self.transport.rank].contiguous().clone()
 
+    def _full_parameter(self,value,parameter,axis):return self._full(value,axis)
+
+    def _local_parameter(self,value,parameter,axis):return self._local(value,axis)
+
+    def _gradient_norm(self,parameters,scale):
+        return distributed_grad_norm(parameters,self.transport,loss_scale=scale,
+            replicated_ids={id(p) for p in parameters if self._layouts[id(p)][2] is None})
+
     @torch.no_grad()
     def step(self,closure=None,*,loss_scale=1.):
         global_grad_norm=self._distributed_grad_norm
@@ -116,8 +124,7 @@ class TensorParallelMuon(torch.optim.Optimizer):
         clip=1.
         if self.max_grad_norm is not None:
             norm=(global_grad_norm if global_grad_norm is not None else
-                distributed_grad_norm([p for p,options in entries],self.transport,loss_scale=scale,
-                    replicated_ids={id(p) for p,options in entries if self._layouts[id(p)][2] is None}))
+                self._gradient_norm([p for p,options in entries],scale))
             self.last_grad_norm=norm
             clip=1. if norm==0 else min(1.,self.max_grad_norm/norm)
         self._distributed_grad_norm=None
@@ -125,9 +132,9 @@ class TensorParallelMuon(torch.optim.Optimizer):
         for index,((parameter,options),used) in enumerate(zip(entries,active,strict=True)):
             if not used:continue
             name,shape,axis=self._layouts[id(parameter)]
-            full=nn.Parameter(self._full(parameter,axis),requires_grad=True)
+            full=nn.Parameter(self._full_parameter(parameter,parameter,axis),requires_grad=True)
             gradient=parameter.grad if parameter.grad is not None else torch.zeros_like(parameter)
-            full.grad=self._full(gradient,axis)
+            full.grad=self._full_parameter(gradient,parameter,axis)
             local=self.state.get(parameter,{})
             counters=self.transport.gather_metadata({key:value for key,value in local.items() if not isinstance(value,torch.Tensor)})
             if any(counter!=counters[0] for counter in counters):raise ValueError('TP Muon state counters/algorithms differ')
@@ -138,7 +145,7 @@ class TensorParallelMuon(torch.optim.Optimizer):
                     value=local[field]
                     if value.shape!=parameter.shape or value.dtype!=torch.float32 or value.device!=parameter.device:
                         raise ValueError('TP Muon master/moment layout differs')
-                    state[field]=self._full(value,axis)
+                    state[field]=self._full_parameter(value,parameter,axis)
             owner=self.owners[index]
             core=None
             failed,error=False,None
@@ -164,8 +171,8 @@ class TensorParallelMuon(torch.optim.Optimizer):
             for field in fields:
                 tensor=new[field] if self.transport.rank==owner else torch.empty(shape,device=parameter.device,dtype=torch.float32)
                 self.transport.broadcast_(tensor,owner)
-                result[field]=self._local(tensor,axis)
-            proposals.append((parameter,self._local(full,axis),result))
+                result[field]=self._local_parameter(tensor,parameter,axis)
+            proposals.append((parameter,self._local_parameter(full,parameter,axis),result))
         for parameter,value,state in proposals:
             parameter.copy_(value)
             self.state[parameter]=state
@@ -208,3 +215,88 @@ class TensorParallelMuon(torch.optim.Optimizer):
         self._versions={id(p):p._version for p in states}
         self.last_step_skipped=False
         self._distributed_grad_norm=None
+
+
+class MeshShardedMuon(TensorParallelMuon):
+    """Complete-matrix Muon with nested FSDP data slices and TP matrix axes.
+
+    Gather data slices into their TP-local matrix, then gather the tensor axis.
+    A single stage-mesh owner runs the same core update; FP32 masters/moments
+    return to both partition dimensions. The inherited proposal/commit boundary
+    preserves whole-step nonfinite skipping. Ordinary unsharded parameters are
+    supported alongside FSDP units; vectors require explicit AdamW groups.
+    """
+    complete_mesh_matrices=True
+    complete_matrix_shards=True
+
+    def __init__(self,params,model,mesh,lr=.02,*,momentum=.95,weight_decay=0.,nesterov=True,
+                 momentum_mode='sgd',dampening=0.,ns_steps=5,ns_coefficients=(3.4445,-4.775,2.0315),
+                 eps=1e-7,adjust_lr='original',matrix_layout='as_stored',stable_normalization=True,
+                 flatten=False,max_grad_norm=None,owners=None):
+        from .sharded_mesh import sharded_mesh_layout
+        if mesh.shape[1]!=1:raise ValueError('construct the optimizer on the actual DP/TP stage mesh')
+        defaults=dict(lr=lr,momentum=momentum,weight_decay=weight_decay,nesterov=nesterov,
+            momentum_mode=momentum_mode,dampening=dampening,ns_steps=ns_steps,
+            ns_coefficients=tuple(ns_coefficients),eps=eps,adjust_lr=adjust_lr,matrix_layout=matrix_layout,
+            stable_normalization=stable_normalization,flatten=flatten,use_muon=True,betas=(.9,.999))
+        torch.optim.Optimizer.__init__(self,params,defaults)
+        self.model,self.mesh,self.transport,self.consensus_group=model,mesh,mesh.world,mesh.world
+        self.max_grad_norm=None if max_grad_norm is None else _number(max_grad_norm,'max_grad_norm')
+        if self.max_grad_norm is not None and self.max_grad_norm<=0:raise ValueError('max_grad_norm must be positive')
+        self.last_step_skipped,self.last_grad_norm=False,None
+        self._distributed_grad_norm=None
+        self._versions={}
+        names={id(p):name for name,p in model.named_parameters()}
+        layout=sharded_mesh_layout(model,mesh)
+        parameters=[p for options in self.param_groups for p in options['params']]
+        if not parameters or len({id(p) for p in parameters})!=len(parameters):
+            raise ValueError('provide nonempty unique mesh model parameters')
+        self._layouts,self._geometry={},{}
+        schema=[]
+        for options in self.param_groups:
+            _validate_group(options)
+            for parameter in options['params']:
+                if id(parameter) not in names:raise ValueError('optimizer parameter is outside the mesh model')
+                spec=layout[names[id(parameter)]]
+                shape=tuple(spec['shape'])
+                axis=None if spec.get('replicated') else spec.get('axis')
+                local_shape=tuple(spec['fsdp_shape']) if 'fsdp_shape' in spec else tuple(parameter.shape)
+                expected=list(local_shape)
+                if axis is not None:expected[axis]*=mesh.tensor.world_size
+                if tuple(expected)!=shape:raise ValueError('FSDP/TP physical and logical matrix shapes differ')
+                if not parameter.requires_grad or not parameter.numel() or not parameter.is_contiguous() or parameter.device.type!=mesh.device_type:
+                    raise ValueError('provide contiguous trainable mesh-device parameters')
+                if parameter.dtype not in (torch.float32,torch.float16,torch.bfloat16):raise ValueError('mesh Muon supports FP32/FP16/BF16 parameters')
+                if 'fsdp_shape' in spec and (parameter.ndim!=1 or parameter.numel()!=math.ceil(math.prod(local_shape)/mesh.data.world_size)):
+                    raise ValueError('FSDP element storage differs from its logical data slice')
+                if options['use_muon'] and (len(shape)<2 or len(shape)>2 and not options['flatten']):
+                    raise ValueError('Muon needs full matrices; select use_muon=False for vector groups')
+                self._layouts[id(parameter)]=(spec['name'],shape,axis)
+                self._geometry[id(parameter)]=(local_shape,'fsdp_shape' in spec)
+                schema.append((spec['name'],shape,axis,str(parameter.dtype),'fsdp_shape' in spec))
+        _overlap_check(parameters)
+        self.owners=list(owners) if owners is not None else [i%self.transport.world_size for i in range(len(parameters))]
+        if len(self.owners)!=len(parameters) or any(type(owner) is not int or not 0<=owner<self.transport.world_size for owner in self.owners):
+            raise ValueError('provide one actual stage-mesh owner per logical parameter')
+        self.transport.validate_training_options((schema,self.owners,self.max_grad_norm,
+            [{key:value for key,value in options.items() if key!='params'} for options in self.param_groups]))
+        self._specs=[(id(p),tuple(p.shape),p.dtype,p.device,p.requires_grad) for p in parameters]
+
+    def _full_parameter(self,value,parameter,axis):
+        shape,sharded=self._geometry[id(parameter)]
+        local=self.mesh.data.all_gather(value)[:math.prod(shape)].view(shape) if sharded else value.detach().clone()
+        return local if axis is None else self.mesh.tensor.all_gather(local,axis=axis)
+
+    def _local_parameter(self,value,parameter,axis):
+        local=value.detach() if axis is None else value.chunk(self.mesh.tensor.world_size,dim=axis)[self.mesh.tensor.rank]
+        if not self._geometry[id(parameter)][1]:return local.contiguous().clone()
+        result=local.new_zeros(parameter.shape)
+        begin=self.mesh.data.rank*parameter.numel()
+        end=min(begin+parameter.numel(),local.numel())
+        if end>begin:result[:end-begin].copy_(local.reshape(-1)[begin:end])
+        return result
+
+    def _gradient_norm(self,parameters,scale):
+        factors={id(p):(1 if self._geometry[id(p)][1] else self.mesh.data.world_size)*
+            (self.mesh.tensor.world_size if self._layouts[id(p)][2] is None else 1) for p in parameters}
+        return distributed_grad_norm(parameters,self.transport,loss_scale=scale,replication_factors=factors)

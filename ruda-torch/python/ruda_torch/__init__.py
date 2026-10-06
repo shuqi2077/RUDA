@@ -241,7 +241,8 @@ from .parallel_adapters import (ColumnParallelLoRALinear,RowParallelLoRALinear,
     ColumnParallelNF4Linear,RowParallelNF4Linear,shard_nf4_linear)
 from .parallel_checkpoint_io import load_tensor_parallel_safetensors,load_tensor_parallel_bnb_nf4_safetensors
 from .hybrid_parallel import DataTensorParallelGroup
-from .tensor_parallel_optim import TensorParallelMuon
+from .tensor_parallel_optim import TensorParallelMuon,MeshShardedMuon
+from .sharded_mesh import ShardedDataTensorParallelGroup
 from .pipeline_trainer import PipelineTrainer
 from .pipeline_ties import PipelineTiedParameters
 from .training_data import StatefulShardSampler,collate_varlen_causal_lm

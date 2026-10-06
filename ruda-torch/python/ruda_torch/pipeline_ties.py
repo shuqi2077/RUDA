@@ -29,7 +29,9 @@ class PipelineTiedParameters:
                 raise ValueError('bind contiguous parameters of this stage on the mesh device')
             spec=layout.get(names[id(parameter)],{})
             local[symbol]=(tuple(parameter.shape),str(parameter.dtype),parameter.requires_grad,
-                           tuple(spec.get('shape',parameter.shape)),None if spec.get('replicated') else spec.get('axis'))
+                           tuple(getattr(parameter,'_ruda_logical_shape',spec.get('shape',parameter.shape))),
+                           getattr(parameter,'_ruda_tp_axis',None if spec.get('replicated') else spec.get('axis')),
+                           getattr(parameter,'_ruda_full_shape',None))
         ranks=mesh.world.gather_metadata(local)
         data,pipeline,tensor=mesh.shape
         symbols=sorted(set().union(*(entry.keys() for entry in ranks)))

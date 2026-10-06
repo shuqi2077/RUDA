@@ -90,6 +90,10 @@ class DataTensorParallelGroup:
     def begin_gradient_overlap(self,*,global_weight,normalized=False,bucket_bytes=25*1024*1024):
         return self.data.begin_gradient_overlap(global_weight=global_weight,normalized=normalized,bucket_bytes=bucket_bytes)
 
+    def replication_factors(self,parameters):
+        data,_,tensor=self.mesh.shape
+        return {id(p):data*(1 if getattr(p,'_ruda_tp_sharded',False) else tensor) for p in parameters}
+
     def prepare_optimizer_step(self,optimizer,*,loss_scale=1.):
         from .sharded_training import Zero2Optimizer
         from .optim import Muon
@@ -141,6 +145,17 @@ def join_mesh_field(values,spec):
     data,tensor=spec['mesh']['data'],spec['mesh']['tensor']
     if len(values)!=data*tensor:raise ValueError('checkpoint mesh rank count differs')
     plain={key:value for key,value in spec.items() if key!='mesh'}
+    if 'fsdp_shape' in plain:
+        shape=plain.pop('fsdp_shape')
+        pieces=[torch.cat([values[d*tensor+t].reshape(-1) for d in range(data)])[:math.prod(shape)].view(shape)
+                for t in range(tensor)]
+        return _join(pieces,plain)
+    if plain.get('transform')=='fsdp-template-extra':
+        from .sharded_mesh import join_fsdp_extra
+        for t in range(tensor):
+            if any(not _equal(values[t],values[d*tensor+t]) for d in range(1,data)):
+                raise ValueError('data replicas contain different FSDP template states')
+        return join_fsdp_extra(values[:tensor],plain)
     if plain.get('transform')=='zero2-tp-flat':
         pieces=[]
         for rank in range(tensor):
@@ -160,12 +175,16 @@ def slice_mesh_field(value,spec,rank,world):
     data,tensor=spec['mesh']['data'],spec['mesh']['tensor']
     if world!=data*tensor:raise ValueError('target checkpoint mesh rank count differs')
     plain={key:item for key,item in spec.items() if key!='mesh'}
+    if plain.get('transform')=='fsdp-template-extra':
+        from .sharded_mesh import slice_fsdp_extra
+        return slice_fsdp_extra(value,plain,rank%tensor,tensor)
+    fsdp=plain.pop('fsdp_shape',None)
     zero=plain.get('transform')=='zero2-tp-flat'
     if zero:
         plain.pop('transform')
         plain.pop('local_shape')
     local=_slice(value,plain,rank%tensor,tensor)
-    if not zero:return local
+    if not zero and fsdp is None:return local
     size=math.ceil(local.numel()/data)
     result=local.new_zeros(size)
     begin=(rank//tensor)*size

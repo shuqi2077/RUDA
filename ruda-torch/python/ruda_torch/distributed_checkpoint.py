@@ -396,7 +396,7 @@ def _restore_optimizer(model, optimizer, description, layout, group, *, consolid
             fields = {}
             spec = specs.get(name)
             for key, value in entry.items():
-                if consolidated and spec is not None and (not spec.get('replicated') or spec.get('transform')=='zero2-tp-flat') and isinstance(value, torch.Tensor) and tuple(value.shape) == tuple(spec['shape']):
+                if consolidated and spec is not None and (not spec.get('replicated') or 'fsdp_shape' in spec or spec.get('transform')=='zero2-tp-flat') and isinstance(value, torch.Tensor) and tuple(value.shape) == tuple(spec['shape']):
                     value = _slice(value, spec, group.rank, group.world_size)
                 fields[key] = value
             states[identity] = fields

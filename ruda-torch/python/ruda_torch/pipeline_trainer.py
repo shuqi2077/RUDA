@@ -40,7 +40,11 @@ class PipelineTrainer:
         self.tied_parameters=tied_parameters
         if tied_parameters is not None and (tied_parameters.model is not stage.module or tied_parameters.mesh is not mesh):
             raise ValueError('tie bindings must belong to this actual stage and mesh')
-        self.coordinator=DataTensorParallelGroup(stage.module,mesh.stage_mesh())
+        from .sharded_training import FullyShardedModule
+        from .sharded_mesh import ShardedDataTensorParallelGroup
+        coordinator=ShardedDataTensorParallelGroup if any(isinstance(unit,FullyShardedModule) for unit in stage.module.modules()) else DataTensorParallelGroup
+        self.coordinator=coordinator(stage.module,mesh.stage_mesh())
+        self.sharded_pipeline=any(mesh.world.gather_metadata(isinstance(self.coordinator,ShardedDataTensorParallelGroup)))
         if tied_parameters is not None:tied_parameters.validate_optimizer(optimizer)
         names=mesh.world.gather_metadata(stage_name)
         data,pipeline,tensor=mesh.shape
@@ -69,6 +73,17 @@ class PipelineTrainer:
         for values in (inputs,targets):
             if any(not isinstance(value,torch.Tensor) or value.device.type!='cpu' for value in values):
                 error='pipeline trainer inputs/targets must be CPU tensors'
+        for failure in self.mesh.world.gather_metadata(error):
+            if failure:raise ValueError(failure)
+        schedules=self.mesh.world.gather_metadata((len(inputs),len(targets)))
+        counts=[schedules[d*width+t][0] for d in range(data) for t in range(tensor)]
+        if any(schedules[d*width+t][0]!=schedules[d*width+(pipeline-1)*tensor+t][1]
+               for d in range(data) for t in range(tensor)):
+            raise ValueError('first-stage inputs and last-stage targets need identical microbatch counts')
+        if self.sharded_pipeline and len(set(counts))!=1:
+            raise ValueError('FSDP pipeline replicas must execute the same collective-bearing microbatch count')
+        if self.stage.rank==0 and any(tuple(value.shape)!=self.stage.input_spec.shape or value.dtype!=self.stage.input_spec.dtype for value in inputs):
+            error='first-stage input differs from its explicit pipeline interface'
         for failure in self.mesh.world.gather_metadata(error):
             if failure:raise ValueError(failure)
         payload=([tuple(value.shape) for value in inputs] if self.input_is_parallel else [value.tolist() for value in inputs],
@@ -142,11 +157,11 @@ class PipelineTrainer:
         parameters=[] if actual is None else [p for options in actual.param_groups for p in options['params']]
         originals={id(shard):original for original,shard in self.optimizer.entries} if zero else {}
         data,_,tensor=self.mesh.shape
-        factors={}
+        factors={} if zero else self.coordinator.replication_factors(parameters)
         for parameter in parameters:
             original=originals[id(parameter)] if zero else parameter
             consumers=1 if self.tied_parameters is None else self.tied_parameters.replication_count(original)
-            factors[id(parameter)]=(1 if zero else data)*(tensor if not getattr(original,'_ruda_tp_sharded',False) else 1)*consumers
+            factors[id(parameter)]=(tensor if not getattr(original,'_ruda_tp_sharded',False) else 1)*consumers if zero else factors[id(parameter)]*consumers
         norm=distributed_grad_norm(parameters,self.mesh.world,loss_scale=scale,replication_factors=factors)
         if requested:
             if zero:self.optimizer._mesh_grad_norm=norm if math.isfinite(norm) else None
@@ -211,8 +226,15 @@ class PipelineTrainer:
         stage=manifest['stages'][self.mesh.coordinates[1]]
         def validate(state):
             if (state['base_id'],state['run_config'])!=(self.base_id,self.run_config):raise ValueError('checkpoint base/config differs')
-        step,state=DistributedCheckpoint(self.coordinator,directory/self.stage_name).load(self.stage.module,self.optimizer,
-            generation=stage['generation'],scheduler=self.scheduler,scaler=self.scaler,validate_application=validate)
+        restored,error=None,None
+        try:
+            restored=DistributedCheckpoint(self.coordinator,directory/self.stage_name).load(self.stage.module,self.optimizer,
+                generation=stage['generation'],scheduler=self.scheduler,scaler=self.scaler,validate_application=validate)
+            if restored[0]!=manifest['step']:raise ValueError('stage checkpoint step differs from the mesh commit')
+        except Exception as failure:error=f'{type(failure).__name__}: {failure}'
+        for failure in self.mesh.world.gather_metadata(error):
+            if failure:raise RuntimeError('mesh checkpoint restore failed: '+failure)
+        step,state=restored
         self.step,self.tokens,self.cursor=step,state['tokens'],state['cursor']
         if self.optimizer is not None:self.optimizer.zero_grad(set_to_none=True)
         return state['application']
@@ -232,10 +254,25 @@ class PipelineTrainer:
         Data/RNG repartitioning remains an explicit reshard_application callback.
         """
         if state.get('version')!=1:raise ValueError('invalid consolidated pipeline checkpoint')
-        source=state['stages'][self.stage_name] if stage_transform is None else stage_transform(state['stages'],self.stage_name,self.mesh.coordinates[1])
-        step,application=DistributedCheckpoint(self.coordinator,'.').load_consolidated(self.stage.module,self.optimizer,
-            source,reshard_application=reshard_application,scheduler=self.scheduler,scaler=self.scaler)
-        if (application['base_id'],application['run_config'])!=(self.base_id,self.run_config):raise ValueError('checkpoint base/config differs')
+        source,error=None,None
+        try:
+            source=state['stages'][self.stage_name] if stage_transform is None else stage_transform(state['stages'],self.stage_name,self.mesh.coordinates[1])
+            if source['step']!=state['step']:raise ValueError('consolidated stage step differs from mesh commit')
+            if any((rank['application']['base_id'],rank['application']['run_config'])!=(self.base_id,self.run_config)
+                   for rank in source['rank_states']):raise ValueError('checkpoint base/config differs')
+        except Exception as failure:error=f'{type(failure).__name__}: {failure}'
+        for failure in self.mesh.world.gather_metadata(error):
+            if failure:raise ValueError(failure)
+        restored,error=None,None
+        try:
+            restored=DistributedCheckpoint(self.coordinator,'.').load_consolidated(self.stage.module,self.optimizer,
+                source,reshard_application=reshard_application,scheduler=self.scheduler,scaler=self.scaler)
+            step,application=restored
+            if (application['base_id'],application['run_config'])!=(self.base_id,self.run_config):raise ValueError('checkpoint base/config differs')
+        except Exception as failure:error=f'{type(failure).__name__}: {failure}'
+        for failure in self.mesh.world.gather_metadata(error):
+            if failure:raise RuntimeError('consolidated mesh restore failed: '+failure)
+        step,application=restored
         self.step,self.tokens,self.cursor=step,application['tokens'],application['cursor']
         if self.optimizer is not None:self.optimizer.zero_grad(set_to_none=True)
         return application['application']

@@ -323,6 +323,8 @@ class SFTTrainer:
             raise ValueError('gradient_overlap must be bool and bucket_bytes positive')
         if gradient_overlap and (replica_group is None or not hasattr(replica_group, 'begin_gradient_overlap')):
             raise ValueError('gradient overlap requires an initialized replicated group')
+        if gradient_overlap and not getattr(replica_group,'supports_gradient_overlap',True):
+            raise ValueError('FSDP slice reduction is performed by backward, not replica bucket overlap')
         if gradient_overlap and hasattr(optimizer, 'synchronize_gradients'):
             raise ValueError('ZeRO reduction is a separate path, not replica all-reduce overlap')
         if replica_group is not None:
