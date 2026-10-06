@@ -29,12 +29,12 @@ impl<B:Backend> ShardingContext<B> {
     pub fn parameter<const D:usize>(&mut self,parameter:Param<Tensor<B,D>>)->ShardedParameter<B> {
         let value=parameter.val();
         if let Some(shard)=self.parameters.get(&parameter.id) {
-                let local=shard.local.val();
-                assert_eq!(shard.logical_shape,value.dims().to_vec(),"tied parameter dimensions differ");
-                assert_eq!(local.dtype(),value.dtype(),"tied parameter storage dtypes differ");
-                assert!(local.device()==value.device(),"tied parameter devices differ");
-                assert_eq!(local.is_require_grad(),value.is_require_grad(),"tied parameter trainability differs");
-                return shard.clone();
+            let local=shard.local.val();
+            assert_eq!(shard.logical_shape,value.dims().to_vec(),"tied parameter dimensions differ");
+            assert_eq!(local.dtype(),value.dtype(),"tied parameter storage dtypes differ");
+            assert!(local.device()==value.device(),"tied parameter devices differ");
+            assert_eq!(local.is_require_grad(),value.is_require_grad(),"tied parameter trainability differs");
+            return shard.clone();
         }
         let id=parameter.id;
         let shard=ShardedParameter::from_full(parameter,self.rank,self.world_size);
@@ -67,6 +67,21 @@ impl<B:Backend> ShardingContext<B> {
     pub fn layer_norm(&mut self,layer:crate::LayerNorm<B>)->FullyShardedLayerNorm<B> {
         let epsilon=layer.epsilon();
         FullyShardedLayerNorm{gamma:self.parameter(layer.gamma),beta:layer.beta.map(|beta|self.parameter(beta)),epsilon}
+    }
+
+    /// Build a gated feed-forward block with one shared leaf for each tied matrix.
+    pub fn gated_mlp(&mut self,gate:crate::Linear<B>,up:crate::Linear<B>,down:crate::Linear<B>)->FullyShardedGatedMLP<B> {
+        let gate=self.linear(gate);
+        let up=self.linear(up);
+        let down=self.linear(down);
+        FullyShardedGatedMLP::from_shards(gate,up,down)
+    }
+
+    /// Tie a logical vocabulary projection to the already sharded embedding.
+    /// Transposition occurs only on the gathered value, never on local storage.
+    pub fn tied_projection(&mut self,embedding:&FullyShardedEmbedding<B>,bias:Option<Param<Tensor<B,1>>>)->FullyShardedProjection<B> {
+        assert_eq!((embedding.weight.rank,embedding.weight.world_size),(self.rank,self.world_size),"embedding data topology differs from the construction context");
+        FullyShardedProjection::from_embedding(embedding,bias.map(|bias|self.parameter(bias)))
     }
 }
 
@@ -197,6 +212,100 @@ impl<B:Backend,S:CheckpointStrategy> FullyShardedEmbedding<Autodiff<B,S>> {
     pub fn forward<C:BroadcastTensorCollective<B>>(&self,input:Tensor<Autodiff<B,S>,2,Int>,communicator:C)
         ->Result<Tensor<Autodiff<B,S>,3>,C::Error> {
         Ok(embedding(self.weight.gather::<C,2>(communicator)?,input))
+    }
+}
+
+/// Data-sharded projection sharing exact `[vocabulary,width]` embedding storage.
+#[derive(Module,Debug)]
+pub struct FullyShardedProjection<B:Backend> {
+    /// Same local Param ID/autograd leaf as the source embedding.
+    pub weight:ShardedParameter<B>,
+    /// Optional logical output bias and its local slice.
+    pub bias:Option<ShardedParameter<B>>,
+}
+
+impl<B:Backend> FullyShardedProjection<B> {
+    /// Retain a real embedding/head tie without copying or transposing its leaf.
+    pub fn from_embedding(embedding:&FullyShardedEmbedding<B>,bias:Option<ShardedParameter<B>>)->Self {
+        assert_eq!(embedding.weight.logical_shape.len(),2,"projection table must be two-dimensional");
+        if let Some(bias)=&bias {
+            assert_eq!(bias.logical_shape,[embedding.weight.logical_shape[0]],"projection bias width differs");
+            assert_eq!((bias.rank,bias.world_size),(embedding.weight.rank,embedding.weight.world_size),"projection bias data topology differs");
+        }
+        Self{weight:embedding.weight.clone(),bias}
+    }
+}
+
+impl<B:Backend,S:CheckpointStrategy> FullyShardedProjection<Autodiff<B,S>> {
+    /// Full logical output with data SUM derivatives on the shared local table.
+    pub fn forward<C:BroadcastTensorCollective<B>,const D:usize>(
+        &self,input:Tensor<Autodiff<B,S>,D>,communicator:C)->Result<Tensor<Autodiff<B,S>,D>,C::Error> {
+        let weight=self.weight.gather::<C,2>(communicator.clone())?.transpose();
+        let bias=match &self.bias {Some(bias)=>Some(bias.gather::<C,1>(communicator)?),None=>None};
+        Ok(linear(input,weight,bias))
+    }
+
+    /// Choose arithmetic/gather precision; output retains the incoming activation
+    /// dtype, while the persistent embedding/head storage remains unchanged.
+    pub fn forward_with_compute_dtype<C:BroadcastTensorCollective<B>,const D:usize>(
+        &self,input:Tensor<Autodiff<B,S>,D>,communicator:C,dtype:FloatDType)->Result<Tensor<Autodiff<B,S>,D>,C::Error> {
+        let output_dtype=input.dtype();
+        let weight=self.weight.gather_with_compute_dtype::<C,2>(communicator.clone(),dtype)?.transpose();
+        let bias=match &self.bias {
+            Some(bias)=>Some(bias.gather_with_compute_dtype::<C,1>(communicator,dtype)?),None=>None,
+        };
+        Ok(linear(input.cast(dtype),weight,bias).cast(output_dtype))
+    }
+}
+
+/// Native gated feed-forward block with only data-sharded persistent parameters.
+#[derive(Module,Debug)]
+pub struct FullyShardedGatedMLP<B:Backend> {
+    /// Input-to-hidden gating projection.
+    pub gate:FullyShardedLinear<B>,
+    /// Input-to-hidden value projection.
+    pub up:FullyShardedLinear<B>,
+    /// Hidden-to-output projection; its bias is applied only by this projection.
+    pub down:FullyShardedLinear<B>,
+}
+
+impl<B:Backend> FullyShardedGatedMLP<B> {
+    /// Use actual loaded projections and preserve ties within this block.
+    pub fn from_full(gate:crate::Linear<B>,up:crate::Linear<B>,down:crate::Linear<B>,rank:usize,world_size:usize)->Self {
+        ShardingContext::new(rank,world_size).gated_mlp(gate,up,down)
+    }
+
+    /// Compose explicitly loaded slices on the same data topology.
+    pub fn from_shards(gate:FullyShardedLinear<B>,up:FullyShardedLinear<B>,down:FullyShardedLinear<B>)->Self {
+        let shape=&gate.weight.logical_shape;
+        assert!(shape.len()==2 && up.weight.logical_shape==*shape && down.weight.logical_shape.len()==2,"gated MLP projection ranks or gate/up widths differ");
+        assert_eq!(down.weight.logical_shape[0],shape[1],"gated MLP intermediate width differs");
+        let topology=(gate.weight.rank,gate.weight.world_size);
+        for layer in [&gate,&up,&down] {
+            assert_eq!((layer.weight.rank,layer.weight.world_size),topology,"gated MLP data topologies differ");
+            if let Some(bias)=&layer.bias {
+                assert_eq!(bias.logical_shape,[layer.weight.logical_shape[1]],"gated MLP bias width differs");
+                assert_eq!((bias.rank,bias.world_size),topology,"gated MLP bias data topology differs");
+            }
+        }
+        Self{gate,up,down}
+    }
+}
+
+impl<B:Backend,S:CheckpointStrategy> FullyShardedGatedMLP<Autodiff<B,S>> {
+    /// SwiGLU on actual local data; no tensor-parallel or model-family inference.
+    pub fn forward<C:BroadcastTensorCollective<B>,const D:usize>(
+        &self,input:Tensor<Autodiff<B,S>,D>,communicator:C)->Result<Tensor<Autodiff<B,S>,D>,C::Error> {
+        self.forward_with(input,communicator,ruda_model::tensor::activation::silu)
+    }
+
+    /// Explicit caller-selected gate activation with the same DP derivatives.
+    pub fn forward_with<C:BroadcastTensorCollective<B>,F,const D:usize>(
+        &self,input:Tensor<Autodiff<B,S>,D>,communicator:C,activation:F)->Result<Tensor<Autodiff<B,S>,D>,C::Error>
+    where F:FnOnce(Tensor<Autodiff<B,S>,D>)->Tensor<Autodiff<B,S>,D> {
+        let gate=self.gate.forward(input.clone(),communicator.clone())?;
+        let up=self.up.forward(input,communicator.clone())?;
+        self.down.forward(activation(gate)*up,communicator)
     }
 }
 
