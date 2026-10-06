@@ -48,8 +48,9 @@ def model_shard_layout(model):
     """Describe actual FSDP/TP storage, retaining full logical names and ties."""
     from .sharded_training import FullyShardedModule
     from .parallel_training import ColumnParallelLinear, RowParallelLinear, VocabParallelEmbedding
+    from .parallel_adapters import _ParallelNF4,_ParallelLoRA,nf4_layout
     layout = {}
-    for path, module in model.named_modules():
+    for path, module in model.named_modules(remove_duplicate=False):
         prefix = path+'.' if path else ''
         if isinstance(module, FullyShardedModule):
             for name, index, shape, dtype, trainable in module._schema:
@@ -67,6 +68,14 @@ def model_shard_layout(model):
                     layout[prefix+key]['aliases'].append(prefix+name)
                 else:
                     layout[prefix+key]=spec
+        elif isinstance(module,_ParallelLoRA):
+            for name,shape,axis in (('lora_A',[module.rank,module.in_features],1 if module.axis==1 else None),
+                                    ('lora_B',[module.out_features,module.rank],0 if module.axis==0 else None)):
+                spec={'name':prefix+name,'aliases':[],'shape':shape,'axis':axis}
+                if axis is None:spec['replicated']=True
+                layout[prefix+name]=spec
+        elif isinstance(module,_ParallelNF4):
+            layout.update(nf4_layout(module,prefix))
         elif isinstance(module, (ColumnParallelLinear, RowParallelLinear, VocabParallelEmbedding)):
             axis = 1 if isinstance(module, RowParallelLinear) else 0
             shape = list(module.weight.shape)
@@ -305,6 +314,9 @@ class DistributedCheckpoint:
 
 
 def _join(values, spec):
+    if spec is not None and spec.get('transform','').startswith('nf4-'):
+        from .parallel_adapters import join_nf4_field
+        return join_nf4_field(values,spec)
     if spec is None or spec.get('replicated') or not isinstance(values[0], torch.Tensor):
         if any(not _equal(values[0], value) for value in values[1:]):
             raise ValueError('replicated checkpoint values differ')
@@ -316,6 +328,9 @@ def _join(values, spec):
 
 
 def _slice(value, spec, rank, world):
+    if spec is not None and spec.get('transform','').startswith('nf4-'):
+        from .parallel_adapters import slice_nf4_field
+        return slice_nf4_field(value,spec,rank,world)
     if spec is None or spec.get('replicated'):
         return value
     if spec['axis'] is None:

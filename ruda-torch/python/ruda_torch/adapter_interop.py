@@ -6,7 +6,7 @@ import math
 import re
 from pathlib import Path
 import torch
-from .finetuning import LoRALinear, NF4Linear, _replace
+from .finetuning import LoRALinear, NF4Linear, _replace,adapter_state_dict
 
 
 def _pattern(patterns,name,default):
@@ -24,6 +24,9 @@ def load_peft_adapter(model,directory,*,module_map=None,prefix='base_model.model
     target_modules mapping. Base-model identity remains the caller's selection.
     """
     from safetensors.torch import load_file
+    from .parallel_adapters import _ParallelLoRA,_ParallelNF4,local_adapter_matrix,lora_from_parallel_base
+    from .parallel_training import ColumnParallelLinear,RowParallelLinear
+    parallel_types=(ColumnParallelLinear,RowParallelLinear,_ParallelNF4)
     directory=Path(directory)
     config=json.loads((directory/'adapter_config.json').read_text(encoding='utf-8'))
     if config.get('peft_type')!='LORA' or config.get('bias','none')!='none':
@@ -53,7 +56,7 @@ def load_peft_adapter(model,directory,*,module_map=None,prefix='base_model.model
     for source,pair in pairs.items():
         path=source if module_map is None else module_map[source]
         base=modules[path]
-        if set(pair)!={'A','B'} or not isinstance(base,(torch.nn.Linear,NF4Linear,LoRALinear)):
+        if set(pair)!={'A','B'} or not isinstance(base,(torch.nn.Linear,NF4Linear,LoRALinear,_ParallelLoRA)+parallel_types):
             raise ValueError('adapter target or A/B matrices are missing')
         rank=_pattern(config.get('rank_pattern',{}),source,config['r'])
         alpha=_pattern(config.get('alpha_pattern',{}),source,config['lora_alpha'])
@@ -69,7 +72,7 @@ def load_peft_adapter(model,directory,*,module_map=None,prefix='base_model.model
             raise ValueError('adapter matrices must contain finite floating values')
         if pair['A'].shape!=(rank,base.in_features) or pair['B'].shape!=(base.out_features,rank):
             raise ValueError(f'adapter dimensions differ: {source}')
-        if isinstance(base,LoRALinear):
+        if isinstance(base,(LoRALinear,_ParallelLoRA)):
             expected=(rank,float(alpha),float(dropout),rslora)
             if (base.rank,base.alpha,base.dropout,base.use_rslora)!=expected:
                 raise ValueError('existing adapter configuration differs')
@@ -84,7 +87,8 @@ def load_peft_adapter(model,directory,*,module_map=None,prefix='base_model.model
     flags=[(parameter,parameter.requires_grad,parameter.grad) for parameter in model.parameters()]
     try:
         for identity,(base,pair,(rank,alpha,dropout,rslora)) in plans.items():
-            layer=base if isinstance(base,LoRALinear) else LoRALinear(base,rank=rank,alpha=alpha,
+            factory=lora_from_parallel_base if isinstance(base,parallel_types) else LoRALinear
+            layer=base if isinstance(base,(LoRALinear,_ParallelLoRA)) else factory(base,rank=rank,alpha=alpha,
                 adapter_dtype=adapter_dtype,dropout=dropout,use_rslora=rslora)
             aliases[identity]=(pair,layer)
             replacements[identity]=layer
@@ -99,8 +103,10 @@ def load_peft_adapter(model,directory,*,module_map=None,prefix='base_model.model
         parameter.grad=None
     with torch.no_grad():
         for pair,layer in aliases.values():
-            layer.lora_A.copy_(pair['A'].to(layer.lora_A))
-            layer.lora_B.copy_(pair['B'].to(layer.lora_B))
+            a=local_adapter_matrix(layer,'lora_A',pair['A']) if isinstance(layer,_ParallelLoRA) else pair['A']
+            b=local_adapter_matrix(layer,'lora_B',pair['B']) if isinstance(layer,_ParallelLoRA) else pair['B']
+            layer.lora_A.copy_(a.to(layer.lora_A))
+            layer.lora_B.copy_(b.to(layer.lora_B))
             layer.lora_A.requires_grad_(True)
             layer.lora_B.requires_grad_(True)
     _replace(model,[(name,replacements[id(module)]) for name,module in modules.items()
@@ -110,9 +116,14 @@ def load_peft_adapter(model,directory,*,module_map=None,prefix='base_model.model
 
 def save_peft_adapter(model,directory,*,base_model_name_or_path,prefix='base_model.model.',
                       task_type=None,module_map=None):
-    """Write a PEFT-compatible config and safetensors into a new directory."""
+    """Write full, PEFT-compatible matrices into a new directory.
+
+    All TP ranks participate in reconstruction; only rank zero writes files.
+    An export spans one TP group, not separate pipeline/model groups.
+    """
     from safetensors.torch import save_file
-    layers={name:layer for name,layer in model.named_modules() if isinstance(layer,LoRALinear)}
+    from .parallel_adapters import _ParallelLoRA
+    layers={name:layer for name,layer in model.named_modules() if isinstance(layer,(LoRALinear,_ParallelLoRA))}
     if not layers:
         raise ValueError('model contains no LoRA layers')
     first=next(iter(layers.values()))
@@ -121,22 +132,41 @@ def save_peft_adapter(model,directory,*,base_model_name_or_path,prefix='base_mod
     if not isinstance(base_model_name_or_path,str) or not base_model_name_or_path:
         raise ValueError('identify the actual base checkpoint')
     rank_pattern,alpha_pattern,tensors={},{},{}
+    groups={id(layer.group):layer.group for layer in layers.values() if isinstance(layer,_ParallelLoRA)}
+    if len(groups)>1:raise ValueError('PEFT export requires a single tensor-parallel group')
+    group=next(iter(groups.values()),None)
     names=[]
+    paths={}
     for name,layer in layers.items():
         target=name if module_map is None else module_map[name]
         if target in names:
             raise ValueError('adapter export path mapping is not one-to-one')
         names.append(target)
+        paths[name]=target
         if layer.rank!=first.rank:rank_pattern[target]=layer.rank
         if layer.alpha!=first.alpha:alpha_pattern[target]=layer.alpha
-        tensors[prefix+target+'.lora_A.weight']=layer.lora_A.detach().cpu().contiguous().clone()
-        tensors[prefix+target+'.lora_B.weight']=layer.lora_B.detach().cpu().contiguous().clone()
     config={'peft_type':'LORA','base_model_name_or_path':base_model_name_or_path,'task_type':task_type,
             'r':first.rank,'lora_alpha':first.alpha,'lora_dropout':first.dropout,'use_rslora':first.use_rslora,
             'bias':'none','fan_in_fan_out':False,'inference_mode':True,'target_modules':names,
             'rank_pattern':rank_pattern,'alpha_pattern':alpha_pattern}
+    if group is not None:
+        group.validate_training_options((str(Path(directory).resolve()),prefix,paths,config))
+    state=adapter_state_dict(model)
+    for name,entry in state['layers'].items():
+        target=paths[name]
+        tensors[prefix+target+'.lora_A.weight']=entry['lora_A'].contiguous().clone()
+        tensors[prefix+target+'.lora_B.weight']=entry['lora_B'].contiguous().clone()
     directory=Path(directory)
-    directory.mkdir(parents=True,exist_ok=False)
-    save_file(tensors,str(directory/'adapter_model.safetensors'),metadata={'format':'pt'})
-    (directory/'adapter_config.json').write_text(json.dumps(config,indent=2)+'\n',encoding='utf-8')
+    error=None
+    if group is None or group.rank==0:
+        try:
+            directory.mkdir(parents=True,exist_ok=False)
+            save_file(tensors,str(directory/'adapter_model.safetensors'),metadata={'format':'pt'})
+            (directory/'adapter_config.json').write_text(json.dumps(config,indent=2)+'\n',encoding='utf-8')
+        except Exception as failure:
+            if group is None:raise
+            error=f'{type(failure).__name__}: {failure}'
+    if group is not None:
+        for failure in group.gather_metadata(error):
+            if failure:raise RuntimeError(f'PEFT export failed: {failure}')
     return directory

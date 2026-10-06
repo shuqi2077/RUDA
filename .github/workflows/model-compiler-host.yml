@@ -27,6 +27,7 @@ jobs:
           python -m pip install pytest safetensors numpy transformers==4.57.1 accelerate==1.13.0
       - name: CPU model and native-region simulator tests
         run: |
+          python -m compileall -q ruda-torch/python/ruda_torch
           python -m pytest -q \
             ruda-torch/python/tests/test_model_compile.py \
             ruda-torch/python/tests/test_finetuning.py \

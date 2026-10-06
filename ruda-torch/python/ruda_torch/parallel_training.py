@@ -132,11 +132,12 @@ class TensorParallelMLP(nn.Module):
     """Gated MLP with rank-local intermediate activations."""
     def __init__(self, gate, up, down, group, *, activation=None):
         super().__init__()
+        from .parallel_adapters import parallel_linear
         if gate.in_features!=up.in_features or gate.out_features!=up.out_features or down.in_features!=up.out_features:
             raise ValueError('gated MLP projection dimensions differ')
-        self.gate_proj = ColumnParallelLinear(gate,group,gather_output=False)
-        self.up_proj = ColumnParallelLinear(up,group,gather_output=False)
-        self.down_proj = RowParallelLinear(down,group,input_is_parallel=True)
+        self.gate_proj = parallel_linear(gate,group,axis=0,gather_output=False)
+        self.up_proj = parallel_linear(up,group,axis=0,gather_output=False)
+        self.down_proj = parallel_linear(down,group,axis=1,input_is_parallel=True)
         self.activation = nn.SiLU() if activation is None else activation
 
     def forward(self, value):
@@ -152,6 +153,7 @@ class TensorParallelAttention(nn.Module):
     def __init__(self, query, key, value, output, group, *, num_heads, num_kv_heads=None,
                  head_dim=None, scale=None, dropout_p=0., attention_impl=None):
         super().__init__()
+        from .parallel_adapters import parallel_linear
         kv_heads = num_heads if num_kv_heads is None else num_kv_heads
         if type(num_heads) is not int or type(kv_heads) is not int or num_heads<=0 or kv_heads<=0 or num_heads%kv_heads:
             raise ValueError('attention head counts must be positive and Q heads divisible by KV heads')
@@ -164,10 +166,10 @@ class TensorParallelAttention(nn.Module):
             raise ValueError('attention projection dimensions differ')
         if any(p.in_features!=query.in_features for p in (key,value)) or not 0<=dropout_p<=1:
             raise ValueError('attention input/dropout configuration differs')
-        self.q_proj = ColumnParallelLinear(query,group,gather_output=False)
-        self.k_proj = ColumnParallelLinear(key,group,gather_output=False)
-        self.v_proj = ColumnParallelLinear(value,group,gather_output=False)
-        self.o_proj = RowParallelLinear(output,group,input_is_parallel=True)
+        self.q_proj = parallel_linear(query,group,axis=0,gather_output=False)
+        self.k_proj = parallel_linear(key,group,axis=0,gather_output=False)
+        self.v_proj = parallel_linear(value,group,axis=0,gather_output=False)
+        self.o_proj = parallel_linear(output,group,axis=1,input_is_parallel=True)
         self.heads,self.kv_heads,self.head_dim = num_heads//group.world_size,kv_heads//group.world_size,head_dim
         self.scale,self.dropout_p = scale,float(dropout_p)
         if attention_impl is not None and not callable(attention_impl):
@@ -209,6 +211,7 @@ def tensor_parallelize(model, group, plan):
     Shared module references and compatible tied weight shards stay shared.
     """
     modules = dict(model.named_modules(remove_duplicate=False))
+    from .parallel_adapters import parallel_linear,parameter_shards
     replacements, weight_shards, signatures = {}, {}, {}
     error = None
     try:
@@ -221,27 +224,28 @@ def tensor_parallelize(model, group, plan):
             options = {'kind': options} if isinstance(options, str) else dict(options)
             kind = options.pop('kind')
             source = modules[name]
-            constructor = {'column': ColumnParallelLinear, 'row': RowParallelLinear,
-                           'embedding': VocabParallelEmbedding}[kind]
+            if kind not in ('column','row','embedding'):raise ValueError('unsupported parallel plan kind')
             signature = (kind, tuple(sorted(options.items())))
             if id(source) in signatures and signatures[id(source)] != signature:
                 raise ValueError('shared modules require identical parallel plans')
             signatures[id(source)] = signature
             if id(source) not in replacements:
-                replacement = constructor(source, group, **options)
-                key = id(source.weight)
                 shard_axis = 1 if kind == 'row' else 0
-                weight_signature = (shard_axis, tuple(replacement.weight.shape))
-                if key in weight_shards:
-                    previous_signature, weight = weight_shards[key]
-                    if previous_signature != weight_signature:
-                        raise ValueError('tied weights require compatible shard axes and shapes')
-                    replacement.weight = weight
-                else:
-                    weight_shards[key] = (weight_signature, replacement.weight)
+                replacement = VocabParallelEmbedding(source,group,**options) if kind=='embedding' else parallel_linear(source,group,axis=shard_axis,**options)
+                entries=[(source.weight,replacement,'weight',0)] if kind=='embedding' else parameter_shards(source,replacement,shard_axis)
+                for original,owner,leaf,axis in entries:
+                    key=id(original)
+                    parameter=getattr(owner,leaf)
+                    weight_signature=(axis,tuple(parameter.shape),parameter.dtype,parameter.requires_grad)
+                    if key in weight_shards:
+                        previous_signature,shared=weight_shards[key]
+                        if previous_signature!=weight_signature:
+                            raise ValueError('tied parameters require compatible shard axes, shapes and flags')
+                        setattr(owner,leaf,shared)
+                    else:weight_shards[key]=(weight_signature,parameter)
                 replacement.train(source.training)
                 replacements[id(source)] = replacement
-        selected = set(replacements)
+        selected={id(child) for name,module in modules.items() if id(module) in replacements for child in module.modules()}
         selected_weights = set(weight_shards)
         for name, module in modules.items():
             for parameter in module.parameters(recurse=False):
@@ -249,11 +253,15 @@ def tensor_parallelize(model, group, plan):
                     raise ValueError('include every consumer of a tied weight in the parallel plan')
     except (KeyError, TypeError, ValueError) as failure:
         error = str(failure)
-    contracts = group.gather_metadata((plan, error))
-    for other_plan, failure in contracts:
+    schema=[(name,type(module).__name__,[(key,tuple(p.shape),str(p.dtype),p.requires_grad) for key,p in module.named_parameters()],
+             [(key,tuple(b.shape),str(b.dtype)) for key,b in module.named_buffers()],
+             [(key,child.get_extra_state()) for key,child in module.named_modules() if type(child).get_extra_state is not nn.Module.get_extra_state])
+            for name,module in modules.items() if isinstance(plan,dict) and name in plan]
+    contracts = group.gather_metadata((plan,schema,error))
+    for other_plan,other_schema,failure in contracts:
         if failure:
             raise ValueError(failure)
-        if other_plan != plan:
+        if other_plan != plan or other_schema!=schema:
             raise ValueError('tensor-parallel plans differ across ranks')
     for name, source in modules.items():
         if name and id(source) in replacements:
@@ -266,10 +274,17 @@ def tensor_parallel_state_dict(model, group):
     """Collectively reconstruct an ordinary full state dictionary on every rank."""
     result = OrderedDict((name,value.detach().cpu() if isinstance(value,torch.Tensor) else copy.deepcopy(value))
                          for name,value in model.state_dict().items())
+    from .parallel_adapters import _ParallelLoRA,_ParallelNF4,full_adapter_matrix,full_nf4_state
     with torch.no_grad():
         for path, module in model.named_modules(remove_duplicate=False):
             prefix = path+'.' if path else ''
-            if isinstance(module, (ColumnParallelLinear, VocabParallelEmbedding)):
+            if isinstance(module,_ParallelLoRA):
+                for name in ('lora_A','lora_B'):result[prefix+name]=full_adapter_matrix(module,name)
+            elif isinstance(module,_ParallelNF4):
+                for key in tuple(result):
+                    if key.startswith(prefix+'local.'):del result[key]
+                result.update((prefix+key,value) for key,value in full_nf4_state(module).items())
+            elif isinstance(module, (ColumnParallelLinear, VocabParallelEmbedding)):
                 result[prefix+'weight'] = group.all_gather(module.weight, axis=0).cpu()
                 if isinstance(module, ColumnParallelLinear) and module.bias is not None:
                     result[prefix+'bias'] = group.all_gather(module.bias, axis=0).cpu()
@@ -281,9 +296,19 @@ def tensor_parallel_state_dict(model, group):
 def load_tensor_parallel_state_dict(model, state, group, *, strict=True):
     """Partition full pretrained/checkpoint tensors for the current TP topology."""
     local = dict(state)
+    from .parallel_adapters import _ParallelLoRA,_ParallelNF4,local_adapter_matrix,local_nf4_state
     for path, module in model.named_modules(remove_duplicate=False):
         prefix = path+'.' if path else ''
-        if isinstance(module, (ColumnParallelLinear, RowParallelLinear, VocabParallelEmbedding)):
+        if isinstance(module,_ParallelLoRA):
+            for name in ('lora_A','lora_B'):
+                key=prefix+name
+                if key in local:local[key]=local_adapter_matrix(module,name,local[key])
+        elif isinstance(module,_ParallelNF4):
+            replacement=local_nf4_state(module,state,prefix)
+            for key in ('packed','scales','codebook','bias','_extra_state'):
+                local.pop(prefix+key,None)
+            local.update(replacement)
+        elif isinstance(module, (ColumnParallelLinear, RowParallelLinear, VocabParallelEmbedding)):
             axis = 1 if isinstance(module, RowParallelLinear) else 0
             key = prefix+'weight'
             if key in local:

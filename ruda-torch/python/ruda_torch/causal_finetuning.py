@@ -32,9 +32,10 @@ def chunked_lm_cross_entropy(hidden, head, labels, *, token_chunk_size=32,
     """
     positive_int(token_chunk_size, 'token_chunk_size')
     from .parallel_training import ColumnParallelLinear
-    parallel=isinstance(head,ColumnParallelLinear)
-    if not isinstance(head, (nn.Linear, NF4Linear, LoRALinear, ColumnParallelLinear)):
-        raise TypeError('head must be Linear, NF4Linear, LoRALinear or ColumnParallelLinear')
+    from .parallel_adapters import ColumnParallelLoRALinear,ColumnParallelNF4Linear
+    parallel=isinstance(head,(ColumnParallelLinear,ColumnParallelLoRALinear,ColumnParallelNF4Linear))
+    if not parallel and not isinstance(head, (nn.Linear, NF4Linear, LoRALinear)):
+        raise TypeError('head must be a dense/NF4/LoRA projection or a column-parallel projection')
     if parallel and head.gather_output:
         raise ValueError('a vocabulary-parallel loss requires gather_output=False')
     if not 0<=label_smoothing<=1:
