@@ -111,6 +111,10 @@ The tables cover the resolved workspace, including the path-dependent CANN drive
 
 ## Find an individual method
 
+Native Python methods are documented in the [PyTorch API reference](native-pytorch-api.md), [model compiler](model-compiler.md), [static graphs](static-pytorch-graphs.md) and [LoRA/NF4 fine-tuning guide](finetuning.md). Shared operator/application selection uses the [stack autotuning policy](stack-autotuning.md).
+
+The [architecture guide](architecture-training.md) documents mHC, compressed attention/caches and Python Muon. The [distributed training guide](distributed-training.md) covers explicit devices, rendezvous, replica initialization, weighted reduction and rank-local recovery.
+
 Use the typed tensor methods under [ruda-tensor/src/api](../../ruda-tensor/src/api), backend traits under [ruda-tensor/src/backend](../../ruda-tensor/src/backend), and domain-specific modules linked from each library guide. Enable the feature that exposes the module before using its symbols.
 
 For device memory, submission, and synchronization, read the [Runtime API](runtime-api.md). For backend-specific initialization and launch contracts, read the [Driver API](driver-api.md). For model parameter and record types, start with [ruda-model exports](../../ruda-model/src/lib.rs), rather than the compiler's similarly named IR types.

@@ -8,15 +8,24 @@ const MAX_KEY: usize = 384 * 1024;
 const MAX_NAME: usize = 4096;
 static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
 
+/// Internal versioned disk payload; not exported as the public stack cache API.
 #[derive(Debug, Clone)]
 pub struct Record {
+    /// Operator/graph/pipeline discriminator, encoded as 0/1/2.
     pub scope: u8,
+    /// Complete canonical key; hash-only lookup is insufficient.
     pub key: String,
+    /// Stable candidate name, not a process-local candidate index.
     pub winner: String,
+    /// Creation time in Unix seconds, used by controller freshness checks.
     pub created: u64,
+    /// Median paired reference duration in nanoseconds, or the single reference baseline.
     pub reference_ns: u64,
+    /// Median selected duration in nanoseconds, or the single reference baseline.
     pub winner_ns: u64,
+    /// Positive finite selected/reference score.
     pub ratio: f64,
+    /// Whether a supported validator passed before the record was created.
     pub verified: bool,
 }
 /// This is NOT a cryptographic authenticity check. Caches must be in a trusted user directory.
@@ -29,8 +38,10 @@ pub fn digest(bytes: &[u8]) -> String {
     }
     std::format!("{a:016x}{b:016x}")
 }
+/// Unix seconds; a clock before the epoch yields zero rather than panicking.
 pub fn now_seconds() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() }
 impl Record {
+    /// Accept only non-future records younger than ttl seconds; the endpoint expires.
     pub fn is_fresh(&self, now: u64, ttl: u64) -> bool {
         self.created <= now && now - self.created < ttl
     }
@@ -85,12 +96,17 @@ impl Record {
 }
 fn invalid(message: &str) -> io::Error { io::Error::new(io::ErrorKind::InvalidData, message.to_string()) }
 
+/// Internal bounded disk store. Controller APIs supply policy/freshness checks;
+/// decoding a record does not itself validate numerical output or driver identity.
 #[derive(Debug)]
 pub struct DiskCache { root: PathBuf, capacity: usize }
 impl DiskCache {
     /// A dedicated directory is used, never the legacy autotune cache directory itself.
     pub fn new(root: PathBuf, capacity: usize) -> Self { Self { root: root.join("stack-autotune-v1"), capacity } }
     fn path(&self, key: &str) -> PathBuf { self.root.join(std::format!("stack-v1-{}.rtune", digest(key.as_bytes()))) }
+    /// Read at most 512 KiB, verify framing/checksum and compare the complete key.
+    /// Absent files/key mismatch are None; corruption and other I/O failures are errors.
+    /// TTL and current-process numerical validation are handled by the controller.
     pub fn load(&self, key: &str) -> io::Result<Option<Record>> {
         let path = self.path(key);
         let mut file = match fs::File::open(path) { Ok(f) => f, Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None), Err(e) => return Err(e) };
@@ -101,9 +117,13 @@ impl DiskCache {
         // Hash collision or copied cache files are misses, not alternate executable choices.
         if record.key == key { Ok(Some(record)) } else { Ok(None) }
     }
+    /// Remove only this key's cache file; an absent file is already successful.
     pub fn remove(&self, key: &str) -> io::Result<()> {
         match fs::remove_file(self.path(key)) { Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()), r => r }
     }
+    /// Encode, fsync a newly created temporary file, rename, then prune old records.
+    /// Failed replacement never deletes the previous destination first. A pruning
+    /// failure can be reported after the new record has already been installed.
     pub fn save(&self, record: &Record) -> io::Result<()> {
         let bytes = record.encode()?;
         fs::create_dir_all(&self.root)?;
@@ -135,6 +155,7 @@ impl DiskCache {
         }
         Ok(())
     }
+    /// Dedicated stack-autotune-v1 directory, not the legacy LocalTuner cache root.
     pub fn directory(&self) -> &Path { &self.root }
 }
 

@@ -25,17 +25,24 @@
 - [Ruda プログラミング ガイド](programming-guide.md): ホストとデバイスのコード、実行階層、メモリ、同期、安全性。
 - [テンソルとフレームワーク](tensor-framework.md): デバイス テンソル、ライブラリ ディスパッチ、融合、自動微分。
 - [トレーニングと状態の保存](training.md): トレーニング ステップ、勾配の累積、学習率のスケジューリング、保存、および復元。
+- [分散学習と rank・device](distributed-training.md): rendezvous、デバイス配置、collective 順序、重み付き勾配と rank ごとの再開。
+- [アーキテクチャと Python Muon](architecture-training.md): mHC、DSA/CSA/HCA、圧縮 KV cache と hybrid model。
+- [LoRA/NF4 微調整](finetuning.md): target 選択、重み準備、causal loss、checkpoint と再開。
+- [PyTorch モデルコンパイラ](model-compiler.md): AOT forward/backward、native 分割、設定と cache。
+- [固定アドレス PyTorch graph](static-pytorch-graphs.md): GraphOp、output の寿命と一階学習。
 - [モデルの読み込みと推論](model-inference.md): ruLLM、テキストおよび画像入力、サンプリング、AWQ、および連続バッチ処理。
 
 ## コンパイルと実行
 
 - [コンパイラー ガイド](compiler-guide.md): Rust カーネル フロントエンド、IR、CUDA C++/NVRTC、およびダイレクト PTX。
 - [PTX バックエンドリファレンス](ptx.md): ターゲット構成、コンパイル出力、制約、およびエラー。
+- [全スタック自動調整](stack-autotuning.md): 候補、検証、計時、policy と cache。
 
 ## API リファレンス
 
 - [ランタイム API](runtime-api.md): デバイス クライアント、メモリ、送信、リードバック、および同期。
 - [ドライバー API とバックエンド](driver-api.md): バックエンドの種類、デバイスの選択、およびランタイム統合。
+- [ネイティブ PyTorch API](native-pytorch-api.md): コンポーネント版、tensor 契約、optimizer、stream と attention。
 - [計算ライブラリ リファレンス](libraries/README.md): ライブラリの選択、Cargo の機能、およびエントリ ポイント。
 
 ## 計算ライブラリ

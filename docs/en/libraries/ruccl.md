@@ -8,6 +8,8 @@ The Cargo package is `ruCCL` and the Rust crate is `ruccl`.
 
 ruCCL includes tensor Backend collectives, a rank core, and in-process implementations. `ruda-communication` provides communication infrastructure. The `orchestrator` feature enables orchestration entry points.
 
+See [ranks, devices and distributed training](../distributed-training.md) for explicit rank/device mapping, TCP rendezvous, initialization order, token-weighted replicas and rank-local recovery.
+
 ## 2. Tensor collective API
 
 | Function | Behavior |

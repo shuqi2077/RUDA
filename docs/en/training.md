@@ -168,6 +168,8 @@ For mixed storage, `TrainingRecord::capture_with_dtypes` also captures `ModuleDT
 
 ## Replicated training and differentiable tensor collectives
 
+For explicit rank/device assignment, rendezvous startup, collective order and rank-local checkpoints, follow the [distributed training guide](distributed-training.md).
+
 Enable `ruda-optim/collective` and initialize `DataParallel<B, C>` before constructing optimizer state, using an explicit root and a communicator for `B::InnerBackend`. Replica paths, shapes, dtypes and frozen/tied structure must match; rank-local parameter IDs may differ and are retained. The default `C` is ruCCL's host-staged `RankCommunicator<TensorDevice<B::InnerBackend>>`; a `DataParallelCommunicator` can supply native device transport without changing replica or optimizer semantics.
 
 `initialize` broadcasts floating parameters. `initialize_with_buffers` additionally broadcasts I32/I64 and Bool parameter buffers once; it retains local IDs, integer widths, aliases and frozen flags. Buffers do not enter gradient updates, and this is not automatic synchronization before each forward pass.
@@ -196,7 +198,7 @@ API reference: [Optimizers](../../ruda-optim/src/optim/mod.rs), [Training record
 
 ## Native PyTorch training on `ruda:0`
 
-This is separate from the Rust `Autodiff<Cuda<...>>` examples above. Build the Rust library and C++ extension from the same source: base ABI 10, training API 4, router API 1, paged-backward API 2 and graph API 2. See the [native PyTorch guide](../../ruda-torch/README.md).
+This is separate from the Rust `Autodiff<Cuda<...>>` examples above. Prepare matching Rust and C++ components from the same source, built locally or from a compatible precompiled bundle: base ABI 10, training API 4, router API 1, paged-backward API 2 and graph API 3. See the [native PyTorch guide](../../ruda-torch/README.md) and [API contracts](native-pytorch-api.md).
 
 `ruda_torch.RMSNorm`/`rms_norm`, `LayerNorm`/`layer_norm` and `silu_mul` provide native first-order training. Normalization is last-axis only; statistics are FP32, outputs retain the activation dtype, and affine parameters may use the input dtype or FP32. Standard `torch.nn.LayerNorm` selects the native training path for supported contiguous last-axis inputs. Higher-order gradients and training graph capture are not supported by these fused interfaces.
 
@@ -206,4 +208,8 @@ Hierarchical statistics use fan-in 1024, at most two extra merge kernels and 49,
 
 `PagedAttentionPlan(..., backward_strategy="ordered")` enables atomic-free history gradients; `"atomic"` remains the default. Autograd allocates only requested gradients. See the [ruDNN guide](libraries/rudnn.md) for history compaction and fixed-selection router/expert training, and the [ruBLAS guide](libraries/rublas.md) for grouped backward.
 
-Save model, optimizer and scaler `state_dict()` values plus data position/RNG state together. Optimizer checkpoints preserve `fused_step` and `max_grad_norm`; hierarchical checkpoints carry step-options version 2. Missing options restore with fused/hierarchical modes disabled. StaticGraph remains fixed-address inference-only.
+Save model, optimizer and scaler `state_dict()` values plus data position/RNG state together. Optimizer checkpoints preserve `fused_step` and `max_grad_norm`; hierarchical checkpoints carry step-options version 2. Missing options restore with fused/hierarchical modes disabled. [StaticGraph](static-pytorch-graphs.md) supports opt-in first-order training with native forward and same-device recomputed backward; it does not capture optimizer updates. Ordinary model forward/backward uses the separate [AOT entry point](model-compiler.md).
+
+## Adapter and packed-base fine-tuning
+
+The [LoRA/NF4 guide](finetuning.md) covers Rust dense adapters and model-independent native PyTorch adapters, CPU or streamed NF4 preparation, causal labels, full-vocabulary chunked loss and token-weighted accumulation. It also specifies adapter export, exact base/optimizer identity, step-boundary checkpoints and resume semantics; these are different from saving a complete model above.

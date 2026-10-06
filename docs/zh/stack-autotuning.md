@@ -1,5 +1,7 @@
 # 全栈自动调优：公共控制器与首批端到端接入
 
+[文档目录](README.md) · [Runtime](runtime-api.md) · [English](../en/stack-autotuning.md)
+
 ## 1. 解决什么问题
 
 自动调优（autotuning）是在多个**语义相同的实现**中，先检查结果，再测量耗时，为当前设备和输入选择实现。这里的“全栈”是让算子、融合图和完整应用路径共用选择规则、环境识别、缓存和报告，而不是只看某一个 GPU 内核的执行时间。
@@ -144,7 +146,30 @@ cargo run --release --locked -p ruda-llm \
 
 示例以 JSON 行报告胜出模式、来源、是否校验、耗时比、样本数、噪声和实际请求耗时。不能把一次模型示例的耗时当成通用性能结论。
 
-## 10. 兼容性与范围
+## 10. 控制器与缓存 API
+
+下列公开入口由 `ruda::runtime::tune::stack` 导出；定义中的逐字段注释说明参数和校验区间。
+
+| API | 契约 |
+| --- | --- |
+| `StackTuner::new(policy, cache_directory)` | 校验策略后创建独立控制器，不做磁盘 I/O，也不安装到全局。 |
+| `enable_stack_autotune(policy, cache_directory)` | 进程内只能安装一次全局控制器，返回 `Result<&'static StackTuner,TuneFailure>`。 |
+| `stack_autotuner()` | 返回已安装控制器或 `None`，不初始化、不试跑。 |
+| `runtime_environment(&client)` | 缓存后端／设备／驱动／构建／选项和调用方执行上下文，返回 `RuntimeEnvironment { fingerprint, persistent, execution_context }`。 |
+| `policy()`、`stats()`、`reports()` | 只读策略、计数器快照和保留的搜索报告；报告由旧到新，最多 `min(capacity,128)` 条。 |
+| `select(&problem, &candidates, reference, &mut runner)` | 返回 `Result<Decision,TuneFailure>`，不执行真实请求；`TrialRunner` 负责隔离校验和完成计时。 |
+| `invalidate(&decision, ban_candidate)` | 移除未来复用，可对该键禁用非参考候选；磁盘失败累计警告，不重放当前状态。 |
+| `record_comparison(&decision, reference_time, selected_time, correctness_checked)` | 接收正值配对观测，仅在退化窗口触发失效时返回 true；记录缺失／胜出名称变化返回 false，不重新检查 TTL。 |
+| `lower_level_fingerprint()` | 全部保留的非 pipeline 选择／绕过的保守摘要，含其他设备和工作负载。 |
+| `try_execute_stack(...)` | 运行时适配器要求已安装控制器、有效显式参考和准确 workload；选择后真实输入仅执行一次，失败不重放。 |
+
+`Problem` 包含 `scope`、`operation`、`environment`、`workload`、`execution_context`、`persistent`。候选数为 1～4096，名称非空、不重复、各不超过 4096 字节；operation／environment／workload 非空，完整键最多 384 KiB，参考实现须满足策略。`Candidate` 提供 `name`、语义 `revision`、可选 `workspace_bytes` 和 `eligible`；`Candidate::new(name)` 默认为 revision `"1"`、可参与、工作区未知。硬限制启用时未知估计不满足限制。
+
+`Decision` 提供 `index`、`reference_index`、`name`、`source`、`verified`、可选的候选／参考 `ratio` 和 `cache_key`；索引仅对应本次候选切片，不用于其他构建。`TuneReport` 提供操作／环境／workload／context、winner、耗时、预算状态与 `CandidateReport` 行（`name`、`samples`、`ratio`、`relative_mad`、`verified`、`note`）。缓存命中增加计数，不生成新搜索报告。
+
+磁盘 Record／`DiskCache` 是内部实现，不是公开序列化 API。读取检查格式、完整键、大小、摘要及数值有效性，控制器检查 TTL 和当前进程校验。保存先新建临时文件、fsync、rename，再按容量清理；清理报错时新记录可能已写入。源码：[策略类型](../../ruda-runtime/src/runtime/tune/stack/policy.rs)、[控制器](../../ruda-runtime/src/runtime/tune/stack/engine.rs)、[运行时适配](../../ruda-runtime/src/runtime/tune/stack/runtime_adapter.rs)、[内部缓存](../../ruda-runtime/src/runtime/tune/stack/cache.rs)。
+
+## 11. 兼容性与范围
 
 既有生成函数、LocalTuner 入口、主要配置字段和旧缓存校验和继续保留。新 trait 方法有默认实现，新增能力通过构造方法和 Cargo 特性显式开启。原 `LocalTuner::clear` 仍只清理旧缓存；新缓存应通过控制器的 `invalidate` 等接口管理，不能把两者混为一谈。
 
@@ -152,7 +177,7 @@ cargo run --release --locked -p ruda-llm \
 
 不包含所有库的适配、跨卡通信调优、单模型多卡切分、服务级动态批处理、真正的全局组合搜索、自动收集线上配对基准或所有硬件上的数值/性能保证。
 
-## 11. 验证入口
+## 12. 验证入口
 
 ```bash
 # 独立 Python 参考 + 编译和运行真实的 std-only Rust 核心测试。

@@ -168,6 +168,8 @@ fn restore_training(
 
 ## 副本训练与可微分张量集合通信
 
+显式 rank／设备映射、rendezvous 启动、集合调用顺序与逐 rank checkpoint 见[分布式训练指南](distributed-training.md)。
+
 启用 `ruda-optim/collective`，在创建优化器状态前，以显式 root 和 `B::InnerBackend` 的通信器初始化 `DataParallel<B, C>`。副本参数路径、shape、dtype 及冻结／共享结构须一致；本地参数 ID 可在 rank 间不同，初始化后保留。默认 `C` 为 ruCCL 的 host-staged `RankCommunicator<TensorDevice<B::InnerBackend>>`；实现 `DataParallelCommunicator` 的原生设备通信器可复用同一副本与优化器语义。
 
 `initialize` 广播浮点参数；`initialize_with_buffers` 额外一次性广播 I32/I64 和 Bool 参数缓冲区，保留本地 ID、整数宽度、别名和冻结标记。缓冲区不参与梯度更新，也不自动在每次前向前同步。
@@ -196,7 +198,7 @@ fn restore_training(
 
 ## 在 `ruda:0` 上进行原生 PyTorch 训练
 
-这条路径与上面的 Rust `Autodiff<Cuda<...>>` 示例分开。Rust 动态库与 C++ 扩展须从同一源码构建：基础 ABI 10、training API 4、router API 1、paged-backward API 2、graph API 2。安装见[原生 PyTorch 指南](../../ruda-torch/README.md)。
+这条路径与上面的 Rust `Autodiff<Cuda<...>>` 示例分开。准备同一源码的匹配 Rust／C++ 组件，可自行构建或使用兼容预编译包：基础 ABI 10、training API 4、router API 1、paged-backward API 2、graph API 3。安装见[原生 PyTorch 指南](../../ruda-torch/README.md)，参数契约见 [API 参考](native-pytorch-api.md)。
 
 `ruda_torch.RMSNorm`／`rms_norm`、`LayerNorm`／`layer_norm` 及 `silu_mul` 支持原生一阶训练。归一化仅沿最后一轴，统计量使用 FP32，输出保留激活 dtype，仿射参数可为输入 dtype 或 FP32。受支持的连续末轴输入可通过标准 `torch.nn.LayerNorm` 进入原生训练路径。这些融合接口不支持高阶梯度或训练图捕获。
 
@@ -206,4 +208,8 @@ fn restore_training(
 
 `PagedAttentionPlan(..., backward_strategy="ordered")` 启用无原子的历史梯度；默认仍是 `"atomic"`。Autograd 只分配请求的梯度。历史页压缩、固定选择的路由与专家训练见 [ruDNN 指南](libraries/rudnn.md)，分组反向见 [ruBLAS 指南](libraries/rublas.md)。
 
-模型、优化器、scaler 的 `state_dict()` 与数据位置／随机数状态应一起保存。优化器存档保留 `fused_step`、`max_grad_norm`；启用分层统计的存档使用 step-options 版本 2。缺少相关选项的旧存档恢复时关闭融合／分层模式。StaticGraph 仍仅用于固定地址推理。
+模型、优化器、scaler 的 `state_dict()` 与数据位置／随机数状态应一起保存。优化器存档保留 `fused_step`、`max_grad_norm`；启用分层统计的存档使用 step-options 版本 2。缺少相关选项的旧存档恢复时关闭融合／分层模式。[StaticGraph](static-pytorch-graphs.md) 可显式启用一阶训练，原生前向、同设备重算反向，不捕获优化器更新。普通模型前向／反向使用独立的 [AOT 入口](model-compiler.md)。
+
+## 适配器与打包 base 微调
+
+[LoRA／NF4 指南](finetuning.md) 覆盖 Rust 稠密适配器、通用原生 PyTorch 适配器、CPU／流式 NF4 准备、因果标签、完整词表分块损失和 token 加权累积；同时说明适配器导出、准确 base／优化器身份、step 边界 checkpoint 与恢复语义，与上面的完整模型存档不同。

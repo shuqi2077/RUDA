@@ -6,6 +6,8 @@ use std::{cell::Cell, collections::{BTreeMap, BTreeSet, VecDeque}, path::PathBuf
     string::{String, ToString}, sync::{Mutex, MutexGuard}, time::{Duration, Instant}, vec::Vec};
 
 std::thread_local! { static DEPTH: Cell<usize> = const { Cell::new(0) }; }
+/// Whether the current thread is inside a shared-controller trial.
+/// This is nesting state, not a query of GPU activity or other processes.
 pub fn is_tuning() -> bool { DEPTH.with(|d| d.get() != 0) }
 pub(super) struct DepthGuard;
 impl DepthGuard { pub(super) fn enter() -> Self { DEPTH.with(|d| d.set(d.get()+1)); Self } }
@@ -14,47 +16,107 @@ impl Drop for DepthGuard { fn drop(&mut self) { DEPTH.with(|d| d.set(d.get()-1))
 /// Benchmarks MUST use isolated state. A completed measurement includes all device work whose
 /// cost belongs to the plan. A submit-only host timestamp is not a valid measurement.
 pub trait TrialRunner {
+    /// Compare isolated outputs for the candidate indices supplied to select.
+    /// Unsupported comparison returns `Validation::Unsupported`; wrong output
+    /// or unconfirmed completion returns an appropriate failure instead.
     fn validate(&mut self, reference: usize, candidate: usize, tolerance: Tolerance) -> Result<Validation, TuneFailure>;
+    /// Return nonzero completed-work duration for an isolated candidate trial.
+    /// Stateful requests must not be advanced by measuring their live state.
     fn measure(&mut self, candidate: usize) -> Result<Duration, TuneFailure>;
 }
+/// Why a reference or selected implementation was returned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DecisionSource { Tuned, MemoryCache, DiskCache, CacheMiss, Disabled, Busy, Nested, ValidationUnavailable }
+pub enum DecisionSource {
+    /// A fresh search completed, possibly choosing the reference.
+    Tuned,
+    /// Valid process-memory record, without a fresh synchronization or validation.
+    MemoryCache,
+    /// Persistent record validated once in this process before reuse.
+    DiskCache,
+    /// Cache-only miss; use the declared reference.
+    CacheMiss,
+    /// Reference-only mode.
+    Disabled,
+    /// Another trial owns the device/key or the parallel-trial budget is full.
+    Busy,
+    /// Nested trial without a usable memory record.
+    Nested,
+    /// No supported numerical validator; use the declared reference.
+    ValidationUnavailable
+}
+/// Implementation selection, not a computed output or an instruction to replay a request.
 #[derive(Debug, Clone)]
 pub struct Decision {
+    /// Index in the candidate slice passed to select for this call.
     pub index: usize,
+    /// Caller-declared reference index in that same slice.
     pub reference_index: usize,
+    /// Stable selected candidate name, independent of slice indexing in another build.
     pub name: String,
+    /// Search/cache/reference provenance.
     pub source: DecisionSource,
     /// True only after a validator reported Passed, never inferred from successful launch.
     pub verified: bool,
+    /// Paired selected/reference timing ratio when available; None on unmeasured bypass.
     pub ratio: Option<f64>,
+    /// Full canonical key used by invalidation and regression observations.
     pub cache_key: String,
 }
+/// One candidate's local timing/validation metadata.
 #[derive(Debug, Clone)]
 pub struct CandidateReport {
+    /// Candidate identity supplied by the adapter.
     pub name: String,
+    /// Number of completed timing pairs; the reference row reports one baseline sample.
     pub samples: usize,
+    /// Median selected/reference ratio, or None when no acceptable score exists.
     pub ratio: Option<f64>,
+    /// Relative median absolute deviation of paired ratios, when measured.
     pub relative_mad: Option<f64>,
+    /// Whether numerical validation passed for this trial.
     pub verified: bool,
+    /// Trial selection/rejection reason for diagnostics.
     pub note: String,
 }
+/// Bounded in-memory diagnostics for one selection workload.
 #[derive(Debug, Clone)]
 pub struct TuneReport {
+    /// Stable operator/graph/application identity.
     pub operation: String,
+    /// Backend/device/driver/build signature supplied by the adapter.
     pub environment: String,
+    /// Exact shapes, strides, precision and operation options.
     pub workload: String,
+    /// Caller-supplied load/topology regime, not an automatically detected topology.
     pub execution_context: String,
+    /// Selected candidate name, including a reference selected without usable validation.
     pub winner: String,
+    /// Time spent in fresh search; unsupported-validation diagnostics may use zero.
     pub elapsed: Duration,
+    /// Whether the soft budget elapsed; it does not interrupt in-flight kernels.
     pub budget_exhausted: bool,
+    /// Candidate diagnostic rows considered by this report.
     pub candidates: Vec<CandidateReport>,
 }
+/// Controller-local counters; these are not GPU utilization or performance estimates.
 #[derive(Debug, Clone, Default)]
 pub struct Stats {
-    pub memory_hits: u64, pub disk_hits: u64, pub misses: u64,
-    pub busy_fallbacks: u64, pub tunes: u64, pub cache_warnings: u64,
-    pub invalidations: u64, pub device_failures: u64,
+    /// Successful process-memory lookups.
+    pub memory_hits: u64,
+    /// Persistent records validated and reused in this process.
+    pub disk_hits: u64,
+    /// Calls admitted to the cold selection path, before disk/cache-only handling.
+    pub misses: u64,
+    /// Contending calls returning the declared reference rather than waiting.
+    pub busy_fallbacks: u64,
+    /// Successful fresh searches, including reference wins.
+    pub tunes: u64,
+    /// Disk read/write/removal warnings; normal execution can continue.
+    pub cache_warnings: u64,
+    /// Explicit or regression-triggered invalidation calls.
+    pub invalidations: u64,
+    /// Device completion failures recorded by this controller.
+    pub device_failures: u64,
 }
 #[derive(Default)]
 struct State {
@@ -72,13 +134,18 @@ impl Drop for Permit<'_> {
     fn drop(&mut self) { let mut s = self.tuner.lock(); s.pending.remove(&self.key); s.devices.remove(&self.device); }
 }
 impl StackTuner {
+    /// Validate policy and create an independent controller.
+    /// `None` disables disk storage. Construction performs no disk I/O and does
+    /// not install this instance as the global runtime controller.
     pub fn new(policy: StackPolicy, cache_directory: Option<PathBuf>) -> Result<Self, TuneFailure> {
         policy.validate()?;
         let disk = cache_directory.map(|dir| DiskCache::new(dir, policy.capacity));
         Ok(Self { policy, disk, state: Mutex::new(State::default()) })
     }
     fn lock(&self) -> MutexGuard<'_, State> { self.state.lock().unwrap_or_else(|e| e.into_inner()) }
+    /// Borrow the immutable policy; runtime reconfiguration is not supported.
     pub fn policy(&self) -> &StackPolicy { &self.policy }
+    /// Snapshot this instance's counters without launching device work.
     pub fn stats(&self) -> Stats { self.lock().stats.clone() }
     /// Conservative dependency snapshot for complete pipelines. It includes all currently
     /// cached lower-level decisions in this controller, including other workloads/devices.
@@ -96,6 +163,8 @@ impl StackTuner {
         parts.sort();
         super::cache::digest(fields(&parts.iter().map(String::as_str).collect::<Vec<_>>()).as_bytes())
     }
+    /// Clone retained search diagnostics, oldest first, bounded by min(capacity, 128).
+    /// Cache hits are counters, not new search reports.
     pub fn reports(&self) -> Vec<TuneReport> { self.lock().reports.iter().cloned().collect() }
     fn insert(&self, record: Record) {
         let mut s = self.lock();
@@ -127,6 +196,11 @@ impl StackTuner {
     fn fail_device(&self, environment: &str) {
         let mut s = self.lock(); s.poisoned_devices.insert(environment.to_string()); s.stats.device_failures += 1;
     }
+    /// Reuse or select an eligible implementation for one exact workload.
+    /// Candidate names must be unique/nonempty, count 1..=4096, and the reference
+    /// index must exist and fit policy. Empty operation/environment/workload or an oversized
+    /// key return InvalidInput. Trials may synchronize; memory hits do not.
+    /// A returned decision does not execute the caller's live request.
     pub fn select(&self, problem: &Problem, candidates: &[Candidate], reference: usize, runner: &mut impl TrialRunner) -> Result<Decision, TuneFailure> {
         if candidates.is_empty() || candidates.len() > 4096 || reference >= candidates.len()
             || problem.operation.is_empty() || problem.environment.is_empty() || problem.workload.is_empty() {
@@ -291,6 +365,8 @@ impl StackTuner {
         Ok((decision, report, record))
     }
     /// Invalidate future selections; NEVER re-run the current stateful request after a failure.
+    /// `ban_candidate=true` additionally bans a non-reference name for this key.
+    /// Removes the persistent record when possible; disk failures increment cache warnings.
     pub fn invalidate(&self, decision: &Decision, ban_candidate: bool) {
         {
             let mut s = self.lock(); s.records.remove(&decision.cache_key); s.regressions.remove(&decision.cache_key); s.bypass.remove(&decision.cache_key);
@@ -308,6 +384,9 @@ impl StackTuner {
     }
     /// Feed paired observations from a controlled replay of the SAME workload and load regime.
     /// Ordinary production request latency is NOT a comparable baseline measurement.
+    /// Returns true only when the accumulated ratio window invalidates this decision.
+    /// Missing records or changed winner names return false; zero or unchecked
+    /// timings return InvalidInput. This observation does not revalidate TTL.
     pub fn record_comparison(&self, decision: &Decision, reference: Duration, selected: Duration, correctness_checked: bool) -> Result<bool, TuneFailure> {
         if !correctness_checked || reference.is_zero() || selected.is_zero() { return Err(TuneFailure::invalid("regression observations require nonzero, correctness-checked paired timings")); }
         let should_invalidate = {

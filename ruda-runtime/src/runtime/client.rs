@@ -59,6 +59,9 @@ impl<R: Runtime> ComputeClient<R> {
     pub fn properties_fingerprint(&self) -> u64 { self.utilities.properties_hash }
 
     /// Create a new client with a new server.
+    ///
+    /// Registers this device/server pair. Panics if that server type is already
+    /// registered for the device; ordinary callers should use Runtime::client.
     pub fn init<D: Device>(device: &D, server: R::Server) -> Self {
         let utilities = server.utilities();
         let context = DeviceHandle::<R::Server>::insert(device.to_id(), server)
@@ -72,6 +75,8 @@ impl<R: Runtime> ComputeClient<R> {
     }
 
     /// Load the client for the given device.
+    /// The runtime must already have initialized a compatible server for that
+    /// device. This does not construct a server or select a different physical GPU.
     pub fn load<D: Device>(device: &D) -> Self {
         let context = DeviceHandle::<R::Server>::new(device.to_id());
 
@@ -159,6 +164,8 @@ impl<R: Runtime> ComputeClient<R> {
     }
 
     /// Given a binding, returns owned resource as bytes.
+    /// Blocks for raw byte readback and returns device/read errors. Tensor
+    /// shape/stride interpretation belongs to the tensor-descriptor interfaces.
     pub fn read_one(&self, handle: Handle) -> Result<Bytes, ServerError> {
         Ok(ruda_core::reader::read_sync(self.read_async(vec![handle]))?.remove(0))
     }
@@ -190,8 +197,9 @@ impl<R: Runtime> ComputeClient<R> {
     ///
     /// The tensor must be in the same layout as created by the runtime, or more strict.
     /// Contiguous tensors are always fine, strided tensors are only ok if the stride is similar to
-    /// the one created by the runtime (i.e. padded on only the last dimension). A way to check
-    /// stride compatibility on the runtime will be added in the future.
+    /// the one created by the runtime (i.e. padded on only the last dimension).
+    /// Check layout compatibility with Runtime::can_read_tensor; make an
+    /// unsupported layout contiguous before readback.
     ///
     /// Also see [`ComputeClient::create_tensor`].
     pub fn read_tensor(&self, descriptors: Vec<CopyDescriptor>) -> Vec<Bytes> {
@@ -819,6 +827,8 @@ impl<R: Runtime> ComputeClient<R> {
     }
 
     /// Flush all outstanding commands.
+    /// Submission succeeds or returns ServerError for the resolved stream.
+    /// This is not a device-completion fence; wait on sync() when completion is required.
     pub fn flush(&self) -> Result<(), ServerError> {
         let stream_id = self.stream_id();
 
@@ -827,7 +837,9 @@ impl<R: Runtime> ComputeClient<R> {
             .unwrap()
     }
 
-    /// Wait for the completion of every task in the server.
+    /// Request completion according to the server's resolved-stream contract.
+    /// The returned future must be awaited or blocked on; merely obtaining it
+    /// is not proof that device work has finished. Completion errors remain explicit.
     pub fn sync(&self) -> DynFut<Result<(), ServerError>> {
         let stream_id = self.stream_id();
 
@@ -859,6 +871,8 @@ impl<R: Runtime> ComputeClient<R> {
     }
 
     /// Get the current memory usage of this client.
+    /// Returns allocator/server accounting, not process RSS, a predicted model
+    /// capacity or a complete physical-GPU peak-memory measurement.
     pub fn memory_usage(&self) -> Result<MemoryUsage, ServerError> {
         let stream_id = self.stream_id();
         self.device

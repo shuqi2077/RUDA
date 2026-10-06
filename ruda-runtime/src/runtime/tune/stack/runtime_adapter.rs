@@ -10,12 +10,25 @@ pub fn enable_stack_autotune(policy: StackPolicy, cache_directory: Option<PathBu
     GLOBAL.set(tuner).map_err(|_| TuneFailure::invalid("stack autotuning was already configured"))?;
     Ok(GLOBAL.get().expect("controller was initialized"))
 }
+/// Return the installed controller, or None to preserve the legacy tuner route.
+/// Merely querying it does not create a controller, inspect files or run trials.
 pub fn stack_autotuner() -> Option<&'static StackTuner> { GLOBAL.get() }
 
 /// Supply extra tags for a deployment's compiler flags and load/topology/power regime.
 /// Set these BEFORE constructing devices/starting inference; changing them live is unsupported.
 #[derive(Debug, Clone)]
-pub struct RuntimeEnvironment { pub fingerprint: String, pub persistent: bool, pub execution_context: String }
+pub struct RuntimeEnvironment {
+    /// Canonical backend/device/driver/build/runtime-options signature.
+    pub fingerprint: String,
+    /// Whether a driver identity and compiled build identity permit disk reuse.
+    pub persistent: bool,
+    /// Deployment-supplied regime, defaulting to isolated-single-device.
+    /// The default does not establish actual isolation or topology.
+    pub execution_context: String
+}
+/// Probe and memoize immutable environment identity for this runtime/client.
+/// Deployment tags must be set before first use; live mutation is not supported.
+/// Missing identity yields session-only caching rather than a fabricated driver version.
 pub fn runtime_environment<R: Runtime>(client: &ComputeClient<R>) -> RuntimeEnvironment {
     use std::{any::TypeId, collections::BTreeMap, sync::Mutex};
     type Key = (TypeId, u16, u16, u64);
@@ -123,6 +136,8 @@ impl<R: Runtime, K: AutotuneKey, I: TuneInputs, O: AutotuneOutput> TrialRunner f
 
 /// Fallible full-stack path. Actual request execution is performed ONCE after selection; an
 /// execution error invalidates future choices but is never silently replayed on another kernel.
+/// Requires an installed controller, an in-range explicit reference and an exact workload
+/// signature on the set. Missing metadata returns AutotuneError before live execution.
 pub fn try_execute_stack<'a, R: Runtime, K: AutotuneKey, I: TuneInputs, O: AutotuneOutput>(
     name: &str, device_id: &str, client: &ComputeClient<R>, set: Arc<TunableSet<K,I,O>>, input: I::At<'a>,
 ) -> Result<O, AutotuneError> {

@@ -148,7 +148,7 @@ API 参照: [オプティマイザー](../../ruda-optim/src/optim/mod.rs)、[ト
 
 ## `ruda:0` 上のネイティブ PyTorch 学習
 
-上記の Rust `Autodiff<Cuda<...>>` とは別の経路です。Rust ライブラリと C++ 拡張を同じソースから構築します。基本 ABI 10、training API 4、router API 1、paged-backward API 2、graph API 2 を使用します。[ネイティブ PyTorch ガイド](../../ruda-torch/README.md)を参照してください。
+上記の Rust `Autodiff<Cuda<...>>` とは別の経路です。同じソースの Rust ライブラリと C++ 拡張、または互換性のあるコンパイル済み bundle を使います。基本 ABI 10、training API 4、router API 1、paged-backward API 2、graph API 3 を使用します。[ネイティブ PyTorch ガイド](../../ruda-torch/README.md)と [API 契約](native-pytorch-api.md)を参照してください。
 
 `ruda_torch.RMSNorm`/`rms_norm`、`LayerNorm`/`layer_norm`、`silu_mul` は一階学習に対応します。正規化は最終軸のみで、統計量は FP32、出力は活性値と同じ dtype、アフィンパラメーターは入力 dtype または FP32 です。標準の `torch.nn.LayerNorm` も対応する連続最終軸入力でネイティブ学習経路を選びます。高階勾配と学習グラフ capture は対象外です。
 
@@ -158,4 +158,6 @@ API 参照: [オプティマイザー](../../ruda-optim/src/optim/mod.rs)、[ト
 
 `PagedAttentionPlan(..., backward_strategy="ordered")` はアトミックを使わない履歴勾配を選びます。既定値は `"atomic"` で、autograd は要求された勾配のみ確保します。履歴圧縮と固定選択のルーター・エキスパート学習は [ruDNN](libraries/rudnn.md)、グループ逆伝播は [ruBLAS](libraries/rublas.md) を参照してください。
 
-モデル・optimizer・scaler の `state_dict()`、データ位置と RNG 状態を一緒に保存します。optimizer は `fused_step` と `max_grad_norm` を保存し、階層統計では step-options バージョン 2 を使用します。設定のない旧保存状態では fused/hierarchical は無効で復元します。StaticGraph は固定アドレス推論専用のままです。
+モデル・optimizer・scaler の `state_dict()`、データ位置と RNG 状態を一緒に保存します。optimizer は `fused_step` と `max_grad_norm` を保存し、階層統計では step-options バージョン 2 を使用します。設定のない旧保存状態では fused/hierarchical は無効で復元します。[StaticGraph](static-pytorch-graphs.md) は opt-in の一階学習を提供し、native forward と同じ device の再計算 backward を使います。optimizer update は capture しません。通常モデルの forward/backward は別の [AOT 入口](model-compiler.md)です。
+
+[LoRA/NF4 微調整](finetuning.md)で adapter、causal loss、再開状態を、[分散学習](distributed-training.md)で明示的 rank/device、token 重み付けと rank ごとの checkpoint を参照できます。

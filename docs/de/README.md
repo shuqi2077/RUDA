@@ -25,17 +25,24 @@ Von Ihrem ersten GPU-Kernel bis hin zu Rechenbibliotheken, Tensortraining und lo
 - [Ruda Programmierhandbuch](programming-guide.md): Host- und Gerätecode, Ausführungshierarchie, Speicher, Synchronisierung und Sicherheit.
 - [Tensoren und Frameworks](tensor-framework.md): Gerätetensoren, Bibliotheksversand, Fusion und automatische Differenzierung.
 - [Trainings- und Speicherstatus](training.md): Trainingsschritte, Gradientenakkumulation, Lernratenplanung, Speichern und Wiederherstellen.
+- [Verteiltes Training, Ranks und Geräte](distributed-training.md): Rendezvous, Gerätezuordnung, Collective-Reihenfolge, gewichtete Gradienten und rank-lokale Wiederaufnahme.
+- [Architekturkomponenten und Python Muon](architecture-training.md): mHC, DSA/CSA/HCA, komprimierter KV-Cache und hybride Modelle.
+- [LoRA/NF4-Fine-Tuning](finetuning.md): Zielauswahl, Gewichtsvorbereitung, kausaler Loss, Checkpoints und Wiederaufnahme.
+- [PyTorch-Modellcompiler](model-compiler.md): AOT-Forward/Backward, native Partitionen, Optionen und Cache.
+- [PyTorch-Graphen mit festen Adressen](static-pytorch-graphs.md): GraphOp, Output-Lebensdauer und Training erster Ordnung.
 - [Modellladen und Inferenz](model-inference.md): ruLLM, Text- und Bildeingaben, Sampling, AWQ und kontinuierliche Stapelverarbeitung.
 
 ## Kompilierung und Ausführung
 
 - [Compiler-Anleitung](compiler-guide.md): das Rust-Kernel-Frontend, IR, CUDA C++/NVRTC und direktes PTX.
 - [PTX Backend-Referenz](ptx.md): Zielkonfiguration, Kompilierungsausgabe, Einschränkungen und Fehler.
+- [Gemeinsames Stack-Autotuning](stack-autotuning.md): Kandidaten, Validierung, Zeitmessung, Policy und Cache.
 
 ## API Referenzen
 
 - [Laufzeit API](runtime-api.md): Geräte-Clients, Speicher, Übermittlung, Rücklesen und Synchronisierung.
 - [Treiber API und Backends](driver-api.md): Backend-Typen, Geräteauswahl und Laufzeitintegration.
+- [Native PyTorch-API](native-pytorch-api.md): Komponentenversionen, Tensorverträge, Optimizer, Streams und Attention.
 - [Referenz zur Compute-Bibliothek](libraries/README.md): Bibliotheksauswahl, Cargo-Funktionen und Einstiegspunkte.
 
 ## Compute-Bibliotheken

@@ -111,6 +111,10 @@ Cargo 包名、仓库目录名和 Rust 导入名可能不同。例如 ruFFT 位�
 
 ## 查找具体方法
 
+原生 Python 方法见 [PyTorch API 参考](native-pytorch-api.md)、[模型编译](model-compiler.md)、[静态图](static-pytorch-graphs.md)和 [LoRA／NF4 微调](finetuning.md)。算子／应用选择共享[全栈自动调优策略](stack-autotuning.md)。
+
+[架构指南](architecture-training.md)介绍 mHC、压缩注意力／缓存和 Python Muon；[分布式训练指南](distributed-training.md)介绍显式设备、rendezvous、副本初始化、加权归约和逐 rank 恢复。
+
 Typed tensor 方法位于 [ruda-tensor/src/api](../../ruda-tensor/src/api)，后端 trait 位于 [ruda-tensor/src/backend](../../ruda-tensor/src/backend)，领域接口可从各计算库手册进入。使用符号前，先启用暴露该模块的 feature。
 
 设备内存、提交和同步见 [Runtime API](runtime-api.md)，后端初始化和启动契约见 [Driver API](driver-api.md)。模型参数与 Record 类型从 [ruda-model 导出入口](../../ruda-model/src/lib.rs) 查找，不要与编译器中名称相近的 IR 类型混用。

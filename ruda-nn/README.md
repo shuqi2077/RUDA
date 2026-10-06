@@ -35,3 +35,4 @@ Default features: `std`, `ruda-model/default`.
 - [Package source](https://github.com/shuqi2077/RUDA/tree/main/ruda-nn/src)
 - [Cargo manifest](https://github.com/shuqi2077/RUDA/blob/main/ruda-nn/Cargo.toml)
 - [Ruda guide](https://github.com/shuqi2077/RUDA/blob/main/docs/en/training.md)
+- [LoRA configuration, forward and merge](../docs/en/finetuning.md#rust-lora)

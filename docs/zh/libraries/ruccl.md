@@ -8,6 +8,8 @@ Cargo package 为 `ruCCL`，Rust crate 名为 `ruccl`。
 
 ruCCL 包含面向张量 Backend 的集合操作、rank 核心与进程内实现。`ruda-communication` 承担通信基础设施。`orchestrator` feature 用于编排相关入口。
 
+显式 rank／设备映射、TCP rendezvous、初始化顺序、token 加权副本和逐 rank 恢复见[分布式训练指南](../distributed-training.md)。
+
 ## 2. 张量集合 API
 
 | 函数 | 行为 |

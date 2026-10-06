@@ -1,5 +1,7 @@
 # 通用 PyTorch 模型入口
 
+[文档目录](README.md) · [原生 API](native-pytorch-api.md) · [English](../en/model-compiler.md)
+
 ## 解决的限制
 
 此前 `StaticGraph(training=True)` 只能执行手写 `GraphOp`，反向也只有几种预先实现的梯度公式。现在增加 `ruda_torch.compile(model)`：模型仍然是普通 `torch.nn.Module`，前向和反向由 PyTorch 的 AOTAutograd 生成。AOTAutograd 是 PyTorch 用来生成可编译反向计算图的组件，不需要为每个模型重写梯度。
@@ -54,13 +56,26 @@ def block(x, residual):
 
 `native` 决定捕获后的操作如何执行：
 
+完整入口为 `compile(model=None, capture='aot', native='auto', device_type='ruda', fullgraph=False, dynamic=None, min_native_ops=2, cache_size=4, decompositions=None)`。`model=None` 返回装饰器；`device_type` 为设备类型而非 `ruda:0` 索引。`min_native_ops` 为 1–256，auto 模式默认连续两个合格操作才形成区域；required 模式最少一个。`cache_size` 为每区域 1–64，默认 4。`decompositions` 须为准确 PyTorch overload 到可调用分解的映射；eager 模式不接受非空分解、fullgraph／dynamic 选项或 required 策略。
+
 | 参数 | 行为 |
 | --- | --- |
 | `auto` | 对满足条件的连续操作建立原生图；其他操作在原设备正常执行。 |
 | `off` | 保留前向/反向图捕获，但全部操作按原设备的 PyTorch 调度执行。适合隔离图捕获与原生分段问题。 |
 | `required` | 已捕获图中只要存在非原生操作，或运行时形状/类型不满足原生条件，就报错。**不承诺图外代码已捕获**；审查整图还须使用 `fullgraph=True`。 |
 
-自动分段目前识别 `aten.add.Tensor`、`aten.mul.Tensor`、`aten.silu.default` 和 `aten.clone.default` 的准确操作重载，不根据名称相似性替换算子。它们还须满足 `StaticGraph` 的设备、连续布局、类型、形状和节点数限制。广播、视图、就地修改、随机操作及其他算子留在原设备普通执行。
+自动分段按准确的 ATen 操作重载识别下列操作，不根据名称相似性替换算子：
+
+| 操作 | 可进入原生区域的重载 |
+| --- | --- |
+| 复制与一元逐点操作 | `aten.clone.default`；`relu`、`silu`、`sigmoid`、`tanh`、`exp`、`log`、`sqrt`、`rsqrt` 等一元操作的 `.default`，完整列表见 [`UNARY_CODES`](../../ruda-torch/python/ruda_torch/_graph_spec.py)。 |
+| 张量与标量算术 | `aten.add/sub/mul/div.Tensor` 和 `.Scalar`；张量二元操作要求形状与类型相同，不广播、不做混合类型提升。 |
+| 矩阵乘 | `aten.mm.default`、`aten.bmm.default`；分别要求同类型的二维、三维输入，内维和批次匹配，不做批次广播。 |
+| 保留维度的归约 | `aten.sum.dim_IntList`、`aten.mean.dim`，要求 `keepdim=True`，不指定额外的 `dtype` 转换。 |
+| Softmax 与反向 | `aten._softmax.default`、`aten._log_softmax.default`、`aten._softmax_backward_data.default`、`aten._log_softmax_backward_data.default`；不做半精度到 FP32 的隐式提升，反向类型须匹配。 |
+| 激活反向 | `aten.silu_backward.default`、`aten.sigmoid_backward.default`、`aten.tanh_backward.default`。 |
+
+运行时仍检查 `ruda:0` 设备、稠密布局、FP32/FP16/BF16 类型、非空的 1–8 维形状和节点数限制；输入复制到连续暂存存储，操作输出须为连续布局。标量须能表示为有限 FP32 值。完整分段规则见 [`_compile_native.py`](../../ruda-torch/python/ruda_torch/_compile_native.py)。显式 `GraphOp` 的 RMSNorm/SiLU-mul 节点不代表 AOT 会自动识别对应复合操作。广播、视图、就地修改、随机操作及其他未支持操作在 `native='auto'` 下留在原设备普通执行，在 `native='required'` 下报错。
 
 不能把 `fullgraph=True` 理解为“全部操作原生捕获”：它只约束 PyTorch 图是否出现断点。`native='required'` 也只审查捕获到的操作。
 
@@ -139,7 +154,7 @@ RUDA_CPP_TEST_LIBRARY="$(find ./model-cpp -name '_C*.so' -print -quit)" \
   python -m pytest -q ruda-torch/python/tests/test_model_compile_cpp.py
 ```
 
-真实设备验收须先按仓库现有说明构建 Rust 和 C++ 扩展：
+真实设备验收须先准备匹配的 Rust 和 C++ 组件，可按仓库说明从源码构建，或使用 [Linux/Colab 预编译包](../../ruda-torch/README.md#linuxcolab-precompiled-bundle)：
 
 ```bash
 RUDA_CUDA_COMPILER=ptx python ruda-torch/tools/validate_model_compile.py \

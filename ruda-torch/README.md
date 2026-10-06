@@ -35,6 +35,31 @@ The loader uses a packaged native library when present, otherwise `target/debug/
 
 Prebuilt wheels are artifacts of successful [Windows build runs](https://github.com/shuqi2077/RUDA/actions/workflows/ruda-torch-windows.yml). They include the native DLL and target Windows x64, CPython 3.13 and PyTorch `2.13.0+cu130`. Install that matching PyTorch build first, extract the wheel artifact, and pass its `.whl` file to `python -m pip install --no-deps`. Artifacts are retained for seven days.
 
+### Linux/Colab precompiled bundle
+
+The [Colab T4 compiled bundle workflow](https://github.com/shuqi2077/RUDA/actions/workflows/colab-t4-build.yml) publishes compiled bundles in [GitHub Releases](https://github.com/shuqi2077/RUDA/releases) under `colab-t4-<full-source-revision>` tags. The bundles target Linux x86_64, CPython 3.13, PyTorch `2.10.0+cu126` with CXX11 ABI enabled, and glibc 2.39 or newer. A compatible NVIDIA GPU and driver are still required; dtype and instruction support depend on the GPU.
+
+1. Download the `.tar.gz`, `manifest.json` and `SHA256SUMS` from the same release. In their download directory, run `sha256sum --check SHA256SUMS` before extracting.
+2. Check out the RUDA source revision recorded as `source_revision` in the manifest, and extract the archive into `ruda-colab-t4/` inside that checkout. Do not combine an older bundle with unrelated `main` Python sources.
+3. Install the matching PyTorch build with `python -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu126` using CPython 3.13.
+4. Copy `ruda-colab-t4/cpp-extension/_C.cpython-313-x86_64-linux-gnu.so` into `ruda-torch/python/ruda_torch/`. Before importing the package, run the following from the matching checkout's root, in the Python process that will use RUDA:
+
+```python
+import os
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+sys.path.insert(0, str(root / 'ruda-torch/python'))
+os.environ['RUDA_TORCH_LIBRARY'] = str(root / 'ruda-colab-t4/native-library/libruda_torch_native.so')
+os.environ['RUDA_CUDA_COMPILER'] = 'ptx'
+os.environ['RUDA_PTX_VERSION'] = '8.0'
+import torch
+import ruda_torch
+```
+
+The archive contains compiled libraries and executables, not a pip wheel. This path loads both native components without running Cargo, a C++ build or an editable pip install. Select a driver-supported PTX version as above; ABI 10, graph API 3 and training API 4 must match between the loaded components.
+
 ## Basic use
 
 ```python
@@ -128,17 +153,22 @@ See the [ruDNN guide](https://github.com/shuqi2077/RUDA/blob/main/docs/en/librar
 
 `ruda_torch.StaticGraph` connects selected native PyTorch tensor operations to
 RUDA's existing `CudaGraph`, rather than a separate CUDA extension/runtime.
-The optional graph interface is version 2; the current base tensor ABI is 10.
-Rebuild both Rust and C++ for this feature. Defaults and eager dispatch stay unchanged.
+The optional graph interface is version 3; the current base tensor ABI is 10.
+Both Rust and C++ components must provide graph API 3. Defaults and eager dispatch stay unchanged.
 
-Supported explicit nodes: copy, same-shape add/mul, SiLU, last-axis RMSNorm and storage-rounded SiLU-mul.
+Supported explicit nodes include copy, unary pointwise operations, same-shape
+add/mul/div, scalar arithmetic, `mm`/`bmm`, keepdim sum/mean, softmax/log-softmax
+and their backward operations, SiLU/sigmoid/tanh backward, last-axis RMSNorm and
+storage-rounded SiLU-mul. See the operator codes and metadata checks in
+[`_graph_spec.py`](python/ruda_torch/_graph_spec.py). Explicit RMSNorm/SiLU-mul
+nodes do not imply automatic recognition of those composite operations by AOT.
 Opt-in `optimize=True` removes unused nodes and fuses single-use left SiLU/mul;
 `reuse_workspace=True` reuses only equal-spec scratch storage after its last read.
 Returned outputs remain dedicated. Both options default to False pending GPU validation.
 Explicit `training=True` enables the first-order gradient bridge described in
 the static-graph guide. This low-level API is not arbitrary model/stream capture
-or a replacement for `torch.cuda.graph`. See `docs/zh/static-pytorch-graphs.md` in the
-repository root for fixed-pointer, output-reuse and synchronization contracts.
+or a replacement for `torch.cuda.graph`. See the [static-graph guide](../docs/en/static-pytorch-graphs.md)
+for fixed-pointer, output-reuse and synchronization contracts.
 
 ```sh
 python ruda-torch/python/examples/static_residual_norm.py
@@ -239,23 +269,34 @@ compiled.close()  # after every outstanding backward has completed
 This removes the hand-written GraphOp/model derivative restriction. It does
 **not** implement every missing device operator or promise full native training
 capture, arbitrary optimizer capture, GPU validation, or a speedup. Native
-regions currently recognize exact add/mul/SiLU/clone overloads with runtime
-metadata guards; no CPU fallback or retry-after-dispatch is installed.
+regions recognize exact overloads for clone, unary pointwise operations,
+tensor/scalar add/sub/mul/div, `mm`/`bmm`, keepdim sum/mean, softmax/log-softmax
+and their backward operations, and SiLU/sigmoid/tanh backward. Runtime metadata
+guards still apply; no CPU fallback or retry-after-dispatch is installed.
 `native='off'` isolates AOT capture from native regions; `capture='eager'`
 explicitly uses normal PyTorch execution rather than claiming compilation.
 Parameter identities and top-level original checkpoint keys are retained. A wrapper saved as a child module retains its structural `_original` prefix for recursive checkpoint loading.
 
-See [`docs/zh/model-compiler.md`](../docs/zh/model-compiler.md) for execution
-policies, cache ownership, custom-op decompositions, limitations, and CPU/C++/GPU
-validation commands. The full native acceptance command is
+See the [model compiler guide](../docs/en/model-compiler.md) ([中文](../docs/zh/model-compiler.md))
+for execution policies, cache ownership, custom-op decompositions and limitations.
+The full native acceptance command is
 `python ruda-torch/tools/validate_model_compile.py --output model-gpu.json`.
 
 ### Native coverage and learned-scale extension (graph API 3)
 
-The new extension maps matrix multiplication, keepdim reductions, softmax and
-more activation forward/backward operations into native regions. Both native
-components must be rebuilt. `LearnedFakeQuantize` adds trainable FP32 scales,
+The graph API 3 extension maps matrix multiplication, keepdim reductions, softmax
+and more activation forward/backward operations into native regions. Both native
+components must provide graph API 3. `LearnedFakeQuantize` adds trainable FP32 scales,
 but returns floating tensors and is not packed INT4 inference.
-See `../RUDA-native-quant-distributed-report.md` for exact supported metadata,
-packed Qwen3.5 loading, the explicit host-staged router group, failure semantics,
-and the separation between passing host tests and unvalidated Rust/GPU paths.
+See the [model compiler guide](../docs/en/model-compiler.md#exact-native-operator-coverage) for exact
+native-region overloads, supported metadata and execution policies.
+
+## LoRA, NF4 and causal fine-tuning
+
+`inject_lora` freezes a model's base and creates adapters on exact selected projections. `quantize_nf4` prepares packed CPU weights before adapter injection; `load_nf4_safetensors` streams an explicitly constructed meta model, and `load_hf_nf4_model` constructs a local HF architecture without downloads or remote code.
+
+`CausalLMFinetuner`, `SFTCollator` and `SFTTrainer` provide explicit backbone/head training, assistant-label handling, full-vocabulary token-chunk loss and token-weighted accumulation. `adapter_state_dict` / `load_adapter_state_dict` exchange adapters; `finetune_state_dict` / `load_finetune_state_dict` add optimizer/scaler/RNG and data-cursor recovery at cleared-gradient step boundaries. Packed NF4 is not learned fake quantization or a PEFT/bitsandbytes checkpoint reader.
+
+See [fine-tuning and recovery](../docs/en/finetuning.md) ([中文](../docs/zh/finetuning.md)) for setup order, parameter/shape limits and the existing [CLI example](python/examples/finetune_causal_lm.py). The [native API reference](../docs/en/native-pytorch-api.md) ([中文](../docs/zh/native-pytorch-api.md)) covers normalization, optimizers, streams, attention, sequence training and component-version requirements.
+
+The [architecture training guide](../docs/en/architecture-training.md) ([中文](../docs/zh/architecture-training.md)) covers mHC, DSA/CSA/HCA, compressed KV-cache ownership, hybrid model composition and Python Muon parameter groups.

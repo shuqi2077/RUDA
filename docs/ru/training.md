@@ -148,7 +148,7 @@ API Ссылка: [Оптимизаторы](../../ruda-optim/src/optim/mod.rs),
 
 ## Нативное обучение PyTorch на `ruda:0`
 
-Этот путь отделён от примеров Rust `Autodiff<Cuda<...>>` выше. Собирайте библиотеку Rust и расширение C++ из одного исходного состояния: базовый ABI 10, training API 4, router API 1, paged-backward API 2, graph API 2. См. [руководство PyTorch](../../ruda-torch/README.md).
+Этот путь отделён от примеров Rust `Autodiff<Cuda<...>>` выше. Используйте библиотеку Rust и расширение C++ из одного исходного состояния либо совместимый готовый bundle: базовый ABI 10, training API 4, router API 1, paged-backward API 2, graph API 3. См. [руководство PyTorch](../../ruda-torch/README.md) и [контракты API](native-pytorch-api.md).
 
 `ruda_torch.RMSNorm`/`rms_norm`, `LayerNorm`/`layer_norm` и `silu_mul` поддерживают нативное обучение первого порядка. Нормализация выполняется по последней оси, статистика — FP32, выход сохраняет dtype активации; аффинные параметры допускают dtype входа или FP32. Стандартный `torch.nn.LayerNorm` выбирает нативный путь для поддерживаемых непрерывных входов с нормализацией по последней оси. Высшие производные и захват графа обучения не поддерживаются.
 
@@ -158,4 +158,6 @@ API Ссылка: [Оптимизаторы](../../ruda-optim/src/optim/mod.rs),
 
 `PagedAttentionPlan(..., backward_strategy="ordered")` выбирает градиенты истории без атомиков; по умолчанию остаётся `"atomic"`. Autograd выделяет только запрошенные градиенты. Уплотнение истории и обучение роутера/экспертов при фиксированном выборе описаны в [ruDNN](libraries/rudnn.md), групповой обратный проход — в [ruBLAS](libraries/rublas.md).
 
-Сохраняйте `state_dict()` модели, оптимизатора и scaler вместе с позицией данных и состоянием RNG. Оптимизатор сохраняет `fused_step` и `max_grad_norm`; иерархические checkpoint используют step-options версии 2. Без этих настроек fused/hierarchical при восстановлении отключены. StaticGraph остаётся только для инференса с фиксированными адресами.
+Сохраняйте `state_dict()` модели, оптимизатора и scaler вместе с позицией данных и состоянием RNG. Оптимизатор сохраняет `fused_step` и `max_grad_norm`; иерархические checkpoint используют step-options версии 2. Без этих настроек fused/hierarchical при восстановлении отключены. [StaticGraph](static-pytorch-graphs.md) поддерживает явно включаемое обучение первого порядка с native forward и пересчитываемым на том же устройстве backward, без захвата обновлений оптимизатора. Обычный forward/backward модели использует отдельный [AOT-вход](model-compiler.md).
+
+См. [LoRA/NF4](finetuning.md) для адаптеров, каузального loss и восстановления и [распределённое обучение](distributed-training.md) для явных rank/устройств, весов по токенам и checkpoint каждого rank.

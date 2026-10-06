@@ -15,6 +15,8 @@
 
 `R::client(&device)` 获取对应运行时的客户端。`R::Device` 决定设备类型；同一个泛型参数并不意味着不同物理设备的存储可以直接互用。
 
+`ComputeClient::init(device, server)` 注册新 server，若同一设备已注册该 server 类型则 panic。`load(device)` 要求兼容 server 已初始化，两者都不替代常规的 `R::client(&device)` 设备初始化。
+
 ## 2. 内存与传输
 
 以下方法属于 `ComputeClient<R>`：
@@ -31,6 +33,8 @@
 
 `read_one_unchecked` 在回读失败时 panic；不要仅凭方法名将它和取消 Kernel 边界检查混为一谈。张量存在非连续布局时应使用张量回读接口，而不是把原始字节直接当作连续元素。
 
+`read_tensor(Vec<CopyDescriptor>)` 返回 `Vec<Bytes>`，失败时 panic；`read_tensor_async` 返回结果为 `Result<Vec<Bytes>, ServerError>` 的 future。描述符必须使用运行时兼容布局：通过 `Runtime::can_read_tensor` 检查，不支持的张量布局先转连续再回读，客户端不自动重排任意视图。`memory_usage()` 返回 `Result<MemoryUsage, ServerError>`，是 server 分配器的记账，不是主机 RSS、全部物理显存或峰值测量。
+
 ## 3. 执行控制
 
 | 方法 | 行为 |
@@ -43,9 +47,19 @@
 
 `launch` 本身不返回设备计算结果。异步编译或执行错误可能在后续回读、同步中被观察到。高层宏生成的启动接口还涉及参数构造，不能用本页的客户端方法签名替代其完整调用契约。
 
+`flush()` 不保证设备完成。须等待或解析 `sync()` 返回的 future，才能等待客户端所解析执行流的完成；仅创建 future 不会等待。unsafe 切换流不建立生产／消费依赖。
+
+| 队列方法 | 契约 |
+| --- | --- |
+| `execution_stream()` | 解析显式设置的流，否则使用调用线程当前流。 |
+| `same_execution_queue(&other)` | 比较设备／server 身份和当前解析的流，不检查完成状态。 |
+| `fixed_execution_queue()` | 克隆客户端并固定当前解析的流，不新建流、不等待；适合跨调用持有工作区的计划。 |
+
 ## 4. 能力与分析
 
 `properties()` 提供设备属性，`features()` 提供特性集合；在选用 dtype、原子操作或矩阵指令前查询相应能力。`enumerate_devices`、`enumerate_all_devices` 和计数方法用于枚举。`profile` 是运行时分析入口，计时范围应区分提交、执行和传输。
+
+`device_id()` 返回运行时设备身份，`properties_fingerprint()` 返回缓存的硬件／能力身份，不逐次探测驱动。共享选择通过 `runtime_environment(&client)` 使用它们，见[全栈调优 API](stack-autotuning.md#10-控制器与缓存-api)。部署标签应在首次使用前固定；改动标签不会重新配置现有控制器或已记忆环境。
 
 ## 5. 错误与安全
 

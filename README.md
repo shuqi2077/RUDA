@@ -97,6 +97,8 @@ print((x + x).cpu())
 
 Prebuilt Windows wheels are available as artifacts of successful [RUDA Torch Windows build](https://github.com/shuqi2077/RUDA/actions/workflows/ruda-torch-windows.yml) runs. Select the wheel artifact, extract its `.whl`, and install that file with `python -m pip install --no-deps`. The wheel includes the native DLL and targets Windows x64, CPython 3.13 and PyTorch `2.13.0+cu130`; install that matching PyTorch build first. Artifacts expire after seven days. `ruda-torch-native` is a source-build component, not a crates.io package.
 
+Linux/Colab users can use [precompiled bundles](ruda-torch/README.md#linuxcolab-precompiled-bundle) from GitHub Releases without compiling Rust or C++ locally. These are not pip wheels; use the matching source revision and the Python, PyTorch and glibc requirements recorded in the bundle manifest.
+
 ## Stack Organization
 
 One repository, multiple crates with clearly defined responsibilities. From domain libraries to higher-level frameworks, the stack is organized in layers and developed together.
@@ -144,6 +146,7 @@ See the guides for convergence and backend restrictions. The packages are worksp
 ## Explore and Contribute
 
 - [Ruda documentation](https://github.com/shuqi2077/RUDA/blob/main/docs/en/README.md): Quickstart, programming guides, compilers, API references, and compute library manuals.
+- [LoRA and NF4 fine-tuning](docs/en/finetuning.md): Prepare local models, supervise causal training, export adapters and resume checkpoints. [中文](docs/zh/finetuning.md).
 - [NVIDIA demo](https://github.com/shuqi2077/RUDA/blob/main/docs/en/getting-started.md): Explore the example and its requirements.
 - [Contributing guide](https://github.com/shuqi2077/RUDA/blob/main/docs/en/CONTRIBUTING.md): Contribute to operators, compilers, runtimes, and frameworks.
 

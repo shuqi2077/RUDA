@@ -148,7 +148,7 @@ API Referenz: [Optimierer](../../ruda-optim/src/optim/mod.rs), [Trainingsaufzeic
 
 ## Natives PyTorch-Training auf `ruda:0`
 
-Dieser Pfad ist getrennt von den obigen Rust-Beispielen mit `Autodiff<Cuda<...>>`. Bauen Sie Rust-Bibliothek und C++-Erweiterung aus demselben Quellstand: Basis-ABI 10, Training-API 4, Router-API 1, Paged-Backward-API 2 und Graph-API 2. Siehe [PyTorch-Anleitung](../../ruda-torch/README.md).
+Dieser Pfad ist getrennt von den obigen Rust-Beispielen mit `Autodiff<Cuda<...>>`. Verwenden Sie Rust-Bibliothek und C++-Erweiterung aus demselben Quellstand oder ein kompatibles vorkompiliertes Bundle: Basis-ABI 10, Training-API 4, Router-API 1, Paged-Backward-API 2 und Graph-API 3. Siehe [PyTorch-Anleitung](../../ruda-torch/README.md) und [API-Verträge](native-pytorch-api.md).
 
 `ruda_torch.RMSNorm`/`rms_norm`, `LayerNorm`/`layer_norm` und `silu_mul` unterstützen natives Training erster Ordnung. Normalisierung erfolgt auf der letzten Achse, Statistik in FP32, Ausgabe im Aktivierungs-dtype; affine Parameter dürfen den Eingabetyp oder FP32 verwenden. Standard-`torch.nn.LayerNorm` wählt den nativen Trainingspfad für unterstützte zusammenhängende Eingaben auf der letzten Achse. Höhere Ableitungen und Trainingsgraph-Capture werden nicht unterstützt.
 
@@ -158,4 +158,6 @@ Die Hierarchie verwendet Fan-in 1024, höchstens zwei zusätzliche Merge-Kernels
 
 `PagedAttentionPlan(..., backward_strategy="ordered")` aktiviert Historiengradienten ohne Atomics; `"atomic"` bleibt Standard. Autograd reserviert nur angeforderte Gradienten. Historienkompaktierung sowie Router-/Expertentraining mit fester Auswahl beschreibt [ruDNN](libraries/rudnn.md), gruppierten Rückwärtslauf [ruBLAS](libraries/rublas.md).
 
-Speichern Sie `state_dict()` von Modell, Optimizer und Scaler zusammen mit Datenposition/RNG-Zustand. Optimizer-Checkpoints speichern `fused_step` und `max_grad_norm`; hierarchische Checkpoints verwenden Step-Options-Version 2. Fehlen Optionen, werden fused/hierarchical deaktiviert wiederhergestellt. StaticGraph bleibt auf Inferenz mit festen Adressen beschränkt.
+Speichern Sie `state_dict()` von Modell, Optimizer und Scaler zusammen mit Datenposition/RNG-Zustand. Optimizer-Checkpoints speichern `fused_step` und `max_grad_norm`; hierarchische Checkpoints verwenden Step-Options-Version 2. Fehlen Optionen, werden fused/hierarchical deaktiviert wiederhergestellt. [StaticGraph](static-pytorch-graphs.md) bietet optional Training erster Ordnung mit nativem Forward und auf demselben Gerät neu berechnetem Backward; Optimizer-Updates werden nicht erfasst. Gewöhnliche Modell-Forward/Backward-Aufrufe verwenden den separaten [AOT-Einstieg](model-compiler.md).
+
+Siehe [LoRA/NF4-Fine-Tuning](finetuning.md) für Adapter, kausalen Loss und Wiederaufnahme sowie [verteiltes Training](distributed-training.md) für explizite Ranks/Geräte, Token-Gewichtung und rank-lokale Checkpoints.

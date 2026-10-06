@@ -9,9 +9,11 @@ from ._graph_opt import prepare_plan
 class StaticGraph:
     """Prepare once, update input CONTENTS, replay into reused native outputs.
 
-    Only contiguous ruda:0 FP32/FP16/BF16 tensors and explicit copy/add/mul/SiLU/
-    last-axis RMSNorm and storage-rounded SiLU-mul nodes are accepted. No
-    broadcasting, pointer rebinding or hidden CPU path. All scalars are
+    Only contiguous ruda:0 FP32/FP16/BF16 tensors and explicit graph API 3
+    pointwise, matrix, keepdim-reduction, softmax/backward, last-axis RMSNorm
+    and storage-rounded SiLU-mul nodes are accepted. See _graph_spec.CODES
+    and plan_layout for exact node/metadata contracts. No broadcasting,
+    pointer rebinding or hidden CPU path. All scalars are
     fixed at build. optimize=True prunes unused nodes and fuses single-use SiLU
     on the left of mul. reuse_workspace=True reuses equal-specification scratch
     allocations after their final consumer. Requested outputs remain distinct.
