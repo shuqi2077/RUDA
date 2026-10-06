@@ -1,11 +1,74 @@
 //! Rust model layers whose persistent parameters/gradients are equal flat shards.
 use alloc::vec::Vec;
+use alloc::collections::BTreeMap;
 use ruda_autodiff::{Autodiff,checkpoint::strategy::CheckpointStrategy,collective};
 use ruda_model::{
-    module::{Module,Param},
-    tensor::{Tensor,Int,DType,FloatDType,backend::Backend,module::{linear,embedding}},
+    module::{Module,Param,ParamId},
+    tensor::{Tensor,Int,DType,FloatDType,TensorPrimitive,backend::Backend,ops::ModuleOps,module::{linear,embedding}},
 };
 use ruda_autodiff::tensor_parallel::BroadcastTensorCollective;
+
+/// Explicit construction context preserving one local autograd leaf per source ID.
+/// Reuse a context for all tied layers, then drop it after model construction. It
+/// retains only local shards, never the complete source tensors or optimizer states.
+pub struct ShardingContext<B:Backend> {
+    rank:usize,
+    world_size:usize,
+    parameters:BTreeMap<ParamId,ShardedParameter<B>>,
+}
+
+impl<B:Backend> ShardingContext<B> {
+    /// Select the actual data-axis topology; no communicator or device is inferred.
+    pub fn new(rank:usize,world_size:usize)->Self {
+        assert!(world_size>0 && rank<world_size,"invalid sharding context topology");
+        Self{rank,world_size,parameters:BTreeMap::new()}
+    }
+
+    /// Return the same local Param/autograd leaf for each alias of a source ID.
+    /// Reusing an ID with different logical metadata or trainability is an error.
+    pub fn parameter<const D:usize>(&mut self,parameter:Param<Tensor<B,D>>)->ShardedParameter<B> {
+        let value=parameter.val();
+        if let Some(shard)=self.parameters.get(&parameter.id) {
+                let local=shard.local.val();
+                assert_eq!(shard.logical_shape,value.dims().to_vec(),"tied parameter dimensions differ");
+                assert_eq!(local.dtype(),value.dtype(),"tied parameter storage dtypes differ");
+                assert!(local.device()==value.device(),"tied parameter devices differ");
+                assert_eq!(local.is_require_grad(),value.is_require_grad(),"tied parameter trainability differs");
+                return shard.clone();
+        }
+        let id=parameter.id;
+        let shard=ShardedParameter::from_full(parameter,self.rank,self.world_size);
+        self.parameters.insert(id,shard.clone());
+        shard
+    }
+
+    /// Shard an existing dense projection, including any tied weight or bias.
+    pub fn linear(&mut self,layer:crate::Linear<B>)->FullyShardedLinear<B> {
+        FullyShardedLinear{weight:self.parameter(layer.weight),bias:layer.bias.map(|bias|self.parameter(bias))}
+    }
+
+    /// Share embedding storage with another explicitly tied projection/table.
+    pub fn embedding(&mut self,layer:crate::Embedding<B>)->FullyShardedEmbedding<B> {
+        FullyShardedEmbedding{weight:self.parameter(layer.weight)}
+    }
+
+    /// Shard a caller-injected adapter without duplicating shared local leaves.
+    pub fn lora(&mut self,layer:crate::LoRALinear<B>)->FullyShardedLoRALinear<B> {
+        FullyShardedLoRALinear{base:self.linear(layer.base),adapter_a:self.linear(layer.adapter_a),
+            adapter_b:self.linear(layer.adapter_b),dropout:layer.dropout,scale:layer.scale}
+    }
+
+    /// Shard RMSNorm's existing affine parameter with its actual epsilon.
+    pub fn rms_norm(&mut self,layer:crate::RmsNorm<B>)->FullyShardedRmsNorm<B> {
+        FullyShardedRmsNorm{gamma:self.parameter(layer.gamma),epsilon:layer.epsilon}
+    }
+
+    /// Shard LayerNorm affine values without guessing or resetting its epsilon.
+    pub fn layer_norm(&mut self,layer:crate::LayerNorm<B>)->FullyShardedLayerNorm<B> {
+        let epsilon=layer.epsilon();
+        FullyShardedLayerNorm{gamma:self.parameter(layer.gamma),beta:layer.beta.map(|beta|self.parameter(beta)),epsilon}
+    }
+}
 
 /// A logical parameter backed only by this rank's padded element slice.
 ///
@@ -158,10 +221,85 @@ impl<B:Backend> FullyShardedLoRALinear<B> {
     /// Consume caller-loaded/injected dense LoRA before creating local optimizers.
     /// No parameters are reinitialized and no base checkpoint is inferred.
     pub fn from_full(layer:crate::LoRALinear<B>,rank:usize,world_size:usize)->Self {
-        Self{base:FullyShardedLinear::from_full(layer.base,rank,world_size),
-            adapter_a:FullyShardedLinear::from_full(layer.adapter_a,rank,world_size),
-            adapter_b:FullyShardedLinear::from_full(layer.adapter_b,rank,world_size),
-            dropout:layer.dropout,scale:layer.scale}
+        ShardingContext::new(rank,world_size).lora(layer)
+    }
+}
+
+/// Last-axis RMS normalization with persistent data-sharded affine storage.
+#[derive(Module,Debug)]
+pub struct FullyShardedRmsNorm<B:Backend> {
+    /// Logical affine vector and its local data slice.
+    pub gamma:ShardedParameter<B>,
+    /// Actual source normalization epsilon.
+    pub epsilon:f64,
+}
+
+impl<B:Backend> FullyShardedRmsNorm<B> {
+    /// Convert an existing normalization before creating the shard optimizer.
+    pub fn from_full(layer:crate::RmsNorm<B>,rank:usize,world_size:usize)->Self {
+        ShardingContext::new(rank,world_size).rms_norm(layer)
+    }
+}
+
+impl<B:Backend,S:CheckpointStrategy> FullyShardedRmsNorm<Autodiff<B,S>> {
+    /// FP32 statistics/affine arithmetic, retaining the input activation dtype.
+    pub fn forward<C:BroadcastTensorCollective<B>,const D:usize>(
+        &self,input:Tensor<Autodiff<B,S>,D>,communicator:C)->Result<Tensor<Autodiff<B,S>,D>,C::Error> {
+        self.forward_with_compute_dtype(input,communicator,FloatDType::F32)
+    }
+
+    /// Explicit arithmetic/collective precision without changing affine storage.
+    pub fn forward_with_compute_dtype<C:BroadcastTensorCollective<B>,const D:usize>(
+        &self,input:Tensor<Autodiff<B,S>,D>,communicator:C,dtype:FloatDType)->Result<Tensor<Autodiff<B,S>,D>,C::Error> {
+        assert!(D>0 && self.gamma.logical_shape==[input.dims()[D-1]],"RMSNorm affine width differs");
+        let output_dtype=input.dtype();
+        let gamma=self.gamma.gather_with_compute_dtype::<C,1>(communicator,dtype)?;
+        let input=input.cast(dtype);
+        let rms=(input.clone().square().mean_dim(D-1)+self.epsilon).sqrt();
+        Ok(((input/rms)*gamma.unsqueeze::<D>()).cast(output_dtype))
+    }
+}
+
+/// Backend-native last-axis LayerNorm with data-sharded scale/optional bias.
+#[derive(Module,Debug)]
+pub struct FullyShardedLayerNorm<B:Backend> {
+    /// Local slices of the logical affine scale.
+    pub gamma:ShardedParameter<B>,
+    /// Optional local slices of the logical affine bias.
+    pub beta:Option<ShardedParameter<B>>,
+    /// Actual source normalization epsilon.
+    pub epsilon:f64,
+}
+
+impl<B:Backend> FullyShardedLayerNorm<B> {
+    /// Convert loaded scale/bias without initializing another normalization.
+    pub fn from_full(layer:crate::LayerNorm<B>,rank:usize,world_size:usize)->Self {
+        ShardingContext::new(rank,world_size).layer_norm(layer)
+    }
+}
+
+impl<B:Backend,S:CheckpointStrategy> FullyShardedLayerNorm<Autodiff<B,S>> {
+    /// FP32 normalization/affine computation, preserving the input storage dtype.
+    pub fn forward<C:BroadcastTensorCollective<B>,const D:usize>(
+        &self,input:Tensor<Autodiff<B,S>,D>,communicator:C)->Result<Tensor<Autodiff<B,S>,D>,C::Error> {
+        self.forward_with_compute_dtype(input,communicator,FloatDType::F32)
+    }
+
+    /// Use the same native LayerNorm/autodiff operation with explicit precision.
+    pub fn forward_with_compute_dtype<C:BroadcastTensorCollective<B>,const D:usize>(
+        &self,input:Tensor<Autodiff<B,S>,D>,communicator:C,dtype:FloatDType)->Result<Tensor<Autodiff<B,S>,D>,C::Error> {
+        assert!(D>0 && self.gamma.logical_shape==[input.dims()[D-1]],"LayerNorm affine width differs");
+        let output_dtype=input.dtype();
+        let gamma=self.gamma.gather_with_compute_dtype::<C,1>(communicator.clone(),dtype)?.into_primitive().tensor();
+        let beta=match &self.beta {
+            Some(beta)=>{
+                assert_eq!(beta.logical_shape,self.gamma.logical_shape,"LayerNorm bias width differs");
+                Some(beta.gather_with_compute_dtype::<C,1>(communicator,dtype)?.into_primitive().tensor())
+            }
+            None=>None,
+        };
+        let output=<Autodiff<B,S> as ModuleOps<Autodiff<B,S>>>::layer_norm(input.cast(dtype).into_primitive().tensor(),gamma,beta,self.epsilon);
+        Ok(Tensor::<Autodiff<B,S>,D>::from_primitive(TensorPrimitive::Float(output)).cast(output_dtype))
     }
 }
 

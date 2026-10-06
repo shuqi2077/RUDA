@@ -64,6 +64,9 @@ impl LayerNormConfig {
 }
 
 impl<B: Backend> LayerNorm<B> {
+    /// The configured normalization epsilon, independent of parameter storage.
+    pub fn epsilon(&self) -> f64 { self.epsilon }
+
     pub fn forward_with_compute_dtype<const D: usize>(
         &self,
         input: Tensor<B, D>,
