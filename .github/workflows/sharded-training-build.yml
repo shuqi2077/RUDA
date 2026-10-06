@@ -1,0 +1,54 @@
+name: Sharded training compilation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ruda-optim/**'
+      - 'ruda-nn/**'
+      - 'ruda-autodiff/**'
+      - 'ruda-tensor/**'
+      - 'ruda-model/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/sharded-training-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_BUILD_JOBS: '2'
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  RUST_MIN_STACK: '16777216'
+
+jobs:
+  rust-training-libraries:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup override set 1.97.1
+      - name: Restore Cargo cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-rust-1.97.1-training-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-rust-1.97.1-training-${{ hashFiles('Cargo.lock') }}-
+            ${{ runner.os }}-rust-1.97.1-optim-${{ hashFiles('Cargo.lock') }}-
+      - name: Compile Rust sharded layers and no_std
+        run: |
+          cargo check --locked -p ruda-nn --no-default-features --features tensor-parallel --lib
+      - name: Compile Rust sharded optimizers
+        run: |
+          cargo check --locked -p ruda-optim --features collective,gradient-guard --lib
