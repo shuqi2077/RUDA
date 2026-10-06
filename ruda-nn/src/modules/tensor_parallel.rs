@@ -4,7 +4,7 @@ use ruda_autodiff::{Autodiff, checkpoint::strategy::CheckpointStrategy, tensor_p
 use region::BroadcastTensorCollective;
 use ruda_model::{
     module::{Module, Param},
-    tensor::{Tensor, Int, DType, TensorPrimitive, backend::Backend, module::{linear, embedding}, activation::silu},
+    tensor::{Tensor, Int, DType, TensorPrimitive, ElementConversion, backend::Backend, module::{linear, embedding}, activation::silu},
 };
 
 /// Output-feature shard of a global projection, with an optional local bias shard.
@@ -309,7 +309,7 @@ where B: Backend, S: CheckpointStrategy, C: BroadcastTensorCollective<B> {
     let ignored = labels.clone().equal_elem(ignore_index);
     let invalid = labels.clone().lower_elem(0).bool_or(labels.clone().greater_equal_elem(vocabulary as i64))
         .bool_and(ignored.clone().bool_not());
-    assert!(!invalid.any().into_scalar(), "target lies outside the full vocabulary");
+    assert!(!invalid.any().into_scalar().elem::<bool>(), "target lies outside the full vocabulary");
     let logits = logits.cast(DType::F32);
     if tokens == 0 { return Ok(logits.sum_dim(1).reshape([tokens])); }
     let local_max = logits.clone().detach().max_dim(1).inner();

@@ -355,6 +355,8 @@ class SFTTrainer:
                     boundaries=_boundaries(batch['cu_seqlens'],batch['input_ids'].numel())
                     if batch['input_ids'].ndim!=1 or batch['position_ids'].shape!=batch['input_ids'].shape:
                         raise ValueError('packed batches need flat tokens and corresponding positions')
+                    if type(batch['max_seqlen']) is not int or batch['max_seqlen']!=max(end-begin for begin,end in zip(boundaries,boundaries[1:])):
+                        raise ValueError('packed maximum length differs from actual document boundaries')
                     if any(int(batch['labels'][begin])!=-100 for begin,end in zip(boundaries,boundaries[1:]) if end>begin):
                         raise ValueError('packed document starts cannot be cross-document next-token targets')
                     counts.append(int((batch['labels'][1:]!=-100).sum()))

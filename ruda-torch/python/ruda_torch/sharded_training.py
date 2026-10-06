@@ -459,7 +459,7 @@ class ShardedReplicaGroup:
             raise ValueError('sharded training model changed after coordinator creation')
 
     def validate_microbatches(self, batches):
-        signatures = [tuple((name, tuple(value.shape), str(value.dtype)) for name, value in sorted(batch.items()))
+        signatures = [tuple((name, tuple(value.shape), str(value.dtype)) if isinstance(value,torch.Tensor) else (name,value) for name, value in sorted(batch.items()))
                       for batch in batches]
         self.transport.validate_training_options(signatures)
         if not batches:
