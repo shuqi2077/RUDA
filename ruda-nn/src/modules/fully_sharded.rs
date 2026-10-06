@@ -136,3 +136,48 @@ impl<B:Backend,S:CheckpointStrategy> FullyShardedEmbedding<Autodiff<B,S>> {
         Ok(embedding(self.weight.gather::<C,2>(communicator)?,input))
     }
 }
+
+/// Native LoRA whose frozen base and trainable adapters all retain local DP slices.
+/// There is no persistent duplicate full base or adapter matrix. Ordinary layer
+/// records contain only slices and logical geometry, retaining tied parameter IDs.
+#[derive(Module,Debug)]
+pub struct FullyShardedLoRALinear<B:Backend> {
+    /// Frozen element-sharded base projection.
+    pub base:FullyShardedLinear<B>,
+    /// Data slices of `[input,rank]`, with its own floating storage dtype.
+    pub adapter_a:FullyShardedLinear<B>,
+    /// Data slices of `[rank,output]`, with its own floating storage dtype.
+    pub adapter_b:FullyShardedLinear<B>,
+    /// Adapter-only input dropout, using this data replica's backend RNG.
+    pub dropout:crate::Dropout,
+    /// Explicit alpha/rank or alpha/sqrt(rank) coefficient from the source adapter.
+    pub scale:f64,
+}
+
+impl<B:Backend> FullyShardedLoRALinear<B> {
+    /// Consume caller-loaded/injected dense LoRA before creating local optimizers.
+    /// No parameters are reinitialized and no base checkpoint is inferred.
+    pub fn from_full(layer:crate::LoRALinear<B>,rank:usize,world_size:usize)->Self {
+        Self{base:FullyShardedLinear::from_full(layer.base,rank,world_size),
+            adapter_a:FullyShardedLinear::from_full(layer.adapter_a,rank,world_size),
+            adapter_b:FullyShardedLinear::from_full(layer.adapter_b,rank,world_size),
+            dropout:layer.dropout,scale:layer.scale}
+    }
+}
+
+impl<B:Backend,S:CheckpointStrategy> FullyShardedLoRALinear<Autodiff<B,S>> {
+    /// Gather this projection's values; backward reduce-scatters DP gradient sums.
+    /// Normalize local loss sums by global token weight before backward. All ranks
+    /// must use the same collective-bearing order; do not reduce these slices again.
+    pub fn forward<C:BroadcastTensorCollective<B>,const D:usize>(
+        &self,input:Tensor<Autodiff<B,S>,D>,communicator:C)->Result<Tensor<Autodiff<B,S>,D>,C::Error> {
+        let adapted=input.clone().cast(self.adapter_a.weight.local.val().dtype());
+        let adapted=self.dropout.forward(adapted);
+        let base=self.base.forward(input,communicator.clone())?;
+        let hidden=self.adapter_a.forward(adapted,communicator.clone())?
+            .cast(self.adapter_b.weight.local.val().dtype());
+        let update=self.adapter_b.forward(hidden,communicator)?.mul_scalar(self.scale);
+        let dtype=base.dtype();
+        Ok(base+update.cast(dtype))
+    }
+}
