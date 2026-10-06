@@ -233,6 +233,7 @@ from .adapter_interop import load_peft_adapter, save_peft_adapter
 from .attention import scaled_dot_product_attention
 from .block_attention import block_scaled_dot_product_attention
 from .parallel_loss import vocab_parallel_cross_entropy
+from .transformers_attention import register_transformers_attention
 from .parallel_mesh import ParallelMesh, TensorParallelGroup
 from .sharded_optim import ShardedMuon, distributed_grad_norm
 from .quantization_interop import bnb_nf4_linear, load_bnb_nf4_safetensors

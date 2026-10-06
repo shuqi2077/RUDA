@@ -134,8 +134,7 @@ def _lower(node):
             operation = 'add' if kind == 'sub' else kind
             lv,rv = args[0].meta.get('val'),args[1].meta.get('val')
             if isinstance(lv,torch.Tensor) and isinstance(rv,torch.Tensor) and lv.shape != rv.shape:
-                if not _layout_capable():return None
-                operation += '_broadcast'
+                if _layout_capable():operation += '_broadcast'
             return GraphOp(operation, node.name, left, args[1].name,
                            alpha if kind in ('add','sub') else 0.)
         if type(args[1]) not in (int,float) or not math.isfinite(args[1]): return None

@@ -73,6 +73,18 @@ impl<O> Fp32MasterOptimizer<O> {
     }
 }
 
+#[cfg(feature="collective")]
+impl<B:Backend,O:crate::data_parallel::zero2::ElementwiseShardOptimizer<B>>
+    crate::data_parallel::zero2::ElementwiseShardOptimizer<B> for Fp32MasterOptimizer<O> {
+    fn validate_element_sharding(&self)->Result<(),&'static str> {
+        if self.grad_clipping.is_some() {
+            return Err("tensor-wide clipping must run before ZeRO-2 gradient sharding");
+        }
+        self.optimizer.validate_element_sharding()
+    }
+    fn shard_gradient_dtype(&self,_storage:DType)->DType {DType::F32}
+}
+
 impl<B: Backend, O: SimpleOptimizer<B>> SimpleOptimizer<B> for Fp32MasterOptimizer<O> {
     type State<const D: usize> = Fp32MasterState<B, D, O::State<D>>;
 

@@ -41,14 +41,20 @@ def _dropout(shape,device,dtype,p,generator):
     return (random>=p).to(dtype)/(1-p)
 
 
-def _scores(query,key,mask,causal,scale,row,col):
+def _scores(query,key,mask,causal,scale,row,col,offset,window):
     scores=query@key.transpose(-1,-2)*scale
-    if causal:
-        allowed=positions(key.shape[-2],key.device,col).unsqueeze(0)<=positions(query.shape[-2],query.device,row).unsqueeze(-1)
-        scores=scores.masked_fill(~allowed,float('-inf'))
-    elif mask is not None:
+    if mask is not None:
         tile=mask[...,row:row+query.shape[-2],col:col+key.shape[-2]]
         scores=scores.masked_fill(~tile,float('-inf')) if tile.dtype==torch.bool else scores+tile.to(scores.dtype)
+    if causal or window is not None:
+        columns=positions(key.shape[-2],key.device,col).unsqueeze(0)
+        rows=positions(query.shape[-2],query.device,row+offset).unsqueeze(-1)
+        allowed=columns<=rows if causal else torch.ones_like(columns<=rows)
+        if window is not None:
+            left,right=window
+            if left>=0:allowed=allowed&(columns>=rows-left)
+            if right>=0:allowed=allowed&(columns<=rows+right)
+        scores=scores.masked_fill(~allowed,float('-inf'))
     return scores
 
 
@@ -61,7 +67,7 @@ def _exponential(scores,maximum):
 
 class _BlockAttention(torch.autograd.Function):
     @staticmethod
-    def forward(ctx,query,key,value,mask,causal,scale,p,qblock,kblock,generator):
+    def forward(ctx,query,key,value,mask,causal,scale,p,qblock,kblock,generator,offset,window):
         dtype=work_dtype(query)
         prefix=query.shape[:-2]
         rows,columns=query.shape[-2],key.shape[-2]
@@ -86,7 +92,7 @@ class _BlockAttention(torch.autograd.Function):
                 for col in range(0,columns,kblock):
                     k=key[...,col:col+kblock,:].to(dtype)
                     v=value[...,col:col+kblock,:].to(dtype)
-                    scores=_scores(q,k,mask,causal,scale,row,col)
+                    scores=_scores(q,k,mask,causal,scale,row,col,offset,window)
                     next_max=torch.maximum(maximum,scores.amax(-1,keepdim=True))
                     old_safe=torch.where(maximum==float('-inf'),torch.zeros_like(maximum),maximum)
                     next_safe=torch.where(next_max==float('-inf'),torch.zeros_like(next_max),next_max)
@@ -101,7 +107,7 @@ class _BlockAttention(torch.autograd.Function):
         ctx.save_for_backward(query,key,value,original_mask if original_mask is not None else query.new_empty(0),out,maxima,sums)
         ctx.has_mask=original_mask is not None
         ctx.mask_shape=None if original_mask is None else tuple(original_mask.shape)
-        ctx.options=causal,scale,p,qblock,kblock
+        ctx.options=causal,scale,p,qblock,kblock,offset,window
         return out.to(query.dtype)
 
     @staticmethod
@@ -109,7 +115,7 @@ class _BlockAttention(torch.autograd.Function):
     def backward(ctx,gradient):
         query,key,value,saved_mask,out,maxima,sums=ctx.saved_tensors
         mask=saved_mask if ctx.has_mask else None
-        causal,scale,p,qblock,kblock=ctx.options
+        causal,scale,p,qblock,kblock,offset,window=ctx.options
         dtype=work_dtype(query)
         dq=torch.zeros_like(query,dtype=dtype)
         dk=torch.zeros_like(key,dtype=dtype)
@@ -131,7 +137,7 @@ class _BlockAttention(torch.autograd.Function):
                 for col in range(0,columns,kblock):
                     k=key[...,col:col+kblock,:].to(dtype)
                     v=value[...,col:col+kblock,:].to(dtype)
-                    probability=_exponential(_scores(q,k,mask,causal,scale,row,col),maximum)/denominator
+                    probability=_exponential(_scores(q,k,mask,causal,scale,row,col,offset,window),maximum)/denominator
                     drop=_dropout(probability.shape,query.device,dtype,p,generator) if p else None
                     dp=do@v.transpose(-1,-2)
                     if drop is not None:dp=dp*drop
@@ -150,12 +156,12 @@ class _BlockAttention(torch.autograd.Function):
                         row_start=0 if padded[-2]==1 else row
                         col_start=0 if padded[-1]==1 else col
                         dm.view(padded)[...,row_start:row_start+item.shape[-2],col_start:col_start+item.shape[-1]].add_(item)
-        return dq.to(query.dtype),dk.to(key.dtype),dv.to(value.dtype),None if dm is None else dm.to(mask.dtype),None,None,None,None,None,None
+        return dq.to(query.dtype),dk.to(key.dtype),dv.to(value.dtype),None if dm is None else dm.to(mask.dtype),None,None,None,None,None,None,None,None
 
 
 def block_scaled_dot_product_attention(query,key,value,*,attn_mask=None,dropout_p=0.,is_causal=False,
                                        scale=None,enable_gqa=False,query_block_size=128,key_block_size=256,
-                                       generator=None):
+                                       generator=None,causal_offset=0,window_size=None):
     """Exact softmax MHA/GQA with bounded score tiles and recomputed backward.
 
     Intermediate probabilities/masks are not retained as an N-by-N tensor.
@@ -163,6 +169,8 @@ def block_scaled_dot_product_attention(query,key,value,*,attn_mask=None,dropout_
     tile reductions may differ by floating-point rounding. Backward is first
     order. A dropout call consumes its own reserved RNG stream; backward does
     not rewind or advance the application's generator.
+    Causal row positions are shifted by causal_offset (zero is upper-left).
+    window_size=(left,right) bounds distances; -1 means unbounded on that side.
     """
     if query.ndim<3 or key.ndim!=query.ndim or value.ndim!=query.ndim:
         raise ValueError('attention requires [...,heads,tokens,features] operands')
@@ -175,6 +183,11 @@ def block_scaled_dot_product_attention(query,key,value,*,attn_mask=None,dropout_
         raise ValueError('invalid attention dropout/causal/GQA policy')
     if any(type(size) is not int or size<=0 for size in (query_block_size,key_block_size)):
         raise ValueError('attention tile sizes must be positive integers')
+    if type(causal_offset) is not int:raise ValueError('causal offset must be an integer')
+    if window_size is not None:
+        if not isinstance(window_size,(tuple,list)) or len(window_size)!=2 or any(type(n) is not int or n<-1 for n in window_size):
+            raise ValueError('attention window must contain two integer distances >= -1')
+        window_size=tuple(window_size)
     if is_causal and attn_mask is not None:raise ValueError('supply either a mask or causal attention')
     if enable_gqa:
         if key.shape[-3]<=0 or key.shape[-3]!=value.shape[-3] or query.shape[-3]%key.shape[-3]:
@@ -203,4 +216,4 @@ def block_scaled_dot_product_attention(query,key,value,*,attn_mask=None,dropout_
             result=result+attn_mask.masked_fill(~torch.isfinite(attn_mask),0).sum()*0
         return result
     return _BlockAttention.apply(query,key,value,attn_mask,is_causal,factor,float(dropout_p),
-                                 query_block_size,key_block_size,generator)
+                                 query_block_size,key_block_size,generator,causal_offset,window_size)
