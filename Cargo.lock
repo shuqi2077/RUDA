@@ -5940,7 +5940,7 @@ dependencies = [
 
 [[package]]
 name = "ruda-optim"
-version = "0.21.31"
+version = "0.21.32"
 dependencies = [
  "derive-new",
  "hashbrown 0.16.1",
