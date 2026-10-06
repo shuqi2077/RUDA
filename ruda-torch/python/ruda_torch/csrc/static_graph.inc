@@ -62,8 +62,8 @@ class StaticGraphBridge {
     for(const auto& t:tensors_) {
       validate(t.device());
       TORCH_CHECK(t.layout()==c10::Layout::Strided && t.is_contiguous()
-        && t.dim()>0 && t.dim()<=8 && t.numel()>0 && t.numel()<=std::numeric_limits<uint32_t>::max(),
-        "static graph requires nonempty contiguous rank 1..8 tensors");
+        && t.dim()>=0 && t.dim()<=8 && t.numel()>0 && t.numel()<=std::numeric_limits<uint32_t>::max(),
+        "static graph requires nonempty contiguous rank 0..8 tensors");
       TORCH_CHECK(dtype_code(t.scalar_type())<=2,"static graph supports FP32/FP16/BF16 only");
       TORCH_CHECK(!t.requires_grad(),"static graph is inference-only");
       args.emplace_back(std::make_unique<Argument>(t));
@@ -77,8 +77,42 @@ class StaticGraphBridge {
       const size_t out=inputs+i;
       TORCH_CHECK(a<out,"static graph node refers to a future input");
       const auto& x=tensors_[a]; const auto& y=tensors_[out];
-      TORCH_CHECK((op==7 || op==30 || op==104 || op==105 || x.sizes()==y.sizes()) && x.scalar_type()==y.scalar_type(),"static graph output mismatch");
-      if(op==0 || op==3 || (op>=9 && op<=14) || op==17 || (op>=19 && op<=25) || op==27 || (op>=35 && op<=40) || op==43 || op==45 || op==108) {
+      TORCH_CHECK((op==7 || op==30 || op==104 || op==105 || (op>=112 && op<=120) || x.sizes()==y.sizes())
+        && (op==114 || x.scalar_type()==y.scalar_type()),"static graph output mismatch");
+      if(op==112 || op==114) {
+        TORCH_CHECK(b==a && scalars[i]==0.0f && !std::signbit(scalars[i])
+          && (op==112 ? x.numel()==y.numel() : x.sizes()==y.sizes()),"invalid graph reshape/cast");
+      } else if(op==113) {
+        TORCH_CHECK(b==a && x.dim()==y.dim() && std::isfinite(scalars[i]) && scalars[i]>=0
+          && std::floor(scalars[i])==scalars[i] && scalars[i]<float(1u<<(3*x.dim())),"invalid graph permutation encoding");
+        const auto code=static_cast<uint32_t>(scalars[i]); uint32_t seen=0;
+        for(int d=0;d<x.dim();++d) {
+          const uint32_t axis=(code>>(3*d))&7u;
+          TORCH_CHECK(axis<uint32_t(x.dim()) && !(seen&(1u<<axis)) && y.size(d)==x.size(axis),"invalid graph permutation axes/shape");
+          seen|=1u<<axis;
+        }
+      } else if(op==115) {
+        TORCH_CHECK(b==a && scalars[i]==0.0f && !std::signbit(scalars[i]) && y.dim()>=x.dim(),"invalid graph expansion");
+        for(int d=0;d<x.dim();++d) TORCH_CHECK(x.size(d)==1 || x.size(d)==y.size(y.dim()-x.dim()+d),"invalid graph expansion shape");
+      } else if(op>=116 && op<=118) {
+        TORCH_CHECK(b<out && tensors_[b].scalar_type()==x.scalar_type() && std::isfinite(scalars[i])
+          && (op==116 || (scalars[i]==0.0f && !std::signbit(scalars[i]))),"invalid broadcast graph inputs");
+        const auto& r=tensors_[b]; const int rank=std::max(x.dim(),r.dim());
+        TORCH_CHECK(y.dim()==rank,"invalid broadcast output rank");
+        for(int d=0;d<rank;++d) {
+          const auto lhs=d<rank-x.dim() ? 1 : x.size(d-rank+x.dim());
+          const auto rhs=d<rank-r.dim() ? 1 : r.size(d-rank+r.dim());
+          TORCH_CHECK((lhs==rhs || lhs==1 || rhs==1) && y.size(d)==std::max(lhs,rhs),"invalid broadcast shape");
+        }
+      } else if(op==119 || op==120) {
+        TORCH_CHECK(b==a && std::isfinite(scalars[i]) && scalars[i]>0 && scalars[i]<(1u<<x.dim())
+          && std::floor(scalars[i])==scalars[i],"invalid squeezed reduction mask");
+        const auto mask=static_cast<uint32_t>(scalars[i]); int out_dim=0;
+        for(int d=0;d<x.dim();++d) if(!(mask&(1u<<d))) {
+          TORCH_CHECK(out_dim<y.dim() && y.size(out_dim)==x.size(d),"invalid squeezed reduction shape"); ++out_dim;
+        }
+        TORCH_CHECK(out_dim==y.dim(),"invalid squeezed reduction rank");
+      } else if(op==0 || op==3 || (op>=9 && op<=14) || op==17 || (op>=19 && op<=25) || op==27 || (op>=35 && op<=40) || op==43 || op==45 || op==108) {
         TORCH_CHECK(b==a && scalars[i]==0.0f && !std::signbit(scalars[i]),"invalid unary static graph node");
       } else if(op==1 || op==2 || op==8 || op==15 || op==16 || op==18 || op==101) {
         TORCH_CHECK(b<out && tensors_[b].sizes()==x.sizes() && tensors_[b].scalar_type()==x.scalar_type(),
@@ -106,7 +140,7 @@ class StaticGraphBridge {
         for(int d=0;d<x.dim();++d) TORCH_CHECK(y.size(d)==((mask & (1u<<d)) ? 1 : x.size(d)),
           "graph reduction output mismatch");
       } else if(op==100) {
-        TORCH_CHECK(std::isfinite(scalars[i]) && scalars[i]>0.0f,"invalid RMSNorm epsilon");
+        TORCH_CHECK(x.dim()>0 && std::isfinite(scalars[i]) && scalars[i]>0.0f,"invalid RMSNorm epsilon/rank");
         TORCH_CHECK(x.numel()/x.size(-1)<=std::numeric_limits<uint32_t>::max()/32,
                     "RMSNorm row grid overflow");
         if(b!=std::numeric_limits<uint32_t>::max()) {

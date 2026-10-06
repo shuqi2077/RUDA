@@ -2,6 +2,7 @@ import ctypes
 import os
 from pathlib import Path
 import sys
+from contextlib import contextmanager
 
 import torch
 
@@ -65,6 +66,42 @@ def synchronize(device=None):
 torch._register_device_module("ruda", sys.modules[__name__])
 torch.utils.generate_methods_for_privateuse1_backend()
 
+_initialized = True
+_random_available = False
+if hasattr(_native,'ruda_torch_random_api_version') and hasattr(_C,'initialize_random'):
+    _native.ruda_torch_random_api_version.restype = ctypes.c_uint32
+    if _native.ruda_torch_random_api_version()!=1 or getattr(_C,'random_api_version',0)!=1:
+        raise RuntimeError('RUDA random API mismatch; rebuild Rust and C++ extensions')
+    _C.initialize_random(ctypes.cast(_native.ruda_torch_random_fill,ctypes.c_void_p).value)
+    _random_available = True
+from .random import Generator, default_generator, uniform_, normal_, bernoulli_
+
+def manual_seed_all(seed):
+    default_generator.manual_seed(seed)
+
+def manual_seed(seed):
+    return default_generator.manual_seed(seed)
+
+def get_rng_state(device=None):
+    return default_generator.get_state()
+
+def set_rng_state(state, device=None):
+    default_generator.set_state(state)
+
+def get_rng_state_all():
+    return [get_rng_state()]
+
+def set_rng_state_all(states):
+    if len(states)!=1:
+        raise ValueError('RUDA exposes one process-local random generator')
+    set_rng_state(states[0])
+
+@contextmanager
+def device(index=None):
+    if index not in (None,0,'ruda','ruda:0',torch.device('ruda:0')):
+        raise ValueError('RUDA exposes only process-local ruda:0')
+    yield
+
 _native.ruda_torch_counter.argtypes = [ctypes.c_uint32]
 _native.ruda_torch_counter.restype = ctypes.c_uint64
 
@@ -83,6 +120,8 @@ def execution_stats():
          "paged_backward_ordered_workspace_allocations", "paged_backward_ordered_workspace_bytes_total"))}
 
 from . import _ops
+from .random import register_random_ops
+register_random_ops()
 
 from ._streams import Stream, Event, stream, current_stream, default_stream, record_stream
 from ._paged import PagedAttentionPlan
@@ -95,6 +134,11 @@ if hasattr(_native, "ruda_torch_graph_api_version") and hasattr(_C, "initialize_
         raise RuntimeError("RUDA static graph API mismatch; rebuild Rust and C++ extensions")
     _C.initialize_graph(ctypes.cast(_native.ruda_torch_graph,ctypes.c_void_p).value)
     _graph_available = True
+_graph_layout_available = False
+if _graph_available and hasattr(_native,'ruda_torch_graph_layout_api_version'):
+    _native.ruda_torch_graph_layout_api_version.restype = ctypes.c_uint32
+    _graph_layout_available = (_native.ruda_torch_graph_layout_api_version()==1
+                               and getattr(_C,'graph_layout_api_version',0)==1)
 from ._graph import StaticGraph, GraphOp
 
 # Training is a separately negotiated extension. Explicit StaticGraph training
@@ -178,3 +222,17 @@ from .finetuning import (LoRALinear, NF4Linear, inject_lora, quantize_nf4,
 from .causal_finetuning import (chunked_lm_cross_entropy, SFTCollator, CausalLMFinetuner,
                                SFTTrainer, load_hf_nf4_model, activation_checkpoint_modules)
 from .distributed_training import ReplicaGroup
+from .parallel_training import (ColumnParallelLinear, RowParallelLinear, VocabParallelEmbedding,
+    TensorParallelMLP, TensorParallelAttention,
+    tensor_parallelize, tensor_parallel_state_dict, load_tensor_parallel_state_dict,
+    copy_to_tensor_parallel, reduce_from_tensor_parallel, gather_from_tensor_parallel, scatter_to_tensor_parallel)
+from .sharded_training import FullyShardedModule, fully_shard, Zero2Optimizer, ShardedReplicaGroup
+from .pipeline_training import PipelineStage, PipelineTensorSpec
+from .distributed_checkpoint import DistributedCheckpoint, model_shard_layout
+from .adapter_interop import load_peft_adapter, save_peft_adapter
+from .attention import scaled_dot_product_attention
+from .block_attention import block_scaled_dot_product_attention
+from .parallel_loss import vocab_parallel_cross_entropy
+from .parallel_mesh import ParallelMesh, TensorParallelGroup
+from .sharded_optim import ShardedMuon, distributed_grad_norm
+from .quantization_interop import bnb_nf4_linear, load_bnb_nf4_safetensors

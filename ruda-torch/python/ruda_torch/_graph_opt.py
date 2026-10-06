@@ -116,18 +116,18 @@ def plan_storage(layout: Layout, *, reuse: bool = False) -> tuple[int, ...]:
 
 
 def prepare_plan(inputs: Mapping[str, TensorSpec], nodes: Sequence[GraphOp], outputs=None,
-                 *, optimize: bool = False, reuse_workspace: bool = False) -> ExecutionPlan:
+                 *, optimize: bool = False, reuse_workspace: bool = False,layout_api=0) -> ExecutionPlan:
     if type(optimize) is not bool or type(reuse_workspace) is not bool:
         raise TypeError('optimizer options must be booleans')
     nodes = tuple(nodes)
-    original = plan_layout(inputs, nodes, outputs)
+    original = plan_layout(inputs, nodes, outputs,layout_api=layout_api)
     public_names = tuple(original.names[i] for i in original.output_indices)
     original_count = len(nodes)
     eliminated = fused = ()
     if optimize:
         nodes, eliminated = _prune(nodes, public_names)
         nodes, fused = _fuse(nodes, public_names)
-    layout = plan_layout(inputs, nodes, public_names)
+    layout = plan_layout(inputs, nodes, public_names,layout_api=layout_api)
     roots = plan_storage(layout, reuse=reuse_workspace)
     return ExecutionPlan(layout, nodes, roots, original_count,
                          original.workspace_bytes, eliminated, fused)

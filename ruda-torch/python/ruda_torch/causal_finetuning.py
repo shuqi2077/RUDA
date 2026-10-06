@@ -22,7 +22,7 @@ from .finetuning import (NF4Linear, LoRALinear, inject_lora, load_nf4_safetensor
 
 def chunked_lm_cross_entropy(hidden, head, labels, *, token_chunk_size=32,
                              ignore_index=-100, shift=True, reduction='mean',
-                             recompute=True):
+                             recompute=True, label_smoothing=0.):
     """Compute loss without materializing [batch, sequence, vocabulary] logits.
 
     Each token chunk projects against the complete vocabulary: this is exact
@@ -31,8 +31,14 @@ def chunked_lm_cross_entropy(hidden, head, labels, *, token_chunk_size=32,
     parameter gradients. Attention masks and supervision labels are separate.
     """
     positive_int(token_chunk_size, 'token_chunk_size')
-    if not isinstance(head, (nn.Linear, NF4Linear, LoRALinear)):
-        raise TypeError('head must be Linear, NF4Linear or LoRALinear')
+    from .parallel_training import ColumnParallelLinear
+    parallel=isinstance(head,ColumnParallelLinear)
+    if not isinstance(head, (nn.Linear, NF4Linear, LoRALinear, ColumnParallelLinear)):
+        raise TypeError('head must be Linear, NF4Linear, LoRALinear or ColumnParallelLinear')
+    if parallel and head.gather_output:
+        raise ValueError('a vocabulary-parallel loss requires gather_output=False')
+    if not 0<=label_smoothing<=1:
+        raise ValueError('label smoothing must be in [0,1]')
     if hidden.ndim != 3 or labels.shape != hidden.shape[:2] or labels.device != hidden.device:
         raise ValueError('hidden [B,T,D] and labels [B,T] must match on one device')
     if labels.dtype not in (torch.int32, torch.int64) or hidden.shape[-1] != head.in_features:
@@ -46,17 +52,24 @@ def chunked_lm_cross_entropy(hidden, head, labels, *, token_chunk_size=32,
     dtype = work_dtype(hidden)
     def loss_chunk(x, target):
         logits = head(x)
+        if parallel:
+            from .parallel_loss import vocab_parallel_cross_entropy
+            return vocab_parallel_cross_entropy(logits,target,head.group,ignore_index=ignore_index,
+                                                 label_smoothing=label_smoothing,reduction='sum')
         with precision_context(logits):
             logp = F.log_softmax(logits.to(dtype), -1)
             valid = target != ignore_index
             safe = torch.where(valid, target, torch.zeros_like(target)).to(torch.int64)
             selected = logp.gather(-1, safe.unsqueeze(-1)).squeeze(-1)
-            return -torch.where(valid, selected, torch.zeros_like(selected)).sum()
+            loss=-selected
+            if label_smoothing:
+                loss=(1-label_smoothing)*loss-label_smoothing*logp.mean(-1)
+            return torch.where(valid,loss,torch.zeros_like(loss)).sum()
     losses = []
     for start in range(0, flat.shape[0], token_chunk_size):
         args = flat[start:start + token_chunk_size], targets[start:start + token_chunk_size]
         if recompute and torch.is_grad_enabled():
-            losses.append(checkpoint(loss_chunk, *args, use_reentrant=False, preserve_rng_state=False))
+            losses.append(checkpoint(loss_chunk, *args, use_reentrant=False, preserve_rng_state=True))
         else:
             losses.append(loss_chunk(*args))
     total = torch.stack(losses).sum() if losses else hidden.to(dtype).sum() * 0
@@ -259,15 +272,25 @@ class SFTTrainer:
     `base_id` and `run_config`. A checkpoint never contains the frozen model.
     """
     def __init__(self, model, optimizer, *, base_id, run_config,
-                 scaler=None, scheduler=None, replica_group=None):
+                 scaler=None, scheduler=None, replica_group=None, gradient_overlap=False,
+                 bucket_bytes=25*1024*1024):
         from .compiler import CompiledModel
+        from .sharded_training import FullyShardedModule
         original = model.original if isinstance(model, CompiledModel) else model
-        if not isinstance(original, CausalLMFinetuner):
+        template = original._template if isinstance(original,FullyShardedModule) else original
+        if not isinstance(template, CausalLMFinetuner):
             raise TypeError('model must be a CausalLMFinetuner or its RUDA compiled wrapper')
         self.model, self.executable, self.optimizer = original, model, optimizer
         self.base_id, self.run_config = base_id, copy.deepcopy(run_config)
         self.scaler, self.scheduler = scaler, scheduler
         self.replica_group = replica_group
+        self.gradient_overlap, self.bucket_bytes = gradient_overlap, bucket_bytes
+        if type(gradient_overlap) is not bool or type(bucket_bytes) is not int or bucket_bytes <= 0:
+            raise ValueError('gradient_overlap must be bool and bucket_bytes positive')
+        if gradient_overlap and (replica_group is None or not hasattr(replica_group, 'begin_gradient_overlap')):
+            raise ValueError('gradient overlap requires an initialized replicated group')
+        if gradient_overlap and hasattr(optimizer, 'synchronize_gradients'):
+            raise ValueError('ZeRO reduction is a separate path, not replica all-reduce overlap')
         if replica_group is not None:
             replica_group.validate_model(original)
         if scaler is not None and not hasattr(optimizer, 'last_step_skipped'):
@@ -303,8 +326,11 @@ class SFTTrainer:
             for error in self.replica_group.gather_metadata(error):
                 if error:
                     raise ValueError(error)
+            if hasattr(self.replica_group, 'validate_microbatches'):
+                self.replica_group.validate_microbatches(microbatches)
             self.replica_group.validate_training_options((
                 self.step, self.base_id,
+                self.gradient_overlap, self.bucket_bytes,
                 None if self.scaler is None else self.scaler.state_dict(),
                 [(type(self.optimizer).__module__, type(self.optimizer).__qualname__),
                  [{k: v for k, v in group.items() if k != 'params'} for group in self.optimizer.param_groups]],
@@ -317,13 +343,17 @@ class SFTTrainer:
         started = time.monotonic()
         self.executable.train()
         self.optimizer.zero_grad(set_to_none=True)
+        overlap = None
         loss_total = None
-        for batch in microbatches:
+        for index, batch in enumerate(microbatches):
             batch = {name: tensor.to(device) for name, tensor in batch.items()}
             loss = self.executable(**batch, reduction='sum')
             scaled = loss / count
             if self.scaler is not None:
                 scaled = self.scaler.scale(scaled)
+            if self.gradient_overlap and index == len(microbatches)-1:
+                overlap = self.replica_group.begin_gradient_overlap(global_weight=count, normalized=True,
+                                                                   bucket_bytes=self.bucket_bytes)
             scaled.backward()
             loss_total = loss.detach() if loss_total is None else loss_total + loss.detach()
         if self.replica_group is not None:
@@ -331,8 +361,19 @@ class SFTTrainer:
                 loss_total = torch.zeros((), dtype=torch.float32, device=device)
                 if self.scaler is not None:
                     self.scaler.scale(loss_total)
-            self.replica_group.synchronize_gradients(local_weight=local_count, normalized=True, missing='zero')
+            if self.gradient_overlap:
+                if overlap is None:
+                    overlap = self.replica_group.begin_gradient_overlap(global_weight=count, normalized=True,
+                                                                       bucket_bytes=self.bucket_bytes)
+                overlap.finish(local_weight=local_count, missing='zero')
+            elif hasattr(self.optimizer, 'synchronize_gradients'):
+                self.optimizer.synchronize_gradients(local_weight=local_count, normalized=True, missing='zero')
+            else:
+                self.replica_group.synchronize_gradients(local_weight=local_count, normalized=True, missing='zero')
             self.replica_group.sum_(loss_total)
+            if hasattr(self.replica_group, 'prepare_optimizer_step'):
+                self.replica_group.prepare_optimizer_step(self.optimizer,
+                    loss_scale=1. if self.scaler is None else self.scaler.get_scale())
         if self.scaler is None:
             self.optimizer.step()
         else:
@@ -398,6 +439,33 @@ class SFTTrainer:
         self.elapsed_before_resume = state.get('elapsed_seconds', 0.)
         self.started = time.monotonic()
         self.last_checkpoint = {'path': str(Path(path).resolve()), 'saved_at': state['saved_at']}
+        return self.step
+
+    def save_distributed(self, directory):
+        """Collectively commit model/optimizer/data state for replica, TP or FSDP storage."""
+        from .distributed_checkpoint import DistributedCheckpoint
+        if self.replica_group is None:
+            raise ValueError('save_distributed requires an explicit distributed coordinator')
+        state = {'base_id': self.base_id, 'run_config': self.run_config, 'cursor': self.cursor,
+                 'tokens': self.tokens, 'elapsed_seconds': self.elapsed_before_resume+time.monotonic()-self.started}
+        result = DistributedCheckpoint(self.replica_group, directory).save(self.model, self.optimizer,
+            step=self.step, application_state=state, scheduler=self.scheduler, scaler=self.scaler)
+        self.last_checkpoint = result
+        return result
+
+    def resume_distributed(self, directory, *, generation=None):
+        from .distributed_checkpoint import DistributedCheckpoint
+        if self.replica_group is None:
+            raise ValueError('resume_distributed requires an explicit distributed coordinator')
+        def validate(state):
+            if state['base_id'] != self.base_id or state['run_config'] != self.run_config:
+                raise ValueError('distributed checkpoint base/source/config differs')
+        step, state = DistributedCheckpoint(self.replica_group, directory).load(self.model, self.optimizer,
+            generation=generation, scheduler=self.scheduler, scaler=self.scaler,validate_application=validate)
+        self.step, self.cursor, self.tokens = step, state['cursor'], state['tokens']
+        self.elapsed_before_resume = state['elapsed_seconds']
+        self.started = time.monotonic()
+        self.optimizer.zero_grad(set_to_none=True)
         return self.step
 
     def write_progress(self, directory, metrics, *, total_steps=None):

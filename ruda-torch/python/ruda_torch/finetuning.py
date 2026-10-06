@@ -209,7 +209,7 @@ class NF4Linear(nn.Module):
 
 class LoRALinear(nn.Module):
     """Frozen dense/NF4 base plus alpha/rank * B(A(x))."""
-    def __init__(self, base, *, rank=16, alpha=16., adapter_dtype=torch.float32):
+    def __init__(self, base, *, rank=16, alpha=16., adapter_dtype=torch.float32, dropout=0., use_rslora=False):
         super().__init__()
         if not isinstance(base, (nn.Linear, NF4Linear)):
             raise TypeError('LoRA requires nn.Linear or NF4Linear')
@@ -218,8 +218,11 @@ class LoRALinear(nn.Module):
             raise ValueError('alpha must be finite and positive')
         if adapter_dtype not in _FLOATS:
             raise ValueError('adapter_dtype must be FP32, FP16 or BF16')
+        if type(dropout) not in (int,float) or not 0<=dropout<=1 or type(use_rslora) is not bool:
+            raise ValueError('LoRA dropout must be in [0,1] and use_rslora must be bool')
         self.base = base
         self.rank, self.alpha = rank, float(alpha)
+        self.dropout, self.use_rslora = float(dropout), use_rslora
         self.in_features, self.out_features = base.in_features, base.out_features
         device = base.weight.device if isinstance(base, nn.Linear) else base.packed.device
         # Initialization is an explicit setup operation, not a runtime CPU fallback.
@@ -233,7 +236,14 @@ class LoRALinear(nn.Module):
         self.train(base.training)
 
     def get_extra_state(self):
-        return {'version': 1, 'rank': self.rank, 'alpha': self.alpha}
+        result = {'version': 1, 'rank': self.rank, 'alpha': self.alpha}
+        if self.dropout or self.use_rslora:
+            result.update(version=2,dropout=self.dropout,use_rslora=self.use_rslora)
+        return result
+
+    @property
+    def scaling(self):
+        return self.alpha/(math.sqrt(self.rank) if self.use_rslora else self.rank)
 
     def set_extra_state(self, state):
         if state != self.get_extra_state():
@@ -241,8 +251,15 @@ class LoRALinear(nn.Module):
 
     def forward(self, x):
         result = self.base(x)
-        update = F.linear(F.linear(x.to(self.lora_A.dtype), self.lora_A), self.lora_B)
-        return result + (update * (self.alpha / self.rank)).to(result.dtype)
+        adapted = x.to(self.lora_A.dtype)
+        if self.training and self.dropout:
+            if x.device.type=='ruda':
+                from .random import native_dropout
+                adapted = native_dropout(adapted,self.dropout)[0]
+            else:
+                adapted = F.dropout(adapted,p=self.dropout,training=True)
+        update = F.linear(F.linear(adapted, self.lora_A), self.lora_B)
+        return result + (update * self.scaling).to(result.dtype)
 
 
 def _selected(model, target_modules, types):
@@ -269,7 +286,7 @@ def _replace(model, replacements):
         setattr(parent, child, value)
 
 
-def inject_lora(model, *, target_modules, rank=16, alpha=16., adapter_dtype=torch.float32):
+def inject_lora(model, *, target_modules, rank=16, alpha=16., adapter_dtype=torch.float32,dropout=0.,use_rslora=False):
     """In-place injection; freeze base model, preserving shared module aliases.
 
     Names are exact qualified module paths. No model family or head-selection
@@ -281,7 +298,8 @@ def inject_lora(model, *, target_modules, rank=16, alpha=16., adapter_dtype=torc
     wrappers = {}
     for _, base in selected:
         if id(base) not in wrappers:
-            wrappers[id(base)] = LoRALinear(base, rank=rank, alpha=alpha, adapter_dtype=adapter_dtype)
+            wrappers[id(base)] = LoRALinear(base, rank=rank, alpha=alpha, adapter_dtype=adapter_dtype,
+                                            dropout=dropout,use_rslora=use_rslora)
     for p in model.parameters():
         p.requires_grad_(False)
         p.grad = None
@@ -337,12 +355,18 @@ def adapter_state_dict(model):
                             'lora_B': layer.lora_B.detach().cpu().clone()}
     if not layers:
         raise ValueError('model has no LoRA adapters')
-    return {'format': 'ruda-lora', 'version': 1, 'layers': layers}
+    version = 1
+    if any(layer.dropout or layer.use_rslora for layer in model.modules() if isinstance(layer,LoRALinear)):
+        version = 2
+        for name,layer in model.named_modules():
+            if isinstance(layer,LoRALinear):
+                layers[name].update(dropout=layer.dropout,use_rslora=layer.use_rslora)
+    return {'format': 'ruda-lora', 'version': version, 'layers': layers}
 
 
 @torch.no_grad()
 def load_adapter_state_dict(model, state):
-    if not isinstance(state, dict) or set(state) != {'format', 'version', 'layers'} or state['format'] != 'ruda-lora' or state['version'] != 1:
+    if not isinstance(state, dict) or set(state) != {'format', 'version', 'layers'} or state['format'] != 'ruda-lora' or state['version'] not in (1,2):
         raise ValueError('unsupported adapter checkpoint')
     layers = {name: layer for name, layer in model.named_modules() if isinstance(layer, LoRALinear)}
     if not layers or not isinstance(state['layers'], dict) or set(layers) != set(state['layers']):
@@ -352,6 +376,10 @@ def load_adapter_state_dict(model, state):
         entry = state['layers'][name]
         metadata = {'rank': layer.rank, 'alpha': layer.alpha, 'in_features': layer.in_features,
                     'out_features': layer.out_features, 'base': 'nf4' if isinstance(layer.base, NF4Linear) else 'dense'}
+        if state['version']==2:
+            metadata.update(dropout=layer.dropout,use_rslora=layer.use_rslora)
+        elif layer.dropout or layer.use_rslora:
+            raise ValueError('legacy adapter checkpoint does not contain dropout/RSLoRA semantics')
         if not isinstance(entry, dict) or set(entry) != set(metadata) | {'lora_A', 'lora_B'} or any(entry[k] != v for k, v in metadata.items()):
             raise ValueError(f'adapter configuration mismatch: {name}')
         for key in ('lora_A', 'lora_B'):
@@ -388,7 +416,7 @@ def merge_lora(model):
             continue
         base = layer.base
         result = nn.Linear(base.in_features, base.out_features, bias=base.bias is not None, device='meta', dtype=base.weight.dtype)
-        result.weight = nn.Parameter((base.weight.float() + (layer.lora_B.float() @ layer.lora_A.float()) * (layer.alpha/layer.rank)).to(base.weight.dtype), requires_grad=False)
+        result.weight = nn.Parameter((base.weight.float() + (layer.lora_B.float() @ layer.lora_A.float()) * layer.scaling).to(base.weight.dtype), requires_grad=False)
         if base.bias is not None:
             result.bias = nn.Parameter(base.bias.detach().clone(), requires_grad=False)
         merged[id(layer)] = result.eval()
@@ -558,13 +586,17 @@ def finetune_state_dict(model, optimizer, *, base_id, step, data_state, scaler=N
         raise ValueError('clear gradients before snapshot; partial accumulation is not saved')
     layout = _optimizer_layout(model, optimizer)
     cuda_devices = sorted({p.device.index for p in model.parameters() if p.device.type == 'cuda'})
-    return {'format': 'ruda-finetune', 'version': 1, 'base_id': base_id, 'step': step,
+    state = {'format': 'ruda-finetune', 'version': 1, 'base_id': base_id, 'step': step,
             'adapter': adapter_state_dict(model), 'optimizer': _cpu_tree(optimizer.state_dict()),
             'optimizer_type': type(optimizer).__module__ + '.' + type(optimizer).__qualname__,
             'optimizer_layout': layout, 'data_state': _cpu_tree(data_state),
             'scaler': None if scaler is None else _cpu_tree(scaler.state_dict()),
             'cpu_rng': torch.get_rng_state().clone(),
             'cuda_rng': {i: torch.cuda.get_rng_state(i).cpu() for i in cuda_devices}}
+    if any(p.device.type=='ruda' for p in model.parameters()):
+        from . import get_rng_state
+        state['ruda_rng'] = get_rng_state()
+    return state
 
 
 def load_finetune_state_dict(model, optimizer, state, *, base_id, scaler=None):
@@ -586,5 +618,8 @@ def load_finetune_state_dict(model, optimizer, state, *, base_id, scaler=None):
     torch.set_rng_state(state['cpu_rng'])
     for i, rng in state['cuda_rng'].items():
         torch.cuda.set_rng_state(rng, i)
+    if 'ruda_rng' in state:
+        from . import set_rng_state
+        set_rng_state(state['ruda_rng'])
     optimizer.zero_grad(set_to_none=True)
     return state['step'], copy.deepcopy(state['data_state'])

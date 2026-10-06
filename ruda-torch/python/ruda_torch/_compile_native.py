@@ -7,6 +7,7 @@ from collections import OrderedDict
 import math
 import operator
 from threading import RLock
+import sys
 
 import torch
 from torch.fx import Graph, GraphModule, Node
@@ -34,6 +35,35 @@ _TARGETS.update({torch.ops.aten.clone.default: 'copy', torch.ops.aten.add.Tensor
     torch.ops.aten.sum.dim_IntList: 'sum_keepdim', torch.ops.aten.mean.dim: 'mean_keepdim',
     torch.ops.aten.add.Scalar: 'add', torch.ops.aten.sub.Scalar: 'sub',
     torch.ops.aten.mul.Scalar: 'mul', torch.ops.aten.div.Scalar: 'div'})
+_TARGETS.update({torch.ops.aten.view_copy.default: 'reshape_copy',
+    torch.ops.aten.permute_copy.default: 'permute_copy', torch.ops.aten._to_copy.default: 'cast',
+    torch.ops.aten.expand_copy.default: 'expand_copy'})
+_ALIASES={torch.ops.aten.view.default:'reshape_copy',torch.ops.aten.reshape.default:'reshape_copy',
+    torch.ops.aten._unsafe_view.default:'reshape_copy',torch.ops.aten.permute.default:'permute_copy',
+    torch.ops.aten.t.default:'transpose_copy',torch.ops.aten.transpose.int:'transpose_copy',
+    torch.ops.aten.unsqueeze.default:'reshape_copy',torch.ops.aten.squeeze.dim:'reshape_copy',
+    torch.ops.aten.squeeze.default:'reshape_copy',torch.ops.aten.expand.default:'expand_copy'}
+
+
+def _layout_capable():
+    return getattr(sys.modules.get(__package__),'_graph_layout_available',False)
+
+
+def _internal_alias(node, seen=None):
+    """Materialize a view only when all consumers are pure, non-aliasing math.
+
+    Returning a view, mutating through it or inspecting its storage/strides stays
+    on ordinary device dispatch. No user-observable alias is replaced by a copy.
+    """
+    seen=set() if seen is None else seen
+    if node in seen:return False
+    seen.add(node)
+    for user in node.users:
+        if user.op!='call_function':return False
+        if user.target in _ALIASES:
+            if not _internal_alias(user,seen.copy()):return False
+        elif user.target not in _TARGETS:return False
+    return True
 
 
 def _rank(node):
@@ -42,14 +72,58 @@ def _rank(node):
 
 
 def _lower(node):
-    if node.op != 'call_function' or node.target not in _TARGETS:
+    if node.op != 'call_function' or node.target not in _TARGETS and node.target not in _ALIASES:
+        return None
+    alias=node.target in _ALIASES
+    if alias and (not _layout_capable() or not _internal_alias(node)):
         return None
     value = node.meta.get('val')
-    if isinstance(value, torch.Tensor) and not value.is_contiguous():
+    if isinstance(value, torch.Tensor) and not value.is_contiguous() and not alias:
         return None  # Output stride/clone memory-format is observable to users.
-    kind, args, kwargs = _TARGETS[node.target], node.args, dict(node.kwargs)
+    kind, args, kwargs = (_ALIASES[node.target] if alias else _TARGETS[node.target]), node.args, dict(node.kwargs)
     if not args or not isinstance(args[0], Node): return None
     left = args[0].name
+    if kind=='transpose_copy':
+        rank=_rank(args[0])
+        if rank is None or kwargs:return None
+        axes=list(range(rank))
+        if node.target==torch.ops.aten.t.default:
+            if rank>2 or len(args)!=1:return None
+            if rank==2:axes=[1,0]
+        else:
+            if len(args)!=3 or any(type(d) is not int or not -rank<=d<rank for d in args[1:]):return None
+            a,b=args[1]%rank,args[2]%rank
+            axes[a],axes[b]=axes[b],axes[a]
+        return GraphOp('permute_copy',node.name,left,scalar=sum(d<<(3*i) for i,d in enumerate(axes)),shape=tuple(value.shape))
+    if kind in ('reshape_copy','permute_copy','expand_copy','cast'):
+        if not _layout_capable():return None
+        if not isinstance(value, torch.Tensor) or value.dtype not in (torch.float32,torch.float16,torch.bfloat16):
+            return None
+        if kind == 'cast':
+            if len(args) != 1 or set(kwargs)-{'dtype','device','layout','pin_memory','non_blocking','memory_format'}:
+                return None
+            source = args[0].meta.get('val')
+            if not isinstance(source,torch.Tensor) or source.device != value.device or source.layout != value.layout:
+                return None
+            if kwargs.get('pin_memory',False) or kwargs.get('memory_format') not in (None,torch.preserve_format,torch.contiguous_format):
+                return None
+            return GraphOp(kind,node.name,left,dtype=str(value.dtype).removeprefix('torch.'))
+        if alias and kind=='reshape_copy':
+            if kwargs or len(args) not in (1,2):return None
+            return GraphOp(kind,node.name,left,shape=tuple(value.shape))
+        if kind=='expand_copy' and len(args)==3 and args[2] is False:args=args[:2]
+        if len(args) != 2 or kwargs or not isinstance(args[1],(tuple,list)) or any(type(d) is not int for d in args[1]):
+            return None
+        scalar = 0
+        if kind == 'permute_copy':
+            rank = _rank(args[0])
+            if rank is None or len(args[1]) != rank or any(not -rank<=d<rank for d in args[1]):
+                return None
+            axes = [d%rank for d in args[1]]
+            if len(set(axes)) != rank:
+                return None
+            scalar = sum(d<<(3*i) for i,d in enumerate(axes))
+        return GraphOp(kind,node.name,left,scalar=scalar,shape=tuple(value.shape))
     if kind in ('add', 'sub', 'mul', 'div'):
         if len(args) != 2 or set(kwargs) - ({'alpha'} if kind in ('add','sub') else set()):
             return None
@@ -57,7 +131,12 @@ def _lower(node):
         if type(alpha) not in (int, float) or not math.isfinite(alpha): return None
         if kind == 'sub': alpha = -alpha
         if isinstance(args[1], Node):
-            return GraphOp('add' if kind == 'sub' else kind, node.name, left, args[1].name,
+            operation = 'add' if kind == 'sub' else kind
+            lv,rv = args[0].meta.get('val'),args[1].meta.get('val')
+            if isinstance(lv,torch.Tensor) and isinstance(rv,torch.Tensor) and lv.shape != rv.shape:
+                if not _layout_capable():return None
+                operation += '_broadcast'
+            return GraphOp(operation, node.name, left, args[1].name,
                            alpha if kind in ('add','sub') else 0.)
         if type(args[1]) not in (int,float) or not math.isfinite(args[1]): return None
         scalar = args[1] * alpha if kind in ('add','sub') else args[1]
@@ -77,7 +156,9 @@ def _lower(node):
         return GraphOp(kind, node.name, left, args[1].name if backward else None, axis % rank)
     if kind in ('sum_keepdim', 'mean_keepdim'):
         if not 2 <= len(args) <= 3 or set(kwargs) - {'keepdim','dtype'}: return None
-        if (args[2] if len(args) == 3 else kwargs.get('keepdim', False)) is not True: return None
+        keepdim = args[2] if len(args) == 3 else kwargs.get('keepdim', False)
+        if type(keepdim) is not bool: return None
+        if not keepdim and not _layout_capable():return None
         if kwargs.get('dtype') is not None: return None
         rank = _rank(args[0]); dims = args[1]
         if rank is None or not isinstance(dims, (tuple,list)): return None
@@ -85,7 +166,8 @@ def _lower(node):
         if any(type(d) is not int or not -rank <= d < rank for d in dims): return None
         dims = [d % rank for d in dims]
         if len(set(dims)) != len(dims): return None
-        return GraphOp(kind, node.name, left, scalar=sum(1 << d for d in dims))
+        return GraphOp(kind if keepdim else kind.removesuffix('_keepdim'), node.name, left,
+                       scalar=sum(1 << d for d in dims))
     if kind == 'copy':
         if len(args) != 1 or set(kwargs) - {'memory_format'}: return None
         if kwargs.get('memory_format') not in (None, torch.preserve_format, torch.contiguous_format): return None
@@ -153,7 +235,12 @@ class NativeRegion(torch.nn.Module):
             else:
                 try:
                     specs = {name: _input_spec(value) for name, value in zip(self.names, args, strict=True)}
-                    plan_layout(specs, self.nodes, self.outputs)
+                    plan_layout(specs, self.nodes, self.outputs,layout_api=int(_layout_capable()))
+                    if any(node.kind in ('reshape_copy','permute_copy','cast','expand_copy',
+                           'add_broadcast','mul_broadcast','div_broadcast','sum','mean') for node in self.nodes):
+                        from . import _graph_layout_available
+                        if not _graph_layout_available:
+                            raise ValueError('native graph layout extension unavailable')
                 except (ValueError, TypeError, OverflowError) as exc:
                     reason = str(exc)
             if reason is not None:

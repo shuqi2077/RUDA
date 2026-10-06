@@ -78,6 +78,18 @@ class ReplicaGroup:
         self._complete([tensor])
         return tensor
 
+    def max_(self, tensor):
+        """Dense in-place maximum reduction, using the same allocation fence."""
+        dist.all_reduce(self._alias(tensor),op=dist.ReduceOp.MAX,group=self.group)
+        self._complete([tensor])
+        return tensor
+
+    def min_(self, tensor):
+        """Dense in-place minimum reduction, using the same allocation fence."""
+        dist.all_reduce(self._alias(tensor),op=dist.ReduceOp.MIN,group=self.group)
+        self._complete([tensor])
+        return tensor
+
     def broadcast_(self, tensor, root=0):
         """Broadcast from a group-relative rank, preserving RUDA allocation ownership."""
         if not isinstance(root, int) or isinstance(root, bool) or not 0 <= root < self.world_size:
@@ -87,6 +99,44 @@ class ReplicaGroup:
         dist.broadcast(alias, src=source, group=self.group)
         self._complete([tensor])
         return tensor
+
+    def all_gather(self, tensor, *, axis=0):
+        """Concatenate equally shaped rank-local tensors along an explicit axis."""
+        if tensor.ndim == 0 or not -tensor.ndim <= axis < tensor.ndim:
+            raise ValueError('all-gather axis is out of range')
+        axis %= tensor.ndim
+        source = tensor.movedim(axis, 0).contiguous()
+        shape = list(source.shape)
+        shape[0] *= self.world_size
+        output = source.new_empty(shape)
+        dist.all_gather_into_tensor(self._alias(output), self._alias(source), group=self.group)
+        self._complete([output])
+        return output.movedim(0, axis).contiguous()
+
+    def reduce_scatter(self, tensor, *, axis=0):
+        """Sum and scatter equal slices; no averaging or implicit dtype conversion."""
+        if tensor.ndim == 0 or not -tensor.ndim <= axis < tensor.ndim:
+            raise ValueError('reduce-scatter axis is out of range')
+        axis %= tensor.ndim
+        if tensor.shape[axis] % self.world_size:
+            raise ValueError('reduce-scatter dimension must divide the group size')
+        source = tensor.movedim(axis, 0).contiguous()
+        shape = list(source.shape)
+        shape[0] //= self.world_size
+        output = source.new_empty(shape)
+        dist.reduce_scatter_tensor(self._alias(output), self._alias(source), group=self.group)
+        self._complete([output])
+        return output.movedim(0, axis).contiguous()
+
+    def begin_gradient_overlap(self, *, global_weight, normalized=False, bucket_bytes=25*1024*1024):
+        """Start bucket reductions during the FINAL backward of an accumulation window.
+
+        Earlier microbatches accumulate normally. Finish before any optimizer step.
+        Bucket order is fixed across ranks, including locally unused parameters.
+        """
+        from .parallel_training import GradientOverlap
+        return GradientOverlap(self, global_weight=global_weight, normalized=normalized,
+                               bucket_bytes=bucket_bytes)
 
     def initialize(self, model, *, root=0, broadcast_buffers=True):
         """Validate replicas/aliases collectively and broadcast state before optimizer creation."""

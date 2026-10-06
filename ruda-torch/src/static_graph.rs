@@ -34,6 +34,30 @@ fn prepare(state_client: &ComputeClient<CudaRuntime>, ts: &[View], n: &NodeSpec,
                 unsafe { kernels::static_silu_mul::prepare::<$dtype, CudaRuntime>(
                     state_client, RudaCount::Static(blocks,1,1), RudaDim::new_1d(128),
                     a.arg(), b.arg(), out.arg()) }
+            } else if n.op == 112 || n.op == 114 {
+                let blocks = u32::try_from(out.len.div_ceil(128)).expect("graph layout grid overflow");
+                macro_rules! cast { ($out:ty) => { unsafe { kernels::convert::prepare::<$dtype,$out,CudaRuntime>(
+                    state_client,RudaCount::Static(blocks,1,1),RudaDim::new_1d(128),a.arg(),out.arg()) } }; }
+                match out.dtype { 0=>cast!(f32),1=>cast!(f16),2=>cast!(bf16),_=>unreachable!() }
+            } else if n.op == 113 {
+                let blocks = u32::try_from(out.len.div_ceil(128)).expect("graph permutation grid overflow");
+                unsafe { kernels::graph_permute::prepare::<$dtype,CudaRuntime>(state_client,
+                    RudaCount::Static(blocks,1,1),RudaDim::new_1d(128),a.arg(),out.arg(),n.scalar as u32) }
+            } else if n.op == 115 {
+                let blocks = u32::try_from(out.len.div_ceil(128)).expect("graph expansion grid overflow");
+                unsafe { kernels::graph_expand::prepare::<$dtype,CudaRuntime>(state_client,
+                    RudaCount::Static(blocks,1,1),RudaDim::new_1d(128),a.arg(),out.arg()) }
+            } else if matches!(n.op,116..=118) {
+                let blocks = u32::try_from(out.len.div_ceil(128)).expect("graph broadcast grid overflow");
+                unsafe { kernels::graph_broadcast::prepare::<$dtype,CudaRuntime>(state_client,
+                    RudaCount::Static(blocks,1,1),RudaDim::new_1d(128),a.arg(),b.arg(),out.arg(),n.scalar,n.op) }
+            } else if n.op == 119 || n.op == 120 {
+                let mask = n.scalar as u32;
+                let shape = a.shape.iter().enumerate().map(|(d,&size)|if mask&(1<<d)!=0 {1} else {size}).collect();
+                let expanded = View::packed(out.handle.clone(),shape,out.dtype);
+                let blocks = u32::try_from(out.len.div_ceil(128)).expect("graph reduction grid overflow");
+                unsafe { kernels::reduce_sum_storage::prepare::<$dtype,$dtype,CudaRuntime>(state_client,
+                    RudaCount::Static(blocks,1,1),RudaDim::new_1d(128),a.arg(),expanded.arg(),n.op==120) }
             } else if n.op == RMS_NORM {
                 let rows = a.len / a.shape[a.shape.len()-1];
                 let blocks = u32::try_from((rows * 32).div_ceil(128)).expect("graph RMSNorm grid overflow");
@@ -71,6 +95,9 @@ fn prepare(state_client: &ComputeClient<CudaRuntime>, ts: &[View], n: &NodeSpec,
 #[unsafe(no_mangle)]
 pub extern "C" fn ruda_torch_graph_api_version() -> u32 { 3 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn ruda_torch_graph_layout_api_version() -> u32 { 1 }
+
 /// Optional in-process extension API 3; base tensor ABI remains 10.
 /// 0=build, 1=replay, 2=wait, 3=query fixed queue, 4=close,
 /// 5=preallocated eager control (same kernels, one final sync policy),
@@ -101,7 +128,9 @@ pub unsafe extern "C" fn ruda_torch_graph(
             let descriptors=unsafe{std::slice::from_raw_parts(descriptors,tensor_count)};
             let nodes=unsafe{std::slice::from_raw_parts(nodes,node_count)}.to_vec();
             let tensors:Vec<View>=descriptors.iter().map(|d| unsafe{View::read(d)}).collect();
-            let specs:Vec<_>=tensors.iter().map(|t|TensorSpec{shape:&t.shape,strides:&t.strides,dtype:t.dtype}).collect();
+            let specs:Vec<_>=tensors.iter().zip(descriptors).map(|(t,d)|TensorSpec{
+                shape:if d.rank==0 {&[]} else {&t.shape},
+                strides:if d.rank==0 {&[]} else {&t.strides},dtype:t.dtype}).collect();
             graph_contract::validate(&specs,&nodes,input_count).expect("invalid native static graph");
             let client=client().fixed_execution_queue();
             let prepared=nodes.iter().enumerate().map(|(i,n)|prepare(&client,&tensors,n,input_count+i)).collect();

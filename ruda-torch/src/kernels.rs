@@ -21,6 +21,62 @@ pub fn convert<I: Numeric + RudaElement, O: Numeric + RudaElement>(a: &Tensor<I>
     }
 }
 
+#[ruda]
+fn broadcast_offset<F: Numeric>(input: &Tensor<F>, output: &Tensor<F>, position: usize) -> usize {
+    let mut remaining = position;
+    let mut result = 0usize;
+    let mut dim = output.rank();
+    while dim > 0 {
+        dim -= 1;
+        let coordinate = remaining % output.shape(dim);
+        remaining /= output.shape(dim);
+        if dim + input.rank() >= output.rank() {
+            let source_dim = dim + input.rank() - output.rank();
+            if input.shape(source_dim) != 1 { result += coordinate * input.stride(source_dim); }
+        }
+    }
+    result
+}
+
+#[ruda(launch)]
+pub fn graph_broadcast<F: Float + RudaElement>(
+    a: &Tensor<F>, b: &Tensor<F>, out: &mut Tensor<F>, alpha: f32, #[comptime] operation: u32,
+) {
+    let pos = ABSOLUTE_POS as usize;
+    if pos < out.len() {
+        let x = f32::cast_from(a[broadcast_offset(a, out, pos)]);
+        let y = f32::cast_from(b[broadcast_offset(b, out, pos)]);
+        let mut value = 0.0f32;
+        if comptime!(operation == 116) { value = x + alpha * y; }
+        else if comptime!(operation == 117) { value = x * y; }
+        else { value = x / y; }
+        out[pos] = F::cast_from(value);
+    }
+}
+
+#[ruda(launch)]
+pub fn graph_expand<F: Float + RudaElement>(a: &Tensor<F>, out: &mut Tensor<F>) {
+    let pos = ABSOLUTE_POS as usize;
+    if pos < out.len() { out[pos] = a[broadcast_offset(a, out, pos)]; }
+}
+
+#[ruda(launch)]
+pub fn graph_permute<F: Float + RudaElement>(a: &Tensor<F>, out: &mut Tensor<F>, permutation: u32) {
+    let pos = ABSOLUTE_POS as usize;
+    if pos < out.len() {
+        let mut remaining = pos;
+        let mut source = 0usize;
+        let mut dim = out.rank();
+        while dim > 0 {
+            dim -= 1;
+            let axis = ((permutation >> u32::cast_from(dim * 3)) & 7u32) as usize;
+            source += (remaining % out.shape(dim)) * a.stride(axis);
+            remaining /= out.shape(dim);
+        }
+        out[pos] = a[source];
+    }
+}
+
 #[ruda(launch)]
 pub fn arange<I: Numeric + RudaElement, O: Numeric + RudaElement>(
     start: &Tensor<I>, step: &Tensor<I>, out: &mut Tensor<O>,

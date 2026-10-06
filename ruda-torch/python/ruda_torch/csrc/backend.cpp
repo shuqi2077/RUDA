@@ -186,6 +186,7 @@ struct Argument {
 #include "router.inc"
 #include "nf4.inc"
 #include "sequence_training.inc"
+#include "random.inc"
 
 class PagedPlanBridge {
   void* plan_=nullptr;
@@ -501,6 +502,12 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     nf4_matmul_native=reinterpret_cast<NF4Matmul>(address);
   });
   m.def("nf4_matmul", nf4_matmul);
+  m.attr("random_api_version") = 1;
+  m.def("initialize_random",[](uintptr_t address) {
+    TORCH_CHECK(allocate_native && address && !random_fill_native,"invalid or repeated random initialization");
+    random_fill_native=reinterpret_cast<RandomFill>(address);
+  });
+  m.def("random_fill_",random_fill);
   m.attr("sequence_api_version") = 1;
   m.def("initialize_sequence", [](std::vector<uintptr_t> addresses) {
     TORCH_CHECK(allocate_native && addresses.size()==2 && addresses[0] && addresses[1] && !triangular_native,
@@ -565,6 +572,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("training_analyze_hierarchical", training_analyze_hierarchical);
   m.def("training_adamw_batch_", training_adamw_batch);
   m.attr("graph_api_version") = 3;
+  m.attr("graph_layout_api_version") = 1;
   m.def("initialize_graph", [](uintptr_t address) {
     TORCH_CHECK(allocate_native && address && !static_graph_native, "invalid or repeated static graph initialization");
     static_graph_native = reinterpret_cast<StaticGraphCommand>(address);

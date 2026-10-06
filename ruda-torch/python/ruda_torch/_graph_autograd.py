@@ -55,6 +55,20 @@ def forward_values(layout, inputs):
         elif op in (104,105):
             dims = tuple(d for d in range(x.ndim) if int(scalar) & (1 << d))
             out = (x.sum(dims, keepdim=True) if op == 104 else x.mean(dims, keepdim=True)).to(left.dtype)
+        elif op == 112:
+            out = left.reshape(layout.specs[layout.inputs+i].shape).clone()
+        elif op == 113:
+            axes = tuple((int(scalar)>>(3*d))&7 for d in range(left.ndim))
+            out = left.permute(axes).contiguous().clone()
+        elif op == 114:
+            out = left.to(getattr(torch,layout.specs[layout.inputs+i].dtype),copy=True)
+        elif op == 115:
+            out = left.expand(layout.specs[layout.inputs+i].shape).contiguous().clone()
+        elif op in (116,117,118):
+            out = (x+scalar*y if op == 116 else x*y if op == 117 else x/y).to(left.dtype)
+        elif op in (119,120):
+            dims = tuple(d for d in range(x.ndim) if int(scalar)&(1<<d))
+            out = (x.sum(dims) if op == 119 else x.mean(dims)).to(left.dtype)
         else:
             raise RuntimeError(f'unsupported training graph opcode: {op}')
         values.append(out)

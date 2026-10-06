@@ -21,6 +21,9 @@ use std::{collections::HashMap, error::Error, fmt, marker::PhantomData};
 /// Optimizer-state partitioning with replicated parameters and gradients.
 pub mod zero;
 
+/// Element-sharded gradients and optimizer states with replicated model weights.
+pub mod zero2;
+
 /// An explicit policy for trainable parameters unused by a local backward pass.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MissingGradientPolicy {

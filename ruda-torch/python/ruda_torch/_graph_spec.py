@@ -27,6 +27,8 @@ class GraphOp:
     left: str
     right: str | None = None
     scalar: float = 0.0
+    shape: tuple[int, ...] | None = None
+    dtype: str | None = None
 
     @classmethod
     def add(cls, output, left, right, *, alpha=1.0): return cls('add',output,left,right,alpha)
@@ -52,7 +54,10 @@ BINARY_CODES = {'add': 1, 'mul': 2, 'div': 8, 'silu_backward': 15,
 SCALAR_CODES = {'add_scalar': 109, 'mul_scalar': 110, 'div_scalar': 111}
 CODES = {**UNARY_CODES, **BINARY_CODES, **SCALAR_CODES, 'mm': 7, 'bmm': 30,
     'rms_norm': 100, 'softmax': 102, 'log_softmax': 103, 'sum_keepdim': 104,
-    'mean_keepdim': 105, 'softmax_backward': 106, 'log_softmax_backward': 107}
+    'mean_keepdim': 105, 'softmax_backward': 106, 'log_softmax_backward': 107,
+    'reshape_copy': 112, 'permute_copy': 113, 'cast': 114, 'expand_copy': 115,
+    'add_broadcast': 116, 'mul_broadcast': 117, 'div_broadcast': 118,
+    'sum': 119, 'mean': 120}
 
 @dataclass(frozen=True)
 class Layout:
@@ -68,7 +73,9 @@ class Layout:
         return sum(math.prod(s.shape)*(4 if s.dtype=='float32' else 2) for s in self.specs[self.inputs:])
 
 
-def plan_layout(inputs: Mapping[str,TensorSpec], nodes: Sequence[GraphOp], outputs=None) -> Layout:
+def plan_layout(inputs: Mapping[str,TensorSpec], nodes: Sequence[GraphOp], outputs=None, *, layout_api=0) -> Layout:
+    if layout_api not in (0,1):
+        raise ValueError('unsupported graph layout extension version')
     if not isinstance(inputs,Mapping) or not 1<=len(inputs)<=MAX_TENSORS:
         raise ValueError('static graph needs named inputs')
     nodes=tuple(nodes)
@@ -80,8 +87,8 @@ def plan_layout(inputs: Mapping[str,TensorSpec], nodes: Sequence[GraphOp], outpu
             raise TypeError('expected nonempty names and TensorSpec values')
         if spec.dtype not in ('float32','float16','bfloat16'):
             raise ValueError('static graph supports float32/float16/bfloat16')
-        if not 1<=len(spec.shape)<=8 or any(type(d) is not int or d<=0 for d in spec.shape):
-            raise ValueError('static graph requires nonempty rank 1..8 shapes')
+        if not (0 if layout_api else 1)<=len(spec.shape)<=8 or any(type(d) is not int or d<=0 for d in spec.shape):
+            raise ValueError('static graph requires nonempty rank 0..8 shapes')
         if math.prod(spec.shape)>2**32-1: raise ValueError('32-bit kernel indexing limit')
     words=[]; scalars=[]
     codes=CODES
@@ -96,7 +103,52 @@ def plan_layout(inputs: Mapping[str,TensorSpec], nodes: Sequence[GraphOp], outpu
         try: scalar=struct.unpack('<f',struct.pack('<f',float(node.scalar)))[0]
         except (TypeError,ValueError,OverflowError,struct.error) as exc: raise ValueError('invalid FP32 scalar') from exc
         if not math.isfinite(scalar): raise ValueError('graph scalar must be finite in FP32')
-        if node.kind in UNARY_CODES:
+        if node.kind in ('reshape_copy', 'permute_copy', 'cast', 'expand_copy'):
+            if node.right is not None:
+                raise ValueError('layout operators have one input')
+            b = a
+            if node.kind == 'cast':
+                if node.dtype not in ('float32', 'float16', 'bfloat16') or node.shape is not None or scalar != 0:
+                    raise ValueError('cast requires an explicit floating dtype and zero scalar')
+                spec = TensorSpec(spec.shape, node.dtype)
+            else:
+                shape = node.shape
+                if shape is None or not isinstance(shape, tuple) or len(shape)>8 or any(type(d) is not int or d<=0 for d in shape):
+                    raise ValueError('layout nodes require an explicit output shape')
+                if node.dtype is not None:
+                    raise ValueError('layout operations do not change dtype')
+                if node.kind == 'reshape_copy':
+                    if math.prod(shape) != math.prod(spec.shape) or scalar != 0:
+                        raise ValueError('reshape must preserve element count')
+                elif node.kind == 'permute_copy':
+                    code = int(scalar)
+                    axes = tuple((code >> (3*d)) & 7 for d in range(len(spec.shape)))
+                    if code != scalar or code < 0 or code >= 1 << (3*len(spec.shape)) or sorted(axes) != list(range(len(spec.shape))):
+                        raise ValueError('invalid packed permutation axes')
+                    if shape != tuple(spec.shape[d] for d in axes):
+                        raise ValueError('permutation output shape differs')
+                else:
+                    if len(shape)<len(spec.shape) or scalar != 0 or any(x not in (1,y) for x,y in zip(reversed(spec.shape),reversed(shape))):
+                        raise ValueError('expand shape is not broadcast compatible')
+                spec = TensorSpec(shape, spec.dtype)
+        elif node.kind in ('add_broadcast','mul_broadcast','div_broadcast'):
+            if node.right not in ids:
+                raise ValueError('missing broadcast input')
+            b = ids[node.right]
+            right = specs[b]
+            if right.dtype != spec.dtype:
+                raise ValueError('broadcast arithmetic requires identical dtypes; use an explicit cast')
+            shape = []
+            left_shape = (1,)*(max(len(spec.shape),len(right.shape))-len(spec.shape))+spec.shape
+            right_shape = (1,)*(len(left_shape)-len(right.shape))+right.shape
+            for x,y in zip(left_shape,right_shape):
+                if x != y and x != 1 and y != 1:
+                    raise ValueError('incompatible broadcasting dimensions')
+                shape.append(max(x,y))
+            if node.kind != 'add_broadcast' and scalar != 0:
+                raise ValueError('broadcast multiply/divide requires zero scalar')
+            spec = TensorSpec(tuple(shape),spec.dtype)
+        elif node.kind in UNARY_CODES:
             if node.right is not None or scalar != 0. or math.copysign(1., scalar) < 0:
                 raise ValueError('unary operation requires no right input and canonical zero scalar')
             b = a
@@ -132,15 +184,20 @@ def plan_layout(inputs: Mapping[str,TensorSpec], nodes: Sequence[GraphOp], outpu
                 b = ids[node.right]
             elif node.right is not None:
                 raise ValueError('softmax forward has no right tensor')
-        elif node.kind in ('sum_keepdim', 'mean_keepdim'):
+        elif node.kind in ('sum_keepdim', 'mean_keepdim', 'sum', 'mean'):
             # Bit mask, not a shape guessed from the resulting singleton axes.
             mask = int(scalar)
             if scalar != mask or not 0 < mask < (1 << len(spec.shape)) or node.right is not None:
                 raise ValueError('reduction requires a nonempty in-range dimension mask')
             b = a
-            spec = TensorSpec(tuple(1 if mask & (1 << d) else size
-                                    for d, size in enumerate(spec.shape)), spec.dtype)
+            if node.kind in ('sum','mean'):
+                spec = TensorSpec(tuple(size for d,size in enumerate(spec.shape) if not mask & (1<<d)),spec.dtype)
+            else:
+                spec = TensorSpec(tuple(1 if mask & (1 << d) else size
+                                        for d, size in enumerate(spec.shape)), spec.dtype)
         else:
+            if not spec.shape:
+                raise ValueError('RMSNorm requires a feature axis')
             if scalar <= 0: raise ValueError('RMSNorm epsilon must remain positive after FP32 conversion')
             if math.prod(spec.shape[:-1]) > (2**32-1)//32: raise ValueError('RMSNorm row grid limit')
             b = NO_WEIGHT
@@ -149,6 +206,8 @@ def plan_layout(inputs: Mapping[str,TensorSpec], nodes: Sequence[GraphOp], outpu
                 b = ids[node.right]
                 if specs[b] != TensorSpec((spec.shape[-1],), spec.dtype):
                     raise ValueError('RMSNorm needs same-dtype last-axis weight')
+        if math.prod(spec.shape)>2**32-1:
+            raise ValueError('graph output exceeds 32-bit indexing')
         words.extend((codes[node.kind],a,b)); scalars.append(scalar)
         ids[node.output]=len(names); names.append(node.output); specs.append(spec)
     if outputs is None: outputs=(nodes[-1].output,)

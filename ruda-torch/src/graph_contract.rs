@@ -33,8 +33,8 @@ pub fn validate(tensors: &[TensorSpec<'_>], nodes: &[NodeSpec], inputs: usize) -
         return Err("static graph requires 1..256 nodes, nonempty inputs, and one logical output per node (max 512 tensors)".into());
     }
     for t in tensors {
-        if t.dtype > 2 || t.shape.is_empty() || t.shape.len() > 8 || t.shape.len() != t.strides.len() {
-            return Err("static graph accepts rank 1..8 FP32/FP16/BF16 tensors".into());
+        if t.dtype > 2 || t.shape.len() > 8 || t.shape.len() != t.strides.len() {
+            return Err("static graph accepts rank 0..8 FP32/FP16/BF16 tensors".into());
         }
         let mut count = 1usize;
         for (&dim, &stride) in t.shape.iter().zip(t.strides).rev() {
@@ -50,8 +50,61 @@ pub fn validate(tensors: &[TensorSpec<'_>], nodes: &[NodeSpec], inputs: usize) -
         if n.a as usize >= out_index { return Err("static graph input must precede its output".into()); }
         let a = &tensors[n.a as usize];
         let out = &tensors[out_index];
-        if a.dtype != out.dtype || (!matches!(n.op, 7 | 30 | 104 | 105) && a.shape != out.shape) { return Err("static graph output shape/dtype mismatch".into()); }
+        if (n.op != 114 && a.dtype != out.dtype) || (!matches!(n.op, 7 | 30 | 104 | 105 | 112..=120) && a.shape != out.shape) {
+            return Err("static graph output shape/dtype mismatch".into());
+        }
         match n.op {
+            112 | 114 => {
+                if n.b != n.a || n.scalar.to_bits()!=0 || (n.op==112 && a.shape.iter().product::<usize>()!=out.shape.iter().product::<usize>())
+                    || (n.op==114 && a.shape!=out.shape) {
+                    return Err("invalid graph reshape/cast".into());
+                }
+            }
+            113 => {
+                let code=n.scalar as u32;
+                if !n.scalar.is_finite() || code as f32!=n.scalar || n.b!=n.a || a.shape.len()!=out.shape.len()
+                    || code >= (1u32 << (3*a.shape.len())) {
+                    return Err("invalid graph permutation encoding".into());
+                }
+                let mut seen=0u32;
+                for (dim,&size) in out.shape.iter().enumerate() {
+                    let axis=((code>>(3*dim))&7) as usize;
+                    if axis>=a.shape.len() || seen&(1<<axis)!=0 || size!=a.shape[axis] {
+                        return Err("invalid graph permutation axes/shape".into());
+                    }
+                    seen|=1<<axis;
+                }
+            }
+            115 => {
+                if n.b!=n.a || n.scalar.to_bits()!=0 || a.shape.len()>out.shape.len()
+                    || a.shape.iter().rev().zip(out.shape.iter().rev()).any(|(&x,&y)|x!=1 && x!=y) {
+                    return Err("invalid graph expansion".into());
+                }
+            }
+            116..=118 => {
+                if n.b as usize>=out_index || !n.scalar.is_finite() || (n.op!=116 && n.scalar.to_bits()!=0) {
+                    return Err("invalid graph broadcast inputs/scalar".into());
+                }
+                let b=&tensors[n.b as usize];
+                let rank=a.shape.len().max(b.shape.len());
+                if b.dtype!=a.dtype || out.shape.len()!=rank {return Err("invalid graph broadcast dtype/rank".into());}
+                for dim in 0..rank {
+                    let x=if dim+a.shape.len()<rank {1} else {a.shape[dim+a.shape.len()-rank]};
+                    let y=if dim+b.shape.len()<rank {1} else {b.shape[dim+b.shape.len()-rank]};
+                    if (x!=y && x!=1 && y!=1) || out.shape[dim]!=x.max(y) {
+                        return Err("invalid graph broadcast output".into());
+                    }
+                }
+            }
+            119 | 120 => {
+                let mask=n.scalar as u32;
+                let expected:Vec<_>=a.shape.iter().enumerate().filter_map(|(d,&size)|
+                    if mask&(1<<d)==0 {Some(size)} else {None}).collect();
+                if !n.scalar.is_finite() || mask as f32!=n.scalar || mask==0 || mask>=(1<<a.shape.len())
+                    || n.b!=n.a || out.shape!=expected.as_slice() {
+                    return Err("invalid squeezed reduction output/mask".into());
+                }
+            }
             COPY | 3 | 9..=14 | 17 | 19..=25 | 27 | 35..=40 | 43 | 45 | 108 => {
                 if n.b != n.a || n.scalar.to_bits() != 0f32.to_bits() {
                     return Err("unary graph node must use its input as dummy and canonical zero scalar".into());
@@ -102,6 +155,7 @@ pub fn validate(tensors: &[TensorSpec<'_>], nodes: &[NodeSpec], inputs: usize) -
             }
             RMS_NORM => {
                 if !n.scalar.is_finite() || n.scalar <= 0.0 { return Err("RMSNorm epsilon must be finite and positive".into()); }
+                if a.shape.is_empty() {return Err("RMSNorm requires a feature axis".into());}
                 let width = *a.shape.last().unwrap();
                 let rows = a.shape.iter().product::<usize>() / width;
                 if rows > u32::MAX as usize / 32 { return Err("RMSNorm row grid exceeds 32-bit indexing".into()); }

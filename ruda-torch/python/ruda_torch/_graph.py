@@ -2,6 +2,7 @@
 from collections.abc import Mapping
 from threading import RLock
 import torch
+import sys
 from . import _C
 from ._graph_spec import GraphOp, TensorSpec
 from ._graph_opt import prepare_plan
@@ -62,8 +63,13 @@ class StaticGraph:
             metadata[name]=TensorSpec(tuple(t.shape),str(t.dtype).removeprefix('torch.'))
         if type(infer_dependencies) is not bool or type(track_completion) is not bool:
             raise TypeError('graph options must be booleans')
-        plan=prepare_plan(metadata,nodes,outputs,optimize=optimize,reuse_workspace=reuse_workspace)
+        layout_api=int(getattr(sys.modules[__package__],'_graph_layout_available',False))
+        plan=prepare_plan(metadata,nodes,outputs,optimize=optimize,reuse_workspace=reuse_workspace,layout_api=layout_api)
         layout=plan.layout
+        if any(code>=112 for code in layout.words[::3]) or any(not spec.shape for spec in layout.specs):
+            from . import _graph_layout_available
+            if not _graph_layout_available:
+                raise RuntimeError('native graph layout API 1 required; rebuild Rust and C++ extensions')
         self._inputs=tuple(inputs.values())
         self._input_bindings=tuple(self._binding(t) for t in self._inputs)
         self._training=training

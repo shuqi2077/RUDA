@@ -236,6 +236,7 @@ class AdamW(torch.optim.Optimizer):
         self._poisoned = False
         self.last_step_skipped = False
         self.last_step_had_grad = False
+        self._distributed_grad_norm = None
         self._validate_groups()
 
     def _validate_step_options(self):
@@ -273,7 +274,7 @@ class AdamW(torch.optim.Optimizer):
         _no_overlap(params)
 
     @torch.no_grad()
-    def step(self, closure=None, *, loss_scale=1.0):
+    def step(self, closure=None, *, loss_scale=1.0, global_grad_norm=None):
         if self._poisoned:
             raise RuntimeError('a native optimizer call failed; reload a known checkpoint before reusing this optimizer')
         loss = None
@@ -284,6 +285,12 @@ class AdamW(torch.optim.Optimizer):
         self._validate_step_options()
         scale = _f32(loss_scale, 'loss_scale', positive=True)
         inverse = _f32(1.0 / scale, 'inverse loss scale', positive=True)
+        if global_grad_norm is None:
+            global_grad_norm=self._distributed_grad_norm
+        self._distributed_grad_norm=None
+        if global_grad_norm is not None:
+            if not self.fused_step or not math.isfinite(global_grad_norm) or global_grad_norm<0:
+                raise ValueError('global_grad_norm requires fused_step and a finite nonnegative norm')
         active = []
         occupied = [p for group in self.param_groups for p in group['params']]
         for group in self.param_groups:
@@ -315,7 +322,7 @@ class AdamW(torch.optim.Optimizer):
         if len(active) > 4096:
             raise ValueError('training API 4 accepts at most 4096 active parameter tensors')
         if self.fused_step:
-            return self._step_fused(active, inverse, loss)
+            return self._step_fused(active, inverse, loss, global_grad_norm)
         count = sum(max(1, min(1024, (g.numel() + 31)//32)) for _, _, g in active)
         device = active[0][1].device
         if self._scratch is None or self._scratch[0].numel() != count or self._scratch[0].device != device:
@@ -354,7 +361,7 @@ class AdamW(torch.optim.Optimizer):
         return loss
 
     @torch.no_grad()
-    def _step_fused(self, active, inverse, loss):
+    def _step_fused(self, active, inverse, loss, global_grad_norm=None):
         """Two native calls: read-only analysis, then one batched update command.
 
         This is not one multi-tensor GPU kernel: each parameter still launches
@@ -401,7 +408,7 @@ class AdamW(torch.optim.Optimizer):
                 if (magnitude == 0.0) != (squares == 0.0):
                     raise RuntimeError('inconsistent native gradient statistics')
                 # Host double reconstructs a norm that may exceed FP32 range.
-                norm = magnitude * math.sqrt(squares)
+                norm = magnitude * math.sqrt(squares) if global_grad_norm is None else float(global_grad_norm)
                 clip = min(1.0, float(self.max_grad_norm) / (norm + 1e-6))
                 self.last_grad_norm = norm
             clip = struct.unpack('f', struct.pack('f', clip))[0]
@@ -551,6 +558,10 @@ class GradScaler:
         if not supported and __package__:
             from .optim import Muon
             supported = isinstance(optimizer, Muon)
+        if not supported and __package__:
+            from .sharded_training import Zero2Optimizer
+            from .sharded_optim import ShardedMuon
+            supported=isinstance(optimizer,(Zero2Optimizer,ShardedMuon))
         if not supported:
             raise TypeError('this GradScaler supports ruda_torch.AdamW, Muon and MuonAdamW')
         if args or kwargs:
