@@ -52,3 +52,6 @@ jobs:
       - name: Compile Rust sharded optimizers
         run: |
           cargo check --locked -p ruda-optim --features collective,gradient-guard --lib
+      - name: Compile resumable dataset loading
+        run: |
+          cargo check --locked -p ruda-model --features dataset --lib

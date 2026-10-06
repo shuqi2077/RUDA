@@ -2,6 +2,10 @@
 #[cfg(feature = "dataset")]
 pub mod dataloader;
 
+/// Committed sample cursors and explicit topology-changing epoch continuation.
+#[cfg(feature = "std")]
+pub mod sampler;
+
 /// Dataset module.
 #[cfg(feature = "dataset")]
 pub mod dataset {
