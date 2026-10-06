@@ -2,7 +2,43 @@
 use ruda_autodiff::{Autodiff, checkpoint::strategy::CheckpointStrategy, tensor_parallel as region};
 use ruda_model::{module::{Module, Param}, tensor::{Tensor, Int, backend::Backend, module::linear, activation::silu}};
 use region::BroadcastTensorCollective;
-use super::{fully_sharded::{ShardedParameter, FullyShardedLinear}, tensor_parallel};
+use super::{fully_sharded::{ShardedParameter, FullyShardedLinear, ShardingContext}, tensor_parallel};
+
+impl<B:Backend> ShardingContext<B> {
+    /// Partition a caller-loaded output-column TP shard with shared DP leaves.
+    pub fn tensor_column(&mut self,layer:tensor_parallel::ColumnParallelLinear<B>)->FullyShardedColumnParallelLinear<B> {
+        FullyShardedColumnParallelLinear{local:self.linear(layer.local)}
+    }
+
+    /// Partition an input-row TP shard and its TP-replicated output bias.
+    pub fn tensor_row(&mut self,layer:tensor_parallel::RowParallelLinear<B>)->FullyShardedRowParallelLinear<B> {
+        FullyShardedRowParallelLinear{local:self.linear(layer.local)}
+    }
+
+    /// Preserve real adapter aliases while data-sharding a column TP adapter.
+    pub fn tensor_column_lora(&mut self,layer:tensor_parallel::ColumnParallelLoRA<B>)->FullyShardedColumnParallelLoRA<B> {
+        FullyShardedColumnParallelLoRA{base:self.tensor_column(layer.base),
+            adapter_a:self.linear(layer.adapter_a),adapter_b:self.linear(layer.adapter_b),scale:layer.scale}
+    }
+
+    /// Preserve real adapter aliases while data-sharding a row TP adapter.
+    pub fn tensor_row_lora(&mut self,layer:tensor_parallel::RowParallelLoRA<B>)->FullyShardedRowParallelLoRA<B> {
+        FullyShardedRowParallelLoRA{base:self.tensor_row(layer.base),
+            adapter_a:self.linear(layer.adapter_a),adapter_b:self.linear(layer.adapter_b),scale:layer.scale}
+    }
+
+    /// Reuse shared logical parameters across all projections of a TP MLP.
+    pub fn tensor_gated_mlp(&mut self,layer:tensor_parallel::TensorParallelGatedMlp<B>)->FullyShardedTensorParallelGatedMlp<B> {
+        FullyShardedTensorParallelGatedMlp{gate:self.tensor_column(layer.gate),
+            up:self.tensor_column(layer.up),down:self.tensor_row(layer.down)}
+    }
+
+    /// Keep explicit TP vocabulary ownership and local-table data aliases.
+    pub fn tensor_embedding(&mut self,layer:tensor_parallel::VocabParallelEmbedding<B>)->FullyShardedVocabParallelEmbedding<B> {
+        FullyShardedVocabParallelEmbedding{weight:self.parameter(layer.local.weight),
+            vocabulary_start:layer.vocabulary_start,vocabulary_size:layer.vocabulary_size,padding_index:layer.padding_index}
+    }
+}
 
 /// Preserve errors from the separate data and tensor transports.
 #[derive(Debug)]
@@ -30,14 +66,14 @@ pub struct FullyShardedRowParallelLinear<B: Backend> {
 impl<B: Backend> FullyShardedColumnParallelLinear<B> {
     /// Partition a caller-loaded TP shard, preserving its parameter identities.
     pub fn from_tensor_shard(layer: tensor_parallel::ColumnParallelLinear<B>, data_rank: usize, data_world: usize) -> Self {
-        Self { local: FullyShardedLinear::from_full(layer.local, data_rank, data_world) }
+        ShardingContext::new(data_rank,data_world).tensor_column(layer)
     }
 }
 
 impl<B: Backend> FullyShardedRowParallelLinear<B> {
     /// Partition the local input rows; the bias remains replicated only on TP.
     pub fn from_tensor_shard(layer: tensor_parallel::RowParallelLinear<B>, data_rank: usize, data_world: usize) -> Self {
-        Self { local: FullyShardedLinear::from_full(layer.local, data_rank, data_world) }
+        ShardingContext::new(data_rank,data_world).tensor_row(layer)
     }
 }
 
@@ -108,18 +144,14 @@ pub struct FullyShardedRowParallelLoRA<B: Backend> {
 impl<B: Backend> FullyShardedColumnParallelLoRA<B> {
     /// Consume an initialized TP adapter without gathering or reinitializing its base.
     pub fn from_tensor_shard(layer: tensor_parallel::ColumnParallelLoRA<B>, rank: usize, world: usize) -> Self {
-        Self { base: FullyShardedColumnParallelLinear::from_tensor_shard(layer.base, rank, world),
-            adapter_a: FullyShardedLinear::from_full(layer.adapter_a, rank, world),
-            adapter_b: FullyShardedLinear::from_full(layer.adapter_b, rank, world), scale: layer.scale }
+        ShardingContext::new(rank,world).tensor_column_lora(layer)
     }
 }
 
 impl<B: Backend> FullyShardedRowParallelLoRA<B> {
     /// Consume compatible TP adapter shards, retaining frozen/trainable flags and IDs.
     pub fn from_tensor_shard(layer: tensor_parallel::RowParallelLoRA<B>, rank: usize, world: usize) -> Self {
-        Self { base: FullyShardedRowParallelLinear::from_tensor_shard(layer.base, rank, world),
-            adapter_a: FullyShardedLinear::from_full(layer.adapter_a, rank, world),
-            adapter_b: FullyShardedLinear::from_full(layer.adapter_b, rank, world), scale: layer.scale }
+        ShardingContext::new(rank,world).tensor_row_lora(layer)
     }
 }
 
@@ -184,9 +216,7 @@ pub struct FullyShardedTensorParallelGatedMlp<B: Backend> {
 impl<B: Backend> FullyShardedTensorParallelGatedMlp<B> {
     /// Partition an existing, explicitly connected TP MLP over its data group.
     pub fn from_tensor_shard(layer: tensor_parallel::TensorParallelGatedMlp<B>, rank: usize, world: usize) -> Self {
-        Self { gate: FullyShardedColumnParallelLinear::from_tensor_shard(layer.gate, rank, world),
-            up: FullyShardedColumnParallelLinear::from_tensor_shard(layer.up, rank, world),
-            down: FullyShardedRowParallelLinear::from_tensor_shard(layer.down, rank, world) }
+        ShardingContext::new(rank,world).tensor_gated_mlp(layer)
     }
 }
 
@@ -225,8 +255,7 @@ pub struct FullyShardedVocabParallelEmbedding<B: Backend> {
 impl<B: Backend> FullyShardedVocabParallelEmbedding<B> {
     /// Keep existing vocabulary ownership while partitioning its local table on DP.
     pub fn from_tensor_shard(layer: tensor_parallel::VocabParallelEmbedding<B>, rank: usize, world: usize) -> Self {
-        Self { weight: ShardedParameter::from_full(layer.local.weight, rank, world),
-            vocabulary_start: layer.vocabulary_start, vocabulary_size: layer.vocabulary_size, padding_index: layer.padding_index }
+        ShardingContext::new(rank,world).tensor_embedding(layer)
     }
 }
 
