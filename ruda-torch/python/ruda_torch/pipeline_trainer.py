@@ -58,7 +58,7 @@ class PipelineTrainer:
         self.started=time.monotonic()
         if optimizer is not None:optimizer.zero_grad(set_to_none=True)
 
-    def train_step(self,inputs=None,targets=None,*,local_weight,loss_sum):
+    def train_step(self,inputs=None,targets=None,*,local_weight,loss_sum,microbatch_specs=None):
         inputs=list(inputs or [])
         targets=list(targets or [])
         if not callable(loss_sum):raise TypeError('supply a loss_sum(output,target) callable')
@@ -82,7 +82,16 @@ class PipelineTrainer:
             raise ValueError('first-stage inputs and last-stage targets need identical microbatch counts')
         if self.sharded_pipeline and len(set(counts))!=1:
             raise ValueError('FSDP pipeline replicas must execute the same collective-bearing microbatch count')
-        if self.stage.rank==0 and any(tuple(value.shape)!=self.stage.input_spec.shape or value.dtype!=self.stage.input_spec.dtype for value in inputs):
+        data_rank,_,tensor_rank=self.mesh.coordinates
+        count=schedules[data_rank*width+tensor_rank][0]
+        interfaces=None
+        try:interfaces=self.stage.validate_interfaces(count,microbatch_specs)
+        except (TypeError,ValueError) as failure:error=str(failure)
+        for failure in self.mesh.world.gather_metadata(error):
+            if failure:raise ValueError(failure)
+        contracts=self.mesh.tensor.gather_metadata(interfaces)
+        error=None if all(other==interfaces for other in contracts) else 'TP ranks supplied different pipeline boundary contracts'
+        if self.stage.rank==0 and any(tuple(value.shape)!=spec[0].shape or value.dtype!=spec[0].dtype for value,spec in zip(inputs,interfaces,strict=True)):
             error='first-stage input differs from its explicit pipeline interface'
         for failure in self.mesh.world.gather_metadata(error):
             if failure:raise ValueError(failure)
@@ -99,7 +108,7 @@ class PipelineTrainer:
         scale=1. if self.scaler is None else self.scaler.begin_backward()
         started=time.monotonic()
         self.stage.module.train()
-        result=self.stage.run(inputs,targets,loss_sum=loss_sum,global_weight=total,loss_scale=scale)
+        result=self.stage.run(inputs,targets,loss_sum=loss_sum,global_weight=total,loss_scale=scale,microbatch_specs=interfaces)
         if self.tied_parameters is not None:self.tied_parameters.synchronize_gradients()
         if self.optimizer is not None:
             if hasattr(self.optimizer,'synchronize_gradients'):
