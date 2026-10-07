@@ -216,6 +216,10 @@ visit_fields!(FullyShardedVocabParallelEmbedding,weight);
 visit_fields!(FullyShardedVocabParallelProjection,weight,bias);
 visit_fields!(FullyShardedAwqLinear,qweight,qzeros,scales,bias);
 visit_fields!(FullyShardedAwqLoRALinear,base,adapter_a,adapter_b);
+visit_fields!(FullyShardedAwqAttention,query,key,value,output);
+visit_fields!(FullyShardedAwqFeedForward,up,gate,down,activation);
+visit_fields!(FullyShardedAwqTransformerBlock,attention,feed_forward,attention_norm,feed_forward_norm);
+visit_fields!(FullyShardedAwqTransformerStack,blocks);
 impl<B:Backend> FullyShardedModule<B> for ShardedPackedParameter<B> {
     fn visit_shards<F:FnMut(&ShardedParameter<B>)>(&self,_visitor:&mut F) {}
     fn visit_packed_shards<F:FnMut(&ShardedPackedParameter<B>)>(&self,visitor:&mut F) {visitor(self);}
@@ -230,6 +234,7 @@ macro_rules! visit_variants {
     };
 }
 visit_variants!(FullyShardedAdaptedProjection,Dense,LoRA);
+visit_variants!(FullyShardedAwqProjection,Dense,LoRA,Awq,AwqLoRA);
 visit_variants!(FullyShardedTransformerNorm,Layer,Rms);
 visit_variants!(FullyShardedHeadProjection,Column,RowMajor);
 impl<B:Backend> FullyShardedModule<B> for FullyShardedActivation<B> {

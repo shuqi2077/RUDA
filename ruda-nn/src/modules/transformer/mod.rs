@@ -14,6 +14,7 @@ mod packed;
 mod packed_decoder;
 mod cached;
 mod cached_decoder;
+mod awq;
 
 pub use decoder::*;
 pub use encoder::*;
@@ -27,3 +28,4 @@ pub use adapter_record::*;
 pub use adapted_stack::*;
 pub use adapted_decoder::*;
 pub use decoder_adapter_record::*;
+pub use awq::*;

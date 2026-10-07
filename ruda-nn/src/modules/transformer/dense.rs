@@ -226,6 +226,14 @@ where F: FnOnce(Tensor<B,D>)->Tensor<B,D> {
     if norm_first { output } else { norm.forward(output) }
 }
 
+pub(super) fn try_residual_branch<B:Backend,F,E,const D:usize>(input:Tensor<B,D>,norm:&DenseTransformerNorm<B>,
+    dropout:&Dropout,norm_first:bool,branch:F) -> Result<Tensor<B,D>,E>
+    where F:FnOnce(Tensor<B,D>)->Result<Tensor<B,D>,E> {
+    let source=if norm_first {norm.forward(input.clone())} else {input.clone()};
+    let output=input+dropout.forward(branch(source)?);
+    Ok(if norm_first {output} else {norm.forward(output)})
+}
+
 /// Residual cross-attention on actual encoder memory, including nonmatching widths.
 #[derive(Module,Debug)]
 pub struct DenseCrossAttentionBlock<B: Backend> {

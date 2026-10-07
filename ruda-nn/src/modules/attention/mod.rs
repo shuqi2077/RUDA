@@ -4,6 +4,7 @@ mod mha;
 mod packed;
 mod dense;
 mod cached;
+pub(crate) use cached::append as append_cached_projected;
 mod packed_projection;
 mod packed_mask;
 pub use packed_mask::{PackedDocumentAttentionMask,packed_scaled_dot_product_attention_masked};

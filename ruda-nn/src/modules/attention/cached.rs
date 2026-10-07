@@ -11,7 +11,7 @@ fn cached_masks<B: Backend>(mut masks: DenseAttentionMask<B>,visible: Tensor<B,2
     masks
 }
 
-fn append<B: Backend>(query: &Tensor<B,4>,key: Tensor<B,4>,value: Tensor<B,4>,
+pub(crate) fn append<B: Backend>(query: &Tensor<B,4>,key: Tensor<B,4>,value: Tensor<B,4>,
     new_visible: Option<Tensor<B,2,Bool>>,cache: &mut ProjectedKvCache<B>,masks: DenseAttentionMask<B>,
     geometry: (usize,usize,usize)) -> (Tensor<B,4>,Tensor<B,4>,DenseAttentionMask<B>) {
     let [batch,heads,_,width] = query.dims();

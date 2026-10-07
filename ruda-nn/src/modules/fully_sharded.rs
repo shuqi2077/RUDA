@@ -30,6 +30,8 @@ mod training;
 pub use training::*;
 mod awq;
 pub use awq::*;
+mod awq_transformer;
+pub use awq_transformer::*;
 
 /// Explicit construction context preserving one local autograd leaf per source ID.
 /// Reuse a context for all tied layers, then drop it after model construction. It
