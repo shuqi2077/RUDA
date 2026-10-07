@@ -54,9 +54,33 @@ impl<B: Backend,S: CheckpointStrategy> TensorParallelFeedForward<Autodiff<B,S>> 
     /// Replicated full residual bias is added after reduction and is not rank-multiplied.
     pub fn forward<C: BroadcastTensorCollective<B>,const D: usize>(&self,input: Tensor<Autodiff<B,S>,D>,communicator: C)
         -> Result<Tensor<Autodiff<B,S>,D>,C::Error> {
+        self.forward_with_activation(input,communicator,|module,input|Ok(module.forward(input)))
+    }
+
+    /// Explicit actual activation transform for shard-local or replicated activation state.
+    /// Input gradients still use one shared region and output bias remains a single post-SUM addition.
+    pub fn forward_with_activation<C,F,const D: usize>(&self,input: Tensor<Autodiff<B,S>,D>,communicator: C,activation: F)
+        -> Result<Tensor<Autodiff<B,S>,D>,C::Error>
+        where C: BroadcastTensorCollective<B>,
+            F: FnOnce(&crate::activation::Activation<Autodiff<B,S>>,Tensor<Autodiff<B,S>,D>)->Result<Tensor<Autodiff<B,S>,D>,C::Error> {
         assert!(D > 0,"parallel FFN requires a feature axis");
         let input = region::copy_to_region(input,communicator.clone())?;
-        let partial = self.partial(input);
+        let up = self.local.up.forward(input.clone());
+        let value = if let Some(gate) = &self.local.gate {
+            let activated = activation(&self.local.activation,gate.forward(input))?;
+            assert_eq!(activated.dims(),up.dims(),"parallel activation changed actual gate geometry");
+            activated*up
+        } else {activation(&self.local.activation,up)?};
+        let partial = linear(self.local.dropout.forward(value),self.local.down.weight.val(),None);
         Ok(self.bias(region::reduce_from_region(partial,communicator)?))
+    }
+
+    /// SUM derivatives for explicitly replicated activation parameters, such as one shared PReLU slope.
+    /// Channel-mixing activation placement and replica membership are explicitly caller-owned.
+    pub fn forward_with_replicated_activation<C,K,const D: usize>(&self,input: Tensor<Autodiff<B,S>,D>,communicator: C,activation_group: K)
+        -> Result<Tensor<Autodiff<B,S>,D>,C::Error>
+        where C: BroadcastTensorCollective<B>,K: BroadcastTensorCollective<B,Error=C::Error> {
+        self.forward_with_activation(input,communicator,|module,input|
+            super::copy_replicated_module_to_region::<B,S,K,_>(module.clone(),activation_group).map(|module|module.forward(input)))
     }
 }
