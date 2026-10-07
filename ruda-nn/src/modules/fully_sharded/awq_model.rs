@@ -2,6 +2,8 @@ use super::*;
 use ruda_model::tensor::{Bool,FrozenAwqOps,IntegerTensorCollective};
 use crate::{attention::{DenseAttentionMask,DenseAttentionOptions,PackedSequenceLayout,PackedAttentionOptions,PackedDocumentAttentionMask},
     cache::TransformerKvCache,transformer::{AwqTransformerHead,AwqTransformerModel}};
+use crate::loss::{CausalCrossEntropyConfig,CausalLoss};
+use ruda_autodiff::collective::{CollectiveScope,ScopedCollectiveError};
 
 /// Exact native output projection/norm/dropout with integer and floating storage sharded.
 #[derive(Module,Debug)]
@@ -124,5 +126,70 @@ impl<B:FrozenAwqOps> FullyShardedAwqTransformerModel<B> {
         cache.finish_chunk(next);
         let hidden=if let Some(norm)=&self.normalization {norm.gather_inference(communicator.clone()).map_err(FullyShardedAwqError::Collective)?.forward(hidden)} else {hidden};
         self.head.forward_inference(hidden,communicator)
+    }
+}
+
+/// Original packed model/transport failure or original distributed loss-completion failure.
+#[derive(Debug)]
+pub enum FullyShardedAwqTrainingError<C:core::fmt::Debug,Q:core::fmt::Debug> {
+    /// Original actual native projection or data gather failure.
+    Model(FullyShardedAwqError<C,Q>),
+    /// Original scoped loss reachability/count/transport completion failure.
+    Loss(ScopedCollectiveError<C>),
+}
+impl<C:core::fmt::Debug,Q:core::fmt::Debug> core::fmt::Display for FullyShardedAwqTrainingError<C,Q> {
+    fn fmt(&self,f:&mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {Self::Model(error)=>write!(f,"AWQ training model: {error}"),Self::Loss(error)=>write!(f,"AWQ training loss: {error}")}
+    }
+}
+impl<C:core::fmt::Debug,Q:core::fmt::Debug> core::error::Error for FullyShardedAwqTrainingError<C,Q> {}
+
+macro_rules! awq_head_loss {
+    ($backend:ty,[$($generics:tt)*],$gather:ident,$causal:ident,$packed:ident) => {
+        impl<$($generics)*> FullyShardedAwqTransformerHead<$backend> {
+            /// Gather the actual output head once and reuse it for full-vocabulary token chunks.
+            pub fn $causal<C:IntegerTensorCollective<B>>(&self,hidden:Tensor<$backend,3>,labels:Tensor<$backend,2,Int>,
+                criterion:&CausalCrossEntropyConfig,label_smoothing:f64,communicator:C)
+                -> Result<CausalLoss<$backend>,FullyShardedAwqError<C::Error,<$backend as FrozenAwqOps>::AwqError>> {
+                let head=self.$gather(communicator).map_err(FullyShardedAwqError::Collective)?;
+                criterion.try_forward_hidden_with_smoothing(hidden,labels,|rows|head.forward(rows),label_smoothing).map_err(FullyShardedAwqError::Projection)
+            }
+            /// Original document-local shifted labels and full-vocabulary smoothing/counts.
+            pub fn $packed<C:IntegerTensorCollective<B>>(&self,hidden:Tensor<$backend,2>,labels:Tensor<$backend,1,Int>,layout:&PackedSequenceLayout,
+                criterion:&CausalCrossEntropyConfig,label_smoothing:f64,communicator:C)
+                -> Result<CausalLoss<$backend>,FullyShardedAwqError<C::Error,<$backend as FrozenAwqOps>::AwqError>> {
+                let head=self.$gather(communicator).map_err(FullyShardedAwqError::Collective)?;
+                criterion.try_forward_packed_hidden_with_smoothing(hidden,labels,layout,|rows|head.forward(rows),label_smoothing).map_err(FullyShardedAwqError::Projection)
+            }
+        }
+    };
+}
+awq_head_loss!(B,[B:FrozenAwqOps],gather_inference,forward_causal_loss_inference,forward_packed_causal_loss_inference);
+awq_head_loss!(Autodiff<B,S>,[B:FrozenAwqOps,S:CheckpointStrategy],gather,forward_causal_loss,forward_packed_causal_loss);
+
+impl<B:FrozenAwqOps,S:CheckpointStrategy> FullyShardedAwqTransformerModel<Autodiff<B,S>> {
+    /// Complete actual native fine-tuning graph, globally counted original causal loss
+    /// and rank-consistent AD reachability. No second gradient reduction or skip policy.
+    pub fn forward_causal_with_positions<C,F>(&self,input:FullyShardedTransformerInput<Autodiff<B,S>>,labels:Tensor<Autodiff<B,S>,2,Int>,
+        masks:DenseAttentionMask<Autodiff<B,S>>,options:DenseAttentionOptions,criterion:&CausalCrossEntropyConfig,label_smoothing:f64,communicator:C,positions:F)
+        -> Result<FullyShardedLoss<B,S>,FullyShardedAwqTrainingError<C::Error,<Autodiff<B,S> as FrozenAwqOps>::AwqError>>
+        where C:IntegerTensorCollective<B>,F:FnMut(usize,Tensor<Autodiff<B,S>,4>,Tensor<Autodiff<B,S>,4>)->(Tensor<Autodiff<B,S>,4>,Tensor<Autodiff<B,S>,4>) {
+        let scope=CollectiveScope::<B,S>::new();let transport=scope.bind(communicator.clone());
+        let hidden=self.forward_hidden(input,masks,options,transport.clone(),positions).map_err(FullyShardedAwqTrainingError::Model)?;
+        let loss=self.head.forward_causal_loss(hidden,labels,criterion,label_smoothing,transport).map_err(FullyShardedAwqTrainingError::Model)?;
+        complete_fully_sharded_loss(&scope,loss.loss_sum,loss.valid_tokens,communicator).map_err(FullyShardedAwqTrainingError::Loss)
+    }
+    /// Complete packed-document fine tuning through real packed/dense/adapted projections.
+    /// Original label shifting never crosses document boundaries; exact global integer
+    /// normalization/empty-rank backward participation reuse the existing native scope.
+    pub fn forward_packed_causal_with_positions<C,F>(&self,input:FullyShardedTransformerInput<Autodiff<B,S>,1>,labels:Tensor<Autodiff<B,S>,1,Int>,
+        layout:&PackedSequenceLayout,masks:Option<&[PackedDocumentAttentionMask<Autodiff<B,S>>]>,options:PackedAttentionOptions,
+        criterion:&CausalCrossEntropyConfig,label_smoothing:f64,communicator:C,positions:F)
+        -> Result<FullyShardedLoss<B,S>,FullyShardedAwqTrainingError<C::Error,<Autodiff<B,S> as FrozenAwqOps>::AwqError>>
+        where C:IntegerTensorCollective<B>,F:FnMut(usize,Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>)->(Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>) {
+        let scope=CollectiveScope::<B,S>::new();let transport=scope.bind(communicator.clone());
+        let hidden=self.forward_packed_hidden(input,layout,masks,options,transport.clone(),positions).map_err(FullyShardedAwqTrainingError::Model)?;
+        let loss=self.head.forward_packed_causal_loss(hidden,labels,layout,criterion,label_smoothing,transport).map_err(FullyShardedAwqTrainingError::Model)?;
+        complete_fully_sharded_loss(&scope,loss.loss_sum,loss.valid_tokens,communicator).map_err(FullyShardedAwqTrainingError::Loss)
     }
 }

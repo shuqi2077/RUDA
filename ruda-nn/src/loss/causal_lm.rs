@@ -122,6 +122,18 @@ impl CausalCrossEntropyConfig {
         &self, hidden: Tensor<B, 2>, labels: Tensor<B, 1, Int>, layout: &PackedSequenceLayout,
         project: impl Fn(Tensor<B, 2>) -> Tensor<B, 2>, label_smoothing: f64,
     ) -> CausalLoss<B> {
+        match self.try_forward_packed_hidden_with_smoothing(hidden,labels,layout,
+            |rows|Ok::<_,core::convert::Infallible>(project(rows)),label_smoothing) {
+            Ok(loss)=>loss,Err(never)=>match never {},
+        }
+    }
+
+    /// Original document-local shifted full-vocabulary objective with fallible
+    /// native projection. Backend errors propagate without replacing or skipping chunks.
+    pub fn try_forward_packed_hidden_with_smoothing<B:Backend,E>(
+        &self,hidden:Tensor<B,2>,labels:Tensor<B,1,Int>,layout:&PackedSequenceLayout,
+        project:impl Fn(Tensor<B,2>)->Result<Tensor<B,2>,E>,label_smoothing:f64,
+    ) -> Result<CausalLoss<B>,E> {
         let [tokens, width] = hidden.dims();
         assert_eq!(tokens, layout.tokens(), "packed hidden states differ from document metadata");
         assert_eq!(labels.dims(), [tokens], "packed hidden and label lengths differ");
@@ -129,7 +141,7 @@ impl CausalCrossEntropyConfig {
         let labels = if self.shift {
             labels.clone().mask_fill(layout.document_starts::<B>(&labels.device()), self.ignore_index)
         } else { labels };
-        self.forward_hidden_with_smoothing(hidden.reshape([1, tokens, width]), labels.reshape([1, tokens]), project, label_smoothing)
+        self.try_forward_hidden_with_smoothing(hidden.reshape([1, tokens, width]), labels.reshape([1, tokens]), project, label_smoothing)
     }
 
     pub fn forward_logits<B: Backend>(
@@ -198,6 +210,19 @@ impl CausalCrossEntropyConfig {
         &self, hidden: Tensor<B, 3>, labels: Tensor<B, 2, Int>,
         project: impl Fn(Tensor<B, 2>) -> Tensor<B, 2>, label_smoothing: f64,
     ) -> CausalLoss<B> {
+        match self.try_forward_hidden_with_smoothing(hidden,labels,
+            |rows|Ok::<_,core::convert::Infallible>(project(rows)),label_smoothing) {
+            Ok(loss)=>loss,Err(never)=>match never {},
+        }
+    }
+
+    /// The same FP32 full-vocabulary, chunked, shifted/ignored/smoothed loss with
+    /// an explicitly fallible projection. Original count and rounding are retained;
+    /// a failed projection returns its real error, not a partial mean or skipped rows.
+    pub fn try_forward_hidden_with_smoothing<B:Backend,E>(
+        &self,hidden:Tensor<B,3>,labels:Tensor<B,2,Int>,
+        project:impl Fn(Tensor<B,2>)->Result<Tensor<B,2>,E>,label_smoothing:f64,
+    ) -> Result<CausalLoss<B>,E> {
         assert!(label_smoothing.is_finite() && (0.0..=1.0).contains(&label_smoothing), "label smoothing must be in [0,1]");
         assert!(
             self.token_chunk_size > 0,
@@ -222,10 +247,10 @@ impl CausalCrossEntropyConfig {
         let count = batch.checked_mul(length).expect("token count overflow");
         if count == 0 {
             let mask = Tensor::<B, 3, Bool>::zeros(hidden.dims(), &hidden.device()).bool_not();
-            return CausalLoss {
+            return Ok(CausalLoss {
                 loss_sum: hidden.cast(DType::F32).mask_fill(mask, 0).sum(),
                 valid_tokens: Tensor::zeros([1], (&labels.device(),DType::I64)),
-            };
+            });
         }
         let (hidden, labels) = if self.shift && sequence > 0 {
             (
@@ -243,7 +268,7 @@ impl CausalCrossEntropyConfig {
         let mut loss_sum = Tensor::zeros([1], (&hidden.device(), DType::F32));
         for start in (0..count).step_by(self.token_chunk_size) {
             let end = start.saturating_add(self.token_chunk_size).min(count);
-            let logits = project(hidden.clone().slice([start..end, 0..width]));
+            let logits = project(hidden.clone().slice([start..end, 0..width]))?;
             assert_eq!(
                 logits.dims()[0],
                 end - start,
@@ -272,10 +297,10 @@ impl CausalCrossEntropyConfig {
                     .mask_fill(ignored.clone().slice([start..end]), 0)
                     .sum();
         }
-        CausalLoss {
+        Ok(CausalLoss {
             loss_sum,
             valid_tokens,
-        }
+        })
     }
 }
 
