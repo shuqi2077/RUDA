@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
 from pathlib import Path
 import re
+import sys
 import time
 import types
 from datetime import datetime, timezone
@@ -220,11 +222,11 @@ class CausalLMFinetuner(nn.Module):
             raise TypeError('backbone must return hidden states, not vocabulary logits')
         return result.last_hidden_state
 
-    def forward(self, input_ids, attention_mask, labels, *, reduction='mean'):
+    def forward(self, input_ids, attention_mask, labels, *, reduction='mean', label_smoothing=None):
         hidden = self.hidden(input_ids, attention_mask)
         return chunked_lm_cross_entropy(hidden, self.head, labels,
                                        token_chunk_size=self.token_chunk_size, reduction=reduction,
-                                       label_smoothing=self.label_smoothing)
+                                       label_smoothing=self.label_smoothing if label_smoothing is None else label_smoothing)
 
 
 class PackedCausalLMFinetuner(CausalLMFinetuner):
@@ -237,7 +239,7 @@ class PackedCausalLMFinetuner(CausalLMFinetuner):
     """
     packed_input=True
 
-    def forward(self,input_ids,attention_mask,labels,position_ids,cu_seqlens,max_seqlen,*,reduction='mean'):
+    def forward(self,input_ids,attention_mask,labels,position_ids,cu_seqlens,max_seqlen,*,reduction='mean',label_smoothing=None):
         from .varlen_attention import _boundaries
         if input_ids.ndim!=1 or labels.shape!=input_ids.shape or position_ids.shape!=input_ids.shape or attention_mask.shape!=input_ids.shape:
             raise ValueError('packed causal tensors must share the real flat token axis')
@@ -253,7 +255,7 @@ class PackedCausalLMFinetuner(CausalLMFinetuner):
         hidden=result if isinstance(result,torch.Tensor) else result.last_hidden_state
         if tuple(hidden.shape[:-1])!=tuple(input_ids.shape):raise ValueError('packed backbone must preserve flat tokens, not return vocabulary logits')
         return chunked_lm_cross_entropy(hidden,self.head,labels,token_chunk_size=self.token_chunk_size,
-                                       reduction=reduction,label_smoothing=self.label_smoothing)
+                                       reduction=reduction,label_smoothing=self.label_smoothing if label_smoothing is None else label_smoothing)
 
 
 def load_hf_nf4_model(directory, *, target_modules, device, dtype=torch.bfloat16,
@@ -346,30 +348,34 @@ class SFTTrainer:
         self.last_checkpoint = None
         self.optimizer.zero_grad(set_to_none=True)
 
+    def _batch_counts(self, microbatches):
+        counts = []
+        for batch in microbatches:
+            expected={'input_ids','attention_mask','labels'}|({'position_ids','cu_seqlens','max_seqlen'} if self.packed_input else set())
+            if set(batch) != expected or any(t.device.type != 'cpu' for t in batch.values() if isinstance(t,torch.Tensor)):
+                raise ValueError('supply collated CPU input_ids, attention_mask and labels')
+            if batch['labels'].shape != batch['input_ids'].shape or batch['attention_mask'].shape != batch['labels'].shape:
+                raise ValueError('SFT batch shapes must match')
+            if batch['attention_mask'].dtype != torch.bool or ((batch['labels'] != -100) & ~batch['attention_mask']).any():
+                raise ValueError('padding must not be supervised')
+            if self.packed_input:
+                from .varlen_attention import _boundaries
+                boundaries=_boundaries(batch['cu_seqlens'],batch['input_ids'].numel())
+                if batch['input_ids'].ndim!=1 or batch['position_ids'].shape!=batch['input_ids'].shape:
+                    raise ValueError('packed batches need flat tokens and corresponding positions')
+                if type(batch['max_seqlen']) is not int or batch['max_seqlen']!=max(end-begin for begin,end in zip(boundaries,boundaries[1:])):
+                    raise ValueError('packed maximum length differs from actual document boundaries')
+                if any(int(batch['labels'][begin])!=-100 for begin,end in zip(boundaries,boundaries[1:]) if end>begin):
+                    raise ValueError('packed document starts cannot be cross-document next-token targets')
+                counts.append(int((batch['labels'][1:]!=-100).sum()))
+            else:counts.append(int((batch['labels'][:, 1:] != -100).sum()))
+        return counts
+
     def train_step(self, microbatches):
         microbatches = list(microbatches)
-        counts = []
         error = None
         try:
-            for batch in microbatches:
-                expected={'input_ids','attention_mask','labels'}|({'position_ids','cu_seqlens','max_seqlen'} if self.packed_input else set())
-                if set(batch) != expected or any(t.device.type != 'cpu' for t in batch.values() if isinstance(t,torch.Tensor)):
-                    raise ValueError('supply collated CPU input_ids, attention_mask and labels')
-                if batch['labels'].shape != batch['input_ids'].shape or batch['attention_mask'].shape != batch['labels'].shape:
-                    raise ValueError('SFT batch shapes must match')
-                if batch['attention_mask'].dtype != torch.bool or ((batch['labels'] != -100) & ~batch['attention_mask']).any():
-                    raise ValueError('padding must not be supervised')
-                if self.packed_input:
-                    from .varlen_attention import _boundaries
-                    boundaries=_boundaries(batch['cu_seqlens'],batch['input_ids'].numel())
-                    if batch['input_ids'].ndim!=1 or batch['position_ids'].shape!=batch['input_ids'].shape:
-                        raise ValueError('packed batches need flat tokens and corresponding positions')
-                    if type(batch['max_seqlen']) is not int or batch['max_seqlen']!=max(end-begin for begin,end in zip(boundaries,boundaries[1:])):
-                        raise ValueError('packed maximum length differs from actual document boundaries')
-                    if any(int(batch['labels'][begin])!=-100 for begin,end in zip(boundaries,boundaries[1:]) if end>begin):
-                        raise ValueError('packed document starts cannot be cross-document next-token targets')
-                    counts.append(int((batch['labels'][1:]!=-100).sum()))
-                else:counts.append(int((batch['labels'][:, 1:] != -100).sum()))
+            counts = self._batch_counts(microbatches)
             if self.replica_group is not None:
                 self.replica_group.validate_model(self.model)
             if self.sampler is not None:
@@ -454,6 +460,79 @@ class SFTTrainer:
                 'optimizer_update_skipped': skipped,
                 'total_seconds': self.elapsed_before_resume + time.monotonic() - self.started,
                 'updated_at': datetime.now(timezone.utc).isoformat()}
+
+    def evaluate(self, microbatches):
+        """Unsmoothed token-weighted NLL/perplexity on caller-supplied CPU batches.
+
+        No optimizer update, gradient reset, scheduler/scaler update or attached
+        training-sampler commit is performed. Existing module training flags,
+        including FSDP templates and mixed-mode children, are restored afterward.
+        All distributed coordinates participate using their actual coordinator's
+        forward schedule. Loss sums/counts cover distinct DP examples, not TP copies.
+        An entirely unsupervised window reports unknown loss/perplexity, not zero.
+        """
+        microbatches = list(microbatches)
+        counts, error = [], None
+        try:
+            counts = self._batch_counts(microbatches)
+            if self.replica_group is not None:
+                self.replica_group.validate_model(self.model)
+        except (ValueError, TypeError, AttributeError) as failure:
+            if self.replica_group is None:
+                raise
+            error = str(failure)
+        local_count = sum(counts)
+        if self.replica_group is not None:
+            for failure in self.replica_group.gather_metadata(error):
+                if failure:
+                    raise ValueError(failure)
+            if hasattr(self.replica_group, 'validate_microbatches'):
+                self.replica_group.validate_microbatches(microbatches)
+            self.replica_group.validate_training_options(('evaluation', self.step, self.base_id, self.packed_input, 0.))
+            weights = self.replica_group.gather_metadata(local_count)
+            count = self.replica_group.total_weight(local_count) if any(weights) else 0
+        else:
+            count = local_count
+        modes, seen = [], set()
+        def retain_modes(module):
+            if id(module) in seen:
+                return
+            seen.add(id(module))
+            modes.append((module, module.training))
+            for child in module.children():
+                retain_modes(child)
+            template = getattr(module, '_template', None)
+            if isinstance(template, nn.Module):
+                retain_modes(template)
+        retain_modes(self.model)
+        device = next(self.model.parameters()).device
+        started = time.monotonic()
+        total = None
+        try:
+            self.executable.eval()
+            with torch.no_grad():
+                for batch in microbatches:
+                    batch = {name: value.to(device) if isinstance(value, torch.Tensor) and name != 'cu_seqlens' else value
+                             for name, value in batch.items()}
+                    loss = self.executable(**batch, reduction='sum', label_smoothing=0.)
+                    total = loss.detach() if total is None else total + loss.detach()
+                if total is None:
+                    total = torch.zeros((), dtype=torch.float32, device=device)
+                if self.replica_group is not None:
+                    self.replica_group.sum_(total)
+                loss_sum = float(total.cpu())
+        finally:
+            for module, training in modes:
+                module.train(training)
+            # A tied child may have been visited through multiple parents.
+            for module, training in modes:
+                module.training = training
+        elapsed = time.monotonic() - started
+        mean = None if count == 0 else loss_sum / count
+        perplexity = None if mean is None else math.inf if mean > math.log(sys.float_info.max) else math.exp(mean)
+        return {'supervised_tokens': count, 'nll_sum': loss_sum, 'nll_mean': mean, 'perplexity': perplexity,
+                'microbatches': len(microbatches), 'evaluation_seconds': elapsed,
+                'supervised_tokens_per_second': count / elapsed if elapsed else None}
 
     def _loss_options(self):
         template = getattr(self.model, '_template', self.model)
