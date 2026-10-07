@@ -50,6 +50,7 @@ jobs:
       - name: Compile Rust sharded layers and no_std
         run: |
           cargo check --locked -p ruda-nn --no-default-features --features tensor-parallel --lib
+          cargo check --locked -p ruda-nn --no-default-features --features std,tensor-parallel --lib
       - name: Compile Rust sharded optimizers
         run: |
           cargo check --locked -p ruda-optim --features collective,gradient-guard --lib
