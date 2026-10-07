@@ -4,6 +4,9 @@ use crate::{attention::{DenseAttentionMask,DenseAttentionOptions,PackedSequenceL
     cache::TransformerKvCache,pool::SequencePooling,transformer::SequenceHeadOutput};
 use ruda_model::tensor::Bool;
 
+mod seq2seq;
+pub use seq2seq::*;
+
 /// Complete actual input -> original ordered backbone -> optional final norm -> original head.
 /// Only local parameter shards persist; full gathered values follow the selected AD checkpoint strategy.
 #[derive(Module,Debug)]
@@ -38,6 +41,29 @@ pub(super) fn packed_input<B:Backend>(input:FullyShardedTransformerInput<B,1>,la
         token_types:input.token_types.map(convert),embedding_dtypes:input.embedding_dtypes}
 }
 
+impl<B:Backend> ShardingContext<B> {
+    /// Partition a complete loaded dense model with one canonical local leaf for every source identity.
+    pub fn transformer_model(&mut self,embeddings:crate::transformer::TransformerEmbeddings<B>,
+        backbone:crate::transformer::DenseTransformerStack<B>,normalization:Option<crate::transformer::DenseTransformerNorm<B>>,
+        head:crate::transformer::TransformerHead<B>) -> FullyShardedTransformerModel<B> {
+        let embeddings=self.transformer_embeddings(embeddings);
+        let backbone=self.transformer_stack(backbone);
+        let normalization=normalization.map(|norm|self.normalization(norm));
+        let head=self.transformer_head(head);
+        FullyShardedTransformerModel::from_parts(embeddings,backbone,normalization,head)
+    }
+    /// Partition actual loaded adapters; no role-selection, freeze policy or new A/B initialization is applied.
+    pub fn adapted_transformer_model(&mut self,embeddings:crate::transformer::TransformerEmbeddings<B>,
+        backbone:crate::transformer::AdaptedTransformerStack<B>,normalization:Option<crate::transformer::DenseTransformerNorm<B>>,
+        head:crate::transformer::AdaptedTransformerHead<B>) -> FullyShardedTransformerModel<B> {
+        let embeddings=self.transformer_embeddings(embeddings);
+        let backbone=self.adapted_transformer_stack(backbone);
+        let normalization=normalization.map(|norm|self.normalization(norm));
+        let head=self.adapted_transformer_head(head);
+        FullyShardedTransformerModel::from_parts(embeddings,backbone,normalization,head)
+    }
+}
+
 impl<B:Backend> FullyShardedTransformerModel<B> {
     /// Assemble actual already-sharded components; reuse one ShardingContext while constructing shared roles.
     /// Masks, positional policies, vocabulary, trainability and precision are not selected by this constructor.
@@ -60,9 +86,10 @@ macro_rules! model_execution {
             pub fn $hidden_with<C,F>(&self,input:FullyShardedTransformerInput<$backend>,communicator:C,layer:F)
                 -> Result<Tensor<$backend,3>,C::Error>
                 where C:BroadcastTensorCollective<B>,F:FnMut(usize,&FullyShardedTransformerBlock<$backend>,Tensor<$backend,3>)->Result<Tensor<$backend,3>,C::Error> {
+                let [batch,tokens]=input.tokens.dims();
                 let hidden=self.embeddings.$embed(input,communicator.clone())?;
                 let hidden=self.backbone.forward_with(hidden,layer)?;
-                assert_eq!(hidden.dims()[2],self.head.hidden_width(),"sharded backbone changed hidden width");
+                assert_eq!(hidden.dims(),[batch,tokens,self.head.hidden_width()],"sharded backbone changed actual row geometry");
                 Ok(if let Some(norm)=&self.normalization {norm.$gather(communicator)?.forward(hidden)} else {hidden})
             }
             /// Flat actual document rows, with no padding or invented learned position IDs.
