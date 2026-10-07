@@ -14,6 +14,8 @@ mod attention;
 pub use attention::*;
 mod feed_forward;
 pub use feed_forward::*;
+mod transformer;
+pub use transformer::*;
 
 /// Output-feature shard of a global projection, with an optional local bias shard.
 /// Construct local weights directly or load an explicitly partitioned checkpoint.
