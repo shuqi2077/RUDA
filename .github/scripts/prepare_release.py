@@ -39,15 +39,35 @@ def commit_versions():
 def prepare():
     if git("status", "--porcelain"):
         raise RuntimeError("Release preparation requires a clean checkout")
+    initial_main = git("ls-remote", "origin", "refs/heads/main").split()[0]
     update_versions()
     commit_versions()
     revision = git("rev-parse", "HEAD")
-    git("push", "origin", "HEAD:refs/heads/main")
+    if git("ls-remote", "origin", "refs/heads/main").split()[0] != initial_main:
+        return superseded()
+    try:
+        git("push", "origin", "HEAD:refs/heads/main")
+    except subprocess.CalledProcessError:
+        remote_main = git("ls-remote", "origin", "refs/heads/main").split()[0]
+        if remote_main == revision:
+            pass
+        elif remote_main != initial_main:
+            return superseded()
+        else:
+            raise
     if output := os.environ.get("GITHUB_OUTPUT"):
         with open(output, "a", encoding="utf-8") as file:
             file.write(f"revision={revision}\n")
     print(f"Release source: {revision}", flush=True)
     return revision
+
+
+def superseded():
+    if output := os.environ.get("GITHUB_OUTPUT"):
+        with open(output, "a", encoding="utf-8") as file:
+            file.write("revision=\n")
+    print("Main advanced during version preparation; its CI will trigger a fresh release plan.", flush=True)
+    return ""
 
 
 if __name__ == "__main__":
