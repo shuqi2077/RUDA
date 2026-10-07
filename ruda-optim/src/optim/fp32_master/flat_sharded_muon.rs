@@ -2,6 +2,16 @@ use super::*;
 use crate::{Muon,MuonError,MuonFlatShardLayout,MuonFlatShardedState,MuonShardedError};
 use ruda_model::tensor::BroadcastTensorCollective;
 
+impl Fp32MasterOptimizer<crate::MuonAdamWConfig> {
+    /// Attach explicit FP32 masters to complete flat-FSDP Muon/AdamW routing using the existing wrapper options.
+    /// Loss-scale division and optional clipping are preserved; no dynamic scaling or skip policy is introduced.
+    pub fn init_fully_sharded<B,M,C>(&self,module:&M,parameters:&[crate::FullyShardedOptimizerParameter<C>])
+        -> Result<crate::FullyShardedMuonAdamW<M,B,C>,MuonShardedError<C::Error>>
+        where B:AutodiffBackend,M:AutodiffModule<B>,C:BroadcastTensorCollective<B::InnerBackend> {
+        self.optimizer.init_fully_sharded_master(module,parameters,self.gradient_scale,self.grad_clipping.clone())
+    }
+}
+
 impl<B:Backend> Fp32MasterState<B,1,MuonFlatShardedState<B>> {
     /// Partition a caller-loaded authoritative FP32 matrix/master and its actual original momentum together.
     /// Do not seed a master from already-rounded model storage when continuing a completed optimization run.

@@ -55,6 +55,10 @@ pub struct AdamW {
     cautious_weight_decay: bool,
 }
 
+impl AdamW {
+    pub(crate) fn uses_amsgrad(&self) -> bool {self.momentum.amsgrad}
+}
+
 /// AdamW state.
 #[derive(Record, Clone, new)]
 pub struct AdamWState<B: Backend, const D: usize> {

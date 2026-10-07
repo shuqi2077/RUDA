@@ -20,6 +20,8 @@ mod sharded;
 pub use sharded::*;
 mod record_validation;
 use record_validation::validate_adam_records;
+mod fully_sharded;
+pub use fully_sharded::*;
 
 type Manifest = Vec<(u64, Vec<usize>, bool, String)>;
 type MuonRecords<B: AutodiffBackend> = HashMap<ParamId, AdaptorRecord<Muon<<B as AutodiffBackend>::InnerBackend>, B>>;

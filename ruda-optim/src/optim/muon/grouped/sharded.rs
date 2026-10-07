@@ -68,7 +68,7 @@ impl MuonAdamWConfig {
     }
 }
 
-fn used<B,C>(present: bool,device: &B::Device,communicator: &C) -> Result<bool,MuonShardedError<C::Error>>
+pub(super) fn used<B,C>(present: bool,device: &B::Device,communicator: &C) -> Result<bool,MuonShardedError<C::Error>>
     where B: Backend,C: BroadcastTensorCollective<B> {
     if communicator.world_size() == 1 {return Ok(present);}
     let vote = Tensor::<B,1>::from_floats([if present {1.0f32} else {0.0}],device).cast(DType::F32);
@@ -116,7 +116,9 @@ impl<M,B,C> MuonShardedAdamW<M,B,C>
     }
 }
 
-struct Updates<B: AutodiffBackend> {values:TensorContainer<ParamId>,updated:TensorContainer<ParamId>,backend:core::marker::PhantomData<B>}
+pub(super) struct Updates<B: AutodiffBackend> {
+    pub(super) values:TensorContainer<ParamId>,pub(super) updated:TensorContainer<ParamId>,pub(super) backend:core::marker::PhantomData<B>,
+}
 impl<B: AutodiffBackend> ModuleMapper<B> for Updates<B> {
     fn map_float<const D: usize>(&mut self,param: Param<Tensor<B,D>>) -> Param<Tensor<B,D>> {
         let id = param.id;

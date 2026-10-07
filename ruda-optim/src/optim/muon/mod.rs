@@ -20,6 +20,7 @@ pub use error::MuonError;
 mod grouped;
 pub use grouped::{MuonAdamW,MuonAdamWConfig,MuonAdamWRecord,MuonShardedParameter,MuonShardedAdamW,MuonShardedAdamWRecord,
     Fp32MasterMuonShardedAdamW,Fp32MasterMuonShardedAdamWRecord};
+pub use grouped::{FullyShardedOptimizerParameter,FullyShardedMuonAdamW,FullyShardedMuonAdamWRecord,FullyShardedMuonAdamWState};
 mod sharded;
 pub use sharded::*;
 mod flat_sharded;
