@@ -109,6 +109,10 @@ impl<B: Backend,S: CheckpointStrategy> TensorParallelGroupedQueryAttention<Autod
         where C: BroadcastTensorCollective<B>,K: BroadcastTensorCollective<B,Error=C::Error> {
         let mut weight = layer.weight.val();
         let mut bias = layer.bias.as_ref().map(|bias|bias.val());
+        if let Some(dtype) = compute {
+            weight = weight.cast(dtype);
+            bias = bias.map(|bias|bias.cast(dtype));
+        }
         if let Some(replicas) = &groups.kv_replicas {
             weight = region::copy_to_region(weight,replicas.clone())?;
             bias = bias.map(|bias|region::copy_to_region(bias,replicas.clone())).transpose()?;
@@ -145,13 +149,17 @@ impl<B: Backend,S: CheckpointStrategy> TensorParallelGroupedQueryAttention<Autod
         groups: &AttentionParallelGroups<C,K>,compute: Option<FloatDType>)
         -> Result<(Tensor<Autodiff<B,S>,4>,Tensor<Autodiff<B,S>,4>,Tensor<Autodiff<B,S>,4>),C::Error>
         where C: BroadcastTensorCollective<B>,K: BroadcastTensorCollective<B,Error=C::Error> {
+        let query = if let Some(dtype) = compute {query.cast(dtype)} else {query};
+        let key = if let Some(dtype) = compute {key.cast(dtype)} else {key};
+        let value = if let Some(dtype) = compute {value.cast(dtype)} else {value};
         let query = region::copy_to_region(query,groups.heads.clone())?;
         let key = region::copy_to_region(key,groups.heads.clone())?;
         let value = region::copy_to_region(value,groups.heads.clone())?;
         self.project_copied(query,key,value,groups,compute)
     }
 
-    /// Explicit projection arithmetic dtype, with gradients to original stored parameters.
+    /// Explicit projection/input/KV-replica work dtype, with gradients converted back
+    /// to original storage only after the corresponding SUM derivatives.
     pub fn project_with_compute_dtype<C,K>(&self,query: Tensor<Autodiff<B,S>,3>,key: Tensor<Autodiff<B,S>,3>,value: Tensor<Autodiff<B,S>,3>,
         groups: &AttentionParallelGroups<C,K>,dtype: FloatDType)
         -> Result<(Tensor<Autodiff<B,S>,4>,Tensor<Autodiff<B,S>,4>,Tensor<Autodiff<B,S>,4>),C::Error>
