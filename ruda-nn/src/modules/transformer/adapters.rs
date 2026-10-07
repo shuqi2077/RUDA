@@ -175,7 +175,11 @@ impl<B: Backend> AdaptedFeedForward<B> {
     /// Same native FFN expression, with A/B gradients on selected projections.
     pub fn forward<const D: usize>(&self,input: Tensor<B,D>) -> Tensor<B,D> {
         let up = self.up.forward(input.clone());
-        let value = if let Some(gate) = &self.gate { self.activation.forward(gate.forward(input))*up }
+        let value = if let Some(gate) = &self.gate {
+            let activated = self.activation.forward(gate.forward(input));
+            assert_eq!(activated.dims(),up.dims(),"adapted gate activation must preserve intermediate geometry");
+            activated*up
+        }
             else { self.activation.forward(up) };
         self.down.forward(self.dropout.forward(value))
     }
