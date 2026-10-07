@@ -19,6 +19,8 @@ mod error;
 pub use error::MuonError;
 mod grouped;
 pub use grouped::{MuonAdamW, MuonAdamWConfig, MuonAdamWRecord};
+mod sharded;
+pub use sharded::*;
 
 /// Momentum convention. Checkpoint buffers are NOT interchangeable between modes.
 #[derive(Clone, Default, Debug, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -368,6 +370,12 @@ impl<B: Backend> Muon<B> {
         state: Option<&MuonState<B, D>>,
     ) -> Result<(), MuonError> {
         if D != 2 { return Err(MuonError::ExpectedMatrix { rank: D }); }
+        self.validate_step_shape(lr,tensor,grad,state,&tensor.shape())
+    }
+
+    fn validate_step_shape<const D: usize>(&self,lr: LearningRate,tensor: &Tensor<B,D>,grad: &Tensor<B,D>,
+        state: Option<&MuonState<B,D>>,learning_rate_shape: &[usize]) -> Result<(),MuonError> {
+        if D != 2 { return Err(MuonError::ExpectedMatrix { rank: D }); }
         if !lr.is_finite() || lr < 0.0 {
             return Err(MuonError::InvalidConfig("learning rate must be finite and nonnegative"));
         }
@@ -385,7 +393,7 @@ impl<B: Backend> Muon<B> {
             if tensor.dtype() != buffer.dtype() { return Err(MuonError::DTypeMismatch("momentum")); }
             if tensor.device() != buffer.device() { return Err(MuonError::DeviceMismatch("momentum")); }
         }
-        let adjusted = self.adjust_lr(lr, &shape);
+        let adjusted = self.adjust_lr(lr, learning_rate_shape);
         let decay = lr * self.weight_decay_penalty.unwrap_or(0.0) as f64;
         if !adjusted.is_finite() || !decay.is_finite()
             || (tensor.dtype() == DType::F32 && (!(adjusted as f32).is_finite() || !(decay as f32).is_finite())) {
@@ -404,7 +412,18 @@ impl<B: Backend> Muon<B> {
         state: Option<MuonState<B, D>>,
     ) -> Result<(Tensor<B, D>, Option<MuonState<B, D>>), MuonError> {
         self.validate_step(lr, &tensor, &grad, state.as_ref())?;
-        let (update, momentum) = match self.momentum_mode {
+        let (update,momentum) = self.momentum_update(grad,state);
+        let update = self.zeropower_via_newtonschulz(update);
+        let adjusted_lr = self.adjust_lr(lr, &tensor.shape());
+        let tensor = match self.weight_decay_penalty {
+            Some(penalty) => tensor.mul_scalar(1.0 - lr * penalty as f64),
+            None => tensor,
+        };
+        Ok((tensor - update.mul_scalar(adjusted_lr), Some(MuonState::new(momentum))))
+    }
+
+    fn momentum_update<const D: usize>(&self,grad: Tensor<B,D>,state: Option<MuonState<B,D>>) -> (Tensor<B,D>,MomentumState<B,D>) {
+        match self.momentum_mode {
             MuonMomentumMode::Sgd => self.momentum.transform(grad, state.map(|s| s.momentum)),
             MuonMomentumMode::Ema => {
                 let beta = self.momentum_beta;
@@ -418,14 +437,7 @@ impl<B: Backend> Muon<B> {
                 } else { buffer.clone() };
                 (update, MomentumState::new(buffer))
             }
-        };
-        let update = self.zeropower_via_newtonschulz(update);
-        let adjusted_lr = self.adjust_lr(lr, &tensor.shape());
-        let tensor = match self.weight_decay_penalty {
-            Some(penalty) => tensor.mul_scalar(1.0 - lr * penalty as f64),
-            None => tensor,
-        };
-        Ok((tensor - update.mul_scalar(adjusted_lr), Some(MuonState::new(momentum))))
+        }
     }
 
     /// Adjust learning rate based on parameter shape.

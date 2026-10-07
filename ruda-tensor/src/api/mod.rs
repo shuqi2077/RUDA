@@ -33,6 +33,7 @@ pub use options::*;
 pub use transaction::*;
 
 pub use crate::tensor::IndexingUpdateOp;
+pub use crate::collective::{TensorCollective,ReplicatedTensorCollective,BroadcastTensorCollective};
 
 // Re-exported types
 pub use crate::{
