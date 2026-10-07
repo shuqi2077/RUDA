@@ -70,7 +70,8 @@ paired_construction!(adapted_encoder_decoder_model,crate::transformer::AdaptedTr
 
 macro_rules! paired_execution {
     ($backend:ty,[$($generics:tt)*],$gather:ident,$embed:ident,$encode:ident,$packed_encode:ident,$decode:ident,$packed_decode:ident,
-        $hidden:ident,$packed_hidden:ident,$forward:ident,$packed_forward:ident,$sequence:ident,$packed_sequence:ident) => {
+        $hidden:ident,$packed_hidden:ident,$forward:ident,$packed_forward:ident,$sequence:ident,$packed_sequence:ident,
+        $layer_forward:ident,$packed_layer:ident,$positions:ident,$packed_positions:ident) => {
         impl<$($generics)*> FullyShardedEncoderDecoderModel<$backend> {
             /// Encode actual source rows once, retaining original source gradients and final norm.
             pub fn $encode<C,E>(&self,input:FullyShardedTransformerInput<$backend>,communicator:C,layer:E)
@@ -163,12 +164,40 @@ macro_rules! paired_execution {
                 let hidden=self.$packed_hidden(source,target,source_layout,target_layout,communicator.clone(),encoder,decoder)?;
                 Ok(self.head.$gather(communicator)?.forward_packed_sequences(hidden,target_layout,visible,pooling))
             }
+            /// Complete native paired execution with independently declared encoder/self/cross visibility and positions.
+            /// Source/target lengths, widths, options and position transforms remain their actual independent contracts.
+            pub fn $positions<C,E,F,G>(&self,source:FullyShardedTransformerInput<$backend>,target:FullyShardedTransformerInput<$backend>,
+                source_masks:DenseAttentionMask<$backend>,source_options:DenseAttentionOptions,self_masks:DenseAttentionMask<$backend>,
+                self_options:DenseAttentionOptions,cross_masks:DenseAttentionMask<$backend>,cross_options:DenseAttentionOptions,communicator:C,
+                mut source_positions:E,mut self_positions:F,mut cross_positions:G) -> Result<Tensor<$backend,3>,C::Error>
+                where C:BroadcastTensorCollective<B>,E:FnMut(usize,Tensor<$backend,4>,Tensor<$backend,4>)->(Tensor<$backend,4>,Tensor<$backend,4>),
+                    F:FnMut(usize,Tensor<$backend,4>,Tensor<$backend,4>)->(Tensor<$backend,4>,Tensor<$backend,4>),
+                    G:FnMut(usize,Tensor<$backend,4>,Tensor<$backend,4>)->(Tensor<$backend,4>,Tensor<$backend,4>) {
+                self.$forward(source,target,communicator.clone(),
+                    |index,block,hidden|block.$layer_forward(hidden,source_masks.clone(),source_options,communicator.clone(),|query,key|source_positions(index,query,key)),
+                    |index,block,hidden,memory|block.$layer_forward(hidden,memory,self_masks.clone(),self_options,cross_masks.clone(),cross_options,communicator.clone(),
+                        |query,key|self_positions(index,query,key),|query,key|cross_positions(index,query,key)))
+            }
+            /// Complete actual paired packed graph with independently selected source/self/cross positional and attention rules.
+            pub fn $packed_positions<C,E,F,G>(&self,source:FullyShardedTransformerInput<$backend,1>,target:FullyShardedTransformerInput<$backend,1>,
+                source_layout:&PackedSequenceLayout,target_layout:&PackedSequenceLayout,source_options:PackedAttentionOptions,self_options:PackedAttentionOptions,
+                cross_options:PackedAttentionOptions,communicator:C,mut source_positions:E,mut self_positions:F,mut cross_positions:G) -> Result<Tensor<$backend,2>,C::Error>
+                where C:BroadcastTensorCollective<B>,E:FnMut(usize,Tensor<$backend,3>,Tensor<$backend,3>)->(Tensor<$backend,3>,Tensor<$backend,3>),
+                    F:FnMut(usize,Tensor<$backend,3>,Tensor<$backend,3>)->(Tensor<$backend,3>,Tensor<$backend,3>),
+                    G:FnMut(usize,Tensor<$backend,3>,Tensor<$backend,3>)->(Tensor<$backend,3>,Tensor<$backend,3>) {
+                self.$packed_forward(source,target,source_layout,target_layout,communicator.clone(),
+                    |index,block,hidden|block.$packed_layer(hidden,source_layout,source_options,communicator.clone(),|query,key|source_positions(index,query,key)),
+                    |index,block,hidden,memory|block.$packed_layer(hidden,memory,target_layout,source_layout,self_options,cross_options,communicator.clone(),
+                        |query,key|self_positions(index,query,key),|query,key|cross_positions(index,query,key)))
+            }
         }
     };
 }
 paired_execution!(B,[B:Backend],gather_inference,forward_inference,encode_inference_with,encode_packed_inference_with,
     decode_hidden_inference_with,decode_packed_hidden_inference_with,forward_hidden_inference_with,forward_packed_hidden_inference_with,
-    forward_inference_with,forward_packed_inference_with,forward_sequence_inference_with,forward_packed_sequences_inference_with);
+    forward_inference_with,forward_packed_inference_with,forward_sequence_inference_with,forward_packed_sequences_inference_with,
+    forward_inference,forward_packed_inference,forward_inference_with_positions,forward_packed_inference_with_positions);
 paired_execution!(Autodiff<B,S>,[B:Backend,S:CheckpointStrategy],gather,forward,encode_with,encode_packed_with,
     decode_hidden_with,decode_packed_hidden_with,forward_hidden_with,forward_packed_hidden_with,
-    forward_with,forward_packed_with,forward_sequence_with,forward_packed_sequences_with);
+    forward_with,forward_packed_with,forward_sequence_with,forward_packed_sequences_with,
+    forward,forward_packed,forward_with_positions,forward_packed_with_positions);
