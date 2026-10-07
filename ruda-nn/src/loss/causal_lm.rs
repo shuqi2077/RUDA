@@ -1,7 +1,7 @@
 use ruda_model::{
     config::Config,
     module::Module,
-    tensor::{DType, Int, Bool, Tensor, activation::log_softmax, backend::Backend},
+    tensor::{DType, Int, IntDType, Bool, Tensor, activation::log_softmax, backend::Backend},
 };
 use crate::attention::PackedSequenceLayout;
 
@@ -224,7 +224,7 @@ impl CausalCrossEntropyConfig {
             let mask = Tensor::<B, 3, Bool>::zeros(hidden.dims(), &hidden.device()).bool_not();
             return CausalLoss {
                 loss_sum: hidden.cast(DType::F32).mask_fill(mask, 0).sum(),
-                valid_tokens: Tensor::zeros([1], &labels.device()),
+                valid_tokens: Tensor::zeros([1], (&labels.device(),DType::I64)),
             };
         }
         let (hidden, labels) = if self.shift && sequence > 0 {
@@ -238,7 +238,7 @@ impl CausalCrossEntropyConfig {
         let hidden = hidden.reshape([count, width]);
         let labels = labels.reshape([count]);
         let ignored = labels.clone().equal_elem(self.ignore_index);
-        let valid_tokens = ignored.clone().bool_not().int().sum();
+        let valid_tokens = ignored.clone().bool_not().int().cast(IntDType::I64).sum();
         let targets = labels.mask_fill(ignored.clone(), 0);
         let mut loss_sum = Tensor::zeros([1], (&hidden.device(), DType::F32));
         for start in (0..count).step_by(self.token_chunk_size) {

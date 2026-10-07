@@ -1,7 +1,7 @@
 use super::*;
 use alloc::{sync::Arc,vec::Vec};
 use core::fmt;
-use ruda_tensor::{Bool,DType,TensorData,ElementConversion,tensor::FloatTensor};
+use ruda_tensor::{DType,TensorData,tensor::{Bool,FloatTensor}};
 use crate::NodeId;
 #[cfg(feature="std")]
 use parking_lot::Mutex;
