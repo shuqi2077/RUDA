@@ -22,6 +22,7 @@ impl<B:Backend> ShardedParameter<B> {
         let shape:[usize;D] = self.logical_shape.clone().try_into().expect("native logical parameter rank differs");
         let elements = self.logical_shape.iter().try_fold(1usize,|total,axis|total.checked_mul(*axis)).expect("native logical parameter size overflow");
         let local = self.local.val();
+        assert_eq!(local.dims(),[elements.div_ceil(self.world_size)],"loaded native local parameter slice length differs");
         let local = if let Some(dtype) = dtype {local.cast(dtype)} else {local};
         let dtype = local.dtype();let device = local.device();
         let padded = local.dims()[0].checked_mul(self.world_size).expect("native parameter gather length overflow");

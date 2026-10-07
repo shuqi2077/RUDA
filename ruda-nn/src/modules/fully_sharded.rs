@@ -16,6 +16,8 @@ mod blocks;
 pub use blocks::*;
 mod stack;
 pub use stack::*;
+mod parameter_record;
+pub use parameter_record::*;
 
 /// Explicit construction context preserving one local autograd leaf per source ID.
 /// Reuse a context for all tied layers, then drop it after model construction. It
@@ -166,8 +168,9 @@ impl<B:Backend,S:CheckpointStrategy> ShardedParameter<Autodiff<B,S>> {
         assert_eq!(communicator.rank() as usize,self.rank,"parameter shard rank differs");
         assert_eq!(communicator.world_size() as usize,self.world_size,"parameter shard world size differs");
         let shape:[usize;D]=self.logical_shape.clone().try_into().expect("logical parameter rank differs");
-        let elements=self.logical_shape.iter().product();
+        let elements=self.logical_shape.iter().try_fold(1usize,|total,axis|total.checked_mul(*axis)).expect("logical parameter size overflow");
         let local=self.local.val();
+        assert_eq!(local.dims(),[elements.div_ceil(self.world_size)],"loaded local parameter slice length differs");
         let local=if let Some(dtype)=dtype {local.cast(dtype)} else {local};
         collective::all_gather(local,communicator).map(|full|full.slice([0..elements]).reshape(shape))
     }
