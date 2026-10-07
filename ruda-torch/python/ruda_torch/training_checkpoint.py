@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+from collections import OrderedDict
 import torch
 
 from .finetuning import _cpu_tree
@@ -54,8 +55,10 @@ def training_state_dict(model, optimizer, *, base_id, step, data_state, scaler=N
         raise ValueError('clear gradients before full snapshot; partial accumulation is not saved')
     layout = _optimizer_layout(model, optimizer)
     schema = _tensor_schema(model)
+    model_state = model.state_dict()
     state = {'format': 'ruda-training', 'version': 1, 'base_id': base_id, 'step': step,
-             'model': _cpu_tree(model.state_dict()), 'model_schema': schema,
+             'model': _cpu_tree(model_state), 'model_schema': schema,
+             'model_metadata': _cpu_tree(getattr(model_state, '_metadata', None)),
              'optimizer': _cpu_tree(optimizer.state_dict()),
              'optimizer_type': type(optimizer).__module__ + '.' + type(optimizer).__qualname__,
              'optimizer_layout': layout,
@@ -107,7 +110,10 @@ def load_training_state_dict(model, optimizer, state, *, base_id, scaler=None):
     replace registered Parameters or change their optimizer identities.
     """
     validate_training_state_dict(model, optimizer, state, base_id=base_id, scaler=scaler)
-    model.load_state_dict(state['model'], strict=True)
+    model_state = OrderedDict(state['model'])
+    if state.get('model_metadata') is not None:
+        model_state._metadata = copy.deepcopy(state['model_metadata'])
+    model.load_state_dict(model_state, strict=True)
     optimizer.load_state_dict(copy.deepcopy(state['optimizer']))
     if scaler is not None:
         scaler.load_state_dict(copy.deepcopy(state['scaler']))
