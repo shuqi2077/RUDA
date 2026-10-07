@@ -1,10 +1,12 @@
 use super::*;
-use crate::loss::CausalCrossEntropyConfig;
+use crate::loss::{CausalCrossEntropyConfig,LossTerms};
 use crate::attention::{PackedSequenceLayout,DenseAttentionMask,DenseAttentionOptions,PackedAttentionOptions};
 use ruda_autodiff::collective::{CollectiveScope,ScopedTensorCollective,ScopedCollectiveError};
 use ruda_model::tensor::{IntDType,TensorData,ElementConversion};
 
 mod paired;
+mod weighted;
+pub use weighted::*;
 
 /// Actual original local loss graph, globally effective integer count and detached native global loss metrics.
 /// Normalize the local SUM before backward: gathered parameters already SUM/reduce-scatter their derivatives.
@@ -16,7 +18,7 @@ pub struct FullyShardedLoss<B:Backend,S:CheckpointStrategy> {
     pub local_count:Tensor<B,1,Int>,
     /// Exact checked global count; not a count accumulated in FP32.
     pub global_count:u64,
-    /// Actual FP32 global loss SUM for metrics, without a differentiable replicated-loss reduction.
+    /// Actual global loss SUM in F32/F64 work precision, without a differentiable replicated-loss reduction.
     pub global_loss_sum:Tensor<B,1>,
 }
 impl<B:Backend,S:CheckpointStrategy> FullyShardedLoss<B,S> {
@@ -63,10 +65,11 @@ pub fn complete_fully_sharded_loss<B,S,C>(scope:&CollectiveScope<B,S>,loss_sum:T
         if count>i64::MAX as u64 {return Err(ScopedCollectiveError::Protocol("a native effective count is negative or overflowed"));}
         global_count=global_count.checked_add(count).ok_or(ScopedCollectiveError::Protocol("global effective count overflows u64"))?;
     }
-    let metric=loss_sum.clone().inner().cast(DType::F32);
+    let work=if loss_sum.dtype()==DType::F64 {DType::F64} else {DType::F32};
+    let metric=loss_sum.clone().inner().cast(work);
     let global_loss_sum=if communicator.world_size()==1 {metric} else {Tensor::<B,1>::from_primitive(TensorPrimitive::Float(
         communicator.all_reduce_sum(metric.into_primitive().tensor()).map_err(ScopedCollectiveError::Collective)?))};
-    if global_loss_sum.dims()!=[1] || global_loss_sum.dtype()!=DType::F32 || global_loss_sum.device()!=device {return Err(ScopedCollectiveError::Protocol("loss metric transport changed original shape/storage/device"));}
+    if global_loss_sum.dims()!=[1] || global_loss_sum.dtype()!=work || global_loss_sum.device()!=device {return Err(ScopedCollectiveError::Protocol("loss metric transport changed original shape/storage/device"));}
     Ok(FullyShardedLoss {loss_sum,local_count,global_count,global_loss_sum})
 }
 
