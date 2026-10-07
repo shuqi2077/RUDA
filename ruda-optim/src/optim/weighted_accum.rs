@@ -3,7 +3,7 @@ use core::fmt;
 use ruda_model::{
     module::AutodiffModule,
     record::{PrecisionSettings,Record,RecorderError},
-    tensor::{DType,FloatDType,backend::{AutodiffBackend,Backend}},
+    tensor::{DType,FloatDType,TensorMetadata,backend::{AutodiffBackend,Backend}},
 };
 use serde::{Deserialize,Serialize};
 use super::{GradientsAccumulator,GradientsParams,GradientsParamsRecord,GradientTransformError};
@@ -135,6 +135,7 @@ impl<M> WeightedGradientsAccumulator<M> {
         if state.total_weight == 0. && !accumulator.pending().is_empty() {
             return Err(WeightedAccumulationError::InvalidState);
         }
+        validate_pending_dtype::<B>(accumulator.pending(),state.dtype)?;
         let values = accumulator.pending().cast_for::<B,M>(module,state.dtype)?;
         let mut restored = GradientsAccumulator::new();
         restored.accumulate_with_dtype::<B>(module,values,state.dtype);
@@ -170,11 +171,12 @@ impl<M> WeightedGradientsAccumulator<M> {
         let count = self.state.microbatches.checked_add(1).ok_or(WeightedAccumulationError::CounterOverflow)?;
         // Validate every supplied ID before any scaling/addition. A rejected
         // argument leaves pending gradients and normalization counters untouched.
-        gradients.validate_for::<B,M>(module)?;
         if weight > 0. {
             let multiplier = if mean { weight } else { 1. };
             let values = gradients.scaled_for::<B,M>(module,multiplier,self.state.dtype)?;
             self.accumulator.accumulate_with_dtype::<B>(module,values,self.state.dtype);
+        } else {
+            gradients.validate_for::<B,M>(module)?;
         }
         self.state.total_weight = total;
         self.state.microbatches = count;
@@ -231,6 +233,8 @@ impl<M> WeightedGradientsAccumulator<M> {
         if record.state.total_weight == 0. && !gradients.is_empty() {
             return Err(RecorderError::Unknown(WeightedAccumulationError::InvalidState.to_string()));
         }
+        validate_pending_dtype::<B>(&gradients,record.state.dtype)
+            .map_err(|error|RecorderError::Unknown(error.to_string()))?;
         gradients.validate_for::<B,M>(module).map_err(|error|RecorderError::Unknown(error.to_string()))?;
         let mut restored = GradientsAccumulator::new();
         let values = gradients.cast_for::<B,M>(module,record.state.dtype)
@@ -240,6 +244,16 @@ impl<M> WeightedGradientsAccumulator<M> {
         self.state = record.state;
         Ok(())
     }
+}
+
+fn validate_pending_dtype<B: AutodiffBackend>(gradients: &GradientsParams,dtype: FloatDType)
+    -> Result<(),WeightedAccumulationError> {
+    for id in gradients.container.ids() {
+        let primitive = gradients.container.get::<B::InnerBackend>(id)
+            .ok_or(WeightedAccumulationError::InvalidState)?;
+        if primitive.dtype() != DType::from(dtype) { return Err(WeightedAccumulationError::InvalidState); }
+    }
+    Ok(())
 }
 
 fn validate_state(state: &WeightedAccumulationState) -> Result<(),WeightedAccumulationError> {

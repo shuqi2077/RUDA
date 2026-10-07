@@ -117,6 +117,11 @@ impl DenseTransformerNormConfig {
 }
 
 impl<B: Backend> DenseTransformerNorm<B> {
+    /// Actual affine width of the loaded normalization module.
+    pub fn width(&self) -> usize {
+        match self { Self::Layer(layer)=>layer.gamma.val().dims()[0],Self::Rms(layer)=>layer.gamma.val().dims()[0] }
+    }
+
     /// FP32 statistics for half storage; explicit F64 inputs retain F64 arithmetic.
     pub fn forward<const D: usize>(&self,input: Tensor<B,D>) -> Tensor<B,D> {
         let dtype = if input.dtype() == DType::F64 { FloatDType::F64 } else { FloatDType::F32 };
@@ -186,6 +191,14 @@ impl<B: Backend> DenseTransformerBlock<B> {
     pub fn forward_with_positions<F>(&self,input: Tensor<B,3>,masks: DenseAttentionMask<B>,
         options: DenseAttentionOptions,positions: F) -> Tensor<B,3>
     where F: FnOnce(Tensor<B,4>,Tensor<B,4>)->(Tensor<B,4>,Tensor<B,4>) {
+        self.forward_feed_forward(self.forward_attention_with_positions(input,masks,options,positions))
+    }
+
+    /// Attention/residual/normalization stage alone, for encoder-decoder composition.
+    /// Feed-forward parameters are not applied until forward_feed_forward is called.
+    pub fn forward_attention_with_positions<F>(&self,input: Tensor<B,3>,masks: DenseAttentionMask<B>,
+        options: DenseAttentionOptions,positions: F) -> Tensor<B,3>
+    where F: FnOnce(Tensor<B,4>,Tensor<B,4>)->(Tensor<B,4>,Tensor<B,4>) {
         let source = if self.norm_first { self.attention_norm.forward(input.clone()) } else { input.clone() };
         let (query,key,value) = self.attention.project(source.clone(),source.clone(),source);
         let query_shape = query.dims();
@@ -195,10 +208,132 @@ impl<B: Backend> DenseTransformerBlock<B> {
         assert_eq!(key.dims(),key_shape,"key position transform changed geometry");
         let branch = self.attention.forward_projected(query,key,value,masks,options);
         let hidden = input + self.residual_dropout.forward(branch);
-        let hidden = if self.norm_first { hidden } else { self.attention_norm.forward(hidden) };
+        if self.norm_first { hidden } else { self.attention_norm.forward(hidden) }
+    }
+
+    /// Feed-forward/residual/normalization stage using the actual existing weights.
+    pub fn forward_feed_forward(&self,hidden: Tensor<B,3>) -> Tensor<B,3> {
         let source = if self.norm_first { self.feed_forward_norm.forward(hidden.clone()) } else { hidden.clone() };
         let output = hidden + self.residual_dropout.forward(self.feed_forward.forward(source));
         if self.norm_first { output } else { self.feed_forward_norm.forward(output) }
+    }
+}
+
+/// Residual cross-attention on actual encoder memory, including nonmatching widths.
+#[derive(Module,Debug)]
+pub struct DenseCrossAttentionBlock<B: Backend> {
+    /// Loaded Q/K/V/output weights; query and memory input widths may differ.
+    pub attention: GroupedQueryAttention<B>,
+    /// Query/residual normalization, applied in the explicitly selected order.
+    pub query_norm: DenseTransformerNorm<B>,
+    /// Optional independent normalization of encoder memory before K/V projection.
+    pub memory_norm: Option<DenseTransformerNorm<B>>,
+    /// Dropout after the output projection, before residual addition.
+    pub residual_dropout: Dropout,
+    /// Pre-normalize queries rather than normalize the residual result.
+    pub norm_first: bool,
+}
+
+impl<B: Backend> DenseCrossAttentionBlock<B> {
+    /// Connect actual weights and optional memory norm without changing their IDs.
+    pub fn new(attention: GroupedQueryAttention<B>,query_norm: DenseTransformerNorm<B>,
+        memory_norm: Option<DenseTransformerNorm<B>>,residual_dropout: Dropout,norm_first: bool) -> Self {
+        assert_eq!(query_norm.width(),attention.query.weight.val().dims()[0],"cross query/norm widths differ");
+        if let Some(norm) = &memory_norm {
+            assert_eq!(norm.width(),attention.key.weight.val().dims()[0],"cross memory/norm widths differ");
+        }
+        assert!(residual_dropout.prob.is_finite() && (0.0..=1.0).contains(&residual_dropout.prob),"invalid cross residual dropout");
+        Self {attention,query_norm,memory_norm,residual_dropout,norm_first}
+    }
+
+    /// Explicit memory/query masks; causal/window alignment is never assumed.
+    pub fn forward(&self,input: Tensor<B,3>,memory: Tensor<B,3>,masks: DenseAttentionMask<B>,
+        options: DenseAttentionOptions) -> Tensor<B,3> {
+        self.forward_with_positions(input,memory,masks,options,|query,key|(query,key))
+    }
+
+    /// Transform projected query and encoder key positions independently of payloads.
+    pub fn forward_with_positions<F>(&self,input: Tensor<B,3>,memory: Tensor<B,3>,
+        masks: DenseAttentionMask<B>,options: DenseAttentionOptions,positions: F) -> Tensor<B,3>
+    where F: FnOnce(Tensor<B,4>,Tensor<B,4>)->(Tensor<B,4>,Tensor<B,4>) {
+        let source = if self.norm_first { self.query_norm.forward(input.clone()) } else { input.clone() };
+        let memory = if let Some(norm) = &self.memory_norm { norm.forward(memory) } else { memory };
+        let (query,key,value) = self.attention.project(source,memory.clone(),memory);
+        let query_shape = query.dims();
+        let key_shape = key.dims();
+        let (query,key) = positions(query,key);
+        assert_eq!(query.dims(),query_shape,"cross query position transform changed geometry");
+        assert_eq!(key.dims(),key_shape,"cross memory position transform changed geometry");
+        let branch = self.attention.forward_projected(query,key,value,masks,options);
+        let hidden = input + self.residual_dropout.forward(branch);
+        if self.norm_first { hidden } else { self.query_norm.forward(hidden) }
+    }
+}
+
+/// Self-attention, encoder-memory cross-attention and FFN in that exact order.
+#[derive(Module,Debug)]
+pub struct DenseEncoderDecoderLayer<B: Backend> {
+    /// Actual self-attention and final feed-forward stages, with their independent norms.
+    pub backbone: DenseTransformerBlock<B>,
+    /// Actual encoder-memory stage inserted before the backbone's feed-forward.
+    pub cross_attention: DenseCrossAttentionBlock<B>,
+}
+
+impl<B: Backend> DenseEncoderDecoderLayer<B> {
+    /// Connect supplied stages; no new random weights or implicit extra residuals.
+    pub fn new(backbone: DenseTransformerBlock<B>,cross_attention: DenseCrossAttentionBlock<B>) -> Self {
+        assert_eq!(backbone.attention.query.weight.val().dims()[0],
+            cross_attention.attention.query.weight.val().dims()[0],"decoder residual widths differ");
+        Self {backbone,cross_attention}
+    }
+
+    /// Forward real target and encoder memory with distinct actual visibility rules.
+    pub fn forward(&self,input: Tensor<B,3>,memory: Tensor<B,3>,self_masks: DenseAttentionMask<B>,
+        self_options: DenseAttentionOptions,memory_masks: DenseAttentionMask<B>,memory_options: DenseAttentionOptions)
+        -> Tensor<B,3> {
+        self.forward_with_positions(input,memory,self_masks,self_options,memory_masks,memory_options,
+            |query,key|(query,key),|query,key|(query,key))
+    }
+
+    /// Caller-owned self/cross positional transforms, without guessing shared offsets.
+    pub fn forward_with_positions<F,G>(&self,input: Tensor<B,3>,memory: Tensor<B,3>,
+        self_masks: DenseAttentionMask<B>,self_options: DenseAttentionOptions,
+        memory_masks: DenseAttentionMask<B>,memory_options: DenseAttentionOptions,self_positions: F,cross_positions: G)
+        -> Tensor<B,3>
+    where F: FnOnce(Tensor<B,4>,Tensor<B,4>)->(Tensor<B,4>,Tensor<B,4>),
+        G: FnOnce(Tensor<B,4>,Tensor<B,4>)->(Tensor<B,4>,Tensor<B,4>) {
+        let hidden = self.backbone.forward_attention_with_positions(input,self_masks,self_options,self_positions);
+        let hidden = self.cross_attention.forward_with_positions(hidden,memory,memory_masks,memory_options,cross_positions);
+        self.backbone.forward_feed_forward(hidden)
+    }
+}
+
+/// Ordered encoder-decoder layers sharing the caller's actual memory tensor.
+#[derive(Module,Debug)]
+pub struct DenseEncoderDecoderStack<B: Backend> {
+    /// Decoder layers in the actual architecture's order.
+    pub layers: Vec<DenseEncoderDecoderLayer<B>>,
+}
+
+impl<B: Backend> DenseEncoderDecoderStack<B> {
+    /// Connect actual loaded layers without resetting parameters, optimizers or IDs.
+    pub fn new(layers: Vec<DenseEncoderDecoderLayer<B>>) -> Self { Self {layers} }
+
+    /// Apply explicitly shared self/cross visibility rules to each actual layer.
+    pub fn forward(&self,mut input: Tensor<B,3>,memory: Tensor<B,3>,self_masks: DenseAttentionMask<B>,
+        self_options: DenseAttentionOptions,memory_masks: DenseAttentionMask<B>,memory_options: DenseAttentionOptions)
+        -> Tensor<B,3> {
+        for layer in &self.layers {
+            input = layer.forward(input,memory.clone(),self_masks.clone(),self_options,memory_masks.clone(),memory_options);
+        }
+        input
+    }
+
+    /// Explicit per-layer positions/masks/options with no architecture-specific defaults.
+    pub fn forward_with<F>(&self,mut input: Tensor<B,3>,memory: Tensor<B,3>,mut layer: F) -> Tensor<B,3>
+    where F: FnMut(usize,&DenseEncoderDecoderLayer<B>,Tensor<B,3>,Tensor<B,3>)->Tensor<B,3> {
+        for (index,block) in self.layers.iter().enumerate() { input = layer(index,block,input,memory.clone()); }
+        input
     }
 }
 

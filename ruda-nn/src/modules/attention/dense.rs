@@ -3,7 +3,7 @@ use super::{PackedAttentionOptions, PackedCausalAlignment};
 use crate::{Dropout, DropoutConfig, Linear, LinearConfig};
 use ruda_model::{
     config::Config, module::Module,
-    tensor::{Bool, DType, Int, Tensor, backend::Backend},
+    tensor::{Bool, DType, FloatDType, Int, Tensor, backend::Backend},
 };
 #[cfg(not(feature = "std"))]
 #[allow(unused_imports)]
@@ -208,6 +208,25 @@ impl GroupedQueryAttentionConfig {
 }
 
 impl<B: Backend> GroupedQueryAttention<B> {
+    /// Connect actual loaded projections, including cross-attention with a
+    /// different query/memory input width. No parameters are rebuilt or copied.
+    pub fn from_projections(query: Linear<B>,key: Linear<B>,value: Linear<B>,output: Linear<B>,
+        query_heads: usize,kv_heads: usize,head_dimension: usize,dropout: Dropout) -> Self {
+        assert!(query_heads > 0 && kv_heads > 0 && head_dimension > 0
+            && query_heads.is_multiple_of(kv_heads),"invalid grouped projection head geometry");
+        let query_width = query_heads.checked_mul(head_dimension).expect("query width overflow");
+        let key_width = kv_heads.checked_mul(head_dimension).expect("KV width overflow");
+        let query_shape = query.weight.val().dims();
+        let key_shape = key.weight.val().dims();
+        let value_shape = value.weight.val().dims();
+        assert_eq!(query_shape[1],query_width,"actual query weight differs from head geometry");
+        assert_eq!(key_shape[1],key_width,"actual key weight differs from head geometry");
+        assert_eq!(value_shape,key_shape,"actual key/value input and head widths differ");
+        assert_eq!(output.weight.val().dims(),[query_width,query_shape[0]],"actual attention output/residual widths differ");
+        assert!(dropout.prob.is_finite() && (0.0..=1.0).contains(&dropout.prob),"invalid attention dropout");
+        Self {query,key,value,output,dropout,query_heads,kv_heads,head_dimension}
+    }
+
     /// Apply the actual Q/K/V parameters, exposing [batch, heads, tokens, features].
     /// The caller may transform Q/K positions before forward_projected.
     pub fn project(&self, query: Tensor<B, 3>, key: Tensor<B, 3>, value: Tensor<B, 3>)
@@ -221,6 +240,24 @@ impl<B: Backend> GroupedQueryAttention<B> {
         let key = self.key.forward(key).reshape([batch, keys, self.kv_heads, self.head_dimension]).swap_dims(1, 2);
         let value = self.value.forward(value).reshape([batch, keys, self.kv_heads, self.head_dimension]).swap_dims(1, 2);
         (query, key, value)
+    }
+
+    /// Explicit projection arithmetic dtype, retaining derivatives to each
+    /// parameter's original storage. Outputs use the selected arithmetic dtype.
+    /// This casts parameter VALUES, not modules or newly detached parameter leaves.
+    pub fn project_with_compute_dtype(&self,query: Tensor<B,3>,key: Tensor<B,3>,value: Tensor<B,3>,
+        dtype: FloatDType) -> (Tensor<B,4>,Tensor<B,4>,Tensor<B,4>) {
+        let [batch,queries,_] = query.dims();
+        let [key_batch,keys,_] = key.dims();
+        let [value_batch,values,_] = value.dims();
+        assert_eq!((batch,keys),(key_batch,values),"grouped projection batches/key lengths differ");
+        assert_eq!(batch,value_batch,"grouped value batch differs");
+        let project = |layer: &Linear<B>,input: Tensor<B,3>|ruda_model::tensor::module::linear(
+            input.cast(dtype),layer.weight.val().cast(dtype),layer.bias.as_ref().map(|bias|bias.val().cast(dtype)));
+        let query = project(&self.query,query).reshape([batch,queries,self.query_heads,self.head_dimension]).swap_dims(1,2);
+        let key = project(&self.key,key).reshape([batch,keys,self.kv_heads,self.head_dimension]).swap_dims(1,2);
+        let value = project(&self.value,value).reshape([batch,keys,self.kv_heads,self.head_dimension]).swap_dims(1,2);
+        (query,key,value)
     }
 
     /// Attend actual projected/transformed heads and apply the existing output weight.
@@ -240,5 +277,19 @@ impl<B: Backend> GroupedQueryAttention<B> {
         masks: DenseAttentionMask<B>, options: DenseAttentionOptions) -> Tensor<B, 3> {
         let (query, key, value) = self.project(query, key, value);
         self.forward_projected(query, key, value, masks, options)
+    }
+
+    /// Whole attention projection/output arithmetic precision chosen explicitly.
+    /// Input/bias storage may differ; only the final output returns to query storage.
+    pub fn forward_with_compute_dtype(&self,query: Tensor<B,3>,key: Tensor<B,3>,value: Tensor<B,3>,
+        mut masks: DenseAttentionMask<B>,options: DenseAttentionOptions,dtype: FloatDType) -> Tensor<B,3> {
+        let storage = query.dtype();
+        let (query,key,value) = self.project_with_compute_dtype(query,key,value,dtype);
+        if let Some(bias) = masks.bias.take() { masks.bias = Some(bias.cast(dtype)); }
+        let [batch,heads,queries,width] = query.dims();
+        let context = dense_scaled_dot_product_attention(query,key,value,masks,options,Some(&self.dropout))
+            .swap_dims(1,2).reshape([batch,queries,heads*width]);
+        ruda_model::tensor::module::linear(context,self.output.weight.val().cast(dtype),
+            self.output.bias.as_ref().map(|bias|bias.val().cast(dtype))).cast(storage)
     }
 }
