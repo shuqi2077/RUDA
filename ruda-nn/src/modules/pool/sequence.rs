@@ -1,4 +1,4 @@
-use ruda_model::{config::Config,tensor::{Bool,DType,Int,Tensor,backend::Backend}};
+use ruda_model::{config::Config,tensor::{Bool,DType,FloatDType,Int,IntDType,Tensor,backend::Backend}};
 
 /// Explicit reduction over real tokens, independent of left/right padding.
 #[derive(Config,Debug,Copy)]
@@ -49,13 +49,13 @@ pub fn pool_sequence<B: Backend>(hidden: Tensor<B,3>,visible: Tensor<B,2,Bool>,
         };
     }
     assert!(tokens <= i64::MAX as usize,"sequence token indices exceed I64");
-    let counts = visible.clone().int().cast(DType::I64).sum_dim(1).reshape([batch]);
+    let counts = visible.clone().cast(IntDType::I64).sum_dim(1).reshape([batch]);
     let valid = counts.clone().greater_elem(0);
     let excluded = visible.clone().bool_not().reshape([batch,tokens,1]).expand([batch,tokens,width]);
     let values = match pooling {
         SequencePooling::Mean => {
             let total = hidden.cast(compute).mask_fill(excluded,0).sum_dim(1).reshape([batch,width]);
-            total / counts.clone().float().cast(compute).clamp_min(1).reshape([batch,1])
+            total / counts.clone().cast(FloatDType::from(compute)).clamp_min(1).reshape([batch,1])
         }
         SequencePooling::Max => {
             let maximum = hidden.cast(compute).mask_fill(excluded,f64::NEG_INFINITY).max_dim(1).reshape([batch,width]);

@@ -79,7 +79,7 @@ def forward_values(layout, inputs):
         elif op in (129,130,131,132,133):
             stored = torch.full((),scalar,dtype=left.dtype,device=left.device).float()
             if op == 129:
-                if scalar == 0: out = torch.ones_like(x)
+                if scalar == 0: out = torch.pow(x,0.)
                 elif scalar == 1: out = x.clone()
                 elif scalar == 2: out = x*x
                 elif scalar == 3: out = x*x*x
