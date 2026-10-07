@@ -4,6 +4,8 @@ use crate::{cache::EncoderDecoderKvCache,transformer::AdaptedProjection};
 
 mod training;
 mod inference;
+mod adapter_record;
+pub use adapter_record::{TensorParallelEncoderDecoderAdapterRecord,TensorParallelPairedVocabularies};
 #[cfg(feature="std")]
 mod batches;
 

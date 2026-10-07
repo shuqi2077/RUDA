@@ -11,6 +11,7 @@ mod hidden;
 mod training;
 mod inference;
 mod adapter_record;
+mod adapter_aliases;
 pub use adapter_record::TensorParallelModelAdapterRecord;
 mod packed;
 mod cached;
@@ -19,7 +20,7 @@ pub use partition::TensorParallelTransformerModelPartition;
 #[cfg(feature="std")]
 mod batches;
 mod seq2seq;
-pub use seq2seq::TensorParallelEncoderDecoderModel;
+pub use seq2seq::{TensorParallelEncoderDecoderModel,TensorParallelEncoderDecoderAdapterRecord,TensorParallelPairedVocabularies};
 
 /// Complete native single-stream Transformer assembled from actual local model partitions.
 /// Input tables, exact selected/unselected layer order, optional final normalization and

@@ -1,8 +1,8 @@
 use super::*;
-use alloc::{collections::BTreeMap,format,string::String,vec::Vec};
-use crate::{Linear,transformer::{AdaptedProjection,StackAdapterRecord,TransformerHeadAdapterRecord}};
+use alloc::{format,string::String,vec::Vec};
+use crate::transformer::{StackAdapterRecord,TransformerHeadAdapterRecord};
 use super::super::VocabParallelHeadAdapterRecord;
-use ruda_model::{module::{ModuleVisitor,Param,ParamId},record::{PrecisionSettings,Record,Recorder,RecorderError}};
+use ruda_model::{module::{ModuleVisitor,Param},record::{PrecisionSettings,Record,Recorder,RecorderError}};
 
 type VocabularyPlacement = (Vec<usize>,usize,usize);
 
@@ -20,7 +20,7 @@ fn placement<B:Backend>(model:&TensorParallelTransformerModel<B>,input:&VocabPar
     Ok((entry(input,input_rank),entry(output,output_rank)))
 }
 
-fn frozen<B:Backend,M:Module<B>>(module:&M) -> Result<(),RecorderError> {
+pub(super) fn frozen<B:Backend,M:Module<B>>(module:&M) -> Result<(),RecorderError> {
     struct Inspect {trainable:bool}
     impl<B:Backend> ModuleVisitor<B> for Inspect {
         fn visit_float<const D:usize>(&mut self,param:&Param<Tensor<B,D>>) {self.trainable |= param.val().is_require_grad();}
@@ -33,63 +33,12 @@ fn adapted_backbone<B:Backend>(model:&TensorParallelTransformerModel<B>) -> bool
     model.backbone.layers.iter().any(|layer|matches!(layer,TensorParallelAdaptedStackLayer::Adapted(_)))
 }
 
-fn each_adapter<B:Backend,F>(model:&TensorParallelTransformerModel<B>,mut visit:F)
-    where F:FnMut(&Linear<B>) {
-    let mut projection = |projection:&AdaptedProjection<B>| {
-        if let AdaptedProjection::LoRA(layer) = projection {visit(&layer.adapter_a);visit(&layer.adapter_b);}
-    };
-    for layer in &model.backbone.layers {
-        if let TensorParallelAdaptedStackLayer::Adapted(block) = layer {
-            let attention = &block.attention.local;let feed = &block.feed_forward.local;
-            for candidate in [&attention.query,&attention.key,&attention.value,&attention.output,&feed.up,&feed.down] {projection(candidate);}
-            if let Some(gate) = &feed.gate {projection(gate);}
-        }
-    }
-    match &model.head {
-        TensorParallelOutputHead::AdaptedLinear(head)=>{visit(&head.local.projection.adapter_a);visit(&head.local.projection.adapter_b);},
-        TensorParallelOutputHead::AdaptedVocabulary(head)=>{visit(&head.projection.adapter_a);visit(&head.projection.adapter_b);},
-        _=>{},
-    }
-}
-
 fn aliases<B:Backend>(model:&TensorParallelTransformerModel<B>) -> Result<Vec<usize>,RecorderError> {
-    let mut seen:BTreeMap<(ParamId,bool),(usize,Tensor<B,2>)> = BTreeMap::new();
-    let mut aliases = Vec::new();let mut error = None;
-    each_adapter(model,|adapter| {
-        let value = adapter.weight.val();let key = (adapter.weight.id,value.is_require_grad());let index = aliases.len();
-        if let Some((canonical,previous)) = seen.get(&key) {
-            if previous.dims() != value.dims() || previous.dtype() != value.dtype() || previous.device() != value.device() {
-                error = Some(invalid("shared adapter IDs have incompatible geometry/storage/device"));
-            }
-            aliases.push(*canonical);
-        } else {seen.insert(key,(index,value));aliases.push(index);}
-    });
-    if let Some(error) = error {Err(error)} else {Ok(aliases)}
+    super::adapter_aliases::capture(model)
 }
 
-fn rejoin_adapters<B:Backend>(mut model:TensorParallelTransformerModel<B>,expected:&[usize]) -> Result<TensorParallelTransformerModel<B>,RecorderError> {
-    if aliases(&model)?.as_slice() != expected {return Err(invalid("restored adapter identities no longer match original parameter sharing"));}
-    let mut values = Vec::new();each_adapter(&model,|adapter|values.push(adapter.weight.val()));
-    let mut index = 0usize;
-    let mut join = |adapter:&mut Linear<B>| {
-        let value = values[expected[index]].clone();adapter.weight = adapter.weight.clone().map(|_|value);index += 1;
-    };
-    let mut projection = |projection:&mut AdaptedProjection<B>| {
-        if let AdaptedProjection::LoRA(layer) = projection {join(&mut layer.adapter_a);join(&mut layer.adapter_b);}
-    };
-    for layer in &mut model.backbone.layers {
-        if let TensorParallelAdaptedStackLayer::Adapted(block) = layer {
-            let attention = &mut block.attention.local;let feed = &mut block.feed_forward.local;
-            for candidate in [&mut attention.query,&mut attention.key,&mut attention.value,&mut attention.output,&mut feed.up,&mut feed.down] {projection(candidate);}
-            if let Some(gate) = &mut feed.gate {projection(gate);}
-        }
-    }
-    match &mut model.head {
-        TensorParallelOutputHead::AdaptedLinear(head)=>{join(&mut head.local.projection.adapter_a);join(&mut head.local.projection.adapter_b);},
-        TensorParallelOutputHead::AdaptedVocabulary(head)=>{join(&mut head.projection.adapter_a);join(&mut head.projection.adapter_b);},
-        _=>{},
-    }
-    Ok(model)
+fn rejoin_adapters<B:Backend>(model:TensorParallelTransformerModel<B>,expected:&[usize]) -> Result<TensorParallelTransformerModel<B>,RecorderError> {
+    super::adapter_aliases::rejoin(model,expected)
 }
 
 /// Complete actual model A/B-only record with exact physical vocabulary placement.
