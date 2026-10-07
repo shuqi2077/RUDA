@@ -33,6 +33,8 @@ pub use selection::VocabParallelGreedySelection;
 mod normalization_inference;
 mod embeddings;
 pub use embeddings::TensorParallelTransformerEmbeddings;
+mod model;
+pub use model::*;
 
 /// Output-feature shard of a global projection, with an optional local bias shard.
 /// Construct local weights directly or load an explicitly partitioned checkpoint.

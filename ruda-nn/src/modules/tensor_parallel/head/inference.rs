@@ -61,3 +61,4 @@ inference_heads!(TensorParallelTransformerHead);
 inference_heads!(TensorParallelAdaptedTransformerHead);
 inference_heads!(VocabParallelTransformerHead);
 inference_heads!(VocabParallelAdaptedTransformerHead);
+inference_heads!(TensorParallelOutputHead);

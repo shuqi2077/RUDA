@@ -12,6 +12,8 @@ mod training;
 mod vocabulary;
 pub use vocabulary::VocabParallelTransformerHead;
 mod inference;
+mod dispatch;
+pub use dispatch::TensorParallelOutputHead;
 mod vocabulary_adapter;
 pub use vocabulary_adapter::*;
 
