@@ -30,6 +30,9 @@ impl<M> GradientsAccumulator<M> {
 }
 
 impl<M> GradientsAccumulator<M> {
+    /// Borrow pending gradients without clearing an accumulation window.
+    pub fn pending(&self) -> &GradientsParams { &self.grads }
+
     /// Snapshot pending gradients without resetting the accumulation window.
     pub fn try_to_record<B: AutodiffBackend>(&self) -> Result<GradientsParamsRecord, RecorderError>
     where

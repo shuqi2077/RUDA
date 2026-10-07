@@ -22,7 +22,7 @@ mod collective;
 /// Data type that contains gradients for parameters.
 #[derive(Default, Debug)]
 pub struct GradientsParams {
-    container: TensorContainer<ParamId>,
+    pub(super) container: TensorContainer<ParamId>,
 }
 
 impl GradientsParams {
