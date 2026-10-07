@@ -12,7 +12,7 @@
 [package]
 edition = "2024"
 name = "ruda-fusion"
-version = "0.21.28"
+version = "0.21.29"
 authors = ["nathanielsimard <nathaniel.simard.42@gmail.com>"]
 build = false
 autolib = false
@@ -76,7 +76,7 @@ path = "src/lib.rs"
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
-version = "0.21.30"
+version = "0.21.31"
 features = ["std", "graph"]
 default-features = false
 
@@ -155,7 +155,7 @@ features = ["kernel-ir", "std"]
 [dependencies.ruprim]
 package = "ruPRIM"
 path = "../ruPRIM"
-version = "0.1.35"
+version = "0.1.44"
 default-features = false
 optional = true
 features = ["kernel-ir", "std", "elementwise"]

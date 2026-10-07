@@ -1,7 +1,7 @@
 [package]
 edition = "2024"
 name = "ruda-tensor-device"
-version = "0.21.29"
+version = "0.21.30"
 authors = ["nathanielsimard <nathaniel.simard.42@gmail.com>"]
 build = false
 autolib = false
@@ -42,7 +42,7 @@ tracing = ["dep:tracing", "ruda-kernel/frontend-tracing", "ruda-kernel/device-te
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
-version = "0.21.30"
+version = "0.21.31"
 features = ["kernel", "graph"]
 default-features = false
 
@@ -91,7 +91,7 @@ invalid_html_tags = "deny"
 [dependencies.rufft]
 package = "ruda-fft"
 path = "../ruFFT"
-version = "0.1.35"
+version = "0.1.44"
 default-features = false
 features = ["std", "tensor"]
 
@@ -122,7 +122,7 @@ features = ["kernel-ir", "std", "tensor-vector", "tensor-matmul"]
 [dependencies.rudnn]
 package = "ruDNN"
 path = "../ruDNN"
-version = "0.1.35"
+version = "0.1.44"
 default-features = false
 features = ["kernel-ir", "std", "pooling", "interpolation", "grid-sample", "ctc", "tensor-convolution", "tensor-attention"]
 
@@ -130,7 +130,7 @@ features = ["kernel-ir", "std", "pooling", "interpolation", "grid-sample", "ctc"
 [dependencies.ruprim]
 package = "ruPRIM"
 path = "../ruPRIM"
-version = "0.1.35"
+version = "0.1.44"
 default-features = false
 features = ["kernel-ir", "std", "elementwise", "indexing", "tensor-scan", "tensor-reduce"]
 
@@ -144,7 +144,7 @@ features = ["kernel-ir", "quantization-kernels", "device-tensor", "device-tensor
 
 [dependencies.ruda-fusion]
 path = "../ruda-fusion"
-version = "0.21.28"
+version = "0.21.29"
 default-features = false
 features = ["device-tensor"]
 optional = true

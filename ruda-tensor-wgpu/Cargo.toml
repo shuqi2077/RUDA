@@ -1,7 +1,7 @@
 [package]
 edition = "2024"
 name = "ruda-tensor-wgpu"
-version = "0.21.28"
+version = "0.21.29"
 authors = [ "nathanielsimard <nathaniel.simard.42@gmail.com>",]
 build = false
 autolib = false
@@ -41,18 +41,18 @@ path = "src/lib.rs"
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
-version = "0.21.30"
+version = "0.21.31"
 default-features = false
 features = [ "wgpu",]
 
 [dependencies.ruda-tensor-device]
 path = "../ruda-tensor-device"
-version = "0.21.29"
+version = "0.21.30"
 default-features = false
 
 [dependencies.ruda-fusion]
 path = "../ruda-fusion"
-version = "0.21.28"
+version = "0.21.29"
 default-features = false
 features = [ "std", "tracing",]
 optional = true
