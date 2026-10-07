@@ -1,4 +1,37 @@
 use super::*;
+use crate::ElementwiseShardOptimizer;
+
+/// Original coordinate optimizer whose native rank-tagged histories can become corresponding flat local histories.
+/// The conversion uses each original concrete state type, not a newly initialized replacement moment buffer.
+pub trait FlatShardElementwiseOptimizer<B:Backend>:ElementwiseShardOptimizer<B> {
+    /// Partition one original full native history, retaining every scalar clock and optional-state branch.
+    fn partition_native_history(record:AdaptorRecordV1<Self,B>,shard:&FlatOptimizerTensorShard) -> Result<Self::State<1>,OptimizerShardError>
+        where Self:Sized;
+}
+impl<B:Backend,O:ElementwiseShardOptimizer<B>> FlatShardElementwiseOptimizer<B> for O
+    where O::State<0>:FlatOptimizerCheckpointState<B,0,FlatState=O::State<1>>,
+        O::State<1>:FlatOptimizerCheckpointState<B,1,FlatState=O::State<1>>,
+        O::State<2>:FlatOptimizerCheckpointState<B,2,FlatState=O::State<1>>,
+        O::State<3>:FlatOptimizerCheckpointState<B,3,FlatState=O::State<1>>,
+        O::State<4>:FlatOptimizerCheckpointState<B,4,FlatState=O::State<1>>,
+        O::State<5>:FlatOptimizerCheckpointState<B,5,FlatState=O::State<1>>,
+        O::State<6>:FlatOptimizerCheckpointState<B,6,FlatState=O::State<1>>,
+        O::State<7>:FlatOptimizerCheckpointState<B,7,FlatState=O::State<1>>,
+        O::State<8>:FlatOptimizerCheckpointState<B,8,FlatState=O::State<1>> {
+    fn partition_native_history(record:AdaptorRecordV1<Self,B>,shard:&FlatOptimizerTensorShard) -> Result<Self::State<1>,OptimizerShardError> {
+        match record {
+            AdaptorRecordV1::Rank0(state)=>state.into_flat_shard(shard),
+            AdaptorRecordV1::Rank1(state)=>state.into_flat_shard(shard),
+            AdaptorRecordV1::Rank2(state)=>state.into_flat_shard(shard),
+            AdaptorRecordV1::Rank3(state)=>state.into_flat_shard(shard),
+            AdaptorRecordV1::Rank4(state)=>state.into_flat_shard(shard),
+            AdaptorRecordV1::Rank5(state)=>state.into_flat_shard(shard),
+            AdaptorRecordV1::Rank6(state)=>state.into_flat_shard(shard),
+            AdaptorRecordV1::Rank7(state)=>state.into_flat_shard(shard),
+            AdaptorRecordV1::Rank8(state)=>state.into_flat_shard(shard),
+        }
+    }
+}
 
 /// Original non-tensor clocks and optional-state structure, independent of native buffer placement.
 /// Equality compares actual saved continuation, not hashes, replayed steps or inferred optimizer age.

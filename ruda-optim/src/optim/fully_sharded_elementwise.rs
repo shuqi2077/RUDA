@@ -7,6 +7,8 @@ use crate::{LearningRate,grad_clipping::GradientClipping};
 use super::{ElementwiseShardOptimizer,OptimizerCheckpointBuffers,FullyShardedOptimizerParameter,FullyShardedAccumulationError,
     GradientsParams,MultiGradientsParams,Optimizer,fully_sharded_accum::{Placement,inspect}};
 
+mod continuation;
+
 /// Actual native transport, local-parameter/state geometry or source-optimizer argument failure.
 #[derive(Debug)]
 pub enum FullyShardedElementwiseError<E:fmt::Debug> {
@@ -134,7 +136,6 @@ impl<O,M,B,C> FullyShardedElementwiseOptimizer<O,M,B,C>
         if record.version!=1 || record.placement!=self.placement {return Err(FullyShardedElementwiseError::State("saved original ownership differs"));}
         for (id,state) in &record.states {
             let spec=self.placement.iter().find(|entry|entry.0==id.val()).ok_or(FullyShardedElementwiseError::State("unknown saved state parameter"))?;
-            if !spec.5 {return Err(FullyShardedElementwiseError::State("frozen parameter has allocated native history"));}
             let elements=spec.1.iter().product::<usize>();let slots=elements.div_ceil(spec.3 as usize);
             validate_state::<B::InnerBackend,O>(state,[slots],self.optimizer.shard_gradient_dtype(spec.4)).map_err(FullyShardedElementwiseError::State)?;
         }
