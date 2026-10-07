@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 use ruda_model::tensor::{Tensor,TensorPrimitive,TensorData,Int,Bool,DType,backend::Backend};
-use super::{VocabParallelLossLayout,BroadcastTensorCollective,loss::floating,selection::gather_index_matrix};
+use super::{VocabParallelLossLayout,BroadcastTensorCollective,loss::floating,selection::{gather_index_matrix,actual_maximum}};
 
 /// Actual globally ordered native top-k candidates from sharded vocabulary logits.
 /// Selection is distinct from threshold-tie-retaining categorical sampling.
@@ -24,7 +24,7 @@ fn select<B:Backend>(scores:Tensor<B,2>,ids:Tensor<B,2,Int>,mut valid:Tensor<B,2
         .reshape([1,width]).expand([rows,width]);
     let mut score_columns = Vec::with_capacity(k);let mut index_columns = Vec::with_capacity(k);
     for _ in 0..k {
-        let maximum = scores.clone().mask_fill(valid.clone().bool_not(),f32::NEG_INFINITY).max_dim(1);
+        let maximum = actual_maximum(&scores,Some(&valid));
         let candidate = scores.clone().equal(maximum.clone()).bool_and(valid.clone());
         let selected = ids.clone().mask_where(candidate.bool_not(),sentinel.clone()).min_dim(1);
         let missing = selected.clone().equal(integer(i64::MAX,[rows,1],&scores.device()));

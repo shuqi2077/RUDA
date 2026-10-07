@@ -11,6 +11,14 @@ pub struct VocabParallelGreedySelection<B:Backend,const D:usize = 1> {
     pub valid:Tensor<B,D,Bool>,
 }
 
+pub(super) fn actual_maximum<B:Backend>(values:&Tensor<B,2>,valid:Option<&Tensor<B,2,Bool>>) -> Tensor<B,2> {
+    let work = if let Some(valid) = valid {values.clone().mask_fill(valid.clone().bool_not(),f32::NEG_INFINITY)} else {values.clone()};
+    let maximum = work.max_dim(1);
+    let present = values.clone().equal(maximum.clone());
+    let present = if let Some(valid) = valid {present.bool_and(valid.clone())} else {present};
+    maximum.mask_fill(present.any_dim(1).bool_not(),f32::NEG_INFINITY)
+}
+
 pub(super) fn gather_index_matrix<B:Backend,C:BroadcastTensorCollective<B>>(indices:Tensor<B,2,Int>,communicator:&C) -> Result<Tensor<B,3,Int>,C::Error> {
     let [rows,width] = indices.dims();assert!(width > 0,"index gather needs actual candidate columns");
     if communicator.world_size() == 1 {return Ok(indices.reshape([1,rows,width]));}
@@ -66,10 +74,11 @@ impl VocabParallelLossLayout {
         let limit = Tensor::<B,2,Int>::from_data(TensorData::new(alloc::vec![self.vocabulary_size() as i64],[1,1]),(&logits.device(),DType::I64)).expand([rows,width]);
         let mut valid = logits.clone().is_nan().bool_not().bool_and(ids.clone().lower(limit));
         if let Some(visible) = visible {valid = valid.bool_and(visible.reshape([rows,1]).expand([rows,width]));}
-        let local_maximum = logits.clone().mask_fill(valid.clone().bool_not(),f32::NEG_INFINITY).max_dim(1);
+        let local_maximum = actual_maximum(&logits,Some(&valid));
         let maximum = if communicator.world_size() == 1 {local_maximum} else {
             let gathered = communicator.all_gather_float(local_maximum.into_primitive().tensor())?;
-            Tensor::<B,2>::from_primitive(TensorPrimitive::Float(gathered)).reshape([self.world_size(),rows]).max_dim(0).reshape([rows,1])
+            let gathered = Tensor::<B,2>::from_primitive(TensorPrimitive::Float(gathered)).reshape([self.world_size(),rows]).transpose();
+            actual_maximum(&gathered,None)
         };
         let candidates = logits.equal(maximum).bool_and(valid);
         let sentinel = Tensor::<B,2,Int>::from_data(TensorData::new(alloc::vec![i64::MAX],[1,1]),(&ids.device(),DType::I64)).expand([rows,width]);
