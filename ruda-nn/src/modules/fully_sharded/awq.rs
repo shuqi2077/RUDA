@@ -6,7 +6,7 @@ use core::fmt;
 /// Word boundaries are preserved; packed codes never travel through float tensors.
 #[derive(Module, Debug)]
 pub struct ShardedPackedParameter<B: Backend> {
-    /// Actual I32/I64 native local words; integer parameters have no optimizer gradient.
+    /// Actual U8/I32/I64 native local words; integer parameters have no optimizer gradient.
     pub local: Param<Tensor<B, 1, Int>>,
     /// Original complete integer tensor axes, excluding local padding.
     pub logical_shape: Vec<usize>,
@@ -24,7 +24,7 @@ impl<B: Backend> ShardedPackedParameter<B> {
         let size = elements.div_ceil(world_size);
         size.checked_mul(world_size).expect("packed padded size overflows");
         assert_eq!(local.val().dims(), [size], "local packed word count differs");
-        assert!(matches!(local.val().dtype(), DType::I32 | DType::I64), "packed shard storage must retain I32/I64");
+        assert!(matches!(local.val().dtype(), DType::U8 | DType::I32 | DType::I64), "packed shard storage must retain U8/I32/I64");
         Self { local, logical_shape, rank, world_size }
     }
 

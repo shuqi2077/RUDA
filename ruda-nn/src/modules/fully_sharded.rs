@@ -34,6 +34,8 @@ mod awq_transformer;
 pub use awq_transformer::*;
 mod awq_model;
 pub use awq_model::*;
+mod nf4;
+pub use nf4::*;
 
 /// Explicit construction context preserving one local autograd leaf per source ID.
 /// Reuse a context for all tied layers, then drop it after model construction. It
@@ -115,6 +117,17 @@ impl<B:Backend> ShardingContext<B> {
     pub fn awq_lora(&mut self,layer:crate::AwqLoRALinear<B>)->FullyShardedAwqLoRALinear<B> {
         FullyShardedAwqLoRALinear {base:self.awq(layer.base),adapter_a:self.linear(layer.adapter_a),
             adapter_b:self.linear(layer.adapter_b),dropout:layer.dropout,scale:layer.scale}
+    }
+
+    /// Partition actual native NF4 bytes/scales/codebook/bias, retaining canonical shared IDs.
+    pub fn nf4(&mut self,layer:crate::FrozenNf4Linear<B>) -> FullyShardedNf4Linear<B> {
+        layer.validate();
+        FullyShardedNf4Linear::from_shards(self.packed_parameter(layer.packed),self.parameter(layer.scales),self.parameter(layer.codebook),
+            layer.bias.map(|bias|self.parameter(bias)),layer.input_features,layer.output_features,layer.block_size,layer.tile_rows,layer.use_tensor_core)
+    }
+    /// Partition the real packed NF4 base AND original trainable native A/B leaves.
+    pub fn nf4_lora(&mut self,layer:crate::Nf4LoRALinear<B>) -> FullyShardedNf4LoRALinear<B> {
+        FullyShardedNf4LoRALinear {base:self.nf4(layer.base),adapter_a:self.linear(layer.adapter_a),adapter_b:self.linear(layer.adapter_b),dropout:layer.dropout,scale:layer.scale}
     }
 
     /// Shard RMSNorm's existing affine parameter with its actual epsilon.

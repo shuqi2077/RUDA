@@ -36,7 +36,7 @@ impl<B:Backend> FullyShardedPackedParameterRecord<B> {
         if self.version!=1 {return Err(FullyShardedParameterError::Record);}
         let (_,size)=packed_geometry(self.logical_shape(),self.rank(),self.world_size())?;
         if self.local().val().dims()!=[size] {return Err(FullyShardedParameterError::Geometry("saved packed slice length differs"));}
-        if !matches!(self.local().val().dtype(),DType::I32|DType::I64) {return Err(FullyShardedParameterError::DType);}
+        if !matches!(self.local().val().dtype(),DType::U8|DType::I32|DType::I64) {return Err(FullyShardedParameterError::DType);}
         Ok(())
     }
     /// Restore the actual saved local slice with its original source identity.

@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 use crate::{Dropout,DropoutConfig,Linear,LinearConfig,LoRALinearConfig};
-use ruda_model::{module::{Initializer,Module,Param},tensor::{Tensor,TensorData,TensorPrimitive,Int,DType,Element,ElementConversion,
+use ruda_model::{module::{Initializer,Module,Param,ParamId},tensor::{Tensor,TensorData,TensorPrimitive,Int,DType,Element,ElementConversion,
     FrozenNf4Ops,Nf4ProjectionOptions,backend::Backend}};
 #[cfg(not(feature="std"))]
 #[allow(unused_imports)]
@@ -55,8 +55,9 @@ impl PackedNf4Data {
     /// Upload actual preprocessing payload to an explicitly selected native backend/device.
     /// No base bias, adapter values or parameter identities are fabricated.
     pub fn into_layer<B:Backend>(self,device:&B::Device,bias:Option<Param<Tensor<B,1>>>,tile_rows:usize,use_tensor_core:bool) -> FrozenNf4Linear<B> {
-        let size=self.input_features*self.output_features;
-        let packed=Param::from_tensor(Tensor::<B,1,Int>::from_data(TensorData::new(self.packed,[size.div_ceil(2)]),(device,DType::U8)));
+        assert!(self.input_features>0 && self.output_features>0 && self.block_size>0 && self.block_size%2==0 && self.block_size<=u32::MAX as usize && tile_rows>0,"invalid NF4 upload geometry");
+        let size=self.input_features.checked_mul(self.output_features).expect("NF4 upload size overflows");assert!(size<=u32::MAX as usize,"NF4 upload indexing overflows");
+        let packed=Param::initialized(ParamId::new(),Tensor::<B,1,Int>::from_data(TensorData::new(self.packed,[size.div_ceil(2)]),(device,DType::U8)));
         let scales=Param::from_tensor(Tensor::<B,1>::from_data(TensorData::new(self.scales,[size.div_ceil(self.block_size)]),(device,DType::F32)));
         let book=Param::from_tensor(Tensor::<B,1>::from_data(TensorData::new(NF4_CODEBOOK.to_vec(),[16]),(device,DType::F32)));
         FrozenNf4Linear::from_parameters(packed,scales,book,bias,self.input_features,self.output_features,self.block_size,tile_rows,use_tensor_core)
@@ -138,7 +139,8 @@ pub struct Nf4LoRALinear<B:Backend> {
 impl LoRALinearConfig {
     /// Attach actual new trainable A/B leaves with explicit dtype and rsLoRA selection.
     pub fn init_nf4<B:Backend>(&self,base:FrozenNf4Linear<B>,adapter_dtype:DType,use_rslora:bool) -> Nf4LoRALinear<B> {
-        base.validate();assert!(self.rank>0,"NF4 adapter rank must be positive");
+        base.validate();assert!(self.rank>0 && self.alpha.is_finite(),"invalid NF4 adapter rank/alpha");
+        assert!(self.dropout.is_finite() && (0.0..1.0).contains(&self.dropout),"NF4 adapter dropout must be in [0,1)");
         assert!(matches!(adapter_dtype,DType::F32|DType::F16|DType::BF16),"NF4 adapter storage must be floating");
         let device=base.packed.val().device();
         let mut a=LinearConfig::new(base.input_features,self.rank).with_bias(false).init(&device);

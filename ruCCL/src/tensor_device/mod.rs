@@ -65,7 +65,7 @@ impl<B: Backend> TensorDevice<B> {
         &self,
         value: B::FloatTensorPrimitive,
     ) -> Result<TensorBuffer<B, T>, TensorDeviceError> {
-        if matches!(T::dtype(), DType::I32 | DType::I64) {
+        if matches!(T::dtype(), DType::U8 | DType::I32 | DType::I64) {
             return Err(TensorDeviceError::InvalidBuffer("integer elements require import_int"));
         }
         self.validate_type::<T>()?;
@@ -79,7 +79,7 @@ impl<B: Backend> TensorDevice<B> {
         &self,
         value: B::IntTensorPrimitive,
     ) -> Result<TensorBuffer<B, T>, TensorDeviceError> {
-        if !matches!(T::dtype(), DType::I32 | DType::I64) {
+        if !matches!(T::dtype(), DType::U8 | DType::I32 | DType::I64) {
             return Err(TensorDeviceError::InvalidBuffer("floating elements require import_float"));
         }
         self.validate_type::<T>()?;

@@ -145,7 +145,9 @@ impl<R:Runtime> Nf4Gemm<R> {
                     output.clone().into_array_arg(),bias.clone().into_array_arg(),n as u32,input.dtype.into(),bias.dtype.into());
             }}
         }
-        let mut strides=vec![1usize;rank];for axis in (0..rank.saturating_sub(1)).rev() {strides[axis]=strides[axis+1]*output_shape[axis+1];}
+        let mut strides=vec![1usize;rank];for axis in (0..rank.saturating_sub(1)).rev() {
+            strides[axis]=strides[axis+1].checked_mul(output_shape[axis+1]).ok_or(Nf4Error::Layout("NF4 leading output strides overflow"))?;
+        }
         Ok(RudaTensor::new(output.client,output.handle,Metadata::new(output_shape,strides),output.device,output.dtype))
     }
     fn tensor_core(&self,input:RudaTensor<R>,output:RudaTensor<R>,rows:usize,backward:bool) -> Result<(),Nf4Error> {

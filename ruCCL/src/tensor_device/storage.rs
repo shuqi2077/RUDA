@@ -61,6 +61,7 @@ impl<B: Backend> TensorDevice<B> {
             DType::BF16 => Primitive::Float(B::float_empty(shape, &self.device, FloatDType::BF16)),
             DType::I32 => Primitive::Int(B::int_empty(shape, &self.device, IntDType::I32)),
             DType::I64 => Primitive::Int(B::int_empty(shape, &self.device, IntDType::I64)),
+            DType::U8 => Primitive::Int(B::int_empty(shape, &self.device, IntDType::U8)),
             _ => unreachable!("sealed collective element type"),
         };
         Ok(self.wrap(value, length))
@@ -68,7 +69,7 @@ impl<B: Backend> TensorDevice<B> {
 
     pub(super) fn from_values<T: TensorElement>(&self, values: &[T]) -> Primitive<B> {
         let data = TensorData::new(values.to_vec(), [values.len()]);
-        if matches!(T::dtype(), DType::I32 | DType::I64) {
+        if matches!(T::dtype(), DType::U8 | DType::I32 | DType::I64) {
             Primitive::Int(B::int_from_data(data, &self.device))
         } else {
             Primitive::Float(B::float_from_data(data, &self.device))

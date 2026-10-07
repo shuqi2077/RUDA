@@ -222,6 +222,8 @@ visit_fields!(FullyShardedAwqTransformerBlock,attention,feed_forward,attention_n
 visit_fields!(FullyShardedAwqTransformerStack,blocks);
 visit_fields!(FullyShardedAwqTransformerHead,projection,normalization);
 visit_fields!(FullyShardedAwqTransformerModel,embeddings,backbone,normalization,head);
+visit_fields!(FullyShardedNf4Linear,packed,scales,codebook,bias);
+visit_fields!(FullyShardedNf4LoRALinear,base,adapter_a,adapter_b);
 impl<B:Backend> FullyShardedModule<B> for ShardedPackedParameter<B> {
     fn visit_shards<F:FnMut(&ShardedParameter<B>)>(&self,_visitor:&mut F) {}
     fn visit_packed_shards<F:FnMut(&ShardedPackedParameter<B>)>(&self,visitor:&mut F) {visitor(self);}
