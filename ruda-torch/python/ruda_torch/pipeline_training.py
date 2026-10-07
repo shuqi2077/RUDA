@@ -23,6 +23,10 @@ class PipelineTensorSpec:
         self.validate()
         return torch.empty(self.shape, device=device, dtype=self.dtype)
 
+    @property
+    def has_floating(self):
+        return self.dtype in (torch.float32,torch.float16,torch.bfloat16)
+
 
 class PipelineStage:
     """One caller-constructed stage per rank, with a noninterleaved 1F1B schedule.
@@ -32,19 +36,60 @@ class PipelineStage:
     total effective weight. Input/output interfaces are explicit tensors, not a
     guessed transformer architecture. Optimizer steps occur after run() returns.
     """
+    transport_protocol=1
+
     def __init__(self, module, group, *, input_spec, output_spec):
         self.module, self.group = module, group
         self.input_spec, self.output_spec = input_spec, output_spec
         self.rank, self.world_size = group.rank, group.world_size
         self.device = torch.device('ruda:0' if group.device_type == 'ruda' else 'cpu')
         group.validate_training_options(group.world_size)
-        specs = group.gather_metadata((input_spec, output_spec))
+        error=None
+        try:
+            for spec in (input_spec,output_spec):
+                if not self._is_spec(spec):raise TypeError('unsupported pipeline boundary contract')
+                spec.validate()
+            self._validate_input_spec(input_spec)
+        except (TypeError,ValueError) as failure:error=str(failure)
+        specs = group.gather_metadata((input_spec, output_spec,self.transport_protocol,error))
+        for _,_,protocol,failure in specs:
+            if failure:raise ValueError(failure)
+            if protocol!=self.transport_protocol:raise ValueError('pipeline stages must use the same tensor transfer protocol')
         for rank in range(group.world_size-1):
             if specs[rank][1] != specs[rank+1][0]:
                 raise ValueError('adjacent pipeline activation interfaces differ')
-            if specs[rank][1].dtype not in (torch.float32,torch.float16,torch.bfloat16):
+            if not specs[rank][1].has_floating:
                 raise ValueError('differentiable stage boundaries must carry floating activations')
         self._running = False
+
+    def _is_spec(self,spec):return isinstance(spec,PipelineTensorSpec)
+
+    def _validate_input_spec(self,spec):return None
+
+    def _matches(self,value,spec):
+        return isinstance(value,torch.Tensor) and tuple(value.shape)==spec.shape and value.dtype==spec.dtype
+
+    def _is_cpu_payload(self,value):return isinstance(value,torch.Tensor) and value.device.type=='cpu'
+
+    def _payload_metadata(self,value,shapes_only=False):return tuple(value.shape) if shapes_only else value.tolist()
+
+    def _to_device(self,value):return value.to(self.device)
+
+    def _received_input(self,value):return value.requires_grad_(True)
+
+    def _invoke(self,value):return self.module(value)
+
+    def _gradient_spec(self,spec):return spec
+
+    def _backward_output(self,output,gradient):
+        if output.requires_grad:output.backward(gradient)
+
+    def _input_gradient(self,value):
+        if self.rank>0 and value.grad is None:return torch.zeros_like(value)
+        return value.grad
+
+    @property
+    def invocation_contract(self):return self.transport_protocol,'single'
 
     def validate_interfaces(self,count,microbatch_specs=None):
         """Collectively validate the actual per-microbatch boundary contracts.
@@ -60,12 +105,13 @@ class PipelineStage:
             interfaces=tuple((self.input_spec,self.output_spec) for _ in range(count)) if microbatch_specs is None else tuple(microbatch_specs)
             if len(interfaces)!=count:raise ValueError('supply one boundary contract per actual microbatch')
             for pair in interfaces:
-                if not isinstance(pair,(tuple,list)) or len(pair)!=2 or not all(isinstance(spec,PipelineTensorSpec) for spec in pair):
+                if not isinstance(pair,(tuple,list)) or len(pair)!=2 or not all(self._is_spec(spec) for spec in pair):
                     raise TypeError('microbatch boundary contracts must be input/output PipelineTensorSpec pairs')
                 for spec in pair:spec.validate()
-                if self.rank>0 and pair[0].dtype not in (torch.float32,torch.float16,torch.bfloat16):
+                self._validate_input_spec(pair[0])
+                if self.rank>0 and not pair[0].has_floating:
                     raise ValueError('received pipeline activations must be floating')
-                if self.rank<self.world_size-1 and pair[1].dtype not in (torch.float32,torch.float16,torch.bfloat16):
+                if self.rank<self.world_size-1 and not pair[1].has_floating:
                     raise ValueError('sent pipeline activations must be floating')
             interfaces=tuple(tuple(pair) for pair in interfaces)
         except (TypeError,ValueError) as failure:error=str(failure)
@@ -121,19 +167,19 @@ class PipelineStage:
         def recv_input(index):
             input_spec=interfaces[index][0]
             if first:
-                value = inputs[index].to(self.device)
-                if tuple(value.shape) != input_spec.shape or value.dtype != input_spec.dtype:
+                value = self._to_device(inputs[index])
+                if not self._matches(value,input_spec):
                     raise ValueError('pipeline input differs from its explicit interface')
                 return value
-            return self._exchange(receive_spec=input_spec, receive_rank=self.rank-1).requires_grad_(True)
+            return self._received_input(self._exchange(receive_spec=input_spec, receive_rank=self.rank-1))
 
         def forward(value, index):
-            output = self.module(value)
+            output = self._invoke(value)
             output_spec=interfaces[index][1]
-            if not isinstance(output, torch.Tensor) or tuple(output.shape) != output_spec.shape or output.dtype != output_spec.dtype:
+            if not self._matches(output,output_spec):
                 raise ValueError('pipeline output differs from its explicit interface')
             if last:
-                loss = loss_sum(output, targets[index].to(self.device))
+                loss = loss_sum(output,self._to_device(targets[index]))
                 if loss.numel() != 1:
                     raise ValueError('pipeline loss_sum must return a scalar')
                 losses.append(loss.detach())
@@ -143,11 +189,8 @@ class PipelineStage:
 
         def backward(gradient):
             _, value, output = pending.popleft()
-            if output.requires_grad:
-                output.backward(gradient)
-            if not first and value.grad is None:
-                return torch.zeros_like(value)
-            return value.grad
+            self._backward_output(output,gradient)
+            return self._input_gradient(value)
 
         try:
             for index in range(warmup):
@@ -161,7 +204,7 @@ class PipelineStage:
                 output = forward(value, index)
                 backward_index=pending[0][0]
                 gradient = None if last else self._exchange(send=output, send_rank=self.rank+1,
-                    receive_spec=interfaces[backward_index][1], receive_rank=self.rank+1)
+                    receive_spec=self._gradient_spec(interfaces[backward_index][1]), receive_rank=self.rank+1)
                 input_gradient = backward(gradient)
                 final = step == remaining-1
                 if not first:
@@ -169,12 +212,12 @@ class PipelineStage:
                         receive_spec=None if final else interfaces[index+1][0],
                         receive_rank=None if final else self.rank-1)
                     if value is not None:
-                        value.requires_grad_(True)
+                        value=self._received_input(value)
                 elif not final:
                     value = recv_input(index+1)
             for _ in range(warmup):
                 backward_index=pending[0][0]
-                gradient = None if last else self._exchange(receive_spec=interfaces[backward_index][1], receive_rank=self.rank+1)
+                gradient = None if last else self._exchange(receive_spec=self._gradient_spec(interfaces[backward_index][1]), receive_rank=self.rank+1)
                 input_gradient = backward(gradient)
                 if not first:
                     self._exchange(send=input_gradient, send_rank=self.rank-1)

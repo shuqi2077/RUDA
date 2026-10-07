@@ -229,6 +229,7 @@ from .parallel_training import (ColumnParallelLinear, RowParallelLinear, VocabPa
     copy_to_tensor_parallel, reduce_from_tensor_parallel, gather_from_tensor_parallel, scatter_to_tensor_parallel)
 from .sharded_training import FullyShardedModule, fully_shard, Zero2Optimizer, ShardedReplicaGroup
 from .pipeline_training import PipelineStage, PipelineTensorSpec
+from .structured_pipeline import StructuredPipelineStage,PipelineTreeSpec,PipelineLeafSpec,PipelineConstant
 from .distributed_checkpoint import DistributedCheckpoint, model_shard_layout
 from .adapter_interop import load_peft_adapter, save_peft_adapter
 from .attention import scaled_dot_product_attention

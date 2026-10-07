@@ -44,6 +44,7 @@ class PipelineTrainer:
         from .sharded_mesh import ShardedDataTensorParallelGroup
         coordinator=ShardedDataTensorParallelGroup if any(isinstance(unit,FullyShardedModule) for unit in stage.module.modules()) else DataTensorParallelGroup
         self.coordinator=coordinator(stage.module,mesh.stage_mesh())
+        self.coordinator.validate_training_options(stage.invocation_contract)
         self.sharded_pipeline=any(mesh.world.gather_metadata(isinstance(self.coordinator,ShardedDataTensorParallelGroup)))
         if tied_parameters is not None:tied_parameters.validate_optimizer(optimizer)
         names=mesh.world.gather_metadata(stage_name)
@@ -71,8 +72,8 @@ class PipelineTrainer:
         if not total:raise ValueError('global pipeline effective weight must be positive')
         error=None
         for values in (inputs,targets):
-            if any(not isinstance(value,torch.Tensor) or value.device.type!='cpu' for value in values):
-                error='pipeline trainer inputs/targets must be CPU tensors'
+            if any(not self.stage._is_cpu_payload(value) for value in values):
+                error='pipeline trainer input/target tensor leaves must be on CPU'
         for failure in self.mesh.world.gather_metadata(error):
             if failure:raise ValueError(failure)
         schedules=self.mesh.world.gather_metadata((len(inputs),len(targets)))
@@ -91,12 +92,12 @@ class PipelineTrainer:
             if failure:raise ValueError(failure)
         contracts=self.mesh.tensor.gather_metadata(interfaces)
         error=None if all(other==interfaces for other in contracts) else 'TP ranks supplied different pipeline boundary contracts'
-        if self.stage.rank==0 and any(tuple(value.shape)!=spec[0].shape or value.dtype!=spec[0].dtype for value,spec in zip(inputs,interfaces,strict=True)):
+        if self.stage.rank==0 and any(not self.stage._matches(value,spec[0]) for value,spec in zip(inputs,interfaces,strict=True)):
             error='first-stage input differs from its explicit pipeline interface'
         for failure in self.mesh.world.gather_metadata(error):
             if failure:raise ValueError(failure)
-        payload=([tuple(value.shape) for value in inputs] if self.input_is_parallel else [value.tolist() for value in inputs],
-                 [value.tolist() for value in targets])
+        payload=([self.stage._payload_metadata(value,self.input_is_parallel) for value in inputs],
+                 [self.stage._payload_metadata(value) for value in targets])
         requests=self.mesh.tensor.gather_metadata(payload)
         error=None if all(item==payload for item in requests) else 'TP ranks supplied different pipeline logical microbatches'
         for failure in self.mesh.world.gather_metadata(error):
