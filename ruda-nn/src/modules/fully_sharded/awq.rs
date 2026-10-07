@@ -91,6 +91,10 @@ pub struct FullyShardedAwqLinear<B: Backend> {
 }
 
 impl<B: Backend> FullyShardedAwqLinear<B> {
+    /// Convert original loaded packed base storage into this rank's actual slices.
+    pub fn from_full(layer:crate::FrozenAwqLinear<B>,rank:usize,world_size:usize) -> Self {
+        ShardingContext::new(rank,world_size).awq(layer)
+    }
     /// Assemble actual local base slices, retaining their values and IDs.
     pub fn from_shards(qweight: ShardedPackedParameter<B>, qzeros: ShardedPackedParameter<B>,
         scales: ShardedParameter<B>, bias: Option<ShardedParameter<B>>, group_size: usize) -> Self {
@@ -170,12 +174,34 @@ pub struct FullyShardedAwqLoRALinear<B: Backend> {
 }
 
 impl<B: Backend> FullyShardedAwqLoRALinear<B> {
+    /// Validate loaded adapter logical shapes, storage, trainability and topology
+    /// against the actual packed base before entering any collective.
+    pub fn validate(&self) {
+        self.base.validate();
+        let input=self.base.qweight.logical_shape[0];let output=self.base.scales.logical_shape[1];
+        let [a_input,rank]:[usize;2]=self.adapter_a.weight.logical_shape.clone().try_into().expect("AWQ adapter A must be a matrix");
+        assert!(rank>0 && self.scale.is_finite(),"invalid AWQ adapter rank/scale");
+        assert_eq!(a_input,input,"AWQ adapter A input width differs");
+        assert_eq!(self.adapter_b.weight.logical_shape,[rank,output],"AWQ adapter B shape differs");
+        assert!(self.adapter_a.bias.is_none() && self.adapter_b.bias.is_none(),"AWQ adapters must be bias-free");
+        let device=self.base.qweight.local.val().device();
+        let topology=(self.base.qweight.rank,self.base.qweight.world_size);
+        for parameter in [&self.adapter_a.weight,&self.adapter_b.weight] {
+            assert_eq!((parameter.rank,parameter.world_size),topology,"AWQ adapter/base topologies differ");
+            let value=parameter.local.val();
+            assert_eq!(value.device(),device,"AWQ adapter/base devices differ");
+            assert!(matches!(value.dtype(),DType::F16|DType::BF16|DType::F32),"unsupported AWQ adapter storage");
+            assert!(!B::ad_enabled(&device) || value.is_require_grad(),"AWQ adapters must be trainable on the AD backend");
+            let _=ShardedParameter::from_local(parameter.local.clone(),parameter.logical_shape.clone(),parameter.rank,parameter.world_size);
+        }
+    }
     /// Convert loaded native packed base/adapters into actual local slices.
     pub fn from_full(layer: crate::AwqLoRALinear<B>, rank: usize, world_size: usize) -> Self {
         ShardingContext::new(rank, world_size).awq_lora(layer)
     }
     /// Transient native module for inference; no adapter merge or requantization.
     pub fn gather_inference<C: IntegerTensorCollective<B>>(&self, communicator: C) -> Result<crate::AwqLoRALinear<B>, C::Error> {
+        self.validate();
         Ok(crate::AwqLoRALinear {base:self.base.gather_inference(communicator.clone())?,
             adapter_a:self.adapter_a.gather_inference(communicator.clone())?,adapter_b:self.adapter_b.gather_inference(communicator)?,
             dropout:self.dropout.clone(),scale:self.scale})
@@ -185,6 +211,7 @@ impl<B: Backend> FullyShardedAwqLoRALinear<B> {
 impl<B: Backend, S: CheckpointStrategy> FullyShardedAwqLoRALinear<Autodiff<B, S>> {
     /// Original differentiable A/B gathers with an unchanged packed frozen base.
     pub fn gather<C: IntegerTensorCollective<B>>(&self, communicator: C) -> Result<crate::AwqLoRALinear<Autodiff<B, S>>, C::Error> {
+        self.validate();
         Ok(crate::AwqLoRALinear {base:self.base.gather(communicator.clone())?,
             adapter_a:self.adapter_a.gather(communicator.clone())?,adapter_b:self.adapter_b.gather(communicator)?,
             dropout:self.dropout.clone(),scale:self.scale})

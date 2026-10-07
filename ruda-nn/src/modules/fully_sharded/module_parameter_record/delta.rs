@@ -24,6 +24,7 @@ impl<B:Backend> FullyShardedModuleDeltaRecord<B> {
     /// Save only explicitly selected real IDs, preserving canonical ties and every selected leaf's native metadata.
     /// The supplied base identifier names the required original values; this is not a tensor-content hash.
     pub fn capture<M:FullyShardedModule<B>>(module:&M,base_id:&str,updated_ids:&[ParamId]) -> Result<Self,FullyShardedParameterError> {
+        require_float_only(module)?;
         if base_id.is_empty() {return Err(FullyShardedParameterError::Record);}
         let shards=schema(module)?;let ids=updated_ids.iter().copied().collect::<BTreeSet<_>>();
         if ids.len()!=updated_ids.len() || ids.iter().any(|id|!shards.contains_key(id)) {return Err(FullyShardedParameterError::Record);}
@@ -64,6 +65,7 @@ impl<B:Backend> FullyShardedModuleDeltaRecord<B> {
     /// Match the required caller-identified base and all prepared native parameter roles/flags.
     /// The caller must actually load that base's original values; this does not authenticate their contents.
     pub fn validate_for<M:FullyShardedModule<B>>(&self,module:&M,base_id:&str) -> Result<(),FullyShardedParameterError> {
+        require_float_only(module)?;
         self.validate()?;
         let targets=schema(module)?;
         if self.base_id!=base_id || self.signatures.len()!=targets.len() {return Err(FullyShardedParameterError::Record);}

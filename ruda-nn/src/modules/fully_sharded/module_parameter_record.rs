@@ -6,12 +6,23 @@ use crate::hybrid_sharded::{FullyShardedColumnParallelLinear,FullyShardedRowPara
 
 mod delta;
 pub use delta::FullyShardedModuleDeltaRecord;
+mod packed;
+pub use packed::{FullyShardedPackedParameterRecord,FullyShardedStorageRecord};
 
 /// Explicit logical-shard visitation alongside native local-parameter module visitation.
 /// Implementations must enumerate every actual sharded leaf, including repeated shared roles.
 pub trait FullyShardedModule<B:Backend>:Module<B> {
     /// Visit each actual logical parameter together with its exact rank/topology metadata.
     fn visit_shards<F:FnMut(&ShardedParameter<B>)>(&self,visitor:&mut F);
+    /// Visit exact immutable packed integer slices separately from floating leaves.
+    /// Existing floating-only modules retain an empty packed schema.
+    fn visit_packed_shards<F:FnMut(&ShardedPackedParameter<B>)>(&self,_visitor:&mut F) {}
+}
+
+fn require_float_only<B:Backend,M:FullyShardedModule<B>>(module:&M) -> Result<(),FullyShardedParameterError> {
+    let mut packed=false;module.visit_packed_shards(&mut |_|packed=true);
+    if packed {return Err(FullyShardedParameterError::Geometry("packed modules require FullyShardedStorageRecord; floating-only records omit packed base words"));}
+    Ok(())
 }
 
 /// Canonical local parameter-only checkpoint for a complete native sharded module.
@@ -75,6 +86,7 @@ fn restore_values<B:Backend,M:FullyShardedModule<B>>(module:M,values:BTreeMap<Pa
 impl<B:Backend> FullyShardedModuleParameterRecord<B> {
     /// Capture each canonical actual local leaf exactly once, retaining original logical/topology metadata.
     pub fn capture<M:FullyShardedModule<B>>(module:&M) -> Result<Self,FullyShardedParameterError> {
+        require_float_only(module)?;
         let parameters=schema(module)?.into_values().map(|parameter|parameter.parameter_record()).collect::<Result<Vec<_>,_>>()?;
         Ok(Self {version:1,parameters})
     }
@@ -94,6 +106,11 @@ impl<B:Backend> FullyShardedModuleParameterRecord<B> {
     }
     /// Validate exact prepared architecture parameter IDs, logical layouts, topology, storage and trainability.
     pub fn validate_for<M:FullyShardedModule<B>>(&self,module:&M) -> Result<(),FullyShardedParameterError> {
+        require_float_only(module)?;
+        self.validate_float_for(module)
+    }
+
+    fn validate_float_for<M:FullyShardedModule<B>>(&self,module:&M) -> Result<(),FullyShardedParameterError> {
         self.validate()?;let shards=schema(module)?;
         if shards.len()!=self.parameters.len() {return Err(FullyShardedParameterError::Record);}
         for saved in &self.parameters {
@@ -155,6 +172,7 @@ macro_rules! visit_fields {
     ($module:ident,$($field:ident),+ $(,)?) => {
         impl<B:Backend> FullyShardedModule<B> for $module<B> {
             fn visit_shards<F:FnMut(&ShardedParameter<B>)>(&self,visitor:&mut F) {$(self.$field.visit_shards(visitor);)+}
+            fn visit_packed_shards<F:FnMut(&ShardedPackedParameter<B>)>(&self,visitor:&mut F) {$(self.$field.visit_packed_shards(visitor);)+}
         }
     };
 }
@@ -163,9 +181,11 @@ impl<B:Backend> FullyShardedModule<B> for ShardedParameter<B> {
 }
 impl<B:Backend,M:FullyShardedModule<B>> FullyShardedModule<B> for Option<M> {
     fn visit_shards<F:FnMut(&ShardedParameter<B>)>(&self,visitor:&mut F) {if let Some(module)=self {module.visit_shards(visitor);}}
+    fn visit_packed_shards<F:FnMut(&ShardedPackedParameter<B>)>(&self,visitor:&mut F) {if let Some(module)=self {module.visit_packed_shards(visitor);}}
 }
 impl<B:Backend,M:FullyShardedModule<B>> FullyShardedModule<B> for Vec<M> {
     fn visit_shards<F:FnMut(&ShardedParameter<B>)>(&self,visitor:&mut F) {for module in self {module.visit_shards(visitor);}}
+    fn visit_packed_shards<F:FnMut(&ShardedPackedParameter<B>)>(&self,visitor:&mut F) {for module in self {module.visit_packed_shards(visitor);}}
 }
 visit_fields!(FullyShardedLinear,weight,bias);
 visit_fields!(FullyShardedEmbedding,weight);
@@ -194,11 +214,18 @@ visit_fields!(FullyShardedRowParallelLoRA,base,adapter_a,adapter_b);
 visit_fields!(FullyShardedTensorParallelGatedMlp,gate,up,down);
 visit_fields!(FullyShardedVocabParallelEmbedding,weight);
 visit_fields!(FullyShardedVocabParallelProjection,weight,bias);
+visit_fields!(FullyShardedAwqLinear,qweight,qzeros,scales,bias);
+visit_fields!(FullyShardedAwqLoRALinear,base,adapter_a,adapter_b);
+impl<B:Backend> FullyShardedModule<B> for ShardedPackedParameter<B> {
+    fn visit_shards<F:FnMut(&ShardedParameter<B>)>(&self,_visitor:&mut F) {}
+    fn visit_packed_shards<F:FnMut(&ShardedPackedParameter<B>)>(&self,visitor:&mut F) {visitor(self);}
+}
 
 macro_rules! visit_variants {
     ($module:ident,$($variant:ident),+ $(,)?) => {
         impl<B:Backend> FullyShardedModule<B> for $module<B> {
             fn visit_shards<F:FnMut(&ShardedParameter<B>)>(&self,visitor:&mut F) {match self {$(Self::$variant(module)=>module.visit_shards(visitor),)+}}
+            fn visit_packed_shards<F:FnMut(&ShardedPackedParameter<B>)>(&self,visitor:&mut F) {match self {$(Self::$variant(module)=>module.visit_packed_shards(visitor),)+}}
         }
     };
 }

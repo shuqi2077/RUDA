@@ -55,6 +55,14 @@ pub struct FullyShardedParameterRecord<B:Backend> {
 }
 
 impl<B:Backend> FullyShardedParameterRecord<B> {
+    pub(super) fn into_exact_item(self) -> (u32,Vec<usize>,usize,usize,u64,bool,ruda_model::tensor::TensorData) {
+        (self.version,self.shape,self.rank,self.world,self.local.id.val(),self.trainable,self.local.val().into_data())
+    }
+    pub(super) fn from_exact_item(item:(u32,Vec<usize>,usize,usize,u64,bool,ruda_model::tensor::TensorData),device:&B::Device) -> Self {
+        let storage=item.6.dtype;
+        let value=Tensor::<B,1>::from_data(item.6,(device,storage)).set_require_grad(item.5);
+        Self {version:item.0,shape:item.1,rank:item.2,world:item.3,storage,trainable:item.5,local:Param::initialized(ParamId::from(item.4),value)}
+    }
     /// Actual original logical parameter dimensions, without padding.
     pub fn logical_shape(&self) -> &[usize] {&self.shape}
     /// Actual owning rank of this saved local interval.
