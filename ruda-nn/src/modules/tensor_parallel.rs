@@ -20,6 +20,8 @@ mod encoder_decoder;
 pub use encoder_decoder::*;
 mod adapted;
 pub use adapted::*;
+mod partition;
+pub use partition::*;
 
 /// Output-feature shard of a global projection, with an optional local bias shard.
 /// Construct local weights directly or load an explicitly partitioned checkpoint.
