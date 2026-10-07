@@ -10,6 +10,10 @@ pub mod sampler;
 #[cfg(feature = "std")]
 pub mod token_batch;
 
+/// Explicit-label causal-LM examples and packed/padded device collation.
+#[cfg(feature = "std")]
+pub mod causal;
+
 /// Dataset module.
 #[cfg(feature = "dataset")]
 pub mod dataset {

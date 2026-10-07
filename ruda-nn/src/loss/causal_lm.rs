@@ -61,6 +61,44 @@ impl<B: Backend> CausalLoss<B> {
 }
 
 impl CausalCrossEntropyConfig {
+    /// Train a packed decoder directly from the native device data batch.
+    /// The batch's explicit supervision alignment/sentinel must match this loss.
+    #[cfg(feature = "std")]
+    pub fn forward_packed_batch<B: Backend, M: PackedCausalLanguageModel<B>>(
+        &self, model: &M, batch: ruda_model::data::causal::PackedCausalBatch<B>,
+    ) -> CausalLoss<B> {
+        use ruda_model::data::causal::CausalTargetAlignment;
+        assert_eq!(self.ignore_index, batch.ignore_index, "collator and loss ignore indices differ");
+        assert_eq!(self.shift, batch.target_alignment == CausalTargetAlignment::NextToken, "collator and loss target alignment differs");
+        let layout = PackedSequenceLayout::new(batch.boundaries, batch.input_ids.dims()[0]);
+        self.forward_packed_model(model, batch.input_ids, batch.labels, &layout)
+    }
+
+    /// Train a caller's actual padding-aware hidden-state function from a batch.
+    ///
+    /// The backbone receives the actual visibility mask and reset positions;
+    /// it must honor both. Vocabulary projection uses every class in each chunk.
+    /// No model-family adapter, label-mask inference or CPU execution is installed.
+    #[cfg(feature = "std")]
+    pub fn forward_padded_batch<B: Backend>(
+        &self, batch: ruda_model::data::causal::PaddedCausalBatch<B>,
+        forward_hidden: impl FnOnce(Tensor<B, 2, Int>, Tensor<B, 2, Bool>, Tensor<B, 2, Int>) -> Tensor<B, 3>,
+        project: impl Fn(Tensor<B, 2>) -> Tensor<B, 2>,
+    ) -> CausalLoss<B> {
+        use ruda_model::data::causal::CausalTargetAlignment;
+        assert_eq!(self.ignore_index, batch.ignore_index, "collator and loss ignore indices differ");
+        assert_eq!(self.shift, batch.target_alignment == CausalTargetAlignment::NextToken, "collator and loss target alignment differs");
+        let shape = batch.input_ids.dims();
+        assert_eq!(batch.labels.dims(), shape, "batch token/label geometry differs");
+        assert_eq!(batch.attention_mask.dims(), shape, "batch visibility geometry differs");
+        assert_eq!(batch.position_ids.dims(), shape, "batch position geometry differs");
+        let device = batch.input_ids.device();
+        assert!(batch.labels.device() == device && batch.attention_mask.device() == device
+            && batch.position_ids.device() == device, "causal batch operands must share a device");
+        let hidden = forward_hidden(batch.input_ids, batch.attention_mask, batch.position_ids);
+        self.forward_hidden(hidden, batch.labels, project)
+    }
+
     /// Train an explicit packed decoder, retaining the full-vocabulary chunk algorithm.
     pub fn forward_packed_model<B: Backend, M: PackedCausalLanguageModel<B>>(
         &self, model: &M, tokens: Tensor<B, 1, Int>, labels: Tensor<B, 1, Int>, layout: &PackedSequenceLayout,
