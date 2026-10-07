@@ -1,5 +1,5 @@
 use ruda_kernel::dsl as kernel_dsl;
-use super::{ReduceFamily, ReduceInstruction};
+use super::{ReduceFamily, ReduceInstruction, min_identity};
 use crate::reduce::components::{
     instructions::{Accumulator, AccumulatorFormat, Item, ReduceRequirements, ReduceStep, Value},
     precision::ReducePrecision,
@@ -34,12 +34,12 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
     }
 
     fn null_input(_this: &Self) -> Vector<P::EI, P::SI> {
-        Vector::empty().fill(P::EI::max_value())
+        Vector::empty().fill(min_identity::<P::EI>())
     }
 
     fn null_accumulator(_this: &Self) -> Accumulator<P> {
         Accumulator::<P> {
-            elements: Value::new_single(Vector::empty().fill(P::EA::max_value())),
+            elements: Value::new_single(Vector::empty().fill(min_identity::<P::EA>())),
             args: Value::new_None(),
         }
     }
@@ -93,7 +93,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
     ) -> Value<Out> {
-        let mut min = P::EA::max_value();
+        let mut min = min_identity::<P::EA>();
         let accumulator = accumulator.elements.item();
         #[unroll]
         for k in 0..accumulator.size() {

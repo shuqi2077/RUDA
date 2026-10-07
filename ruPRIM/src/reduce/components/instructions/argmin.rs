@@ -57,12 +57,12 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
     }
 
     fn null_input(_this: &Self) -> Vector<P::EI, P::SI> {
-        Vector::empty().fill(P::EI::max_value())
+        Vector::empty().fill(super::min_identity::<P::EI>())
     }
 
     fn null_accumulator(_this: &Self) -> Accumulator<P> {
         Accumulator::<P> {
-            elements: Value::new_single(Vector::empty().fill(P::EA::max_value())),
+            elements: Value::new_single(Vector::empty().fill(super::min_identity::<P::EA>())),
             args: Value::new_single(Vector::empty().fill(u32::MAX)),
         }
     }
@@ -134,7 +134,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
     ) -> Value<Out> {
         let vector_size = accumulator.elements.item().size().comptime();
         let value = if vector_size > 1 {
-            let mut min = P::EA::max_value();
+            let mut min = super::min_identity::<P::EA>();
             let mut coordinate = u32::MAX.runtime();
 
             #[unroll]

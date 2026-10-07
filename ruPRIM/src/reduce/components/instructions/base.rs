@@ -171,7 +171,7 @@ pub fn plane_topk_insert<N: Numeric, S: Size>(
             lane_id.equal(winning_coord)
         };
 
-        local_best_val = select_many(is_winner, Vector::new(N::min_value()), local_best_val);
+        local_best_val = select_many(is_winner, Vector::new(super::max_identity::<N>()), local_best_val);
         if has_coords {
             local_best_coord = select_many(is_winner, Vector::new(u32::MAX), local_best_coord);
         }
@@ -192,7 +192,7 @@ pub fn plane_topk_merge<N: Numeric, S: Size>(
 
     #[unroll]
     for i in 0..k {
-        let mut local_val = Vector::new(N::min_value());
+        let mut local_val = Vector::new(super::max_identity::<N>());
         let mut local_coord = Vector::new(u32::MAX);
 
         #[unroll]

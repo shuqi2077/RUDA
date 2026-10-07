@@ -104,7 +104,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
     }
 
     fn null_input(_this: &Self) -> Vector<P::EI, P::SI> {
-        Vector::empty().fill(P::EI::min_value())
+        Vector::empty().fill(super::max_identity::<P::EI>())
     }
 
     fn null_accumulator(this: &Self) -> Accumulator<P> {
@@ -112,7 +112,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
         let mut args = Array::new(comptime!(this.k));
         #[unroll]
         for i in 0..this.k {
-            elements[i] = Vector::new(P::EA::min_value());
+            elements[i] = Vector::new(super::max_identity::<P::EA>());
             args[i] = Vector::new(u32::MAX);
         }
 
@@ -217,7 +217,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
 
         #[unroll]
         for slot in 0..this.k {
-            topk_vals[slot] = P::EA::min_value();
+            topk_vals[slot] = super::max_identity::<P::EA>();
             topk_coords[slot] = u32::MAX;
         }
 

@@ -1,5 +1,5 @@
 use ruda_kernel::dsl as kernel_dsl;
-use super::{ArgAccumulator, ReduceFamily, ReduceInstruction, lowest_coordinate_matching};
+use super::{ArgAccumulator, ReduceFamily, ReduceInstruction, lowest_coordinate_matching, max_identity};
 use crate::reduce::components::{
     instructions::{Accumulator, AccumulatorFormat, Item, ReduceRequirements, ReduceStep, Value},
     precision::ReducePrecision,
@@ -55,12 +55,12 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
     }
 
     fn null_input(_this: &Self) -> Vector<P::EI, P::SI> {
-        Vector::new(P::EI::min_value())
+        Vector::new(max_identity::<P::EI>())
     }
 
     fn null_accumulator(_this: &Self) -> Accumulator<P> {
         Accumulator::<P> {
-            elements: Value::new_single(Vector::new(P::EA::min_value())),
+            elements: Value::new_single(Vector::new(max_identity::<P::EA>())),
             args: Value::new_single(Vector::new(u32::MAX)),
         }
     }
@@ -132,7 +132,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
     ) -> Value<Out> {
         let vector_size = accumulator.elements.item().size().comptime();
         let value = if vector_size > 1 {
-            let mut max = P::EA::min_value();
+            let mut max = max_identity::<P::EA>();
             let mut coordinate = u32::MAX.runtime();
             #[unroll]
             for k in 0..vector_size {
