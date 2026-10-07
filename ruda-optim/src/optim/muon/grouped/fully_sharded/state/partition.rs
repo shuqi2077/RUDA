@@ -55,6 +55,67 @@ impl<B:Backend> FullyShardedMuonAdamWState<B> {
     }
 }
 
+impl<B:AutodiffBackend> FullyShardedMuonAdamWRecord<B> {
+    /// Move actual saved local momentum/masters only, without changing original configuration or placement.
+    pub fn to_device(mut self,device:&B::Device) -> Self {
+        self.states=self.states.into_iter().map(|(id,state)|(id,state.to_device(device))).collect();self
+    }
+    /// Offline complete-rank-set conversion of a whole original mixed optimizer checkpoint.
+    /// Records must represent the same completed boundary and one complete original data group. The actual
+    /// algorithm/configuration, parameter roles, absence of unused state and every per-parameter clock remain
+    /// unchanged. Load/repartition matching model/data/scheduler/gradient records and create the new explicit
+    /// communicators separately; this does not perform an automatic live-world migration or tensor transport.
+    pub fn repartition_from_ranks(sources:&[Self],rank:u32,world:u32) -> Result<Self,MuonError> {
+        let first=sources.first().ok_or(MuonError::InvalidConfig("complete original mixed optimizer record set is empty"))?;
+        if world==0 || rank>=world {return Err(MuonError::InvalidConfig("invalid destination mixed optimizer record rank/world"));}
+        let old_world=u32::try_from(sources.len()).map_err(|_|MuonError::InvalidConfig("original mixed optimizer record rank count overflows"))?;
+        let ids=first.states.keys().copied().collect::<HashSet<_>>();
+        for (source_rank,source) in sources.iter().enumerate() {
+            if source.version!=1 || source.config_key!=first.config_key || source.manifest.len()!=first.manifest.len()
+                || source.placement.len()!=first.placement.len() || source.placement.len()!=source.manifest.len()
+                || source.states.keys().copied().collect::<HashSet<_>>()!=ids {return Err(MuonError::IncompatibleRecord);}
+            let mut previous=None;
+            for ((manifest,placement),(original,original_placement)) in source.manifest.iter().zip(&source.placement)
+                .zip(first.manifest.iter().zip(&first.placement)) {
+                if previous.is_some_and(|id|id>=manifest.0) || placement.0!=manifest.0 || manifest!=original
+                    || placement.0!=original_placement.0 || placement.1!=original_placement.1 || placement.4!=original_placement.4
+                    || placement.2!=source_rank as u32 || placement.3!=old_world || (placement.4 && !manifest.2) {
+                    return Err(MuonError::IncompatibleRecord);
+                }
+                previous=Some(manifest.0);parameter_geometry(&placement.1,placement.2,placement.3,manifest.1)?;
+                if placement.4 && placement.1.len()!=2 {return Err(MuonError::IncompatibleRecord);}
+            }
+            for (id,state) in &source.states {
+                let manifest=source.manifest.iter().find(|entry|entry.0==id.val()).ok_or(MuonError::IncompatibleRecord)?;
+                let placement=source.placement.iter().find(|entry|entry.0==id.val()).ok_or(MuonError::IncompatibleRecord)?;
+                if !manifest.2 {return Err(MuonError::IncompatibleRecord);}
+                let master=state.master_muon.is_some() || state.master_adamw.is_some();
+                if !master && format!("{:?}",state.storage)!=manifest.3 {return Err(MuonError::IncompatibleRecord);}
+                if master && !matches!(manifest.3.as_str(),"F32"|"F16"|"BF16") {return Err(MuonError::IncompatibleRecord);}
+                let variants=usize::from(state.muon.is_some())+usize::from(state.adamw.is_some())+usize::from(state.master_muon.is_some())+usize::from(state.master_adamw.is_some());
+                if variants!=1 || placement.4!=(state.muon.is_some() || state.master_muon.is_some()) {return Err(MuonError::IncompatibleRecord);}
+                if let Some(momentum)=state.muon_momentum() {
+                    if momentum.dims()!=[manifest.1] || momentum.dtype()!=state.storage {return Err(MuonError::IncompatibleRecord);}
+                }
+                if let Some(master)=state.master() {if master.dims()!=[manifest.1] || master.dtype()!=DType::F32 {return Err(MuonError::IncompatibleRecord);}}
+            }
+        }
+        let mut states=HashMap::new();
+        for (id,_) in &first.states {
+            let placement=first.placement.iter().find(|entry|entry.0==id.val()).ok_or(MuonError::IncompatibleRecord)?;
+            let records=sources.iter().map(|source|source.states.get(id).cloned().ok_or(MuonError::IncompatibleRecord)).collect::<Result<Vec<_>,_>>()?;
+            states.insert(*id,FullyShardedMuonAdamWState::repartition_from_ranks(&records,&placement.1,placement.4,rank,world)?);
+        }
+        let mut manifest=first.manifest.clone();let mut placement=first.placement.clone();
+        for (entry,layout) in manifest.iter_mut().zip(&mut placement) {
+            let elements=layout.1.iter().try_fold(1usize,|total,axis|total.checked_mul(*axis)).ok_or(MuonError::InvalidConfig("destination mixed optimizer record size overflows"))?;
+            entry.1=elements.div_ceil(world as usize);layout.2=rank;layout.3=world;
+            parameter_geometry(&layout.1,rank,world,entry.1)?;
+        }
+        Ok(Self {version:1,config_key:first.config_key.clone(),manifest,placement,states})
+    }
+}
+
 fn repartition_adam<B:Backend>(sources:&[AdamWState<B,1>],elements:usize,rank:u32,world:u32) -> Result<AdamWState<B,1>,MuonError> {
     let first=sources.first().ok_or(MuonError::InvalidConfig("complete original AdamW rank set is empty"))?;
     for state in sources {
