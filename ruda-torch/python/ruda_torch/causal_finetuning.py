@@ -450,12 +450,19 @@ class SFTTrainer:
                 'total_seconds': self.elapsed_before_resume + time.monotonic() - self.started,
                 'updated_at': datetime.now(timezone.utc).isoformat()}
 
+    def _capture_training_state(self):
+        return finetune_state_dict(self.model, self.optimizer, base_id=self.base_id,
+                                   step=self.step, data_state={'cursor': self.cursor, 'tokens': self.tokens},
+                                   scaler=self.scaler)
+
+    def _restore_training_state(self, state):
+        return load_finetune_state_dict(self.model, self.optimizer, state,
+                                       base_id=self.base_id, scaler=self.scaler)
+
     def save(self, directory):
         directory = Path(directory); directory.mkdir(parents=True, exist_ok=True)
         latest, previous, temporary = (directory / name for name in ('latest.pt', 'previous.pt', 'next.pt'))
-        state = finetune_state_dict(self.model, self.optimizer, base_id=self.base_id,
-                                   step=self.step, data_state={'cursor': self.cursor, 'tokens': self.tokens},
-                                   scaler=self.scaler)
+        state = self._capture_training_state()
         state['run_config'] = self.run_config
         if self.sampler is not None:state['data_state']['sampler']=self.sampler.state_dict()
         if self.replica_group is not None:
@@ -491,8 +498,7 @@ class SFTTrainer:
         name = None if self.scheduler is None else type(self.scheduler).__module__ + '.' + type(self.scheduler).__qualname__
         if (saved is None) != (name is None) or saved is not None and saved['class'] != name:
             raise ValueError('scheduler mismatch')
-        self.step, data = load_finetune_state_dict(self.model, self.optimizer, state,
-                                                  base_id=self.base_id, scaler=self.scaler)
+        self.step, data = self._restore_training_state(state)
         if saved is not None:
             self.scheduler.load_state_dict(saved['state'])
         self.cursor, self.tokens = data['cursor'], data['tokens']
@@ -549,3 +555,28 @@ class SFTTrainer:
         temporary.write_text(json.dumps(status, indent=2) + '\n', encoding='utf-8')
         os.replace(temporary, directory / 'progress.json')
         return status
+
+
+class CausalLMTrainer(SFTTrainer):
+    """Full-parameter training using the existing token-weighted training loop.
+
+    The model still follows CausalLMFinetuner/PackedCausalLMFinetuner's explicit
+    hidden-state/head contract; its trainable tensors need not be LoRA adapters.
+    save/resume include all persistent model weights/buffers and actual optimizer
+    state. The source cursor, batch policy, scheduler/scaler and tensor RNG are
+    restored through the same step-boundary path as adapter-only fine-tuning.
+
+    A local snapshot retains actual local storage, not a consolidated global
+    model. For all-rank FSDP/TP/ZeRO commits, use the inherited save_distributed
+    and resume_distributed with the actual coordinator and shared filesystem.
+    """
+    def _capture_training_state(self):
+        from .training_checkpoint import training_state_dict
+        return training_state_dict(self.model, self.optimizer, base_id=self.base_id,
+                                   step=self.step, data_state={'cursor': self.cursor, 'tokens': self.tokens},
+                                   scaler=self.scaler)
+
+    def _restore_training_state(self, state):
+        from .training_checkpoint import load_training_state_dict
+        return load_training_state_dict(self.model, self.optimizer, state,
+                                        base_id=self.base_id, scaler=self.scaler)
