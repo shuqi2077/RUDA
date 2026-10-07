@@ -504,6 +504,7 @@ class SFTTrainer:
             template = getattr(module, '_template', None)
             if isinstance(template, nn.Module):
                 retain_modes(template)
+        retain_modes(self.executable)
         retain_modes(self.model)
         device = next(self.model.parameters()).device
         started = time.monotonic()
