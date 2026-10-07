@@ -114,6 +114,14 @@ impl CausalCrossEntropyConfig {
         &self, hidden: Tensor<B, 2>, labels: Tensor<B, 1, Int>, layout: &PackedSequenceLayout,
         project: impl Fn(Tensor<B, 2>) -> Tensor<B, 2>,
     ) -> CausalLoss<B> {
+        self.forward_packed_hidden_with_smoothing(hidden, labels, layout, project, 0.0)
+    }
+
+    /// Smooth over the full vocabulary while retaining actual packed document boundaries.
+    pub fn forward_packed_hidden_with_smoothing<B: Backend>(
+        &self, hidden: Tensor<B, 2>, labels: Tensor<B, 1, Int>, layout: &PackedSequenceLayout,
+        project: impl Fn(Tensor<B, 2>) -> Tensor<B, 2>, label_smoothing: f64,
+    ) -> CausalLoss<B> {
         let [tokens, width] = hidden.dims();
         assert_eq!(tokens, layout.tokens(), "packed hidden states differ from document metadata");
         assert_eq!(labels.dims(), [tokens], "packed hidden and label lengths differ");
@@ -121,7 +129,7 @@ impl CausalCrossEntropyConfig {
         let labels = if self.shift {
             labels.clone().mask_fill(layout.document_starts::<B>(&labels.device()), self.ignore_index)
         } else { labels };
-        self.forward_hidden(hidden.reshape([1, tokens, width]), labels.reshape([1, tokens]), project)
+        self.forward_hidden_with_smoothing(hidden.reshape([1, tokens, width]), labels.reshape([1, tokens]), project, label_smoothing)
     }
 
     pub fn forward_logits<B: Backend>(
@@ -149,6 +157,25 @@ impl CausalCrossEntropyConfig {
         })
     }
 
+    /// Train an explicit decoder with caller-selected full-vocabulary label smoothing.
+    pub fn forward_model_with_smoothing<B: Backend, M: CausalLanguageModel<B>>(
+        &self, model: &M, tokens: Tensor<B, 2, Int>, labels: Tensor<B, 2, Int>, label_smoothing: f64,
+    ) -> CausalLoss<B> {
+        assert_eq!(tokens.dims(), labels.dims(), "tokens and labels must have matching shapes");
+        self.forward_hidden_with_smoothing(model.forward_hidden(tokens), labels, |rows| model.project(rows), label_smoothing)
+    }
+
+    /// Train an actual packed decoder with explicit smoothing and document isolation.
+    pub fn forward_packed_model_with_smoothing<B: Backend, M: PackedCausalLanguageModel<B>>(
+        &self, model: &M, tokens: Tensor<B, 1, Int>, labels: Tensor<B, 1, Int>,
+        layout: &PackedSequenceLayout, label_smoothing: f64,
+    ) -> CausalLoss<B> {
+        assert_eq!(tokens.dims(), labels.dims(), "packed tokens and labels differ");
+        assert_eq!(tokens.dims()[0], layout.tokens(), "packed tokens differ from document metadata");
+        self.forward_packed_hidden_with_smoothing(model.forward_packed_hidden(tokens, layout), labels, layout,
+            |rows| model.project(rows), label_smoothing)
+    }
+
     /// Compute exact loss without constructing `[B, T, vocabulary]` logits.
     ///
     /// The projection can be dense, LoRA or another differentiable module.
@@ -161,6 +188,17 @@ impl CausalCrossEntropyConfig {
         labels: Tensor<B, 2, Int>,
         project: impl Fn(Tensor<B, 2>) -> Tensor<B, 2>,
     ) -> CausalLoss<B> {
+        self.forward_hidden_with_smoothing(hidden, labels, project, 0.0)
+    }
+
+    /// Full-vocabulary label smoothing with the existing chunked projection.
+    /// Ignored labels contribute neither target nor smoothing loss; normalization
+    /// still uses the actual supervised-token count, not the vocabulary size.
+    pub fn forward_hidden_with_smoothing<B: Backend>(
+        &self, hidden: Tensor<B, 3>, labels: Tensor<B, 2, Int>,
+        project: impl Fn(Tensor<B, 2>) -> Tensor<B, 2>, label_smoothing: f64,
+    ) -> CausalLoss<B> {
+        assert!(label_smoothing.is_finite() && (0.0..=1.0).contains(&label_smoothing), "label smoothing must be in [0,1]");
         assert!(
             self.token_chunk_size > 0,
             "token_chunk_size must be positive"
@@ -215,7 +253,8 @@ impl CausalCrossEntropyConfig {
                 logits.dims()[1] > 0,
                 "projection vocabulary must be nonempty"
             );
-            let selected = log_softmax(logits.cast(DType::F32), 1)
+            let log_probabilities = log_softmax(logits.cast(DType::F32), 1);
+            let selected = log_probabilities.clone()
                 .gather(
                     1,
                     targets
@@ -224,6 +263,10 @@ impl CausalCrossEntropyConfig {
                         .reshape([end - start, 1]),
                 )
                 .reshape([end - start]);
+            let selected = if label_smoothing == 0.0 { selected } else {
+                selected.mul_scalar(1.0 - label_smoothing)
+                    + log_probabilities.mean_dim(1).reshape([end - start]).mul_scalar(label_smoothing)
+            };
             loss_sum = loss_sum
                 - selected
                     .mask_fill(ignored.clone().slice([start..end]), 0)

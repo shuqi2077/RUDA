@@ -180,10 +180,13 @@ class CausalLMFinetuner(nn.Module):
     """An explicit backbone/head split; no model-specific module-path inference."""
     def __init__(self, backbone, head, *, token_chunk_size=32,
                  activation_checkpointing=True, checkpoint_modules=None,
-                 preserve_rng_state=True):
+                 preserve_rng_state=True, label_smoothing=0.):
         super().__init__()
         self.backbone, self.head = backbone, head
         self.token_chunk_size = positive_int(token_chunk_size, 'token_chunk_size')
+        self.label_smoothing = float(label_smoothing)
+        if not 0 <= self.label_smoothing <= 1:
+            raise ValueError('label_smoothing must be in [0,1]')
         self.activation_checkpointing = bool(activation_checkpointing)
         self.preserve_rng_state = bool(preserve_rng_state)
         self._checkpoint_backbone = False
@@ -220,7 +223,8 @@ class CausalLMFinetuner(nn.Module):
     def forward(self, input_ids, attention_mask, labels, *, reduction='mean'):
         hidden = self.hidden(input_ids, attention_mask)
         return chunked_lm_cross_entropy(hidden, self.head, labels,
-                                       token_chunk_size=self.token_chunk_size, reduction=reduction)
+                                       token_chunk_size=self.token_chunk_size, reduction=reduction,
+                                       label_smoothing=self.label_smoothing)
 
 
 class PackedCausalLMFinetuner(CausalLMFinetuner):
@@ -248,7 +252,8 @@ class PackedCausalLMFinetuner(CausalLMFinetuner):
         else:result=self.backbone(**kwargs)
         hidden=result if isinstance(result,torch.Tensor) else result.last_hidden_state
         if tuple(hidden.shape[:-1])!=tuple(input_ids.shape):raise ValueError('packed backbone must preserve flat tokens, not return vocabulary logits')
-        return chunked_lm_cross_entropy(hidden,self.head,labels,token_chunk_size=self.token_chunk_size,reduction=reduction)
+        return chunked_lm_cross_entropy(hidden,self.head,labels,token_chunk_size=self.token_chunk_size,
+                                       reduction=reduction,label_smoothing=self.label_smoothing)
 
 
 def load_hf_nf4_model(directory, *, target_modules, device, dtype=torch.bfloat16,
@@ -382,7 +387,7 @@ class SFTTrainer:
             if hasattr(self.replica_group, 'validate_microbatches'):
                 self.replica_group.validate_microbatches(microbatches)
             self.replica_group.validate_training_options((
-                self.step, self.base_id,
+                self.step, self.base_id, self._loss_options(),
                 self.gradient_overlap, self.bucket_bytes,
                 None if self.scaler is None else self.scaler.state_dict(),
                 [(type(self.optimizer).__module__, type(self.optimizer).__qualname__),
@@ -450,6 +455,10 @@ class SFTTrainer:
                 'total_seconds': self.elapsed_before_resume + time.monotonic() - self.started,
                 'updated_at': datetime.now(timezone.utc).isoformat()}
 
+    def _loss_options(self):
+        template = getattr(self.model, '_template', self.model)
+        return {'label_smoothing': template.label_smoothing}
+
     def _capture_training_state(self):
         return finetune_state_dict(self.model, self.optimizer, base_id=self.base_id,
                                    step=self.step, data_state={'cursor': self.cursor, 'tokens': self.tokens},
@@ -464,6 +473,7 @@ class SFTTrainer:
         latest, previous, temporary = (directory / name for name in ('latest.pt', 'previous.pt', 'next.pt'))
         state = self._capture_training_state()
         state['run_config'] = self.run_config
+        state['loss_options'] = self._loss_options()
         if self.sampler is not None:state['data_state']['sampler']=self.sampler.state_dict()
         if self.replica_group is not None:
             state['replica'] = {'rank': self.replica_group.rank, 'world_size': self.replica_group.world_size}
@@ -477,7 +487,7 @@ class SFTTrainer:
         saved_at = state['saved_at']
         del state
         checked = torch.load(temporary, map_location='cpu', weights_only=True)
-        if checked['run_config'] != self.run_config or checked['step'] != self.step:
+        if checked['run_config'] != self.run_config or checked['step'] != self.step or checked['loss_options'] != self._loss_options():
             raise RuntimeError('new checkpoint validation failed; previous version preserved')
         del checked
         if latest.exists():
@@ -494,6 +504,8 @@ class SFTTrainer:
             raise ValueError('checkpoint rank/world size differs; explicit repartitioning is required')
         if state.get('run_config') != self.run_config:
             raise ValueError('resume requires the exact input/source/config snapshot')
+        if state.get('loss_options', {'label_smoothing': 0.}) != self._loss_options():
+            raise ValueError('checkpoint causal loss options differ')
         saved_sampler=state['data_state'].get('sampler')
         if (saved_sampler is None)!=(self.sampler is None):raise ValueError('checkpoint sampler presence differs')
         if self.sampler is not None:self.sampler.validate_state_dict(saved_sampler)
@@ -517,7 +529,8 @@ class SFTTrainer:
         if self.replica_group is None:
             raise ValueError('save_distributed requires an explicit distributed coordinator')
         state = {'base_id': self.base_id, 'run_config': self.run_config, 'cursor': self.cursor,
-                 'tokens': self.tokens, 'elapsed_seconds': self.elapsed_before_resume+time.monotonic()-self.started}
+                 'tokens': self.tokens, 'loss_options': self._loss_options(),
+                 'elapsed_seconds': self.elapsed_before_resume+time.monotonic()-self.started}
         if self.sampler is not None:state['sampler']=self.sampler.state_dict()
         result = DistributedCheckpoint(self.replica_group, directory).save(self.model, self.optimizer,
             step=self.step, application_state=state, scheduler=self.scheduler, scaler=self.scaler)
@@ -531,6 +544,8 @@ class SFTTrainer:
         def validate(state):
             if state['base_id'] != self.base_id or state['run_config'] != self.run_config:
                 raise ValueError('distributed checkpoint base/source/config differs')
+            if state.get('loss_options', {'label_smoothing': 0.}) != self._loss_options():
+                raise ValueError('distributed checkpoint causal loss options differ')
             if (state.get('sampler') is None)!=(self.sampler is None):raise ValueError('checkpoint sampler presence differs')
             if self.sampler is not None:self.sampler.validate_state_dict(state['sampler'])
         step, state = DistributedCheckpoint(self.replica_group, directory).load(self.model, self.optimizer,

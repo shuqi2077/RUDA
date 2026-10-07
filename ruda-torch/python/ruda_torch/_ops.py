@@ -83,11 +83,15 @@ def _division_op(rounding_mode):
 def div(a, b, *, rounding_mode=None):
     if rounding_mode in ('floor', 'trunc'):
         return _typed_division(a, b, rounding_mode=rounding_mode)
+    if rounding_mode is None and (a.dtype not in _dtypes or isinstance(b, torch.Tensor) and b.dtype not in _dtypes):
+        return _true_division(a, b)
     return _binary(_division_op(rounding_mode), a, b)
 
 def div_(a, b, *, rounding_mode=None):
     if rounding_mode in ('floor', 'trunc'):
         return _typed_division(a, b, rounding_mode=rounding_mode, inplace=True)
+    if rounding_mode is None and (a.dtype not in _dtypes or isinstance(b, torch.Tensor) and b.dtype not in _dtypes):
+        return _true_division(a, b, inplace=True)
     return _binary(_division_op(rounding_mode), a, b, inplace=True)
 
 def mm(a, b):
@@ -382,6 +386,20 @@ def _typed_division(a, b, *, rounding_mode, inplace=False):
         op = 126 if rounding_mode == 'floor' else 125
     result = _apply(op, left, right)
     return _primitive_result(result, a, inplace)
+
+
+def _true_division(a, b, *, inplace=False):
+    if inplace:
+        _C.check_inplace(a, b if isinstance(b, torch.Tensor) else a)
+    left, right, dtype = _primitive_operands(a, b)
+    if dtype not in _dtypes:
+        dtype = torch.get_default_dtype()
+        if dtype not in _dtypes:
+            raise RuntimeError('RUDA true division does not support the selected default floating dtype')
+        left, right = left.to(dtype), right.to(dtype)
+    if inplace and (left.shape != a.shape or not torch.can_cast(dtype, a.dtype)):
+        raise RuntimeError('RUDA in-place true division cannot change shape or cast the floating result to the input dtype')
+    return _primitive_result(_apply(8, left, right), a, inplace)
 
 def activation_backward(grad, output, *, tanh=False):
     if output.dtype == torch.float32:
