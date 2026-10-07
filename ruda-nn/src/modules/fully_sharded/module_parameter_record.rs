@@ -7,7 +7,7 @@ use crate::hybrid_sharded::{FullyShardedColumnParallelLinear,FullyShardedRowPara
 mod delta;
 pub use delta::FullyShardedModuleDeltaRecord;
 mod packed;
-pub use packed::{FullyShardedPackedParameterRecord,FullyShardedStorageRecord};
+pub use packed::{FullyShardedPackedParameterRecord,FullyShardedStorageRecord,FullyShardedStorageDeltaRecord};
 
 /// Explicit logical-shard visitation alongside native local-parameter module visitation.
 /// Implementations must enumerate every actual sharded leaf, including repeated shared roles.
@@ -220,6 +220,8 @@ visit_fields!(FullyShardedAwqAttention,query,key,value,output);
 visit_fields!(FullyShardedAwqFeedForward,up,gate,down,activation);
 visit_fields!(FullyShardedAwqTransformerBlock,attention,feed_forward,attention_norm,feed_forward_norm);
 visit_fields!(FullyShardedAwqTransformerStack,blocks);
+visit_fields!(FullyShardedAwqTransformerHead,projection,normalization);
+visit_fields!(FullyShardedAwqTransformerModel,embeddings,backbone,normalization,head);
 impl<B:Backend> FullyShardedModule<B> for ShardedPackedParameter<B> {
     fn visit_shards<F:FnMut(&ShardedParameter<B>)>(&self,_visitor:&mut F) {}
     fn visit_packed_shards<F:FnMut(&ShardedPackedParameter<B>)>(&self,visitor:&mut F) {visitor(self);}

@@ -1,5 +1,7 @@
 use super::*;
 use ruda_model::tensor::TensorData;
+mod delta;
+pub use delta::FullyShardedStorageDeltaRecord;
 
 fn packed_geometry(shape:&[usize],rank:usize,world:usize) -> Result<(usize,usize),FullyShardedParameterError> {
     if world==0 || rank>=world || shape.contains(&0) {return Err(FullyShardedParameterError::Geometry("invalid packed axes/rank/world"));}
@@ -172,6 +174,17 @@ impl<B:Backend> FullyShardedStorageRecord<B> {
         self.validate()?;self.floating.validate_float_for(module)?;
         let targets=packed_schema(module)?;
         if targets.len()!=self.packed.len() {return Err(FullyShardedParameterError::Record);}
+        self.validate_selected_for(module)
+    }
+    fn validate_selected_for<M:FullyShardedModule<B>>(&self,module:&M) -> Result<(),FullyShardedParameterError> {
+        self.validate()?;
+        let floating=schema(module)?;let targets=packed_schema(module)?;
+        for saved in self.floating.parameters() {
+            let target=floating.get(&saved.id()).ok_or(FullyShardedParameterError::Record)?;
+            if target.logical_shape!=saved.logical_shape() || target.rank!=saved.rank() || target.world_size!=saved.world_size() {return Err(FullyShardedParameterError::Record);}
+            if target.local.val().dtype()!=saved.local().val().dtype() {return Err(FullyShardedParameterError::DType);}
+            if B::ad_enabled(&target.local.val().device()) && target.local.val().is_require_grad()!=saved.is_trainable() {return Err(FullyShardedParameterError::Trainability);}
+        }
         for saved in &self.packed {
             let target=targets.get(&saved.id()).ok_or(FullyShardedParameterError::Record)?;
             if target.logical_shape!=saved.logical_shape() || target.rank!=saved.rank() || target.world_size!=saved.world_size() {
@@ -185,6 +198,10 @@ impl<B:Backend> FullyShardedStorageRecord<B> {
     /// per ID, retaining every destination Param mapper and prepared module option.
     pub fn restore_into<M:FullyShardedModule<B>>(self,module:M) -> Result<M,FullyShardedParameterError> {
         self.validate_for(&module)?;
+        self.restore_selected_into(module)
+    }
+    fn restore_selected_into<M:FullyShardedModule<B>>(self,module:M) -> Result<M,FullyShardedParameterError> {
+        self.validate_selected_for(&module)?;
         let targets=schema(&module)?;let packed_targets=packed_schema(&module)?;
         let mut floats=BTreeMap::new();let mut integers=BTreeMap::new();
         for saved in self.floating.parameters {
