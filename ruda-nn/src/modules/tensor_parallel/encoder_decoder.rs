@@ -33,6 +33,12 @@ impl<B: Backend> TensorParallelCrossAttentionBlock<B> {
             memory_norm:block.memory_norm,residual_dropout:block.residual_dropout,norm_first:block.norm_first}
     }
 
+    /// Return the original local cross-attention container without collecting or copying weights.
+    pub fn into_local_block(self) -> DenseCrossAttentionBlock<B> {
+        DenseCrossAttentionBlock {attention:self.attention.local,query_norm:self.query_norm,memory_norm:self.memory_norm,
+            residual_dropout:self.residual_dropout,norm_first:self.norm_first}
+    }
+
     fn source(&self,input: Tensor<B,3>) -> Tensor<B,3> {
         if self.norm_first {self.query_norm.forward(input)} else {input}
     }

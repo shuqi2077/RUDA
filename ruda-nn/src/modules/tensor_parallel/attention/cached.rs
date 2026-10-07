@@ -3,7 +3,7 @@ use super::{Autodiff,Backend,BroadcastTensorCollective,CheckpointStrategy,Tensor
 use ruda_model::tensor::Bool;
 use crate::cache::ProjectedKvCache;
 
-fn masks<B: Backend>(mut masks: DenseAttentionMask<B>,visible: Tensor<B,2,Bool>) -> DenseAttentionMask<B> {
+pub(in crate::modules::tensor_parallel) fn masks<B: Backend>(mut masks: DenseAttentionMask<B>,visible: Tensor<B,2,Bool>) -> DenseAttentionMask<B> {
     masks.key_valid = Some(if let Some(additional) = masks.key_valid {
         assert_eq!(additional.dims(),visible.dims(),"parallel cached visibility must describe the complete retained prefix");
         assert_eq!(additional.device(),visible.device(),"parallel cached visibility device differs");
