@@ -18,6 +18,10 @@ mod stack;
 pub use stack::*;
 mod parameter_record;
 pub use parameter_record::*;
+mod model_parts;
+pub use model_parts::*;
+mod model;
+pub use model::*;
 
 /// Explicit construction context preserving one local autograd leaf per source ID.
 /// Reuse a context for all tied layers, then drop it after model construction. It
