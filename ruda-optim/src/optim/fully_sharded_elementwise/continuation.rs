@@ -23,6 +23,7 @@ impl<O,M,B,C> FullyShardedElementwiseOptimizer<O,M,B,C>
             let state=match record {AdaptorRecord::V1(record)=>O::partition_native_history(record,&shard)?};
             let (_,slots)=shard.geometry()?;
             validate_state::<B::InnerBackend,O>(&state,[slots],self.optimizer.shard_gradient_dtype(spec.4)).map_err(OptimizerShardError::DType)?;
+            self.optimizer.validate_fully_sharded_history(&state).map_err(OptimizerShardError::Placement)?;
             states.insert(id,state);
         }
         self.states=states;Ok(())

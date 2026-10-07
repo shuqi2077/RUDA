@@ -131,7 +131,10 @@ impl<O,M,B,C> FullyShardedElementwiseOptimizer<O,M,B,C>
             let gradient=trim(gradient,binding);
             let gradient=if let Some(clipping)=&clipping {clip(gradient,binding,clipping)?} else {gradient};
             let state=states.remove(&id).map(|state|O::to_device(state,&value.device()));
-            if let Some(state)=&state {validate_state::<B::InnerBackend,O>(state,value.dims(),dtype).map_err(FullyShardedElementwiseError::State)?;}
+            if let Some(state)=&state {
+                validate_state::<B::InnerBackend,O>(state,value.dims(),dtype).map_err(FullyShardedElementwiseError::State)?;
+                optimizer.validate_fully_sharded_history(state).map_err(FullyShardedElementwiseError::State)?;
+            }
             let (value,state)=optimizer.step_fully_sharded(parameter_lr,value,gradient,state,binding)?;let value=trim(value,binding);
             if let Some(state)=state {states.insert(id,state);}
             mapper.values.insert(id,value);
@@ -145,6 +148,7 @@ impl<O,M,B,C> FullyShardedElementwiseOptimizer<O,M,B,C>
             let spec=self.placement.iter().find(|entry|entry.0==id.val()).ok_or(FullyShardedElementwiseError::State("unknown saved state parameter"))?;
             let elements=spec.1.iter().product::<usize>();let slots=elements.div_ceil(spec.3 as usize);
             validate_state::<B::InnerBackend,O>(state,[slots],self.optimizer.shard_gradient_dtype(spec.4)).map_err(FullyShardedElementwiseError::State)?;
+            self.optimizer.validate_fully_sharded_history(state).map_err(FullyShardedElementwiseError::State)?;
         }
         self.states=record.states;Ok(self)
     }

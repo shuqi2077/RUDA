@@ -93,6 +93,7 @@ impl<O,M,B,C> FullyShardedGroupedElementwiseOptimizer<O,M,B,C>
             let spec=self.inner.placement.iter().find(|entry|entry.0==id.val()).ok_or(FullyShardedElementwiseError::State("unknown saved grouped parameter"))?;
             let count=spec.1.iter().product::<usize>();
             validate_state::<B::InnerBackend,O>(state,[count.div_ceil(spec.3 as usize)],self.groups[index].optimizer.shard_gradient_dtype(spec.4)).map_err(FullyShardedElementwiseError::State)?;
+            self.groups[index].optimizer.validate_fully_sharded_history(state).map_err(FullyShardedElementwiseError::State)?;
         }
         self.inner.states=record.inner.states;Ok(self)
     }
@@ -125,6 +126,7 @@ impl<O,M,B,C> FullyShardedGroupedElementwiseOptimizer<O,M,B,C>
             let state=match record {crate::record::AdaptorRecord::V1(record)=>O::partition_native_history(record,&shard)?};
             let (_,slots)=shard.geometry()?;
             validate_state::<B::InnerBackend,O>(&state,[slots],self.groups[index].optimizer.shard_gradient_dtype(spec.4)).map_err(crate::OptimizerShardError::DType)?;
+            self.groups[index].optimizer.validate_fully_sharded_history(&state).map_err(crate::OptimizerShardError::Placement)?;
             states.insert(id,state);
         }
         self.inner.states=states;Ok(())

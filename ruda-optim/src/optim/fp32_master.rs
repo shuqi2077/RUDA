@@ -86,6 +86,9 @@ impl<B:Backend,O:crate::ElementwiseShardOptimizer<B>>
     }
     fn shard_gradient_dtype(&self,_storage:DType)->DType {DType::F32}
     fn validate_fully_sharded_execution(&self) -> Result<(),&'static str> {self.optimizer.validate_fully_sharded_execution()}
+    fn validate_fully_sharded_history(&self,state:&Self::State<1>) -> Result<(),&'static str> {
+        if let Some(inner)=&state.inner {self.optimizer.validate_fully_sharded_history(inner)?;}Ok(())
+    }
     fn step_fully_sharded<C:ruda_model::tensor::BroadcastTensorCollective<B>>(&self,lr:LearningRate,tensor:Tensor<B,1>,gradient:Tensor<B,1>,
         state:Option<Self::State<1>>,binding:&crate::FullyShardedOptimizerParameter<C>)
         -> Result<(Tensor<B,1>,Option<Self::State<1>>),crate::FullyShardedElementwiseError<C::Error>> {

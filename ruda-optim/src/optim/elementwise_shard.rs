@@ -12,6 +12,8 @@ pub trait ElementwiseShardOptimizer<B:Backend>:SimpleOptimizer<B> {
     /// Validate original configuration for native FSDP, where tensor-wide transforms can use logical gathers.
     /// Existing ZeRO-2 validation remains separate and does not implicitly enable local-fragment clipping.
     fn validate_fully_sharded_execution(&self) -> Result<(),&'static str> {self.validate_element_sharding()}
+    /// Check original native history identity before updating or restoring this concrete configured algorithm.
+    fn validate_fully_sharded_history(&self,_state:&Self::State<1>) -> Result<(),&'static str> {Ok(())}
     /// Original coordinate update over one actual native FSDP owner, with any wrapper-level logical transforms.
     fn step_fully_sharded<C:BroadcastTensorCollective<B>>(&self,lr:crate::LearningRate,tensor:Tensor<B,1>,gradient:Tensor<B,1>,
         state:Option<Self::State<1>>, _binding:&crate::FullyShardedOptimizerParameter<C>)
