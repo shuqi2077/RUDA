@@ -11,6 +11,7 @@ mod qwen35;
 pub use qwen35::{Qwen35TextConfig, Qwen35TextModel, Qwen35Cache, Qwen35LayerType, Qwen35RopeConfig, LoadedQwen35Text, load_huggingface_qwen35_text, load_huggingface_qwen35_text_packed};
 pub use qwen35::{LoadedQwen35Vision, Qwen35VisionConfig, Qwen35VisionModel, Qwen35VisionOutput, load_huggingface_qwen35_vision};
 pub use qwen35::{Qwen35MultimodalCache, Qwen35MultimodalModel, load_huggingface_qwen35_multimodal};
+pub use qwen35::{Qwen35MultimodalCacheRecord,Qwen35ImageConditioned,Qwen35CachedMultimodalDecoder};
 pub use qwen35::{Qwen35ImageProcessor, Qwen35PreparedImages, Qwen35RgbImage};
 pub use qwen35::Qwen35BatchCache;
 pub use qwen35::{Qwen35CacheRecord,Qwen35LayerCacheState};

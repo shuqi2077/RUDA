@@ -13,6 +13,7 @@ use projection::Projection;
 mod vision;
 mod multimodal;
 pub use multimodal::{Qwen35MultimodalCache, Qwen35MultimodalModel, load_huggingface_qwen35_multimodal};
+pub use multimodal::{Qwen35MultimodalCacheRecord,Qwen35ImageConditioned,Qwen35CachedMultimodalDecoder};
 pub use vision::{LoadedQwen35Vision, Qwen35VisionConfig, Qwen35VisionModel, Qwen35VisionOutput, load_huggingface_qwen35_vision};
 pub use vision::{Qwen35ImageProcessor, Qwen35PreparedImages, Qwen35RgbImage};
 #[cfg(all(test, feature = "nvidia"))]

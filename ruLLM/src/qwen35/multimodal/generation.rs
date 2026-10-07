@@ -1,10 +1,33 @@
 use super::*;
 use crate::{CausalModelLimits, GreedyGenerationConfig, TokenGenerationOutput, generate_causal_greedy};
 
-struct ImageConditioned<'a, B: Backend> {
+/// Borrowed image-prefill model retaining the actual prepared patch data and grids.
+pub struct ImageConditioned<'a, B: Backend> {
     model: &'a Qwen35MultimodalModel<B>,
     patches: Tensor<B, 2>,
     grids: Vec<[usize; 3]>,
+}
+
+/// Decoder-only view of an already image-prefilled cache. Images are not encoded
+/// again when a native generation-session record is restored through this view.
+pub struct CachedMultimodalDecoder<'a,B: Backend> {model: &'a Qwen35MultimodalModel<B>}
+
+impl<'a,B: Backend> CachedMultimodalDecoder<'a,B> {
+    /// Borrow actual text/vision model identity without allocating or preparing images.
+    pub fn new(model: &'a Qwen35MultimodalModel<B>) -> Self {Self {model}}
+}
+
+impl<R,F,I,BT> CausalModel<DeviceBackend<R,F,I,BT>> for CachedMultimodalDecoder<'_,DeviceBackend<R,F,I,BT>>
+where R: DeviceRuntime,R::Server: ComputeServer,R::Device: DeviceOps,
+    F: FloatElement,I: IntElement,BT: BoolElement {
+    type Cache = Qwen35MultimodalCache<DeviceBackend<R,F,I,BT>>;
+    fn new_cache(&self) -> Self::Cache {self.model.new_cache()}
+    fn forward_cached_last(&self,tokens: Tensor<DeviceBackend<R,F,I,BT>,2,Int>,cache: &mut Self::Cache)
+        -> Tensor<DeviceBackend<R,F,I,BT>,3> {
+        self.try_forward_cached_last(tokens,cache).expect("restored multimodal decode failed")
+    }
+    fn try_forward_cached_last(&self,tokens: Tensor<DeviceBackend<R,F,I,BT>,2,Int>,cache: &mut Self::Cache)
+        -> Result<Tensor<DeviceBackend<R,F,I,BT>,3>,GenerationError> {self.model.decode(tokens,cache)}
 }
 
 impl<R, F, I, BT> CausalModel<DeviceBackend<R, F, I, BT>> for ImageConditioned<'_, DeviceBackend<R, F, I, BT>>
@@ -60,12 +83,22 @@ where
     fn generate_prepared(
         &self, tokens: &[i32], prepared: Qwen35PreparedImages, generation: &GreedyGenerationConfig,
     ) -> Result<TokenGenerationOutput, GenerationError> {
-        let rows = self.expand_image_placeholders(&[tokens.to_vec()],&prepared.grids)?;
+        let (conditioned,prompt) = self.prepare_image_generation(tokens,prepared)?;
         let device = self.text.embedding.weight.val().device();
-        let conditioned = ImageConditioned { model:self, grids:prepared.grids,
-            patches:Tensor::from_data(TensorData::new(prepared.patches,prepared.shape),(&device,DType::F32)) };
         let limits = CausalModelLimits { vocab_size:self.text.config.vocab_size,
             max_sequence_length:self.text.config.max_position_embeddings };
-        generate_causal_greedy(&conditioned,&limits,&rows[0],generation,&device)
+        generate_causal_greedy(&conditioned,&limits,&prompt,generation,&device)
+    }
+
+    /// Prepare the existing image-prefill adapter and actual expanded prompt for
+    /// caller-driven greedy/sampled generation sessions. The image processor owns
+    /// RGB/file preprocessing; the returned adapter reuses the native vision model.
+    pub fn prepare_image_generation(&self,tokens: &[i32],prepared: Qwen35PreparedImages)
+        -> Result<(ImageConditioned<'_,DeviceBackend<R,F,I,BT>>,Vec<i32>),GenerationError> {
+        let rows = self.expand_image_placeholders(&[tokens.to_vec()],&prepared.grids)?;
+        let device = self.text.embedding.weight.val().device();
+        let conditioned = ImageConditioned {model:self,grids:prepared.grids,
+            patches:Tensor::from_data(TensorData::new(prepared.patches,prepared.shape),(&device,DType::F32))};
+        Ok((conditioned,rows.into_iter().next().expect("one prompt was expanded")))
     }
 }

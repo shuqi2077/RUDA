@@ -132,12 +132,20 @@ where
     )
 }
 
-struct RudaPackedModel<'a, R, F, I, BT>(&'a PackedLlamaForCausalLm<DeviceBackend<R, F, I, BT>>)
+/// Borrowed packed decoder using the dedicated native RMSNorm/SwiGLU path.
+/// Can drive incremental generation sessions without switching to the portable path.
+pub struct RudaPackedModel<'a, R, F, I, BT>(&'a PackedLlamaForCausalLm<DeviceBackend<R, F, I, BT>>)
 where
     R: DeviceRuntime,
     F: FloatElement,
     I: IntElement,
     BT: BoolElement;
+
+impl<'a,R,F,I,BT> RudaPackedModel<'a,R,F,I,BT>
+where R: DeviceRuntime,F: FloatElement,I: IntElement,BT: BoolElement {
+    /// Borrow actual packed projection storage; no weights are copied or repacked.
+    pub fn new(model: &'a PackedLlamaForCausalLm<DeviceBackend<R,F,I,BT>>) -> Self {Self(model)}
+}
 
 impl<R, F, I, BT> CausalModel<DeviceBackend<R, F, I, BT>> for RudaPackedModel<'_, R, F, I, BT>
 where

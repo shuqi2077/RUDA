@@ -1,6 +1,9 @@
 mod position;
 mod images;
 mod generation;
+pub use generation::{ImageConditioned as Qwen35ImageConditioned,CachedMultimodalDecoder as Qwen35CachedMultimodalDecoder};
+mod cache_record;
+pub use cache_record::Qwen35MultimodalCacheRecord;
 #[cfg(all(test, feature = "nvidia"))]
 mod tests;
 
