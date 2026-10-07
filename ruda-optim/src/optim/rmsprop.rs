@@ -329,6 +329,12 @@ impl<B:Backend,const D:usize> super::OptimizerCheckpointBuffers<B,D> for RmsProp
     fn visit_checkpoint_buffers<F:FnMut(&Tensor<B,D>)>(&self,visit:&mut F) {visit(&self.buf);}
     fn map_checkpoint_buffers<F:FnMut(Tensor<B,D>)->Tensor<B,D>>(self,map:&mut F) -> Self {Self {buf:map(self.buf)}}
 }
+impl<B:Backend,const D:usize> super::FlatOptimizerCheckpointState<B,D> for RmsPropMomentumState<B,D> {
+    type FlatState=RmsPropMomentumState<B,1>;
+    fn into_flat_shard(self,shard:&super::FlatOptimizerTensorShard) -> Result<Self::FlatState,super::OptimizerShardError> {
+        Ok(RmsPropMomentumState {buf:shard.partition(self.buf)?})
+    }
+}
 
 impl<B: Backend, const D: usize> RmsPropMomentumState<B, D> {
     /// Moves the state to a device.

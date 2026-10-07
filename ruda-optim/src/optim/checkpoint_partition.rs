@@ -6,6 +6,9 @@ use super::{AdaptiveMomentumState,AdamState,AdamWState,Adam,AdamW,Fp32MasterOpti
     Sgd,SgdState,AdaGrad,AdaGradState,LrDecayState,RmsProp,RmsPropState,SquareAvgState,CenteredState,RmsPropMomentumState,
     Adan,AdanState,AdaptiveNesterovMomentumState,momentum::MomentumState,record::{AdaptorRecord,AdaptorRecordV1}};
 
+mod flat;
+pub use flat::*;
+
 /// Native same-geometry optimizer checkpoint buffers, independent of optimizer configuration.
 /// Visit/map every actual moment/history tensor in the same order, retaining scalar metadata and
 /// genuinely absent optional state. Factored or non-coordinate state needs its own placement semantics.
@@ -14,6 +17,15 @@ pub trait OptimizerCheckpointBuffers<B:Backend,const D:usize>:Record<B>+Clone {
     fn visit_checkpoint_buffers<F:FnMut(&Tensor<B,D>)>(&self,visit:&mut F);
     /// Transform every actual buffer, preserving original counters/options and non-tensor state.
     fn map_checkpoint_buffers<F:FnMut(Tensor<B,D>)->Tensor<B,D>>(self,map:&mut F) -> Self;
+}
+
+impl<B:Backend,const D:usize,S:OptimizerCheckpointBuffers<B,D>> OptimizerCheckpointBuffers<B,D> for Fp32MasterState<B,D,S> {
+    fn visit_checkpoint_buffers<F:FnMut(&Tensor<B,D>)>(&self,visit:&mut F) {
+        visit(&self.master);if let Some(inner)=&self.inner {inner.visit_checkpoint_buffers(visit);}
+    }
+    fn map_checkpoint_buffers<F:FnMut(Tensor<B,D>)->Tensor<B,D>>(self,map:&mut F) -> Self {
+        Self {master:map(self.master),inner:self.inner.map(|state|state.map_checkpoint_buffers(map))}
+    }
 }
 
 /// Slice one actual coordinate-wise native optimizer state using its exact model parameter placement.

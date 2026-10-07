@@ -29,6 +29,16 @@ impl<B:Backend,const D:usize> super::OptimizerCheckpointBuffers<B,D> for Momentu
     fn visit_checkpoint_buffers<F:FnMut(&Tensor<B,D>)>(&self,visit:&mut F) {visit(&self.velocity);}
     fn map_checkpoint_buffers<F:FnMut(Tensor<B,D>)->Tensor<B,D>>(self,map:&mut F) -> Self {Self {velocity:map(self.velocity)}}
 }
+impl<B:Backend,const D:usize> super::FlatOptimizerCheckpointState<B,D> for MomentumState<B,D> {
+    type FlatState=MomentumState<B,1>;
+    fn into_flat_shard(self,shard:&super::FlatOptimizerTensorShard) -> Result<Self::FlatState,super::OptimizerShardError> {
+        Ok(MomentumState {velocity:shard.partition(self.velocity)?})
+    }
+}
+impl<B:Backend,const D:usize> super::OptimizerCheckpointScalars for MomentumState<B,D> {
+    type Scalars=();
+    fn checkpoint_scalars(&self) {}
+}
 
 /// Momentum implementation that transforms gradients.
 #[derive(Clone)]
