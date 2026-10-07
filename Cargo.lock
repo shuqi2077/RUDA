@@ -5575,7 +5575,7 @@ dependencies = [
 
 [[package]]
 name = "ruda-dataset"
-version = "0.21.3"
+version = "0.21.4"
 dependencies = [
  "csv",
  "derive-new",
