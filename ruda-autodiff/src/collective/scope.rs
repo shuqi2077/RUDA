@@ -15,7 +15,8 @@ struct Entry<B:Backend,S:CheckpointStrategy> {
 
 /// One explicit data-sharded forward/loss window, retaining scalar graph anchors and original collective order.
 /// Captures actual differentiable collectives using its bound transport, not synthetic model tokens or weights.
-/// Complete the loss on every rank before backward. Use matching forward calls, tracking and transport topology;
+/// Complete the loss on every rank before backward. Use one scope per actual transport group,
+/// with matching forward calls, tracking and topology; complete each independently selected group explicitly.
 /// this coordinates rank-local unused gather paths, not arbitrary mismatched collective-bearing architectures.
 pub struct CollectiveScope<B:Backend,S:CheckpointStrategy> {entries:Arc<Mutex<Vec<Entry<B,S>>>>}
 impl<B:Backend,S:CheckpointStrategy> Clone for CollectiveScope<B,S> {
@@ -86,7 +87,7 @@ impl<B:Backend,S:CheckpointStrategy> CollectiveScope<B,S> {
     }
     /// Complete a real scalar loss by coordinating actual graph reachability across the original data group.
     /// Locally unused but globally used collectives receive only a safe zero dependency; globally unused
-    /// gathers remain absent from backward/optimizer gradients. Existing nonzero loss values are unchanged.
+    /// operations remain absent from backward/optimizer gradients. Existing nonzero loss values are unchanged.
     /// Boolean path flags/counts are host coordination metadata, not host numerical gradient/model fallbacks.
     pub fn complete<C:BroadcastTensorCollective<B>>(&self,mut loss:Tensor<Autodiff<B,S>,1>,communicator:C)
         -> Result<Tensor<Autodiff<B,S>,1>,ScopedCollectiveError<C::Error>> {

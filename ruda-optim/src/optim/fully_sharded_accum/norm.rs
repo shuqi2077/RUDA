@@ -75,8 +75,12 @@ pub fn clip_fully_sharded_gradient_norm<B,M,C>(module:&M,gradients:&mut Gradient
     if square_sum.dims()!=[1] || square_sum.dtype()!=DType::from(dtype) || square_sum.device()!=*device {
         return Err(FullyShardedGradientNormError::Protocol("norm sum transport changed scalar storage/device"));
     }
-    let norm=maximum*square_sum.sqrt();
-    let coefficient=(Tensor::<B::InnerBackend,1>::ones([1],(device,DType::from(dtype))).mul_scalar(max_norm)/(norm.clone()+epsilon)).clamp_max(1);
+    let root=square_sum.sqrt();let norm=maximum*root.clone();
+    // Compute the ratio in scaled coordinates as well: an unrepresentably large native norm
+    // must not turn a finite, representable clipping coefficient into an accidental zero.
+    let limit=Tensor::<B::InnerBackend,1>::ones([1],(device,DType::from(dtype))).mul_scalar(max_norm)/safe_maximum.clone();
+    let offset=Tensor::<B::InnerBackend,1>::ones([1],(device,DType::from(dtype))).mul_scalar(epsilon)/safe_maximum;
+    let coefficient=(limit/(root+offset)).clamp_max(1);
     for id in proposed.container.ids().into_iter().copied().collect::<Vec<_>>() {
         let value=proposed.remove::<B::InnerBackend,1>(id).ok_or_else(||invalid(FullyShardedAccumulationError::State))?;
         let device=value.device();proposed.register(id,value*coefficient.clone().to_device(&device));

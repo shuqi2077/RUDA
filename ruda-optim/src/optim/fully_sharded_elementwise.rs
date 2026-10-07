@@ -2,7 +2,7 @@ use alloc::{collections::{BTreeMap,BTreeSet},vec::Vec};
 use core::{fmt,marker::PhantomData};
 use hashbrown::HashMap;
 use ruda_model::{module::{AutodiffModule,ModuleVisitor,ModuleMapper,Param,ParamId},record::{Record,PrecisionSettings},
-    tensor::{Tensor,TensorPrimitive,DType,BroadcastTensorCollective,container::TensorContainer,backend::{Backend,AutodiffBackend}}};
+    tensor::{Tensor,TensorPrimitive,DType,ElementConversion,BroadcastTensorCollective,container::TensorContainer,backend::{Backend,AutodiffBackend}}};
 use crate::{LearningRate,grad_clipping::GradientClipping};
 use super::{ElementwiseShardOptimizer,OptimizerCheckpointBuffers,FullyShardedOptimizerParameter,FullyShardedAccumulationError,
     GradientsParams,MultiGradientsParams,Optimizer,fully_sharded_accum::{Placement,inspect}};
@@ -115,7 +115,7 @@ impl<O,M,B,C> FullyShardedElementwiseOptimizer<O,M,B,C>
                 if flags.dims()!=[binding.communicator.world_size() as usize] || flags.dtype()!=DType::F32 || flags.device()!=value.device() {
                     return Err(FullyShardedElementwiseError::State("presence transport changed original shape/storage/device"));
                 }
-                flags.greater_elem(0).any().into_scalar()
+                flags.greater_elem(0).any().into_scalar().elem::<bool>()
             };
             if !used {continue;}
             let gradient=gradient.map(|gradient|gradient.cast(dtype)).unwrap_or_else(||Tensor::zeros(value.dims(),(&value.device(),dtype)));

@@ -26,10 +26,12 @@ struct AllReduce<C>(PhantomData<C>);
 struct Broadcast<C>(PhantomData<C>);
 
 impl<B: Backend, C: BroadcastTensorCollective<B>> Backward<B, 1> for Broadcast<C> {
-    type State = (C, u32);
+    type State = (C, u32, bool);
+
+    fn ordered_backward(state:&Self::State) -> bool {state.2}
 
     fn backward(self, ops: Ops<Self::State, 1>, grads: &mut Gradients, _: &mut Checkpointer) {
-        let (communicator, root) = ops.state;
+        let (communicator, root, _) = ops.state;
         unary::<B, _>(ops.parents, ops.node, grads, |grad| {
             let grad = communicator
                 .all_reduce_sum(grad)
@@ -44,11 +46,13 @@ impl<B: Backend, C: BroadcastTensorCollective<B>> Backward<B, 1> for Broadcast<C
 }
 
 impl<B: Backend, C: ReplicatedTensorCollective<B>> Backward<B, 1> for AllReduce<C> {
-    type State = C;
+    type State = (C,bool);
+
+    fn ordered_backward(state:&Self::State) -> bool {state.1}
 
     fn backward(self, ops: Ops<Self::State, 1>, grads: &mut Gradients, _: &mut Checkpointer) {
         unary::<B, _>(ops.parents, ops.node, grads, |grad| {
-            ops.state
+            ops.state.0
                 .all_reduce_sum(grad)
                 .unwrap_or_else(|error| panic!("all-reduce backward failed: {error:?}"))
         });
@@ -223,6 +227,21 @@ where
     S: CheckpointStrategy,
     C: ReplicatedTensorCollective<B>,
 {
+    apply_all_reduce(tensor,communicator,false)
+}
+
+/// Original native SUM/SUM derivative with explicitly ordered backward, independently of local loss depth.
+pub fn all_reduce_sum_ordered<B,S,C,const D:usize>(tensor:Tensor<Autodiff<B,S>,D>,communicator:C)
+    -> Result<Tensor<Autodiff<B,S>,D>,C::Error>
+    where B:Backend,S:CheckpointStrategy,C:ReplicatedTensorCollective<B> {
+    apply_all_reduce(tensor,communicator,true)
+}
+
+fn apply_all_reduce<B,S,C,const D:usize>(tensor:Tensor<Autodiff<B,S>,D>,communicator:C,ordered:bool)
+    -> Result<Tensor<Autodiff<B,S>,D>,C::Error>
+    where B:Backend,S:CheckpointStrategy,C:ReplicatedTensorCollective<B> {
+    let scope=communicator.autodiff_context().and_then(|context|context.downcast_ref::<CollectiveScope<B,S>>()).cloned();
+    let ordered=ordered || scope.is_some();
     let tensor = tensor.into_primitive().tensor();
     let output = communicator.all_reduce_sum(tensor.primitive)?;
     let output = match AllReduce::<C>(PhantomData)
@@ -230,10 +249,12 @@ where
         .compute_bound()
         .stateful()
     {
-        OpsKind::Tracked(prep) => prep.finish(communicator, output),
+        OpsKind::Tracked(prep) => prep.finish((communicator,ordered), output),
         OpsKind::UnTracked(prep) => prep.finish(output),
     };
-    Ok(Tensor::from_primitive(TensorPrimitive::Float(output)))
+    let output=Tensor::from_primitive(TensorPrimitive::Float(output));
+    if let Some(scope)=scope {scope.capture(output.clone());}
+    Ok(output)
 }
 
 /// Average replicated tensor elements, including original scalar-division backward.
@@ -263,6 +284,21 @@ where
     S: CheckpointStrategy,
     C: BroadcastTensorCollective<B>,
 {
+    apply_broadcast(tensor,communicator,root,false)
+}
+
+/// Original native root broadcast and summed root-only derivative with explicit ordered backward.
+pub fn broadcast_ordered<B,S,C,const D:usize>(tensor:Tensor<Autodiff<B,S>,D>,communicator:C,root:u32)
+    -> Result<Tensor<Autodiff<B,S>,D>,C::Error>
+    where B:Backend,S:CheckpointStrategy,C:BroadcastTensorCollective<B> {
+    apply_broadcast(tensor,communicator,root,true)
+}
+
+fn apply_broadcast<B,S,C,const D:usize>(tensor:Tensor<Autodiff<B,S>,D>,communicator:C,root:u32,ordered:bool)
+    -> Result<Tensor<Autodiff<B,S>,D>,C::Error>
+    where B:Backend,S:CheckpointStrategy,C:BroadcastTensorCollective<B> {
+    let scope=communicator.autodiff_context().and_then(|context|context.downcast_ref::<CollectiveScope<B,S>>()).cloned();
+    let ordered=ordered || scope.is_some();
     let tensor = tensor.into_primitive().tensor();
     let output = communicator.broadcast_float(tensor.primitive, root)?;
     let output = match Broadcast::<C>(PhantomData)
@@ -270,8 +306,10 @@ where
         .compute_bound()
         .stateful()
     {
-        OpsKind::Tracked(prep) => prep.finish((communicator, root), output),
+        OpsKind::Tracked(prep) => prep.finish((communicator, root, ordered), output),
         OpsKind::UnTracked(prep) => prep.finish(output),
     };
-    Ok(Tensor::from_primitive(TensorPrimitive::Float(output)))
+    let output=Tensor::from_primitive(TensorPrimitive::Float(output));
+    if let Some(scope)=scope {scope.capture(output.clone());}
+    Ok(output)
 }
