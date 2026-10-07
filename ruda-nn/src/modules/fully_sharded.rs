@@ -14,6 +14,8 @@ mod components;
 pub use components::*;
 mod blocks;
 pub use blocks::*;
+mod stack;
+pub use stack::*;
 
 /// Explicit construction context preserving one local autograd leaf per source ID.
 /// Reuse a context for all tied layers, then drop it after model construction. It
