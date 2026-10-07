@@ -1,10 +1,12 @@
 use core::ops::Range;
-use alloc::vec::Vec;
-use ruda_model::{module::ParamId,tensor::{DType,Tensor,backend::Backend}};
+use alloc::{collections::BTreeSet,vec::Vec};
+use ruda_model::{module::{Module,ModuleVisitor,Param,ParamId},tensor::{DType,Tensor,backend::Backend}};
 use crate::{Linear,activation::Activation,attention::GroupedQueryAttention,
-    transformer::{AdaptedProjection,AdaptedGroupedQueryAttention,DenseFeedForward,AdaptedFeedForward}};
+    transformer::{AdaptedProjection,AdaptedGroupedQueryAttention,DenseFeedForward,AdaptedFeedForward,
+        DenseTransformerBlock,AdaptedTransformerBlock,DenseTransformerStack,AdaptedTransformerStack,AdaptedStackLayer}};
 use super::{ColumnParallelLinear,RowParallelLinear,TensorParallelGroupedQueryAttention,TensorParallelAdaptedGroupedQueryAttention,
-    TensorParallelFeedForward,TensorParallelAdaptedFeedForward};
+    TensorParallelFeedForward,TensorParallelAdaptedFeedForward,TensorParallelTransformerBlock,TensorParallelAdaptedTransformerBlock,
+    TensorParallelTransformerStack,TensorParallelAdaptedTransformerStack,TensorParallelAdaptedStackLayer};
 
 /// Explicit feature axis of a loaded full projection, not a guessed rank/world layout.
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
@@ -191,5 +193,86 @@ impl<B: Backend> TensorParallelAdaptedFeedForward<B> {
             gate:base.gate.map(|gate|partition_parallel_projection(gate,TensorParallelProjectionAxis::Column,features.clone())),
             down:partition_parallel_projection(base.down,TensorParallelProjectionAxis::Row,features.clone()),
             activation:activation(base.activation,features),dropout:base.dropout})
+    }
+}
+
+/// Explicit native block partition with independently specified attention and FFN ranges.
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub struct TensorParallelTransformerPartition {
+    /// Actual corresponding query/KV head ranges from the original full block.
+    pub attention: TensorParallelHeadPartition,
+    /// Actual intermediate feature range, shared by up/gate outputs and down inputs.
+    pub feed_forward: Range<usize>,
+}
+
+impl TensorParallelTransformerPartition {
+    /// Caller-declared native ranges; does not infer communicator membership or model architecture.
+    pub fn new(attention: TensorParallelHeadPartition,feed_forward: Range<usize>) -> Self {Self {attention,feed_forward}}
+}
+
+struct IndependentParameters {ids: BTreeSet<ParamId>}
+impl<B: Backend> ModuleVisitor<B> for IndependentParameters {
+    fn visit_float<const D: usize>(&mut self,param: &Param<Tensor<B,D>>) {
+        assert!(self.ids.insert(param.id),"tied full model parameters require explicit tie-aware local shards");
+    }
+}
+
+fn check_independent_module<B: Backend,M: Module<B>>(module: &M) {module.visit(&mut IndependentParameters {ids:BTreeSet::new()});}
+
+impl<B: Backend> TensorParallelTransformerBlock<B> {
+    /// Partition actual loaded floating block projections, retaining original norms/residual order.
+    /// The callback partitions the actual activation; no optimizer state or tied global model is converted.
+    pub fn from_full_block<F>(block: DenseTransformerBlock<B>,partition: &TensorParallelTransformerPartition,activation: F) -> Self
+        where F: FnOnce(Activation<B>,Range<usize>)->Activation<B> {
+        check_independent_module(&block);
+        Self::from_sharded_block(DenseTransformerBlock {attention:TensorParallelGroupedQueryAttention::from_full(block.attention,&partition.attention).local,
+            feed_forward:TensorParallelFeedForward::from_full(block.feed_forward,partition.feed_forward.clone(),activation).local,
+            attention_norm:block.attention_norm,feed_forward_norm:block.feed_forward_norm,
+            residual_dropout:block.residual_dropout,norm_first:block.norm_first})
+    }
+}
+
+impl<B: Backend> TensorParallelAdaptedTransformerBlock<B> {
+    /// Partition original selected adapters/base projections without reselection or reinitialization.
+    pub fn from_full_block<F>(block: AdaptedTransformerBlock<B>,partition: &TensorParallelTransformerPartition,activation: F) -> Self
+        where F: FnOnce(Activation<B>,Range<usize>)->Activation<B> {
+        check_independent_module(&block);
+        Self::from_sharded_block(AdaptedTransformerBlock {attention:TensorParallelAdaptedGroupedQueryAttention::from_full(block.attention,&partition.attention).local,
+            feed_forward:TensorParallelAdaptedFeedForward::from_full(block.feed_forward,partition.feed_forward.clone(),activation).local,
+            attention_norm:block.attention_norm,feed_forward_norm:block.feed_forward_norm,
+            residual_dropout:block.residual_dropout,norm_first:block.norm_first})
+    }
+}
+
+impl<B: Backend> TensorParallelAdaptedStackLayer<B> {
+    /// Partition the actual layer kind, with no blanket freezing or new adapters on dense layers.
+    pub fn from_full_layer<F>(layer: AdaptedStackLayer<B>,partition: &TensorParallelTransformerPartition,activation: F) -> Self
+        where F: FnOnce(Activation<B>,Range<usize>)->Activation<B> {
+        match layer {AdaptedStackLayer::Dense(block)=>Self::Dense(TensorParallelTransformerBlock::from_full_block(block,partition,activation)),
+            AdaptedStackLayer::Adapted(block)=>Self::Adapted(TensorParallelAdaptedTransformerBlock::from_full_block(block,partition,activation))}
+    }
+}
+
+impl<B: Backend> TensorParallelTransformerStack<B> {
+    /// Partition every actual native layer from loaded full floating weights using its explicit plan.
+    /// Preserves layer order/normalization and passes the original activation to each local partition callback.
+    pub fn from_full_stack<F>(stack: DenseTransformerStack<B>,partitions: &[TensorParallelTransformerPartition],mut activation: F) -> Self
+        where F: FnMut(usize,Activation<B>,Range<usize>)->Activation<B> {
+        assert_eq!(partitions.len(),stack.blocks.len(),"native parallel plans must cover every actual layer exactly once");
+        check_independent_module(&stack);
+        Self::new(stack.blocks.into_iter().zip(partitions).enumerate().map(|(index,(block,partition))|
+            TensorParallelTransformerBlock::from_full_block(block,partition,|module,features|activation(index,module,features))).collect())
+    }
+}
+
+impl<B: Backend> TensorParallelAdaptedTransformerStack<B> {
+    /// Partition original selected/unselected layers, retaining all actual A/B dtypes and scales.
+    /// Complete global optimizer state and tied/packed-quantized checkpoint conversion remain explicit separate operations.
+    pub fn from_full_stack<F>(stack: AdaptedTransformerStack<B>,partitions: &[TensorParallelTransformerPartition],mut activation: F) -> Self
+        where F: FnMut(usize,Activation<B>,Range<usize>)->Activation<B> {
+        assert_eq!(partitions.len(),stack.layers.len(),"native adapter parallel plans must cover every actual layer exactly once");
+        check_independent_module(&stack);
+        Self::new(stack.layers.into_iter().zip(partitions).enumerate().map(|(index,(layer,partition))|
+            TensorParallelAdaptedStackLayer::from_full_layer(layer,partition,|module,features|activation(index,module,features))).collect())
     }
 }
