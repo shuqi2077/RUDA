@@ -8,6 +8,8 @@ use super::{ElementwiseShardOptimizer,OptimizerCheckpointBuffers,FullyShardedOpt
     GradientsParams,MultiGradientsParams,Optimizer,fully_sharded_accum::{Placement,inspect}};
 
 mod continuation;
+mod grouped;
+pub use grouped::*;
 
 /// Actual native transport, local-parameter/state geometry or source-optimizer argument failure.
 #[derive(Debug)]
@@ -96,8 +98,13 @@ impl<O,M,B,C> FullyShardedElementwiseOptimizer<O,M,B,C>
     /// Inspect one actual native local history, without manufacturing unused states.
     pub fn state(&self,id:ParamId) -> Option<&O::State<1>> {self.states.get(&id)}
     /// Update actual local leaves once, with state committed only after original transports succeed.
-    pub fn try_step(&mut self,lr:LearningRate,module:M,mut gradients:GradientsParams) -> Result<M,FullyShardedElementwiseError<C::Error>> {
+    pub fn try_step(&mut self,lr:LearningRate,module:M,gradients:GradientsParams) -> Result<M,FullyShardedElementwiseError<C::Error>> {
         if !lr.is_finite() || lr<0.0 {return Err(FullyShardedElementwiseError::Configuration("learning rate must be finite and nonnegative"));}
+        let optimizer=self.optimizer.clone();let clipping=self.clipping.clone();
+        self.step_configured(module,gradients,move |_|(optimizer.clone(),clipping.clone(),lr))
+    }
+    fn step_configured<F>(&mut self,module:M,mut gradients:GradientsParams,mut configuration:F) -> Result<M,FullyShardedElementwiseError<C::Error>>
+        where F:FnMut(ParamId)->(O,Option<GradientClipping>,LearningRate) {
         inspect::<B,M>(&module,&self.placement,true).map_err(FullyShardedElementwiseError::Arguments)?;
         gradients.validate_for::<B,M>(&module).map_err(|error|FullyShardedElementwiseError::Arguments(error.into()))?;
         let mut leaves=Leaves::<B> {values:BTreeMap::new()};module.visit(&mut leaves);
@@ -110,7 +117,7 @@ impl<O,M,B,C> FullyShardedElementwiseOptimizer<O,M,B,C>
                 continue;
             }
             let gradient=gradients.remove::<B::InnerBackend,1>(id);let present=gradient.is_some();
-            let dtype=self.optimizer.shard_gradient_dtype(value.dtype());
+            let (optimizer,clipping,parameter_lr)=configuration(id);let dtype=optimizer.shard_gradient_dtype(value.dtype());
             let used=if binding.communicator.world_size()==1 {present} else {
                 let flag=Tensor::<B::InnerBackend,1>::ones([1],(&value.device(),DType::F32)).mul_scalar(if present {1.0} else {0.0});
                 let flags=Tensor::<B::InnerBackend,1>::from_primitive(TensorPrimitive::Float(binding.communicator.all_gather_float(flag.into_primitive().tensor()).map_err(FullyShardedElementwiseError::Collective)?));
@@ -122,10 +129,10 @@ impl<O,M,B,C> FullyShardedElementwiseOptimizer<O,M,B,C>
             if !used {continue;}
             let gradient=gradient.map(|gradient|gradient.cast(dtype)).unwrap_or_else(||Tensor::zeros(value.dims(),(&value.device(),dtype)));
             let gradient=trim(gradient,binding);
-            let gradient=if let Some(clipping)=&self.clipping {clip(gradient,binding,clipping)?} else {gradient};
+            let gradient=if let Some(clipping)=&clipping {clip(gradient,binding,clipping)?} else {gradient};
             let state=states.remove(&id).map(|state|O::to_device(state,&value.device()));
             if let Some(state)=&state {validate_state::<B::InnerBackend,O>(state,value.dims(),dtype).map_err(FullyShardedElementwiseError::State)?;}
-            let (value,state)=self.optimizer.step_fully_sharded(lr,value,gradient,state,binding)?;let value=trim(value,binding);
+            let (value,state)=optimizer.step_fully_sharded(parameter_lr,value,gradient,state,binding)?;let value=trim(value,binding);
             if let Some(state)=state {states.insert(id,state);}
             mapper.values.insert(id,value);
         }
