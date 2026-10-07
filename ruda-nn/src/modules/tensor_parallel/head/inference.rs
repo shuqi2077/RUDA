@@ -40,6 +40,20 @@ macro_rules! inference_heads {
                 let [batch,tokens,features] = hidden.dims();assert!(tokens > 0,"cached greedy head requires an actual last token");
                 self.forward_greedy_inference(hidden.slice([0..batch,tokens-1..tokens,0..features]).reshape([batch,features]),communicator,layout,visible)
             }
+
+            /// Native local teacher/inference log probabilities normalized over every real global class.
+            pub fn forward_log_probabilities_inference<C:BroadcastTensorCollective<B>>(&self,hidden:Tensor<B,2>,communicator:C,
+                layout:&VocabParallelLossLayout,visible:Option<Tensor<B,1,Bool>>) -> Result<Tensor<B,2>,C::Error> {
+                let logits = self.forward_inference(hidden,communicator.clone(),layout,false)?;
+                layout.log_softmax_inference(logits,communicator,visible)
+            }
+
+            /// Native complete-class probability normalization without collecting full head logits.
+            pub fn forward_probabilities_inference<C:BroadcastTensorCollective<B>>(&self,hidden:Tensor<B,2>,communicator:C,
+                layout:&VocabParallelLossLayout,visible:Option<Tensor<B,1,Bool>>) -> Result<Tensor<B,2>,C::Error> {
+                let logits = self.forward_inference(hidden,communicator.clone(),layout,false)?;
+                layout.softmax_inference(logits,communicator,visible)
+            }
         }
     };
 }
