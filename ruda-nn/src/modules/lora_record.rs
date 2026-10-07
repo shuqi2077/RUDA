@@ -79,8 +79,8 @@ impl LoRAAdapterSchema {
         if base_id.is_empty() { return Err(invalid("base identity must be supplied explicitly")); }
         let base = layer.base.weight.val();
         let [input,output] = base.dims();
-        if input == 0 || output == 0 || base.is_require_grad() || !base.dtype().is_float() {
-            return Err(invalid("the declared dense base must be nonempty, floating and frozen"));
+        if input == 0 || output == 0 || base.is_require_grad() || (!base.dtype().is_float() && !matches!(base.dtype(),DType::QFloat(_))) {
+            return Err(invalid("the declared base must be nonempty, floating/quantized and frozen"));
         }
         let base_bias_dtype = if let Some(bias) = &layer.base.bias {
             let bias = bias.val();
@@ -126,7 +126,11 @@ impl<B: Backend> LoRAAdapterRecord<B> {
     /// Frozen base handles/values are never retained in this record.
     pub fn capture(layer: &LoRALinear<B>,base_id: &str) -> Result<Self,RecorderError> {
         let schema = LoRAAdapterSchema::capture(layer,base_id)?;
-        let adapters = (layer.adapter_a.clone(),layer.adapter_b.clone());
+        Self::capture_adapters(schema,&layer.adapter_a,&layer.adapter_b)
+    }
+
+    pub(crate) fn capture_adapters(schema:LoRAAdapterSchema,adapter_a:&Linear<B>,adapter_b:&Linear<B>) -> Result<Self,RecorderError> {
+        let adapters = (adapter_a.clone(),adapter_b.clone());
         let dtypes = ModuleDTypeRecord::capture(&adapters)?;
         Ok(Self {schema,adapter_a:adapters.0.into_record(),adapter_b:adapters.1.into_record(),dtypes})
     }
@@ -145,13 +149,19 @@ impl<B: Backend> LoRAAdapterRecord<B> {
     /// Restore optimizer/pending-gradient records only after obtaining this new layer.
     pub fn restore_into(self,layer: LoRALinear<B>,base_id: &str) -> Result<LoRALinear<B>,RecorderError> {
         self.schema.validate_for(&layer,base_id)?;
+        let schema = self.schema.clone();
         let device = layer.base.weight.val().device();
-        let a = layer.adapter_a.load_record(self.adapter_a).fork(&device);
-        let b = layer.adapter_b.load_record(self.adapter_b).fork(&device);
-        let (a,b) = self.dtypes.apply((a,b))?;
+        let (a,b) = self.restore_adapters(layer.adapter_a,layer.adapter_b,&device)?;
         let restored = LoRALinear {base:layer.base,adapter_a:a,adapter_b:b,dropout:layer.dropout,scale:layer.scale};
-        self.schema.validate_for(&restored,base_id)?;
+        schema.validate_for(&restored,base_id)?;
         Ok(restored)
+    }
+
+    pub(crate) fn restore_adapters(self,adapter_a:Linear<B>,adapter_b:Linear<B>,device:&B::Device) -> Result<(Linear<B>,Linear<B>),RecorderError> {
+        let a = adapter_a.load_record(self.adapter_a).fork(device);
+        let b = adapter_b.load_record(self.adapter_b).fork(device);
+        let (a,b) = self.dtypes.apply((a,b))?;
+        Ok((a,b))
     }
 }
 

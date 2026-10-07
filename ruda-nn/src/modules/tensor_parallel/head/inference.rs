@@ -31,3 +31,4 @@ macro_rules! inference_heads {
 inference_heads!(TensorParallelTransformerHead);
 inference_heads!(TensorParallelAdaptedTransformerHead);
 inference_heads!(VocabParallelTransformerHead);
+inference_heads!(VocabParallelAdaptedTransformerHead);
