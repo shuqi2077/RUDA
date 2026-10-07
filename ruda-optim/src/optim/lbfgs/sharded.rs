@@ -221,6 +221,91 @@ impl<B: Backend> LBFGSShardedState<B> {
         self.state.validate_vectors(layout.lengths[rank as usize], None)
     }
 
+    /// Repartition a complete rank-ordered saved state set into a new real vector interval.
+    /// All source records must describe the same original step, precision and local device;
+    /// move explicitly loaded records to the destination device before calling this method.
+    /// Only overlapping pieces are concatenated, not a complete history on every destination.
+    /// Partition the matching model parameters in the same original flattened order. This is
+    /// explicit checkpoint conversion, not an automatic live communicator/world-size change.
+    pub fn repartition_from_shards(
+        sources: &[Self],
+        destination: &LBFGSShardLayout,
+        rank: u32,
+        world: u32,
+    ) -> Result<Self, LBFGSShardError> {
+        destination.validate(rank, world)?;
+        let first = sources.first()
+            .ok_or(LBFGSShardError::Layout("complete source checkpoint set is empty"))?;
+        let source_world = u32::try_from(sources.len())
+            .map_err(|_| LBFGSShardError::Layout("source rank count overflows"))?;
+        first.layout.validate(0, source_world)?;
+        if first.layout.global_len()? != destination.global_len()? {
+            return Err(LBFGSShardError::Shape("destination changes complete vector length"));
+        }
+        let reference = first.state.vectors().next();
+        for (source_rank, source) in sources.iter().enumerate() {
+            source.validate_placement(&first.layout, source_rank as u32, source_world)?;
+            if source.state.g_iter != first.state.g_iter
+                || source.state.t.map(f64::to_bits) != first.state.t.map(f64::to_bits)
+                || source.state.prev_loss.map(f64::to_bits) != first.state.prev_loss.map(f64::to_bits)
+                || source.state.history_s.len() != first.state.history_s.len()
+                || source.state.d.is_some() != first.state.d.is_some()
+                || source.state.prev_flat_grad.is_some() != first.state.prev_flat_grad.is_some()
+            {
+                return Err(LBFGSShardError::Record);
+            }
+            source.state.validate_vectors(first.layout.lengths[source_rank], reference)?;
+        }
+        let target_interval = destination.range(rank)?;
+        let join = |select: &dyn Fn(&LBFGSState<B>) -> Tensor<B, 1>| {
+            let mut pieces = Vec::new();
+            for (source_rank, source) in sources.iter().enumerate() {
+                let source_interval = first.layout.range(source_rank as u32)?;
+                let start = target_interval.start.max(source_interval.start);
+                let end = target_interval.end.min(source_interval.end);
+                if start < end {
+                    let value = select(&source.state);
+                    let piece = if start == source_interval.start && end == source_interval.end {
+                        value
+                    } else {
+                        value.slice(start - source_interval.start..end - source_interval.start)
+                    };
+                    pieces.push(piece);
+                }
+            }
+            let value = if pieces.len() == 1 {
+                pieces.pop().expect("one actual overlapping vector piece")
+            } else {
+                Tensor::cat(pieces, 0)
+            };
+            Ok::<_, LBFGSShardError>(value)
+        };
+        let history_s = (0..first.state.history_s.len())
+            .map(|index| join(&|state| state.history_s[index].clone()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let history_y = (0..first.state.history_y.len())
+            .map(|index| join(&|state| state.history_y[index].clone()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let d = if first.state.d.is_some() {
+            Some(join(&|state| state.d.as_ref().expect("validated direction presence").clone())?)
+        } else { None };
+        let prev_flat_grad = if first.state.prev_flat_grad.is_some() {
+            Some(join(&|state| state.prev_flat_grad.as_ref().expect("validated gradient presence").clone())?)
+        } else { None };
+        Self::from_local_state(
+            LBFGSState {
+                history_s,
+                history_y,
+                d,
+                t: first.state.t,
+                prev_flat_grad,
+                prev_loss: first.state.prev_loss,
+                g_iter: first.state.g_iter,
+            },
+            destination, rank, world,
+        )
+    }
+
     /// Move this rank's original history/gradient/direction, retaining placement and counters.
     pub fn to_device(mut self, device: &B::Device) -> Self {
         self.state = self.state.to_device(device);
