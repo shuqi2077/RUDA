@@ -199,7 +199,7 @@ impl<B: Backend> DenseTransformerBlock<B> {
     pub fn forward_attention_with_positions<F>(&self,input: Tensor<B,3>,masks: DenseAttentionMask<B>,
         options: DenseAttentionOptions,positions: F) -> Tensor<B,3>
     where F: FnOnce(Tensor<B,4>,Tensor<B,4>)->(Tensor<B,4>,Tensor<B,4>) {
-        let source = if self.norm_first { self.attention_norm.forward(input.clone()) } else { input.clone() };
+        residual_branch(input,&self.attention_norm,&self.residual_dropout,self.norm_first,|source| {
         let (query,key,value) = self.attention.project(source.clone(),source.clone(),source);
         let query_shape = query.dims();
         let key_shape = key.dims();
@@ -207,16 +207,23 @@ impl<B: Backend> DenseTransformerBlock<B> {
         assert_eq!(query.dims(),query_shape,"query position transform changed geometry");
         assert_eq!(key.dims(),key_shape,"key position transform changed geometry");
         let branch = self.attention.forward_projected(query,key,value,masks,options);
-        let hidden = input + self.residual_dropout.forward(branch);
-        if self.norm_first { hidden } else { self.attention_norm.forward(hidden) }
+        branch
+        })
     }
 
     /// Feed-forward/residual/normalization stage using the actual existing weights.
     pub fn forward_feed_forward(&self,hidden: Tensor<B,3>) -> Tensor<B,3> {
-        let source = if self.norm_first { self.feed_forward_norm.forward(hidden.clone()) } else { hidden.clone() };
-        let output = hidden + self.residual_dropout.forward(self.feed_forward.forward(source));
-        if self.norm_first { output } else { self.feed_forward_norm.forward(output) }
+        residual_branch(hidden,&self.feed_forward_norm,&self.residual_dropout,self.norm_first,
+            |source|self.feed_forward.forward(source))
     }
+}
+
+pub(super) fn residual_branch<B: Backend,F>(input: Tensor<B,3>,norm: &DenseTransformerNorm<B>,
+    dropout: &Dropout,norm_first: bool,branch: F) -> Tensor<B,3>
+where F: FnOnce(Tensor<B,3>)->Tensor<B,3> {
+    let source = if norm_first { norm.forward(input.clone()) } else { input.clone() };
+    let output = input + dropout.forward(branch(source));
+    if norm_first { output } else { norm.forward(output) }
 }
 
 /// Residual cross-attention on actual encoder memory, including nonmatching widths.
