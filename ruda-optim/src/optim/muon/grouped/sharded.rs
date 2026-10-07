@@ -10,6 +10,8 @@ mod snapshot;
 use snapshot::snapshot;
 mod state;
 pub use state::MuonShardedAdamWRecord;
+mod master;
+pub use master::{Fp32MasterMuonShardedAdamW,Fp32MasterMuonShardedAdamWRecord};
 
 type ShardRecords<B: AutodiffBackend> = HashMap<ParamId,MuonShardedState<<B as AutodiffBackend>::InnerBackend>>;
 type Placement = Vec<(u64,u32,u32,MuonMatrixShardLayout)>;

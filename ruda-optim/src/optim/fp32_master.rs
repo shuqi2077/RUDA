@@ -10,6 +10,8 @@ use ruda_model::{
     },
 };
 
+mod sharded_muon;
+
 /// Opt-in FP32 master parameters for an existing simple optimizer.
 ///
 /// The wrapped optimizer receives FP32 parameters and gradients; its algorithm,

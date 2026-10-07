@@ -18,7 +18,8 @@ use ruda_model::tensor::DType;
 mod error;
 pub use error::MuonError;
 mod grouped;
-pub use grouped::{MuonAdamW,MuonAdamWConfig,MuonAdamWRecord,MuonShardedParameter,MuonShardedAdamW,MuonShardedAdamWRecord};
+pub use grouped::{MuonAdamW,MuonAdamWConfig,MuonAdamWRecord,MuonShardedParameter,MuonShardedAdamW,MuonShardedAdamWRecord,
+    Fp32MasterMuonShardedAdamW,Fp32MasterMuonShardedAdamWRecord};
 mod sharded;
 pub use sharded::*;
 
@@ -393,10 +394,17 @@ impl<B: Backend> Muon<B> {
             if tensor.dtype() != buffer.dtype() { return Err(MuonError::DTypeMismatch("momentum")); }
             if tensor.device() != buffer.device() { return Err(MuonError::DeviceMismatch("momentum")); }
         }
-        let adjusted = self.adjust_lr(lr, learning_rate_shape);
+        self.validate_effective_learning_rate(lr,learning_rate_shape,tensor.dtype())
+    }
+
+    pub(crate) fn validate_effective_learning_rate(&self,lr: LearningRate,shape: &[usize],dtype: DType) -> Result<(),MuonError> {
+        if !lr.is_finite() || lr < 0.0 {
+            return Err(MuonError::InvalidConfig("learning rate must be finite and nonnegative"));
+        }
+        let adjusted = self.adjust_lr(lr, shape);
         let decay = lr * self.weight_decay_penalty.unwrap_or(0.0) as f64;
         if !adjusted.is_finite() || !decay.is_finite()
-            || (tensor.dtype() == DType::F32 && (!(adjusted as f32).is_finite() || !(decay as f32).is_finite())) {
+            || (dtype == DType::F32 && (!(adjusted as f32).is_finite() || !(decay as f32).is_finite())) {
             return Err(MuonError::InvalidConfig("effective learning rate/decay overflows"));
         }
         Ok(())
