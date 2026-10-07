@@ -4,6 +4,9 @@ use alloc::collections::BTreeSet;
 use crate::hybrid_sharded::{FullyShardedColumnParallelLinear,FullyShardedRowParallelLinear,FullyShardedColumnParallelLoRA,
     FullyShardedRowParallelLoRA,FullyShardedTensorParallelGatedMlp,FullyShardedVocabParallelEmbedding,FullyShardedVocabParallelProjection};
 
+mod delta;
+pub use delta::FullyShardedModuleDeltaRecord;
+
 /// Explicit logical-shard visitation alongside native local-parameter module visitation.
 /// Implementations must enumerate every actual sharded leaf, including repeated shared roles.
 pub trait FullyShardedModule<B:Backend>:Module<B> {
@@ -54,6 +57,21 @@ fn schema<B:Backend,M:FullyShardedModule<B>>(module:&M) -> Result<BTreeMap<Param
     Ok(shards)
 }
 
+fn restore_values<B:Backend,M:FullyShardedModule<B>>(module:M,values:BTreeMap<ParamId,Tensor<B,1>>) -> Result<M,FullyShardedParameterError> {
+    struct Restore<B:Backend> {values:BTreeMap<ParamId,Tensor<B,1>>,seen:BTreeSet<ParamId>}
+    impl<B:Backend> ModuleMapper<B> for Restore<B> {
+        fn map_float<const D:usize>(&mut self,parameter:Param<Tensor<B,D>>) -> Param<Tensor<B,D>> {
+            let Some(value)=self.values.get(&parameter.id).cloned() else {return parameter;};
+            assert_eq!(D,1,"validated sharded module leaf rank changed");self.seen.insert(parameter.id);
+            // Primitive rewrapping preserves the exact canonical node, unlike a per-alias reshape/cast.
+            parameter.map(|_|Tensor::<B,D>::from_primitive(value.into_primitive()))
+        }
+    }
+    let mut restore=Restore {values,seen:BTreeSet::new()};let module=module.map(&mut restore);
+    if restore.seen.len()!=restore.values.len() {return Err(FullyShardedParameterError::Record);}
+    Ok(module)
+}
+
 impl<B:Backend> FullyShardedModuleParameterRecord<B> {
     /// Capture each canonical actual local leaf exactly once, retaining original logical/topology metadata.
     pub fn capture<M:FullyShardedModule<B>>(module:&M) -> Result<Self,FullyShardedParameterError> {
@@ -84,7 +102,7 @@ impl<B:Backend> FullyShardedModuleParameterRecord<B> {
                 return Err(FullyShardedParameterError::Record);
             }
             if target.local.val().dtype()!=saved.local().val().dtype() {return Err(FullyShardedParameterError::DType);}
-            if B::ad_enabled(&target.local.val().device()) && target.local.val().is_require_grad()!=saved.local().val().is_require_grad() {
+            if B::ad_enabled(&target.local.val().device()) && target.local.val().is_require_grad()!=saved.is_trainable() {
                 return Err(FullyShardedParameterError::Trainability);
             }
         }
@@ -100,19 +118,7 @@ impl<B:Backend> FullyShardedModuleParameterRecord<B> {
             let value=saved.local().val().to_device(&original.device()).detach().set_require_grad(original.is_require_grad());
             values.insert(saved.id(),value);
         }
-        struct Restore<B:Backend> {values:BTreeMap<ParamId,Tensor<B,1>>,seen:BTreeSet<ParamId>}
-        impl<B:Backend> ModuleMapper<B> for Restore<B> {
-            fn map_float<const D:usize>(&mut self,parameter:Param<Tensor<B,D>>) -> Param<Tensor<B,D>> {
-                assert_eq!(D,1,"validated sharded module leaf rank changed");
-                let value=self.values.get(&parameter.id).expect("validated sharded module identity changed").clone();
-                self.seen.insert(parameter.id);
-                // Primitive rewrapping preserves the exact canonical node, unlike a per-alias reshape/cast.
-                parameter.map(|_|Tensor::<B,D>::from_primitive(value.into_primitive()))
-            }
-        }
-        let mut restore=Restore {values,seen:BTreeSet::new()};let module=module.map(&mut restore);
-        if restore.seen.len()!=restore.values.len() {return Err(FullyShardedParameterError::Record);}
-        Ok(module)
+        restore_values(module,values)
     }
     /// Offline complete-rank-set conversion of all original local values to a new data topology.
     /// Source records must already share the chosen device; matching optimizer/gradient conversion remains separate.
@@ -127,9 +133,9 @@ impl<B:Backend> FullyShardedModuleParameterRecord<B> {
         }
         let mut parameters=Vec::with_capacity(first.parameters.len());
         for record in &first.parameters {
-            let shards=ranks.iter().map(|source|source.get(&record.id()).ok_or(FullyShardedParameterError::Record)
-                .and_then(|saved|(*saved).clone().into_parameter())).collect::<Result<Vec<_>,_>>()?;
-            parameters.push(ShardedParameter::repartition_from_shards(&shards,rank,world)?.parameter_record()?);
+            let records=ranks.iter().map(|source|source.get(&record.id()).ok_or(FullyShardedParameterError::Record)
+                .map(|saved|(*saved).clone())).collect::<Result<Vec<_>,_>>()?;
+            parameters.push(FullyShardedParameterRecord::repartition_from_ranks(&records,rank,world)?);
         }
         Ok(Self {version:1,parameters})
     }

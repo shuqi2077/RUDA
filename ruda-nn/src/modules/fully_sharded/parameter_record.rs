@@ -65,6 +65,8 @@ impl<B:Backend> FullyShardedParameterRecord<B> {
     pub fn id(&self) -> ParamId {self.local.id}
     /// Original authoritative local value, not a gathered complete tensor.
     pub fn local(&self) -> &Param<Tensor<B,1>> {&self.local}
+    /// Original saved training flag, also available when inspecting a record on a native inference backend.
+    pub fn is_trainable(&self) -> bool {self.trainable}
     /// Validate actual saved storage, axes and original schema without reading tensor payloads to host.
     pub fn validate(&self) -> Result<(),FullyShardedParameterError> {
         if self.version!=1 {return Err(FullyShardedParameterError::Record);}
@@ -84,6 +86,18 @@ impl<B:Backend> FullyShardedParameterRecord<B> {
     /// Move saved local values only, retaining all original scalar/identity/topology metadata.
     pub fn to_device(mut self,device:&B::Device) -> Self {
         self.local = self.local.map(|value|value.to_device(device));self
+    }
+    /// Offline rank conversion retaining original saved trainability even on a non-AD conversion backend.
+    /// Actual source values must already share the selected destination device; optimizer state remains separate.
+    pub fn repartition_from_ranks(sources:&[Self],rank:usize,world:usize) -> Result<Self,FullyShardedParameterError> {
+        let first=sources.first().ok_or(FullyShardedParameterError::Geometry("complete saved parameter rank set is empty"))?;
+        for saved in sources {
+            saved.validate()?;
+            if saved.trainable!=first.trainable {return Err(FullyShardedParameterError::Trainability);}
+        }
+        let shards=sources.iter().cloned().map(Self::into_parameter).collect::<Result<Vec<_>,_>>()?;
+        let mut record=ShardedParameter::repartition_from_shards(&shards,rank,world)?.parameter_record()?;
+        record.trainable=first.trainable;record.validate()?;Ok(record)
     }
 }
 
