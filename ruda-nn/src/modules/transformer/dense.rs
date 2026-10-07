@@ -218,9 +218,9 @@ impl<B: Backend> DenseTransformerBlock<B> {
     }
 }
 
-pub(super) fn residual_branch<B: Backend,F>(input: Tensor<B,3>,norm: &DenseTransformerNorm<B>,
-    dropout: &Dropout,norm_first: bool,branch: F) -> Tensor<B,3>
-where F: FnOnce(Tensor<B,3>)->Tensor<B,3> {
+pub(super) fn residual_branch<B: Backend,F,const D: usize>(input: Tensor<B,D>,norm: &DenseTransformerNorm<B>,
+    dropout: &Dropout,norm_first: bool,branch: F) -> Tensor<B,D>
+where F: FnOnce(Tensor<B,D>)->Tensor<B,D> {
     let source = if norm_first { norm.forward(input.clone()) } else { input.clone() };
     let output = input + dropout.forward(branch(source));
     if norm_first { output } else { norm.forward(output) }
