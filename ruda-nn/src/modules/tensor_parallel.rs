@@ -28,6 +28,8 @@ mod head;
 pub use head::*;
 mod causal_loss;
 mod kl_loss;
+mod selection;
+pub use selection::VocabParallelGreedySelection;
 
 /// Output-feature shard of a global projection, with an optional local bias shard.
 /// Construct local weights directly or load an explicitly partitioned checkpoint.

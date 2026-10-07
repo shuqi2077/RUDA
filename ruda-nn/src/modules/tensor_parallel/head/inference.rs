@@ -25,6 +25,21 @@ macro_rules! inference_heads {
                 Ok(SequenceHeadOutput {logits:self.forward_inference(pooled.values,communicator,layout,gather_output)?,
                     valid_rows:pooled.valid_rows,token_counts:pooled.token_counts})
             }
+
+            /// Select native greedy global class IDs directly from rank-local head logits.
+            /// Uses explicit real vocabulary layout/visibility without gathering complete outputs.
+            pub fn forward_greedy_inference<C:BroadcastTensorCollective<B>>(&self,hidden:Tensor<B,2>,communicator:C,
+                layout:&VocabParallelLossLayout,visible:Option<Tensor<B,1,Bool>>) -> Result<super::super::VocabParallelGreedySelection<B>,C::Error> {
+                let logits = self.forward_inference(hidden,communicator.clone(),layout,false)?;
+                layout.greedy_indices_inference(logits,communicator,visible)
+            }
+
+            /// Project/select only the actual last hidden token of each nonempty cached sequence.
+            pub fn forward_greedy_last_inference<C:BroadcastTensorCollective<B>>(&self,hidden:Tensor<B,3>,communicator:C,
+                layout:&VocabParallelLossLayout,visible:Option<Tensor<B,1,Bool>>) -> Result<super::super::VocabParallelGreedySelection<B>,C::Error> {
+                let [batch,tokens,features] = hidden.dims();assert!(tokens > 0,"cached greedy head requires an actual last token");
+                self.forward_greedy_inference(hidden.slice([0..batch,tokens-1..tokens,0..features]).reshape([batch,features]),communicator,layout,visible)
+            }
         }
     };
 }
