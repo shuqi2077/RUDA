@@ -53,6 +53,7 @@ jobs:
           cargo check --locked -p ruda-nn --no-default-features --features std,tensor-parallel --lib
       - name: Compile Rust sharded optimizers
         run: |
+          cargo check --locked -p ruda-optim --no-default-features --lib
           cargo check --locked -p ruda-optim --features collective,gradient-guard --lib
       - name: Compile resumable dataset loading
         run: |

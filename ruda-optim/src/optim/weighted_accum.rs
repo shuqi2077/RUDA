@@ -9,6 +9,9 @@ use serde::{Deserialize,Serialize};
 use super::{GradientsAccumulator,GradientsParams,GradientsParamsRecord,GradientTransformError};
 use super::gradient_transform::{representable,validate_work_dtype};
 
+mod backward;
+pub use backward::*;
+
 /// Explicit normalization and continuation state of an accumulation window.
 #[derive(Clone,Debug,PartialEq,Serialize,Deserialize)]
 pub struct WeightedAccumulationState {
@@ -162,13 +165,7 @@ impl<M> WeightedGradientsAccumulator<M> {
     fn accumulate<B: AutodiffBackend>(
         &mut self,module: &M,gradients: &GradientsParams,weight: f64,mean: bool,
     ) -> Result<(),WeightedAccumulationError> where M: AutodiffModule<B> {
-        if weight < 0. || !representable(weight,self.state.dtype) ||
-            (weight > 0. && self.state.dtype == FloatDType::F32 && weight as f32 == 0.) {
-            return Err(WeightedAccumulationError::InvalidWeight);
-        }
-        let total = self.state.total_weight + weight;
-        if !representable(total,self.state.dtype) { return Err(WeightedAccumulationError::InvalidWeight); }
-        let count = self.state.microbatches.checked_add(1).ok_or(WeightedAccumulationError::CounterOverflow)?;
+        let (total,count) = self.next_counts(weight)?;
         // Validate every supplied ID before any scaling/addition. A rejected
         // argument leaves pending gradients and normalization counters untouched.
         if weight > 0. {
@@ -181,6 +178,17 @@ impl<M> WeightedGradientsAccumulator<M> {
         self.state.total_weight = total;
         self.state.microbatches = count;
         Ok(())
+    }
+
+    fn next_counts(&self,weight: f64) -> Result<(f64,u64),WeightedAccumulationError> {
+        if weight < 0. || !representable(weight,self.state.dtype) ||
+            (weight > 0. && self.state.dtype == FloatDType::F32 && weight as f32 == 0.) {
+            return Err(WeightedAccumulationError::InvalidWeight);
+        }
+        let total = self.state.total_weight+weight;
+        if !representable(total,self.state.dtype) {return Err(WeightedAccumulationError::InvalidWeight);}
+        let count = self.state.microbatches.checked_add(1).ok_or(WeightedAccumulationError::CounterOverflow)?;
+        Ok((total,count))
     }
 
     /// Return the actual scaled loss sums and their local weight, then reset.
