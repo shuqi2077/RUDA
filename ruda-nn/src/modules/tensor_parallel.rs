@@ -24,6 +24,8 @@ mod partition;
 pub use partition::*;
 mod replicated_module;
 pub use replicated_module::*;
+mod head;
+pub use head::*;
 
 /// Output-feature shard of a global projection, with an optional local bias shard.
 /// Construct local weights directly or load an explicitly partitioned checkpoint.

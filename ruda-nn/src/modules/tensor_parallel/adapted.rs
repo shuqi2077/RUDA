@@ -63,7 +63,7 @@ fn column_dense<B,S,C,K,const D: usize>(layer: &Linear<Autodiff<B,S>>,input: Ten
     Ok(linear(input,weight,bias))
 }
 
-fn column<B,S,C,K,F,const D: usize>(layer: &AdaptedProjection<Autodiff<B,S>>,input: Tensor<Autodiff<B,S>,D>,
+pub(super) fn column<B,S,C,K,F,const D: usize>(layer: &AdaptedProjection<Autodiff<B,S>>,input: Tensor<Autodiff<B,S>,D>,
     communicator: &C,replicas: Option<&K>,dropout: F) -> Result<Tensor<Autodiff<B,S>,D>,C::Error>
     where B: Backend,S: CheckpointStrategy,C: BroadcastTensorCollective<B>,K: BroadcastTensorCollective<B,Error=C::Error>,
         F: FnOnce(&Dropout,Tensor<Autodiff<B,S>,D>)->Tensor<Autodiff<B,S>,D> {
