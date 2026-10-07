@@ -15,7 +15,7 @@ pub struct VocabParallelTopKSelection<B:Backend,const D:usize=2> {
 }
 
 fn integer<B:Backend>(value:i64,shape:[usize;2],device:&B::Device) -> Tensor<B,2,Int> {
-    Tensor::from_data(TensorData::new(alloc::vec![value],[1,1]),(device,DType::I64)).expand(shape)
+    Tensor::<B,2,Int>::from_data(TensorData::new(alloc::vec![value],[1,1]),(device,DType::I64)).expand(shape)
 }
 
 fn select<B:Backend>(scores:Tensor<B,2>,ids:Tensor<B,2,Int>,mut valid:Tensor<B,2,Bool>,k:usize) -> (Tensor<B,2>,Tensor<B,2,Int>) {
