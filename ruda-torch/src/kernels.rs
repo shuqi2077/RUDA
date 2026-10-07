@@ -93,9 +93,9 @@ pub fn graph_scalar_math<F: Float + RudaElement>(
             else if scalar == -0.5 { value = 1.0 / x.sqrt(); }
             else if scalar == -1.0 { value = x.recip(); }
             else { value = x.powf(y); }
-        } else if comptime!(operation == 130) { value = floating_modulus(x, y, 122); }
-        else if comptime!(operation == 131) { value = floating_modulus(x, y, 123); }
-        else if comptime!(operation == 132) { value = floating_modulus(x, y, 124); }
+        } else if comptime!(operation == 130) { value = floating_modulus(x, y, 122u32); }
+        else if comptime!(operation == 131) { value = floating_modulus(x, y, 123u32); }
+        else if comptime!(operation == 132) { value = floating_modulus(x, y, 124u32); }
         else { value = (x / y).trunc(); }
         out[pos] = F::cast_from(value);
     }
