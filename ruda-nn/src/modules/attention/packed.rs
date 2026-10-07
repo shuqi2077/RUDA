@@ -111,9 +111,9 @@ pub fn packed_scaled_dot_product_attention<B: Backend>(
     if let Some((left, right)) = options.window { assert!(left >= -1 && right >= -1, "window distances must be nonnegative or -1"); }
     if let Some(dropout) = dropout { assert!(dropout.prob.is_finite() && (0.0..=1.0).contains(&dropout.prob), "invalid dropout probability"); }
     let device = query.device();
-    if queries == 0 {
+    if queries == 0 || dropout.is_some_and(|dropout|dropout.prob == 1.0 && B::ad_enabled(&device)) {
         let zero = connected_zero(query) + connected_zero(key) + connected_zero(value);
-        return (Tensor::<B, 3>::zeros([0, heads, value_features], (&device, DType::F32)) + zero.reshape([1, 1, 1])).cast(dtype);
+        return (Tensor::<B, 3>::zeros([queries, heads, value_features], (&device, DType::F32)) + zero.reshape([1, 1, 1])).cast(dtype);
     }
     let query = query.cast(DType::F32);
     let key = key.cast(DType::F32);
@@ -148,19 +148,16 @@ pub fn packed_scaled_dot_product_attention<B: Backend>(
         let mask = excluded.unsqueeze_dim::<3>(0).repeat_dim(0, heads);
         let fully_masked = mask.clone().all_dim(2);
         scores = scores.mask_fill(mask, f32::NEG_INFINITY);
-        let maximum = scores.clone().max_dim(2).mask_fill(fully_masked, 0);
+        let maximum = scores.clone().max_dim(2).mask_fill(fully_masked.clone(), 0);
         let exponentials = (scores - maximum).exp();
         // Every unmasked finite row has a maximum exponential of exactly one.
         // A fully masked row instead has all zero exponentials and returns zero.
         let denominator = exponentials.clone().sum_dim(2).clamp_min(1);
         let mut weights = exponentials / denominator;
         if let Some(dropout) = dropout {
-            weights = if dropout.prob == 1.0 && B::ad_enabled(&device) {
-                let mask = Tensor::<B, 3, Bool>::zeros(weights.dims(), &device).bool_not();
-                weights.mask_fill(mask, 0)
-            } else { dropout.forward(weights) };
+            weights = dropout.forward(weights);
         }
-        outputs.push(weights.matmul(v).swap_dims(0, 1));
+        outputs.push(weights.matmul(v).mask_fill(fully_masked.expand([heads,qlen,value_features]),0).swap_dims(0, 1));
     }
     Tensor::cat(outputs, 0).cast(dtype)
 }

@@ -91,17 +91,29 @@ pub fn dense_scaled_dot_product_attention<B: Backend>(
         "attention scale must be finite in the selected compute precision");
     if let Some((left, right)) = options.window { assert!(left >= -1 && right >= -1, "window distances must be nonnegative or -1"); }
     if let Some(dropout) = dropout { assert!(dropout.prob.is_finite() && (0.0..=1.0).contains(&dropout.prob), "invalid attention dropout probability"); }
-    if batch == 0 || queries == 0 || keys == 0 {
+    if batch == 0 || queries == 0 || keys == 0
+        || dropout.is_some_and(|dropout|dropout.prob == 1.0 && B::ad_enabled(&device)) {
         let mut zero = connected_zero(query, compute) + connected_zero(key, compute) + connected_zero(value, compute);
         if let Some(bias) = masks.bias { zero = zero + connected_zero(bias, compute); }
         return (Tensor::<B, 4>::zeros([batch, heads, queries, value_features], (&device, compute))
             + zero.reshape([1, 1, 1, 1])).cast(storage);
     }
     let groups = heads / kv_heads;
-    let query = query.cast(compute);
-    let key = key.cast(compute).reshape([batch, kv_heads, 1, keys, features])
+    let mut query = query.cast(compute);
+    let mut key = key.cast(compute);
+    let mut value = value.cast(compute);
+    if let Some(mask) = &masks.query_valid {
+        query = query.mask_fill(mask.clone().bool_not().reshape([batch,1,queries,1])
+            .expand([batch,heads,queries,features]),0);
+    }
+    if let Some(mask) = &masks.key_valid {
+        let excluded = mask.clone().bool_not().reshape([batch,1,keys,1]);
+        key = key.mask_fill(excluded.clone().expand([batch,kv_heads,keys,features]),0);
+        value = value.mask_fill(excluded.expand([batch,kv_heads,keys,value_features]),0);
+    }
+    let key = key.reshape([batch, kv_heads, 1, keys, features])
         .repeat_dim(2, groups).reshape([batch, heads, keys, features]);
-    let value = value.cast(compute).reshape([batch, kv_heads, 1, keys, value_features])
+    let value = value.reshape([batch, kv_heads, 1, keys, value_features])
         .repeat_dim(2, groups).reshape([batch, heads, keys, value_features]);
     let mut scores = query.matmul(key.swap_dims(2, 3)).mul_scalar(scale);
     if let Some(bias) = masks.bias { scores = scores + bias.cast(compute).expand(score_shape); }
@@ -136,17 +148,14 @@ pub fn dense_scaled_dot_product_attention<B: Backend>(
     }
     scores = scores.mask_fill(excluded, f64::NEG_INFINITY);
     let fully_excluded = scores.clone().equal_elem(f64::NEG_INFINITY).all_dim(3);
-    let maximum = scores.clone().max_dim(3).mask_fill(fully_excluded, 0);
+    let maximum = scores.clone().max_dim(3).mask_fill(fully_excluded.clone(), 0);
     let exponentials = (scores - maximum).exp();
     let denominator = exponentials.clone().sum_dim(3).clamp_min(1);
     let mut weights = exponentials / denominator;
     if let Some(dropout) = dropout {
-        weights = if dropout.prob == 1.0 && B::ad_enabled(&device) {
-            let excluded = Tensor::<B, 4, Bool>::zeros(weights.dims(), &device).bool_not();
-            weights.mask_fill(excluded, 0)
-        } else { dropout.forward(weights) };
+        weights = dropout.forward(weights);
     }
-    weights.matmul(value).cast(storage)
+    weights.matmul(value).mask_fill(fully_excluded.expand([batch,heads,queries,value_features]),0).cast(storage)
 }
 
 /// Grouped-query attention projection geometry, independent of model family.
