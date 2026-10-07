@@ -474,13 +474,16 @@ class SFTTrainer:
         state['elapsed_seconds'] = self.elapsed_before_resume + time.monotonic() - self.started
         with temporary.open('wb') as stream:
             torch.save(state, stream); stream.flush(); os.fsync(stream.fileno())
+        saved_at = state['saved_at']
+        del state
         checked = torch.load(temporary, map_location='cpu', weights_only=True)
         if checked['run_config'] != self.run_config or checked['step'] != self.step:
             raise RuntimeError('new checkpoint validation failed; previous version preserved')
+        del checked
         if latest.exists():
             os.replace(latest, previous)
         os.replace(temporary, latest)
-        self.last_checkpoint = {'path': str(latest.resolve()), 'saved_at': state['saved_at']}
+        self.last_checkpoint = {'path': str(latest.resolve()), 'saved_at': saved_at}
         return latest
 
     def resume(self, path):
