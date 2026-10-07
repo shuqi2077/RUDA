@@ -10,8 +10,14 @@ impl<O,M,B,C> FullyShardedElementwiseOptimizer<O,M,B,C>
     /// Absent histories remain absent; existing histories for newly frozen roles are retained without updating.
     /// Replace this local history container only after every source record is validated and partitioned.
     pub fn try_import_native_record(&mut self,record:HashMap<ParamId,AdaptorRecord<O,B>>) -> Result<(),OptimizerShardError> {
-        let mut states=HashMap::with_capacity(record.len());
-        for (id,record) in record {
+        self.try_import_native_records(record)
+    }
+    /// Streaming equivalent: each actual full source history can be released immediately after local slicing.
+    /// The iterator supplies the complete original history set; omitted histories stay absent.
+    pub fn try_import_native_records<I:IntoIterator<Item=(ParamId,AdaptorRecord<O,B>)>>(&mut self,records:I) -> Result<(),OptimizerShardError> {
+        let mut states=HashMap::new();
+        for (id,record) in records {
+            if states.contains_key(&id) {return Err(OptimizerShardError::Placement("duplicate original native history identity"));}
             let spec=self.placement.iter().find(|entry|entry.0==id.val()).ok_or(OptimizerShardError::Placement("native history belongs to an unknown original parameter"))?;
             let shard=FlatOptimizerTensorShard::new(spec.1.clone(),spec.2,spec.3)?;
             let state=match record {AdaptorRecord::V1(record)=>O::partition_native_history(record,&shard)?};
@@ -24,11 +30,14 @@ impl<O,M,B,C> FullyShardedElementwiseOptimizer<O,M,B,C>
 }
 
 impl<B:AutodiffBackend,O:ElementwiseShardOptimizer<B::InnerBackend>> FullyShardedElementwiseRecord<B,O>
-    where O::State<1>:OptimizerCheckpointBuffers<B::InnerBackend,1>+OptimizerCheckpointScalars {
+    where O::State<1>:OptimizerCheckpointBuffers<B::InnerBackend,1> {
     /// Actual local history count, excluding never-used parameters whose original state is absent.
     pub fn state_parameter_count(&self) -> usize {self.states.len()}
     /// Inspect actual original local clocks/buffers without copying or reconstructing global history.
     pub fn state(&self,id:ParamId) -> Option<&O::State<1>> {self.states.get(&id)}
+}
+impl<B:AutodiffBackend,O:ElementwiseShardOptimizer<B::InnerBackend>> FullyShardedElementwiseRecord<B,O>
+    where O::State<1>:OptimizerCheckpointBuffers<B::InnerBackend,1>+OptimizerCheckpointScalars {
     /// Offline exact ownership migration from a complete original rank set to one new data owner.
     /// Coordinate histories are overlap-copied, not summed or recomputed; original clocks/options must match.
     /// The complete saved group must use one original rank ordering for every actual parameter.

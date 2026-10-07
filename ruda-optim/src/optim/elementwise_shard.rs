@@ -1,5 +1,5 @@
 use super::{SimpleOptimizer,Adam,AdamW,Sgd,AdaGrad,RmsProp,Adan};
-use ruda_model::tensor::{DType,backend::Backend};
+use ruda_model::tensor::{Tensor,DType,BroadcastTensorCollective,backend::Backend};
 
 /// An optimizer whose original update is independent for each coordinate of a parameter.
 /// Matrix optimizers such as Muon must not implement this: independent fragments change their algorithm.
@@ -9,6 +9,15 @@ pub trait ElementwiseShardOptimizer<B:Backend>:SimpleOptimizer<B> {
     fn validate_element_sharding(&self) -> Result<(),&'static str> {Ok(())}
     /// Explicit native dtype for already globally normalized and reduce-scattered local derivatives.
     fn shard_gradient_dtype(&self,storage:DType) -> DType {storage}
+    /// Validate original configuration for native FSDP, where tensor-wide transforms can use logical gathers.
+    /// Existing ZeRO-2 validation remains separate and does not implicitly enable local-fragment clipping.
+    fn validate_fully_sharded_execution(&self) -> Result<(),&'static str> {self.validate_element_sharding()}
+    /// Original coordinate update over one actual native FSDP owner, with any wrapper-level logical transforms.
+    fn step_fully_sharded<C:BroadcastTensorCollective<B>>(&self,lr:crate::LearningRate,tensor:Tensor<B,1>,gradient:Tensor<B,1>,
+        state:Option<Self::State<1>>, _binding:&crate::FullyShardedOptimizerParameter<C>)
+        -> Result<(Tensor<B,1>,Option<Self::State<1>>),crate::FullyShardedElementwiseError<C::Error>> {
+        Ok(self.step(lr,tensor,gradient,state))
+    }
 }
 impl<B:Backend> ElementwiseShardOptimizer<B> for Adam {}
 impl<B:Backend> ElementwiseShardOptimizer<B> for AdamW {}

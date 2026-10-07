@@ -79,7 +79,7 @@ impl<O,M,B,C> FullyShardedElementwiseOptimizer<O,M,B,C>
     /// Existing full-model native histories are not silently discarded or implicitly converted by this constructor.
     pub fn new(optimizer:O,module:&M,parameters:&[FullyShardedOptimizerParameter<C>],clipping:Option<GradientClipping>)
         -> Result<Self,FullyShardedElementwiseError<C::Error>> {
-        optimizer.validate_element_sharding().map_err(FullyShardedElementwiseError::Configuration)?;
+        optimizer.validate_fully_sharded_execution().map_err(FullyShardedElementwiseError::Configuration)?;
         let mut bindings=parameters.to_vec();bindings.sort_by_key(|binding|binding.parameter);let mut ids=BTreeSet::new();
         let mut declared=Vec::with_capacity(bindings.len());
         for binding in &bindings {
@@ -125,7 +125,7 @@ impl<O,M,B,C> FullyShardedElementwiseOptimizer<O,M,B,C>
             let gradient=if let Some(clipping)=&self.clipping {clip(gradient,binding,clipping)?} else {gradient};
             let state=states.remove(&id).map(|state|O::to_device(state,&value.device()));
             if let Some(state)=&state {validate_state::<B::InnerBackend,O>(state,value.dims(),dtype).map_err(FullyShardedElementwiseError::State)?;}
-            let (value,state)=self.optimizer.step(lr,value,gradient,state);let value=trim(value,binding);
+            let (value,state)=self.optimizer.step_fully_sharded(lr,value,gradient,state,binding)?;let value=trim(value,binding);
             if let Some(state)=state {states.insert(id,state);}
             mapper.values.insert(id,value);
         }
@@ -162,7 +162,7 @@ fn trim<B:Backend,C:BroadcastTensorCollective<B>>(value:Tensor<B,1>,binding:&Ful
     let real=elements.saturating_sub(binding.communicator.rank() as usize*slots).min(slots);
     if real==slots {value} else {let zero=Tensor::zeros([slots-real],(&value.device(),value.dtype()));value.slice_assign([real..slots],zero)}
 }
-fn clip<B:Backend,C:BroadcastTensorCollective<B>>(value:Tensor<B,1>,binding:&FullyShardedOptimizerParameter<C>,clipping:&GradientClipping)
+pub(super) fn clip<B:Backend,C:BroadcastTensorCollective<B>>(value:Tensor<B,1>,binding:&FullyShardedOptimizerParameter<C>,clipping:&GradientClipping)
     -> Result<Tensor<B,1>,FullyShardedElementwiseError<C::Error>> {
     if matches!(clipping,GradientClipping::Value(_)) {return Ok(clipping.clip_gradient(value));}
     let slots=value.dims()[0];let dtype=value.dtype();let device=value.device();let world=binding.communicator.world_size();

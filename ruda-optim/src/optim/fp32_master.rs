@@ -85,6 +85,23 @@ impl<B:Backend,O:crate::ElementwiseShardOptimizer<B>>
         self.optimizer.validate_element_sharding()
     }
     fn shard_gradient_dtype(&self,_storage:DType)->DType {DType::F32}
+    fn validate_fully_sharded_execution(&self) -> Result<(),&'static str> {self.optimizer.validate_fully_sharded_execution()}
+    fn step_fully_sharded<C:ruda_model::tensor::BroadcastTensorCollective<B>>(&self,lr:LearningRate,tensor:Tensor<B,1>,gradient:Tensor<B,1>,
+        state:Option<Self::State<1>>,binding:&crate::FullyShardedOptimizerParameter<C>)
+        -> Result<(Tensor<B,1>,Option<Self::State<1>>),crate::FullyShardedElementwiseError<C::Error>> {
+        let storage=tensor.dtype();
+        if !matches!(storage,DType::F32|DType::F16|DType::BF16) {return Err(crate::FullyShardedElementwiseError::Configuration("FP32 masters require original FP32/FP16/BF16 model storage"));}
+        let (master,inner)=match state {
+            Some(state)=>{
+                if state.master.dtype()!=DType::F32 || state.master.dims()!=tensor.dims() {return Err(crate::FullyShardedElementwiseError::State("authoritative native local master shape/precision differs"));}
+                (state.master,state.inner)
+            },None=>(tensor.cast(DType::F32),None),
+        };
+        let gradient=gradient.cast(DType::F32);let gradient=if self.gradient_scale==1.0 {gradient} else {gradient/self.gradient_scale};
+        let gradient=if let Some(clipping)=&self.grad_clipping {super::fully_sharded_elementwise::clip(gradient,binding,clipping)?} else {gradient};
+        let (master,inner)=self.optimizer.step_fully_sharded(lr,master,gradient,inner,binding)?;
+        let tensor=master.clone().cast(storage);Ok((tensor,Some(Fp32MasterState {master,inner})))
+    }
 }
 
 impl<B: Backend, O: SimpleOptimizer<B>> SimpleOptimizer<B> for Fp32MasterOptimizer<O> {
