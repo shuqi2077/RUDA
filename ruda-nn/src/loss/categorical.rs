@@ -28,7 +28,7 @@ impl<B: Backend,const D: usize> CategoricalLossTerms<B,D> {
     pub fn mean(&self) -> Tensor<B,1> {
         let denominator = self.effective_weight();
         let empty = denominator.clone().equal_elem(0);
-        self.loss_sum()/denominator.mask_fill(empty,1)
+        self.loss_sum().mask_fill(empty.clone(),0)/denominator.mask_fill(empty,1)
     }
 
     /// Reweight actual samples/tokens/pixels without losing their existing selection mask.

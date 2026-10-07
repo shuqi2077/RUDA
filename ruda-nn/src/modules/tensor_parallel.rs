@@ -7,6 +7,9 @@ use ruda_model::{
     tensor::{Tensor, Int, DType, TensorPrimitive, ElementConversion, backend::Backend, module::{linear, embedding}, activation::silu},
 };
 
+mod loss;
+pub use loss::*;
+
 /// Output-feature shard of a global projection, with an optional local bias shard.
 /// Construct local weights directly or load an explicitly partitioned checkpoint.
 #[derive(Module, Debug)]
