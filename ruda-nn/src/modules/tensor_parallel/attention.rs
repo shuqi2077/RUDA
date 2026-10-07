@@ -3,7 +3,7 @@ use ruda_model::{module::Module,tensor::{FloatDType,Tensor,backend::Backend,modu
 use crate::{Linear,attention::{GroupedQueryAttention,DenseAttentionMask,DenseAttentionOptions,dense_scaled_dot_product_attention}};
 use region::BroadcastTensorCollective;
 
-mod cached;
+pub(super) mod cached;
 mod packed;
 mod masks;
 pub use masks::*;
@@ -114,8 +114,8 @@ impl<B: Backend,S: CheckpointStrategy> TensorParallelGroupedQueryAttention<Autod
             bias = bias.map(|bias|bias.cast(dtype));
         }
         if let Some(replicas) = &groups.kv_replicas {
-            weight = region::copy_to_region(weight,replicas.clone())?;
-            bias = bias.map(|bias|region::copy_to_region(bias,replicas.clone())).transpose()?;
+            if weight.is_require_grad() {weight = region::copy_to_region(weight,replicas.clone())?;}
+            bias = bias.map(|bias|if bias.is_require_grad() {region::copy_to_region(bias,replicas.clone())} else {Ok(bias)}).transpose()?;
         }
         Ok(projection(input,weight,bias,compute))
     }

@@ -38,7 +38,7 @@ pub struct TensorParallelTransformerBlock<B: Backend> {
     pub norm_first: bool,
 }
 
-fn residual<B: Backend,E,F,R,const D: usize>(input: Tensor<B,D>,norm: &DenseTransformerNorm<B>,norm_first: bool,
+pub(super) fn residual<B: Backend,E,F,R,const D: usize>(input: Tensor<B,D>,norm: &DenseTransformerNorm<B>,norm_first: bool,
     branch: F,dropout: R) -> Result<Tensor<B,D>,E>
     where F: FnOnce(Tensor<B,D>)->Result<Tensor<B,D>,E>,R: FnOnce(Tensor<B,D>)->Tensor<B,D> {
     let source = if norm_first {norm.forward(input.clone())} else {input.clone()};

@@ -12,7 +12,7 @@ fn masks<B: Backend>(mut masks: DenseAttentionMask<B>,visible: Tensor<B,2,Bool>)
     masks
 }
 
-fn append<B: Backend>(query: &Tensor<B,4>,key: Tensor<B,4>,value: Tensor<B,4>,new_visible: Option<Tensor<B,2,Bool>>,
+pub(in crate::modules::tensor_parallel) fn append<B: Backend>(query: &Tensor<B,4>,key: Tensor<B,4>,value: Tensor<B,4>,new_visible: Option<Tensor<B,2,Bool>>,
     cache: &mut ProjectedKvCache<B>,mask: DenseAttentionMask<B>,geometry: (usize,usize,usize)) -> (Tensor<B,4>,Tensor<B,4>,DenseAttentionMask<B>) {
     assert_eq!((query.dims()[1],query.dims()[3]),(geometry.0,geometry.2),"parallel cached query geometry differs from actual head shards");
     assert_eq!((key.dims()[1],key.dims()[3]),(geometry.1,geometry.2),"parallel cached key geometry differs from actual head shards");
