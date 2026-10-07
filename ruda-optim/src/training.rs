@@ -12,6 +12,9 @@ use crate::{GradientsAccumulator, GradientsParamsRecord, Optimizer, WeightedGrad
 #[cfg(test)]
 mod tests;
 
+mod model_state;
+pub use model_state::{ModelStateTrainingRecord,TrainableParameterContract};
+
 /// One record containing the trainable state and a caller-defined continuation record.
 ///
 /// Capture at a training boundary with no concurrent updates. The caller's state
