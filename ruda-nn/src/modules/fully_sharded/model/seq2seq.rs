@@ -1,4 +1,5 @@
 use super::*;
+mod cached;
 
 /// Complete actual paired model with independently declared source/target tables and hidden widths.
 /// Native encoder memory remains in the AD graph; it is not detached for distributed training.
