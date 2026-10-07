@@ -9,6 +9,7 @@ use ruda_model::{
 
 mod loss;
 pub use loss::*;
+mod uneven_vocabulary;
 
 /// Output-feature shard of a global projection, with an optional local bias shard.
 /// Construct local weights directly or load an explicitly partitioned checkpoint.
