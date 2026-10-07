@@ -47,10 +47,14 @@ fn prepare(state_client: &ComputeClient<CudaRuntime>, ts: &[View], n: &NodeSpec,
                 let blocks = u32::try_from(out.len.div_ceil(128)).expect("graph expansion grid overflow");
                 unsafe { kernels::graph_expand::prepare::<$dtype,CudaRuntime>(state_client,
                     RudaCount::Static(blocks,1,1),RudaDim::new_1d(128),a.arg(),out.arg()) }
-            } else if matches!(n.op,116..=118) {
+            } else if matches!(n.op,57 | 116..=118 | 121..=124) {
                 let blocks = u32::try_from(out.len.div_ceil(128)).expect("graph broadcast grid overflow");
                 unsafe { kernels::graph_broadcast::prepare::<$dtype,CudaRuntime>(state_client,
                     RudaCount::Static(blocks,1,1),RudaDim::new_1d(128),a.arg(),b.arg(),out.arg(),n.scalar,n.op) }
+            } else if matches!(n.op,129..=133) {
+                let blocks = u32::try_from(out.len.div_ceil(128)).expect("graph scalar math grid overflow");
+                unsafe { kernels::graph_scalar_math::prepare::<$dtype,CudaRuntime>(state_client,
+                    RudaCount::Static(blocks,1,1),RudaDim::new_1d(128),a.arg(),out.arg(),n.scalar,n.op) }
             } else if n.op == 119 || n.op == 120 {
                 let mask = n.scalar as u32;
                 let shape = a.shape.iter().enumerate().map(|(d,&size)|if mask&(1<<d)!=0 {1} else {size}).collect();
@@ -97,6 +101,9 @@ pub extern "C" fn ruda_torch_graph_api_version() -> u32 { 3 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ruda_torch_graph_layout_api_version() -> u32 { 1 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ruda_torch_graph_math_api_version() -> u32 { 1 }
 
 /// Optional in-process extension API 3; base tensor ABI remains 10.
 /// 0=build, 1=replay, 2=wait, 3=query fixed queue, 4=close,

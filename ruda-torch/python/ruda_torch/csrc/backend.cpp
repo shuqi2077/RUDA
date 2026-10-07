@@ -573,6 +573,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("training_adamw_batch_", training_adamw_batch);
   m.attr("graph_api_version") = 3;
   m.attr("graph_layout_api_version") = 1;
+  m.attr("graph_math_api_version") = 1;
   m.def("initialize_graph", [](uintptr_t address) {
     TORCH_CHECK(allocate_native && address && !static_graph_native, "invalid or repeated static graph initialization");
     static_graph_native = reinterpret_cast<StaticGraphCommand>(address);

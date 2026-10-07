@@ -50,7 +50,7 @@ pub fn validate(tensors: &[TensorSpec<'_>], nodes: &[NodeSpec], inputs: usize) -
         if n.a as usize >= out_index { return Err("static graph input must precede its output".into()); }
         let a = &tensors[n.a as usize];
         let out = &tensors[out_index];
-        if (n.op != 114 && a.dtype != out.dtype) || (!matches!(n.op, 7 | 30 | 104 | 105 | 112..=120) && a.shape != out.shape) {
+        if (n.op != 114 && a.dtype != out.dtype) || (!matches!(n.op, 7 | 30 | 57 | 104 | 105 | 112..=124) && a.shape != out.shape) {
             return Err("static graph output shape/dtype mismatch".into());
         }
         match n.op {
@@ -81,7 +81,7 @@ pub fn validate(tensors: &[TensorSpec<'_>], nodes: &[NodeSpec], inputs: usize) -
                     return Err("invalid graph expansion".into());
                 }
             }
-            116..=118 => {
+            57 | 116..=118 | 121..=124 => {
                 if n.b as usize>=out_index || !n.scalar.is_finite() || (n.op!=116 && n.scalar.to_bits()!=0) {
                     return Err("invalid graph broadcast inputs/scalar".into());
                 }
@@ -118,7 +118,7 @@ pub fn validate(tensors: &[TensorSpec<'_>], nodes: &[NodeSpec], inputs: usize) -
                     return Err("invalid static graph pointwise scalar".into());
                 }
             }
-            109..=111 => {
+            109..=111 | 129..=133 => {
                 if n.b != n.a || !n.scalar.is_finite() {
                     return Err("invalid unary scalar operation".into());
                 }

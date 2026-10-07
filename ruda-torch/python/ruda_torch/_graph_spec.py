@@ -52,12 +52,16 @@ UNARY_CODES = {'copy': 0, 'relu': 3, 'exp': 9, 'log': 10, 'sqrt': 11,
 BINARY_CODES = {'add': 1, 'mul': 2, 'div': 8, 'silu_backward': 15,
     'sigmoid_backward': 16, 'tanh_backward': 18, 'silu_mul': 101}
 SCALAR_CODES = {'add_scalar': 109, 'mul_scalar': 110, 'div_scalar': 111}
+MATH_BINARY_CODES = {'pow': 121, 'floor_divide': 122, 'fmod': 123,
+                     'remainder': 124, 'div_trunc': 57}
+MATH_SCALAR_CODES = {'pow_scalar': 129, 'floor_divide_scalar': 130,
+                     'fmod_scalar': 131, 'remainder_scalar': 132, 'div_trunc_scalar': 133}
 CODES = {**UNARY_CODES, **BINARY_CODES, **SCALAR_CODES, 'mm': 7, 'bmm': 30,
     'rms_norm': 100, 'softmax': 102, 'log_softmax': 103, 'sum_keepdim': 104,
     'mean_keepdim': 105, 'softmax_backward': 106, 'log_softmax_backward': 107,
     'reshape_copy': 112, 'permute_copy': 113, 'cast': 114, 'expand_copy': 115,
     'add_broadcast': 116, 'mul_broadcast': 117, 'div_broadcast': 118,
-    'sum': 119, 'mean': 120}
+    'sum': 119, 'mean': 120, **MATH_BINARY_CODES, **MATH_SCALAR_CODES}
 
 @dataclass(frozen=True)
 class Layout:
@@ -131,7 +135,7 @@ def plan_layout(inputs: Mapping[str,TensorSpec], nodes: Sequence[GraphOp], outpu
                     if len(shape)<len(spec.shape) or scalar != 0 or any(x not in (1,y) for x,y in zip(reversed(spec.shape),reversed(shape))):
                         raise ValueError('expand shape is not broadcast compatible')
                 spec = TensorSpec(shape, spec.dtype)
-        elif node.kind in ('add_broadcast','mul_broadcast','div_broadcast'):
+        elif node.kind in ('add_broadcast','mul_broadcast','div_broadcast') or node.kind in MATH_BINARY_CODES:
             if node.right not in ids:
                 raise ValueError('missing broadcast input')
             b = ids[node.right]
@@ -155,6 +159,10 @@ def plan_layout(inputs: Mapping[str,TensorSpec], nodes: Sequence[GraphOp], outpu
         elif node.kind in SCALAR_CODES:
             if node.right is not None:
                 raise ValueError('scalar operation has no right tensor')
+            b = a
+        elif node.kind in MATH_SCALAR_CODES:
+            if node.right is not None or node.shape is not None or node.dtype is not None:
+                raise ValueError('scalar math requires one input and no layout/dtype change')
             b = a
         elif node.kind in BINARY_CODES:
             if node.right not in ids: raise ValueError('missing second graph input')

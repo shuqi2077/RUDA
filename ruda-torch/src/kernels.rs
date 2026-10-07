@@ -49,7 +49,54 @@ pub fn graph_broadcast<F: Float + RudaElement>(
         let mut value = 0.0f32;
         if comptime!(operation == 116) { value = x + alpha * y; }
         else if comptime!(operation == 117) { value = x * y; }
-        else { value = x / y; }
+        else if comptime!(operation == 118) { value = x / y; }
+        else if comptime!(operation == 121) { value = x.powf(y); }
+        else if comptime!(operation == 57) { value = (x / y).trunc(); }
+        else { value = floating_modulus(x, y, operation); }
+        out[pos] = F::cast_from(value);
+    }
+}
+
+#[ruda]
+fn floating_modulus(x: f32, y: f32, #[comptime] operation: u32) -> f32 {
+    let modulo = x % y;
+    let mut result = modulo;
+    if comptime!(operation == 124) {
+        if modulo != 0.0 && ((y < 0.0) != (modulo < 0.0)) { result += y; }
+    } else if comptime!(operation == 122) {
+        let mut quotient = (x - modulo) / y;
+        if modulo != 0.0 && ((y < 0.0) != (modulo < 0.0)) { quotient -= 1.0; }
+        result = quotient.floor();
+        if quotient - result > 0.5 { result += 1.0; }
+        if quotient == 0.0 { result = f32::from_bits((x / y).to_bits() & 0x80000000u32); }
+        if y == 0.0 { result = x / y; }
+    }
+    result
+}
+
+#[ruda(launch)]
+pub fn graph_scalar_math<F: Float + RudaElement>(
+    a: &Tensor<F>, out: &mut Tensor<F>, scalar: f32, #[comptime] operation: u32,
+) {
+    let pos = ABSOLUTE_POS as usize;
+    if pos < out.len() {
+        let x = f32::cast_from(a[pos]);
+        let stored = F::cast_from(scalar);
+        let y = f32::cast_from(stored);
+        let mut value = 0.0f32;
+        if comptime!(operation == 129) {
+            if scalar == 0.0 { value = 1.0; }
+            else if scalar == 1.0 { value = x; }
+            else if scalar == 2.0 { value = x * x; }
+            else if scalar == 3.0 { value = x * x * x; }
+            else if scalar == 0.5 { value = x.sqrt(); }
+            else if scalar == -0.5 { value = 1.0 / x.sqrt(); }
+            else if scalar == -1.0 { value = x.recip(); }
+            else { value = x.powf(y); }
+        } else if comptime!(operation == 130) { value = floating_modulus(x, y, 122); }
+        else if comptime!(operation == 131) { value = floating_modulus(x, y, 123); }
+        else if comptime!(operation == 132) { value = floating_modulus(x, y, 124); }
+        else { value = (x / y).trunc(); }
         out[pos] = F::cast_from(value);
     }
 }
@@ -266,24 +313,7 @@ pub fn pointwise<A: Float + RudaElement, B: Float + RudaElement, O: Float + Ruda
             else if comptime!(op == 121) { out[target] = O::cast_from(x.powf(f32::cast_from(b[offset(b, pos)]))); }
             else if comptime!(op == 122 || op == 123 || op == 124) {
                 let y = f32::cast_from(b[offset(b, pos)]);
-                let modulo = x % y;
-                if comptime!(op == 123) { out[target] = O::cast_from(modulo); }
-                else if comptime!(op == 124) {
-                    let mut remainder = modulo;
-                    if modulo != 0.0 && ((y < 0.0) != (modulo < 0.0)) { remainder += y; }
-                    out[target] = O::cast_from(remainder);
-                } else {
-                    let mut quotient = (x - modulo) / y;
-                    if modulo != 0.0 && ((y < 0.0) != (modulo < 0.0)) { quotient -= 1.0; }
-                    let mut result = quotient.floor();
-                    if quotient - result > 0.5 { result += 1.0; }
-                    if quotient == 0.0 {
-                        let sign = (x / y).to_bits() & 0x80000000u32;
-                        result = f32::from_bits(sign);
-                    }
-                    if y == 0.0 { result = x / y; }
-                    out[target] = O::cast_from(result);
-                }
+                out[target] = O::cast_from(floating_modulus(x, y, op));
             }
             else if comptime!(op == 9) { out[target] = O::cast_from(x.exp()); }
             else if comptime!(op == 10) { out[target] = O::cast_from(x.ln()); }

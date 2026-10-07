@@ -145,6 +145,11 @@ if _graph_available and hasattr(_native,'ruda_torch_graph_layout_api_version'):
     _native.ruda_torch_graph_layout_api_version.restype = ctypes.c_uint32
     _graph_layout_available = (_native.ruda_torch_graph_layout_api_version()==1
                                and getattr(_C,'graph_layout_api_version',0)==1)
+_graph_math_available = False
+if _graph_available and hasattr(_native,'ruda_torch_graph_math_api_version'):
+    _native.ruda_torch_graph_math_api_version.restype = ctypes.c_uint32
+    _graph_math_available = (_native.ruda_torch_graph_math_api_version()==1
+                             and getattr(_C,'graph_math_api_version',0)==1)
 from ._graph import StaticGraph, GraphOp
 
 # Training is a separately negotiated extension. Explicit StaticGraph training

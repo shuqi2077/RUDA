@@ -4,7 +4,7 @@ from threading import RLock
 import torch
 import sys
 from . import _C
-from ._graph_spec import GraphOp, TensorSpec
+from ._graph_spec import GraphOp, TensorSpec, MATH_BINARY_CODES, MATH_SCALAR_CODES
 from ._graph_opt import prepare_plan
 
 class StaticGraph:
@@ -70,6 +70,10 @@ class StaticGraph:
             from . import _graph_layout_available
             if not _graph_layout_available:
                 raise RuntimeError('native graph layout API 1 required; rebuild Rust and C++ extensions')
+        math_codes = {*MATH_BINARY_CODES.values(), *MATH_SCALAR_CODES.values()}
+        if any(code in math_codes for code in layout.words[::3]):
+            if not getattr(sys.modules[__package__],'_graph_math_available',False):
+                raise RuntimeError('native graph math API 1 required; rebuild Rust and C++ extensions')
         self._inputs=tuple(inputs.values())
         self._input_bindings=tuple(self._binding(t) for t in self._inputs)
         self._training=training

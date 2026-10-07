@@ -77,7 +77,7 @@ class StaticGraphBridge {
       const size_t out=inputs+i;
       TORCH_CHECK(a<out,"static graph node refers to a future input");
       const auto& x=tensors_[a]; const auto& y=tensors_[out];
-      TORCH_CHECK((op==7 || op==30 || op==104 || op==105 || (op>=112 && op<=120) || x.sizes()==y.sizes())
+      TORCH_CHECK((op==7 || op==30 || op==57 || op==104 || op==105 || (op>=112 && op<=124) || x.sizes()==y.sizes())
         && (op==114 || x.scalar_type()==y.scalar_type()),"static graph output mismatch");
       if(op==112 || op==114) {
         TORCH_CHECK(b==a && scalars[i]==0.0f && !std::signbit(scalars[i])
@@ -94,7 +94,7 @@ class StaticGraphBridge {
       } else if(op==115) {
         TORCH_CHECK(b==a && scalars[i]==0.0f && !std::signbit(scalars[i]) && y.dim()>=x.dim(),"invalid graph expansion");
         for(int d=0;d<x.dim();++d) TORCH_CHECK(x.size(d)==1 || x.size(d)==y.size(y.dim()-x.dim()+d),"invalid graph expansion shape");
-      } else if(op>=116 && op<=118) {
+      } else if(op==57 || (op>=116 && op<=118) || (op>=121 && op<=124)) {
         TORCH_CHECK(b<out && tensors_[b].scalar_type()==x.scalar_type() && std::isfinite(scalars[i])
           && (op==116 || (scalars[i]==0.0f && !std::signbit(scalars[i]))),"invalid broadcast graph inputs");
         const auto& r=tensors_[b]; const int rank=std::max(x.dim(),r.dim());
@@ -119,7 +119,7 @@ class StaticGraphBridge {
                     "static graph broadcasting/type promotion is not supported");
         TORCH_CHECK(std::isfinite(scalars[i]) && (op==1 || (scalars[i]==0.0f && !std::signbit(scalars[i]))),
                     "invalid static graph scalar");
-      } else if(op>=109 && op<=111) {
+      } else if((op>=109 && op<=111) || (op>=129 && op<=133)) {
         TORCH_CHECK(b==a && std::isfinite(scalars[i]), "invalid scalar graph operation");
       } else if(op==7 || op==30) {
         TORCH_CHECK(b<out, "future matrix graph input");

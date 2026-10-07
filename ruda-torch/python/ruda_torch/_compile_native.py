@@ -38,6 +38,13 @@ _TARGETS.update({torch.ops.aten.clone.default: 'copy', torch.ops.aten.add.Tensor
 _TARGETS.update({torch.ops.aten.view_copy.default: 'reshape_copy',
     torch.ops.aten.permute_copy.default: 'permute_copy', torch.ops.aten._to_copy.default: 'cast',
     torch.ops.aten.expand_copy.default: 'expand_copy'})
+_TARGETS.update({torch.ops.aten.pow.Tensor_Tensor: 'pow',
+    torch.ops.aten.pow.Tensor_Scalar: 'pow',
+    torch.ops.aten.floor_divide.default: 'floor_divide',
+    torch.ops.aten.floor_divide.Scalar: 'floor_divide',
+    torch.ops.aten.fmod.Tensor: 'fmod', torch.ops.aten.fmod.Scalar: 'fmod',
+    torch.ops.aten.remainder.Tensor: 'remainder', torch.ops.aten.remainder.Scalar: 'remainder',
+    torch.ops.aten.div.Tensor_mode: 'div_mode', torch.ops.aten.div.Scalar_mode: 'div_mode'})
 _ALIASES={torch.ops.aten.view.default:'reshape_copy',torch.ops.aten.reshape.default:'reshape_copy',
     torch.ops.aten._unsafe_view.default:'reshape_copy',torch.ops.aten.permute.default:'permute_copy',
     torch.ops.aten.t.default:'transpose_copy',torch.ops.aten.transpose.int:'transpose_copy',
@@ -47,6 +54,10 @@ _ALIASES={torch.ops.aten.view.default:'reshape_copy',torch.ops.aten.reshape.defa
 
 def _layout_capable():
     return getattr(sys.modules.get(__package__),'_graph_layout_available',False)
+
+
+def _math_capable():
+    return getattr(sys.modules.get(__package__),'_graph_math_available',False)
 
 
 def _internal_alias(node, seen=None):
@@ -124,6 +135,34 @@ def _lower(node):
                 return None
             scalar = sum(d<<(3*i) for i,d in enumerate(axes))
         return GraphOp(kind,node.name,left,scalar=scalar,shape=tuple(value.shape))
+    if kind in ('pow','floor_divide','fmod','remainder','div_mode'):
+        if not _math_capable(): return None
+        if kind == 'div_mode':
+            if len(args) != 2 or set(kwargs)-{'rounding_mode'}: return None
+            mode = kwargs.get('rounding_mode')
+            if mode not in (None,'floor','trunc'): return None
+            if mode is None:
+                kind = 'div'
+                kwargs = {}
+            else:
+                kind = 'floor_divide' if mode == 'floor' else 'div_trunc'
+                kwargs = {}
+        if kind != 'div':
+            if len(args) != 2 or kwargs: return None
+            source = args[0].meta.get('val')
+            if not isinstance(source,torch.Tensor) or source.dtype not in (torch.float32,torch.float16,torch.bfloat16):
+                return None
+            if isinstance(args[1],Node):
+                other = args[1].meta.get('val')
+                if not isinstance(other,torch.Tensor) or other.dtype != source.dtype:
+                    return None
+                return GraphOp(kind,node.name,left,args[1].name)
+            scalar = args[1]
+            if type(scalar) not in (int,float) or not math.isfinite(scalar): return None
+            # Eager integer exponents use the exact i64 power kernel. Do not
+            # replace them with an FP32-rounded exponent in a captured graph.
+            if kind == 'pow' and type(scalar) is int and scalar not in (0,1,2,3): return None
+            return GraphOp(kind+'_scalar',node.name,left,scalar=scalar)
     if kind in ('add', 'sub', 'mul', 'div'):
         if len(args) != 2 or set(kwargs) - ({'alpha'} if kind in ('add','sub') else set()):
             return None
@@ -240,6 +279,10 @@ class NativeRegion(torch.nn.Module):
                         from . import _graph_layout_available
                         if not _graph_layout_available:
                             raise ValueError('native graph layout extension unavailable')
+                    if any(node.kind in ('pow','floor_divide','fmod','remainder','div_trunc',
+                           'pow_scalar','floor_divide_scalar','fmod_scalar','remainder_scalar',
+                           'div_trunc_scalar') for node in self.nodes) and not _math_capable():
+                        raise ValueError('native graph math extension unavailable')
                 except (ValueError, TypeError, OverflowError) as exc:
                     reason = str(exc)
             if reason is not None:

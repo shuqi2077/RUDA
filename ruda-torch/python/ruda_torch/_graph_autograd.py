@@ -69,6 +69,29 @@ def forward_values(layout, inputs):
         elif op in (119,120):
             dims = tuple(d for d in range(x.ndim) if int(scalar)&(1<<d))
             out = (x.sum(dims) if op == 119 else x.mean(dims)).to(left.dtype)
+        elif op in (57,121,122,123,124):
+            if op == 121: out = torch.pow(x,y)
+            elif op == 122: out = torch.div(x,y,rounding_mode='floor')
+            elif op == 57: out = torch.div(x,y,rounding_mode='trunc')
+            elif op == 123: out = torch.fmod(x,y)
+            else: out = torch.remainder(x,y)
+            out = out.to(left.dtype)
+        elif op in (129,130,131,132,133):
+            stored = torch.full((),scalar,dtype=left.dtype,device=left.device).float()
+            if op == 129:
+                if scalar == 0: out = torch.ones_like(x)
+                elif scalar == 1: out = x.clone()
+                elif scalar == 2: out = x*x
+                elif scalar == 3: out = x*x*x
+                elif scalar == 0.5: out = x.sqrt()
+                elif scalar == -0.5: out = x.rsqrt()
+                elif scalar == -1: out = x.reciprocal()
+                else: out = torch.pow(x,stored)
+            elif op == 130: out = torch.div(x,stored,rounding_mode='floor')
+            elif op == 131: out = torch.fmod(x,stored)
+            elif op == 132: out = torch.remainder(x,stored)
+            else: out = torch.div(x,stored,rounding_mode='trunc')
+            out = out.to(left.dtype)
         else:
             raise RuntimeError(f'unsupported training graph opcode: {op}')
         values.append(out)
