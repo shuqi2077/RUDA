@@ -10,6 +10,8 @@ pub use input::TensorParallelTransformerInput;
 mod hidden;
 mod training;
 mod inference;
+mod adapter_record;
+pub use adapter_record::TensorParallelModelAdapterRecord;
 
 /// Complete native single-stream Transformer assembled from actual local model partitions.
 /// Input tables, exact selected/unselected layer order, optional final normalization and
