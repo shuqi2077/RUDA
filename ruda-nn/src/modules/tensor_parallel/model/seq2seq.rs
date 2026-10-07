@@ -3,6 +3,7 @@ use super::super::{TensorParallelAdaptedEncoderDecoderStack,TensorParallelAdapte
 use crate::{cache::EncoderDecoderKvCache,transformer::AdaptedProjection};
 
 mod training;
+mod objectives;
 mod inference;
 mod adapter_record;
 pub use adapter_record::{TensorParallelEncoderDecoderAdapterRecord,TensorParallelPairedVocabularies};
