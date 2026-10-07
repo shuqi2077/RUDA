@@ -28,6 +28,15 @@ impl<B: AutodiffBackend> Record<B> for MuonShardedAdamWRecord<B> {
 
 impl<M,B,C> MuonShardedAdamW<M,B,C>
     where B: AutodiffBackend,M: AutodiffModule<B>,C: BroadcastTensorCollective<B::InnerBackend> {
+    /// Import explicitly prepared local native matrix states and auxiliary AdamW records.
+    /// Original numerical settings must be retained. All supplied IDs/storage/shape/placement
+    /// are checked by the same native restore path; no missing state is fabricated or broadcast.
+    pub fn try_load_states(self,muon:HashMap<ParamId,crate::MuonShardedState<B::InnerBackend>>,
+        adamw:HashMap<ParamId,crate::record::AdaptorRecord<crate::AdamW,B>>) -> Result<Self,MuonError> {
+        let mut record = self.to_record();record.muon = muon;record.adamw = adamw;
+        self.try_load_record(record)
+    }
+
     /// Restore only corresponding native configuration, original IDs/roles and actual rank/layout.
     pub fn try_load_record(mut self,record: MuonShardedAdamWRecord<B>) -> Result<Self,MuonError> {
         if record.version != 1 || record.config_key != self.config_key || record.manifest != self.manifest || record.placement != self.placement() {

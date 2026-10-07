@@ -2,6 +2,26 @@ use super::{Fp32MasterOptimizer,Fp32MasterState,GradientClipping,LearningRate,DT
 use crate::{Muon,MuonError,MuonMatrixShardLayout,MuonShardedState,MuonShardedError};
 use ruda_model::tensor::{BroadcastTensorCollective,TensorPrimitive};
 
+impl<B:Backend> Fp32MasterState<B,2,crate::MuonState<B,2>> {
+    /// Explicitly partition a loaded complete FP32 Muon master and its original momentum together.
+    /// The model must use the same actual row/column interval and unchanged numerical configuration.
+    pub fn into_muon_shard(self,layout:&MuonMatrixShardLayout,rank:u32,world:u32)
+        -> Result<Fp32MasterState<B,2,MuonShardedState<B>>,MuonError> {
+        if self.master.dtype() != DType::F32 {return Err(MuonError::DTypeMismatch("master"));}
+        if layout.axis > 1 || rank >= world || layout.lengths.len() != world as usize {return Err(MuonError::InvalidConfig("invalid FP32 master shard placement"));}
+        let global = self.master.dims();let mut local = global;local[layout.axis] = layout.lengths[rank as usize];
+        if layout.global_shape(rank,world,local)? != global {return Err(MuonError::ShapeMismatch("global master"));}
+        if let Some(state) = &self.inner {
+            if state.momentum.velocity().dims() != global {return Err(MuonError::ShapeMismatch("global momentum"));}
+            if state.momentum.velocity().dtype() != DType::F32 {return Err(MuonError::DTypeMismatch("momentum"));}
+            if state.momentum.velocity().device() != self.master.device() {return Err(MuonError::DeviceMismatch("momentum"));}
+        }
+        let master = self.master.slice_dim(layout.axis,layout.range(rank)?);
+        let inner = self.inner.map(|state|MuonShardedState::from_global_state(state,layout,rank,world)).transpose()?;
+        Ok(Fp32MasterState {master,inner})
+    }
+}
+
 impl Fp32MasterOptimizer<crate::MuonAdamWConfig> {
     /// Explicitly opt a generic native sharded-Muon/AdamW model into FP32 master updates.
     /// The wrapper's loss scale and optional clipping apply to both original optimizer groups.

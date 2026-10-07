@@ -68,6 +68,18 @@ pub struct MuonShardedState<B: Backend> {
 }
 
 impl<B: Backend> MuonShardedState<B> {
+    /// Slice an explicitly loaded complete native momentum buffer into its actual rank interval.
+    /// Retains values/storage/device without reinitialization or configuration changes. The caller
+    /// partitions the corresponding model weight identically and retains the original Muon settings.
+    pub fn from_global_state(state:MuonState<B,2>,layout:&MuonMatrixShardLayout,rank:u32,world:u32) -> Result<Self,MuonError> {
+        if layout.axis > 1 || rank >= world || layout.lengths.len() != world as usize {return Err(MuonError::InvalidConfig("invalid Muon global-state shard placement"));}
+        let global_shape = state.momentum.velocity().dims();let mut local_shape = global_shape;
+        local_shape[layout.axis] = layout.lengths[rank as usize];
+        if layout.global_shape(rank,world,local_shape)? != global_shape {return Err(MuonError::ShapeMismatch("global momentum"));}
+        let local = state.momentum.velocity().clone().slice_dim(layout.axis,layout.range(rank)?);
+        Ok(Self {version:1,rank,layout:layout.clone(),global_shape,local:MuonState::new(super::MomentumState::new(local))})
+    }
+
     /// Actual owning rank, not a serialized root-rank replacement.
     pub fn rank(&self) -> u32 {self.rank}
     /// Original rank-ordered physical shard layout.

@@ -53,6 +53,15 @@ impl<M,B,C> Fp32MasterMuonShardedAdamW<M,B,C>
     /// Count unique explicitly selected physical matrix shards, excluding tied aliases.
     pub fn muon_parameter_count(&self) -> usize {self.bindings.len()}
 
+    /// Import explicitly prepared local FP32 masters/momentum and auxiliary AdamW master records.
+    /// Use the original numerical configuration and matching model partitions; native restore
+    /// checks every supplied master/buffer shape, precision, parameter ID and matrix placement.
+    pub fn try_load_states(self,muon:HashMap<ParamId,Fp32MasterState<B::InnerBackend,2,MuonShardedState<B::InnerBackend>>>,
+        adamw:HashMap<ParamId,AdaptorRecord<Fp32MasterOptimizer<AdamW>,B>>) -> Result<Self,MuonError> {
+        let mut record = self.to_record();record.muon = muon;record.adamw = adamw;
+        self.try_load_record(record)
+    }
+
     fn placement(&self) -> Placement {
         self.bindings.iter().map(|binding|(binding.parameter.val(),binding.communicator.rank(),binding.communicator.world_size(),binding.layout.clone())).collect()
     }
@@ -97,10 +106,11 @@ impl<M,B,C> Fp32MasterMuonShardedAdamW<M,B,C>
             let shape:[usize;2] = expected.1.as_slice().try_into().map_err(|_|MuonError::IncompatibleRecord)?;
             let global = binding.layout.global_shape(binding.communicator.rank(),binding.communicator.world_size(),shape)?;
             if state.master.dims() != shape || state.master.dtype() != DType::F32 {return Err(MuonError::IncompatibleRecord);}
-            let inner = state.inner.as_ref().ok_or(MuonError::IncompatibleRecord)?;
-            inner.validate_placement(binding.communicator.rank(),&binding.layout,global)?;
-            if inner.momentum().dims() != shape || inner.momentum().dtype() != DType::F32 || inner.momentum().device() != state.master.device() {
-                return Err(MuonError::IncompatibleRecord);
+            if let Some(inner) = &state.inner {
+                inner.validate_placement(binding.communicator.rank(),&binding.layout,global)?;
+                if inner.momentum().dims() != shape || inner.momentum().dtype() != DType::F32 || inner.momentum().device() != state.master.device() {
+                    return Err(MuonError::IncompatibleRecord);
+                }
             }
         }
         for (id,state) in &record.adamw {
@@ -108,13 +118,18 @@ impl<M,B,C> Fp32MasterMuonShardedAdamW<M,B,C>
             let expected = known.get(id).ok_or(MuonError::IncompatibleRecord)?;
             macro_rules! check {
                 ($state:expr) => {{
-                    let master = &$state.master;let inner = $state.inner.as_ref().ok_or(MuonError::IncompatibleRecord)?;let m = &inner.momentum;
-                    if master.shape().to_vec() != expected.1 || master.dtype() != DType::F32 || m.time == 0
-                        || m.moment_1.shape().to_vec() != expected.1 || m.moment_2.shape().to_vec() != expected.1
-                        || m.moment_1.dtype() != DType::F32 || m.moment_2.dtype() != DType::F32
-                        || m.moment_1.device() != master.device() || m.moment_2.device() != master.device()
-                        || m.max_moment_2.as_ref().is_some_and(|value|value.shape().to_vec() != expected.1 || value.dtype() != DType::F32 || value.device() != master.device()) {
+                    let master = &$state.master;
+                    if master.shape().to_vec() != expected.1 || master.dtype() != DType::F32 {
                         return Err(MuonError::IncompatibleRecord);
+                    }
+                    if let Some(inner) = &$state.inner {
+                        let m = &inner.momentum;
+                        if m.time == 0 || m.moment_1.shape().to_vec() != expected.1 || m.moment_2.shape().to_vec() != expected.1
+                            || m.moment_1.dtype() != DType::F32 || m.moment_2.dtype() != DType::F32
+                            || m.moment_1.device() != master.device() || m.moment_2.device() != master.device()
+                            || m.max_moment_2.as_ref().is_some_and(|value|value.shape().to_vec() != expected.1 || value.dtype() != DType::F32 || value.device() != master.device()) {
+                            return Err(MuonError::IncompatibleRecord);
+                        }
                     }
                 }};
             }
