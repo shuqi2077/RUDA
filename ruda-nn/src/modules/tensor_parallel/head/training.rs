@@ -102,6 +102,21 @@ macro_rules! head_objectives {
                 let logits = self.forward(hidden,communicator.clone(),criterion.layout(),false)?;
                 criterion.forward_soft_token_terms(logits,targets,communicator,visible,weights)
             }
+
+            /// Use the native causal config's real target shift/sentinel and bounded projection chunks.
+            /// Only local vocabulary logits are projected; the loss remains one replicated TP objective.
+            pub fn forward_causal_loss<C:BroadcastTensorCollective<B>>(&self,hidden:Tensor<Autodiff<B,S>,3>,labels:Tensor<Autodiff<B,S>,2,Int>,
+                criterion:&crate::loss::CausalCrossEntropyConfig,communicator:C,layout:&VocabParallelLossLayout,label_smoothing:f64)
+                -> Result<crate::loss::CausalLoss<Autodiff<B,S>>,C::Error> {
+                criterion.forward_sharded_hidden(hidden,labels,layout,communicator,|rows,group|self.forward(rows,group.clone(),layout,false),label_smoothing)
+            }
+
+            /// Chunk actual packed document states without shifting supervision across their boundaries.
+            pub fn forward_packed_causal_loss<C:BroadcastTensorCollective<B>>(&self,hidden:Tensor<Autodiff<B,S>,2>,labels:Tensor<Autodiff<B,S>,1,Int>,
+                packed:&PackedSequenceLayout,criterion:&crate::loss::CausalCrossEntropyConfig,communicator:C,layout:&VocabParallelLossLayout,label_smoothing:f64)
+                -> Result<crate::loss::CausalLoss<Autodiff<B,S>>,C::Error> {
+                criterion.forward_sharded_packed_hidden(hidden,labels,packed,layout,communicator,|rows,group|self.forward(rows,group.clone(),layout,false),label_smoothing)
+            }
         }
     };
 }
