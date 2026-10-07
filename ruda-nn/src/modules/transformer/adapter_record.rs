@@ -127,7 +127,7 @@ impl<B: Backend> TransformerAdapterRecord<B> {
     }
 }
 
-fn restore_projection<B: Backend>(projection: AdaptedProjection<B>,path: &str,
+pub(super) fn restore_projection<B: Backend>(projection: AdaptedProjection<B>,path: &str,
     entries: &mut BTreeMap<String,LoRAAdapterRecord<B>>,base_id: &str) -> Result<AdaptedProjection<B>,RecorderError> {
     match projection {
         AdaptedProjection::Dense(layer) => Ok(AdaptedProjection::Dense(layer)),

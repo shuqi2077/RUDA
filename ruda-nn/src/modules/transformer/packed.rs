@@ -13,15 +13,26 @@ impl<B: Backend> DenseTransformerBlock<B> {
     pub fn forward_packed_masked_with_positions<F>(&self,input: Tensor<B,2>,layout: &PackedSequenceLayout,
         masks: &[PackedDocumentAttentionMask<B>],options: PackedAttentionOptions,positions: F) -> Tensor<B,2>
     where F: FnOnce(Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
+        self.forward_packed_feed_forward(self.forward_packed_attention_masked(input,layout,masks,options,positions))
+    }
+
+    /// Masked attention stage alone, before an explicit encoder-memory stage.
+    pub fn forward_packed_attention_masked<F>(&self,input: Tensor<B,2>,layout: &PackedSequenceLayout,
+        masks: &[PackedDocumentAttentionMask<B>],options: PackedAttentionOptions,positions: F) -> Tensor<B,2>
+    where F: FnOnce(Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
         check_input(&input,layout);
         assert_eq!(masks.len(),layout.documents(),"packed block masks/document count differs");
-        let hidden = residual_branch(input,&self.attention_norm,&self.residual_dropout,self.norm_first,|source| {
+        residual_branch(input,&self.attention_norm,&self.residual_dropout,self.norm_first,|source| {
             let (query,key,value) = self.attention.project_packed(source.clone(),source.clone(),source);
             let geometry = (query.dims(),key.dims());
             let (query,key) = positions(query,key);
             assert_eq!((query.dims(),key.dims()),geometry,"masked packed positions changed geometry");
             self.attention.forward_packed_masked_projected(query,key,value,layout,layout,masks,options)
-        });
+        })
+    }
+
+    /// Actual flat-token FFN/residual/norm stage with native parameter gradients.
+    pub fn forward_packed_feed_forward(&self,hidden: Tensor<B,2>) -> Tensor<B,2> {
         residual_branch(hidden,&self.feed_forward_norm,&self.residual_dropout,self.norm_first,|source|self.feed_forward.forward(source))
     }
 
@@ -34,8 +45,7 @@ impl<B: Backend> DenseTransformerBlock<B> {
     pub fn forward_packed_with_positions<F>(&self,input: Tensor<B,2>,layout: &PackedSequenceLayout,
         options: PackedAttentionOptions,positions: F) -> Tensor<B,2>
     where F: FnOnce(Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
-        let hidden = self.forward_packed_attention(input,layout,options,positions);
-        residual_branch(hidden,&self.feed_forward_norm,&self.residual_dropout,self.norm_first,|source|self.feed_forward.forward(source))
+        self.forward_packed_feed_forward(self.forward_packed_attention(input,layout,options,positions))
     }
 
     /// Packed attention stage alone for actual encoder-decoder stage composition.
@@ -58,15 +68,26 @@ impl<B: Backend> AdaptedTransformerBlock<B> {
     pub fn forward_packed_masked_with_positions<F>(&self,input: Tensor<B,2>,layout: &PackedSequenceLayout,
         masks: &[PackedDocumentAttentionMask<B>],options: PackedAttentionOptions,positions: F) -> Tensor<B,2>
     where F: FnOnce(Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
+        self.forward_packed_feed_forward(self.forward_packed_attention_masked(input,layout,masks,options,positions))
+    }
+
+    /// Actual adapted masked attention stage, before an explicit encoder-memory stage.
+    pub fn forward_packed_attention_masked<F>(&self,input: Tensor<B,2>,layout: &PackedSequenceLayout,
+        masks: &[PackedDocumentAttentionMask<B>],options: PackedAttentionOptions,positions: F) -> Tensor<B,2>
+    where F: FnOnce(Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
         check_input(&input,layout);
         assert_eq!(masks.len(),layout.documents(),"adapted packed masks/document count differs");
-        let hidden = residual_branch(input,&self.attention_norm,&self.residual_dropout,self.norm_first,|source| {
+        residual_branch(input,&self.attention_norm,&self.residual_dropout,self.norm_first,|source| {
             let (query,key,value) = self.attention.project_packed(source.clone(),source.clone(),source);
             let geometry = (query.dims(),key.dims());
             let (query,key) = positions(query,key);
             assert_eq!((query.dims(),key.dims()),geometry,"masked adapted packed positions changed geometry");
             self.attention.forward_packed_masked_projected(query,key,value,layout,layout,masks,options)
-        });
+        })
+    }
+
+    /// Flat-token adapted FFN/residual/norm stage with the actual A/B gradients.
+    pub fn forward_packed_feed_forward(&self,hidden: Tensor<B,2>) -> Tensor<B,2> {
         residual_branch(hidden,&self.feed_forward_norm,&self.residual_dropout,self.norm_first,|source|self.feed_forward.forward(source))
     }
 
@@ -79,19 +100,50 @@ impl<B: Backend> AdaptedTransformerBlock<B> {
     pub fn forward_packed_with_positions<F>(&self,input: Tensor<B,2>,layout: &PackedSequenceLayout,
         options: PackedAttentionOptions,positions: F) -> Tensor<B,2>
     where F: FnOnce(Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
+        self.forward_packed_feed_forward(self.forward_packed_attention(input,layout,options,positions))
+    }
+
+    /// Independent-document adapted attention stage before a decoder memory stage.
+    pub fn forward_packed_attention<F>(&self,input: Tensor<B,2>,layout: &PackedSequenceLayout,
+        options: PackedAttentionOptions,positions: F) -> Tensor<B,2>
+    where F: FnOnce(Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
         check_input(&input,layout);
-        let hidden = residual_branch(input,&self.attention_norm,&self.residual_dropout,self.norm_first,|source| {
+        residual_branch(input,&self.attention_norm,&self.residual_dropout,self.norm_first,|source| {
             let (query,key,value) = self.attention.project_packed(source.clone(),source.clone(),source);
             let geometry = (query.dims(),key.dims());
             let (query,key) = positions(query,key);
             assert_eq!((query.dims(),key.dims()),geometry,"adapted packed positions changed geometry");
             self.attention.forward_packed_projected(query,key,value,layout,layout,options)
-        });
-        residual_branch(hidden,&self.feed_forward_norm,&self.residual_dropout,self.norm_first,|source|self.feed_forward.forward(source))
+        })
     }
 }
 
 impl<B: Backend> AdaptedStackLayer<B> {
+    /// Original/adapted packed attention stage, without prematurely applying the FFN.
+    pub fn forward_packed_attention<F>(&self,input: Tensor<B,2>,layout: &PackedSequenceLayout,
+        options: PackedAttentionOptions,positions: F) -> Tensor<B,2>
+    where F: FnOnce(Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
+        match self {
+            Self::Dense(block)=>block.forward_packed_attention(input,layout,options,positions),
+            Self::Adapted(block)=>block.forward_packed_attention(input,layout,options,positions),
+        }
+    }
+
+    /// Actual masked packed attention stage with per-document visibility and score bias.
+    pub fn forward_packed_attention_masked<F>(&self,input: Tensor<B,2>,layout: &PackedSequenceLayout,
+        masks: &[PackedDocumentAttentionMask<B>],options: PackedAttentionOptions,positions: F) -> Tensor<B,2>
+    where F: FnOnce(Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
+        match self {
+            Self::Dense(block)=>block.forward_packed_attention_masked(input,layout,masks,options,positions),
+            Self::Adapted(block)=>block.forward_packed_attention_masked(input,layout,masks,options,positions),
+        }
+    }
+
+    /// Actual packed FFN stage after an explicit memory-attention stage.
+    pub fn forward_packed_feed_forward(&self,input: Tensor<B,2>) -> Tensor<B,2> {
+        match self {Self::Dense(block)=>block.forward_packed_feed_forward(input),Self::Adapted(block)=>block.forward_packed_feed_forward(input)}
+    }
+
     /// Actual masked packed document execution on either dense/adapted layer type.
     pub fn forward_packed_masked_with_positions<F>(&self,input: Tensor<B,2>,layout: &PackedSequenceLayout,
         masks: &[PackedDocumentAttentionMask<B>],options: PackedAttentionOptions,positions: F) -> Tensor<B,2>

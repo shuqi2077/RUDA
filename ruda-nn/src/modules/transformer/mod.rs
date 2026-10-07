@@ -8,7 +8,9 @@ mod adapters;
 mod adapter_record;
 mod adapted_stack;
 mod adapted_decoder;
+mod decoder_adapter_record;
 mod packed;
+mod packed_decoder;
 
 pub use decoder::*;
 pub use encoder::*;
@@ -20,3 +22,4 @@ pub use adapters::*;
 pub use adapter_record::*;
 pub use adapted_stack::*;
 pub use adapted_decoder::*;
+pub use decoder_adapter_record::*;
