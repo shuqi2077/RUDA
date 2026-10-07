@@ -282,9 +282,8 @@ impl StatefulShardSampler {
         if dataset.len() != self.state.source_length { return Err(invalid("dataset length changed since sampler construction")); }
         let end = self.issued.saturating_add(maximum).min(self.state.indices.len());
         if end == self.issued { return Ok(None); }
-        let items = self.state.indices[self.issued..end].iter().map(|&index|
-            dataset.get(index).ok_or_else(|| invalid(format!("immutable dataset is missing index {index}"))))
-            .collect::<Result<Vec<_>, _>>()?;
+        let items = dataset.get_many(&self.state.indices[self.issued..end])
+            .ok_or_else(|| invalid("immutable dataset is missing a requested source index"))?;
         self.issued = end;
         Ok(Some(items))
     }

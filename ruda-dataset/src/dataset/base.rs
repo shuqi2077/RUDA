@@ -7,6 +7,13 @@ pub trait Dataset<I>: Send + Sync {
     /// Gets the item at the given index.
     fn get(&self, index: usize) -> Option<I>;
 
+    /// Fetch actual items in requested order, preserving repeated indices.
+    /// None means at least one requested item is absent; no filler is returned.
+    /// Storage-backed implementations may combine I/O without changing order.
+    fn get_many(&self, indices: &[usize]) -> Option<Vec<I>> {
+        indices.iter().map(|&index| self.get(index)).collect()
+    }
+
     /// Gets the number of items in the dataset.
     fn len(&self) -> usize;
 
@@ -32,6 +39,10 @@ where
         self.as_ref().get(index)
     }
 
+    fn get_many(&self, indices: &[usize]) -> Option<Vec<I>> {
+        self.as_ref().get_many(indices)
+    }
+
     fn len(&self) -> usize {
         self.as_ref().len()
     }
@@ -40,6 +51,10 @@ where
 impl<I> Dataset<I> for Arc<dyn Dataset<I>> {
     fn get(&self, index: usize) -> Option<I> {
         self.as_ref().get(index)
+    }
+
+    fn get_many(&self, indices: &[usize]) -> Option<Vec<I>> {
+        self.as_ref().get_many(indices)
     }
 
     fn len(&self) -> usize {
@@ -55,6 +70,10 @@ where
         self.as_ref().get(index)
     }
 
+    fn get_many(&self, indices: &[usize]) -> Option<Vec<I>> {
+        self.as_ref().get_many(indices)
+    }
+
     fn len(&self) -> usize {
         self.as_ref().len()
     }
@@ -63,6 +82,10 @@ where
 impl<I> Dataset<I> for Box<dyn Dataset<I>> {
     fn get(&self, index: usize) -> Option<I> {
         self.as_ref().get(index)
+    }
+
+    fn get_many(&self, indices: &[usize]) -> Option<Vec<I>> {
+        self.as_ref().get_many(indices)
     }
 
     fn len(&self) -> usize {

@@ -305,17 +305,22 @@ impl<I: DeserializeOwned> IndexedJsonlDataset<I> {
     /// None means only that the dataset index is out of bounds.
     pub fn get_raw(&self, index: usize) -> io::Result<Option<Vec<u8>>> {
         let Some(row) = self.state.records.get(index) else { return Ok(None); };
+        let mut file = self.file.lock().map_err(|_| io::Error::other("JSONL source lock poisoned"))?;
+        self.state.identity.check(&file)?;
+        let bytes = Self::read_row(&mut file, row)?;
+        self.state.identity.check(&file)?;
+        Ok(Some(bytes))
+    }
+
+    fn read_row(file: &mut File, row: &JsonlRecordLocation) -> io::Result<Vec<u8>> {
         let length = usize::try_from(row.length)
             .map_err(|_| invalid("JSONL row is larger than the process address space"))?;
         let mut bytes = Vec::new();
         bytes.try_reserve_exact(length).map_err(|error| io::Error::other(error.to_string()))?;
         bytes.resize(length, 0);
-        let mut file = self.file.lock().map_err(|_| io::Error::other("JSONL source lock poisoned"))?;
-        self.state.identity.check(&file)?;
         file.seek(SeekFrom::Start(row.offset))?;
         file.read_exact(&mut bytes)?;
-        self.state.identity.check(&file)?;
-        Ok(Some(bytes))
+        Ok(bytes)
     }
 
     /// Deserialize one actual row, distinguishing missing index from parse/I/O failure.
@@ -325,6 +330,32 @@ impl<I: DeserializeOwned> IndexedJsonlDataset<I> {
             "JSONL dataset index {index}, physical line {}: {error}",
             self.state.records[index].line_number)))
     }
+
+    /// Fetch requested actual rows under one source lock and metadata check pair.
+    /// Requested order and duplicate indices are preserved; any missing index
+    /// returns None before reading. An empty request returns an empty collection.
+    pub fn get_many_raw(&self, indices: &[usize]) -> io::Result<Option<Vec<Vec<u8>>>> {
+        if indices.iter().any(|&index| index >= self.state.records.len()) { return Ok(None); }
+        if indices.is_empty() { return Ok(Some(Vec::new())); }
+        let mut file = self.file.lock().map_err(|_| io::Error::other("JSONL source lock poisoned"))?;
+        self.state.identity.check(&file)?;
+        let rows = indices.iter().map(|&index| Self::read_row(&mut file, &self.state.records[index]))
+            .collect::<io::Result<Vec<_>>>()?;
+        self.state.identity.check(&file)?;
+        Ok(Some(rows))
+    }
+
+    /// Deserialize a requested batch after releasing the shared source lock.
+    /// Parse/I/O failure is distinct from an out-of-bounds request, and no
+    /// partially loaded collection is returned as a successful batch.
+    pub fn get_many_result(&self, indices: &[usize]) -> io::Result<Option<Vec<I>>> {
+        let Some(rows) = self.get_many_raw(indices)? else { return Ok(None); };
+        indices.iter().zip(rows).map(|(&index, bytes)| {
+            serde_json::from_slice(&bytes).map_err(|error| invalid(format!(
+                "JSONL dataset index {index}, physical line {}: {error}",
+                self.state.records[index].line_number)))
+        }).collect::<io::Result<Vec<_>>>().map(Some)
+    }
 }
 
 impl<I: DeserializeOwned> Dataset<I> for IndexedJsonlDataset<I> {
@@ -332,6 +363,10 @@ impl<I: DeserializeOwned> Dataset<I> for IndexedJsonlDataset<I> {
     /// panic rather than masquerading as absent data. Use get_result to handle them.
     fn get(&self, index: usize) -> Option<I> {
         self.get_result(index).unwrap_or_else(|error| panic!("indexed JSONL read failed: {error}"))
+    }
+
+    fn get_many(&self, indices: &[usize]) -> Option<Vec<I>> {
+        self.get_many_result(indices).unwrap_or_else(|error| panic!("indexed JSONL batch read failed: {error}"))
     }
 
     fn len(&self) -> usize { self.state.records.len() }
