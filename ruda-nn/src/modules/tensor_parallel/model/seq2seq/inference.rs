@@ -1,5 +1,5 @@
 use super::*;
-use super::super::super::VocabParallelGreedySelection;
+use super::super::super::{VocabParallelGreedySelection,VocabParallelTopKSelection};
 
 impl<B:Backend> TensorParallelEncoderDecoderModel<B> {
     /// Native complete source/target inference with original independent per-layer policies.
@@ -67,5 +67,16 @@ impl<B:Backend> TensorParallelEncoderDecoderModel<B> {
         assert!(target.tokens.dims()[1] > 0,"cached paired greedy model requires an actual last target token");
         let hidden = self.decode_cached_hidden_inference_with(target,cache,target_group,target_layout,decoder)?;
         self.head.forward_greedy_last_inference(hidden,output_group,output_layout,visible)
+    }
+
+    /// Native paired cached decoder-to-global-top-k candidates over already prepared actual source memory.
+    pub fn forward_cached_topk_inference_with<C,O,F>(&self,target:TensorParallelTransformerInput<B>,cache:&mut EncoderDecoderKvCache<B>,
+        target_group:C,target_layout:&VocabParallelLossLayout,decoder:F,output_group:O,output_layout:&VocabParallelLossLayout,
+        k:usize,visible:Option<Tensor<B,1,ruda_model::tensor::Bool>>) -> Result<VocabParallelTopKSelection<B>,C::Error>
+        where C:BroadcastTensorCollective<B>,O:BroadcastTensorCollective<B,Error=C::Error>,
+            F:FnMut(usize,&TensorParallelAdaptedEncoderDecoderLayer<B>,Tensor<B,3>,&mut ProjectedKvCache<B>,&ProjectedKvCache<B>)->Result<Tensor<B,3>,C::Error> {
+        assert!(target.tokens.dims()[1] > 0,"cached paired top-k model requires an actual last target token");
+        let hidden = self.decode_cached_hidden_inference_with(target,cache,target_group,target_layout,decoder)?;
+        self.head.forward_topk_last_inference(hidden,output_group,output_layout,k,visible)
     }
 }

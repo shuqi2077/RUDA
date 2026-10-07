@@ -41,6 +41,27 @@ macro_rules! inference_heads {
                 self.forward_greedy_inference(hidden.slice([0..batch,tokens-1..tokens,0..features]).reshape([batch,features]),communicator,layout,visible)
             }
 
+            /// Actual global top-k candidates from local native output logits, with exact I64 IDs.
+            pub fn forward_topk_inference<C:BroadcastTensorCollective<B>>(&self,hidden:Tensor<B,2>,communicator:C,
+                layout:&VocabParallelLossLayout,k:usize,visible:Option<Tensor<B,1,Bool>>) -> Result<super::super::VocabParallelTopKSelection<B>,C::Error> {
+                let logits = self.forward_inference(hidden,communicator.clone(),layout,false)?;
+                layout.topk_indices_inference(logits,communicator,k,visible)
+            }
+
+            /// Project/select only the actual last token, without projecting earlier cached chunk rows.
+            pub fn forward_topk_last_inference<C:BroadcastTensorCollective<B>>(&self,hidden:Tensor<B,3>,communicator:C,
+                layout:&VocabParallelLossLayout,k:usize,visible:Option<Tensor<B,1,Bool>>) -> Result<super::super::VocabParallelTopKSelection<B>,C::Error> {
+                let [batch,tokens,features] = hidden.dims();assert!(tokens > 0,"cached top-k head requires an actual last token");
+                self.forward_topk_inference(hidden.slice([0..batch,tokens-1..tokens,0..features]).reshape([batch,features]),communicator,layout,k,visible)
+            }
+
+            /// Select candidates from actual full-class log probabilities, not a candidate-only softmax.
+            pub fn forward_topk_log_probabilities_inference<C:BroadcastTensorCollective<B>>(&self,hidden:Tensor<B,2>,communicator:C,
+                layout:&VocabParallelLossLayout,k:usize,visible:Option<Tensor<B,1,Bool>>) -> Result<super::super::VocabParallelTopKSelection<B>,C::Error> {
+                let probabilities = self.forward_log_probabilities_inference(hidden,communicator.clone(),layout,visible.clone())?;
+                layout.topk_indices_inference(probabilities,communicator,k,visible)
+            }
+
             /// Native local teacher/inference log probabilities normalized over every real global class.
             pub fn forward_log_probabilities_inference<C:BroadcastTensorCollective<B>>(&self,hidden:Tensor<B,2>,communicator:C,
                 layout:&VocabParallelLossLayout,visible:Option<Tensor<B,1,Bool>>) -> Result<Tensor<B,2>,C::Error> {

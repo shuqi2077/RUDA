@@ -11,10 +11,12 @@ pub struct VocabParallelGreedySelection<B:Backend,const D:usize = 1> {
     pub valid:Tensor<B,D,Bool>,
 }
 
-fn gather_indices<B:Backend,C:BroadcastTensorCollective<B>>(indices:Tensor<B,2,Int>,communicator:&C) -> Result<Tensor<B,2,Int>,C::Error> {
-    let [rows,width] = indices.dims();assert_eq!(width,1,"greedy index gather needs one actual candidate per row");
-    if communicator.world_size() == 1 {return Ok(indices.reshape([1,rows]));}
-    let mask = Tensor::<B,2,Int>::from_data(TensorData::new(alloc::vec![65535_i64],[1,1]),(&indices.device(),DType::I64)).expand([rows,1]);
+pub(super) fn gather_index_matrix<B:Backend,C:BroadcastTensorCollective<B>>(indices:Tensor<B,2,Int>,communicator:&C) -> Result<Tensor<B,3,Int>,C::Error> {
+    let [rows,width] = indices.dims();assert!(width > 0,"index gather needs actual candidate columns");
+    if communicator.world_size() == 1 {return Ok(indices.reshape([1,rows,width]));}
+    let count = rows.checked_mul(communicator.world_size() as usize).expect("candidate index gather geometry overflow");
+    let encoded_width = width.checked_mul(4).expect("candidate index encoding geometry overflow");
+    let mask = Tensor::<B,2,Int>::from_data(TensorData::new(alloc::vec![65535_i64],[1,1]),(&indices.device(),DType::I64)).expand([rows,width]);
     let mut words = Vec::with_capacity(4);
     for word in 0usize..4 {
         let part = indices.clone().bitwise_right_shift_scalar(((word*16) as i32).elem()).bitwise_and(mask.clone());
@@ -23,16 +25,20 @@ fn gather_indices<B:Backend,C:BroadcastTensorCollective<B>>(indices:Tensor<B,2,I
     }
     let encoded = Tensor::cat(words,1);
     let gathered = communicator.all_gather_float(encoded.into_primitive().tensor())?;
-    let count = rows.checked_mul(communicator.world_size() as usize).expect("greedy candidate gather geometry overflow");
     let gathered = Tensor::<B,2>::from_primitive(TensorPrimitive::Float(gathered));
-    assert_eq!(gathered.dims(),[count,4],"greedy candidate transport returned incompatible geometry");
+    assert_eq!(gathered.dims(),[count,encoded_width],"candidate index transport returned incompatible geometry");
     let mut result:Option<Tensor<B,2,Int>> = None;
     for word in 0usize..4 {
-        let part = gathered.clone().slice_dim(1,word..word+1).into_primitive().tensor();
+        let part = gathered.clone().slice_dim(1,word*width..(word+1)*width).into_primitive().tensor();
         let part = Tensor::<B,2,Int>::from_primitive(B::float_into_int(part,IntDType::I64)).bitwise_left_shift_scalar(((word*16) as i32).elem());
         result = Some(match result {Some(value)=>value.bitwise_or(part),None=>part});
     }
-    Ok(result.expect("four actual candidate words").reshape([communicator.world_size() as usize,rows]))
+    Ok(result.expect("four actual candidate words").reshape([communicator.world_size() as usize,rows,width]))
+}
+
+fn gather_indices<B:Backend,C:BroadcastTensorCollective<B>>(indices:Tensor<B,2,Int>,communicator:&C) -> Result<Tensor<B,2,Int>,C::Error> {
+    let rows = indices.dims()[0];assert_eq!(indices.dims()[1],1,"greedy index gather needs one actual candidate per row");
+    gather_index_matrix(indices,communicator).map(|gathered|gathered.reshape([communicator.world_size() as usize,rows]))
 }
 
 impl VocabParallelLossLayout {

@@ -67,7 +67,9 @@ fn mask_padding<B:Backend>(mut projection:Linear<B>,layout:&VocabParallelLossLay
     let hidden = projection.weight.val().dims()[0];
     assert!(!matches!(projection.weight.val().dtype(),DType::QFloat(_)),
         "packed head padding must be removed/repacked explicitly before loading native local shards");
-    let padding = Tensor::<B,1,Int>::arange(0..width as i64,(&projection.weight.val().device(),DType::I64)).greater_equal_elem(real as i64);
+    let device = projection.weight.val().device();
+    let limit = Tensor::<B,1,Int>::from_data(ruda_model::tensor::TensorData::new(alloc::vec![real as i64],[1]),(&device,DType::I64)).expand([width]);
+    let padding = Tensor::<B,1,Int>::arange(0..width as i64,(&device,DType::I64)).greater_equal(limit);
     projection.weight = projection.weight.map(|weight|weight.mask_fill(padding.clone().reshape([1,width]).expand([hidden,width]),0));
     projection.bias = projection.bias.map(|bias|bias.map(|value|value.mask_fill(padding,0)));
     projection

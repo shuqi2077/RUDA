@@ -30,6 +30,8 @@ mod causal_loss;
 mod kl_loss;
 mod selection;
 pub use selection::VocabParallelGreedySelection;
+mod topk;
+pub use topk::VocabParallelTopKSelection;
 mod normalization_inference;
 mod embeddings;
 pub use embeddings::TensorParallelTransformerEmbeddings;

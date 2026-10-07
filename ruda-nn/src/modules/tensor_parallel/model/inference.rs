@@ -1,7 +1,7 @@
 use super::*;
 use crate::{attention::{DenseAttentionMask,DenseAttentionOptions},pool::SequencePooling,transformer::SequenceHeadOutput};
 use ruda_model::tensor::Bool;
-use super::super::VocabParallelGreedySelection;
+use super::super::{VocabParallelGreedySelection,VocabParallelTopKSelection};
 
 impl<B:Backend> TensorParallelTransformerModel<B> {
     /// Native complete model inference using original per-layer positions, masks and transports.
@@ -62,6 +62,18 @@ impl<B:Backend> TensorParallelTransformerModel<B> {
         assert!(input.tokens.dims()[1] > 0,"cached parallel greedy model requires an actual last input token");
         let hidden = self.forward_cached_hidden_inference_with(input,cache,input_group,input_layout,layer)?;
         self.head.forward_greedy_last_inference(hidden,output_group,output_layout,visible)
+    }
+
+    /// Complete native cached model-to-global-top-k candidates without gathering full logits.
+    /// Only each row's actual last new token is projected; no sampling/EOS/beam policy is inferred.
+    pub fn forward_cached_topk_inference_with<C,O,F>(&self,input:TensorParallelTransformerInput<B>,cache:&mut TransformerKvCache<B>,
+        input_group:C,input_layout:&VocabParallelLossLayout,layer:F,output_group:O,output_layout:&VocabParallelLossLayout,
+        k:usize,visible:Option<Tensor<B,1,Bool>>) -> Result<VocabParallelTopKSelection<B>,C::Error>
+        where C:BroadcastTensorCollective<B>,O:BroadcastTensorCollective<B,Error=C::Error>,
+            F:FnMut(usize,&TensorParallelAdaptedStackLayer<B>,Tensor<B,3>,&mut ProjectedKvCache<B>)->Result<Tensor<B,3>,C::Error> {
+        assert!(input.tokens.dims()[1] > 0,"cached parallel top-k model requires an actual last input token");
+        let hidden = self.forward_cached_hidden_inference_with(input,cache,input_group,input_layout,layer)?;
+        self.head.forward_topk_last_inference(hidden,output_group,output_layout,k,visible)
     }
 
     /// Full-sequence native input/backbone followed by only the actual last-token greedy projection.

@@ -20,7 +20,8 @@ impl<B:Backend> VocabParallelProjection<B> {
         });
         if interval.end <= layout.vocabulary_size() {return (weight,bias);}
         let rows = Tensor::<B,1,Int>::arange(interval.start as i64..interval.end as i64,(&weight.device(),DType::I64));
-        let padding = rows.greater_equal_elem(layout.vocabulary_size() as i64);
+        let limit = Tensor::<B,1,Int>::from_data(TensorData::new(alloc::vec![layout.vocabulary_size() as i64],[1]),(&weight.device(),DType::I64)).expand([width]);
+        let padding = rows.greater_equal(limit);
         let weight = weight.mask_fill(padding.clone().reshape([width,1]).expand([width,features]),0);
         let bias = bias.map(|value|value.mask_fill(padding,0));
         (weight,bias)
