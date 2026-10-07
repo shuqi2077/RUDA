@@ -14,6 +14,8 @@ mod adapter_record;
 pub use adapter_record::TensorParallelModelAdapterRecord;
 mod packed;
 mod cached;
+mod partition;
+pub use partition::TensorParallelTransformerModelPartition;
 #[cfg(feature="std")]
 mod batches;
 
