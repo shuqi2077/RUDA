@@ -8,6 +8,10 @@ use super::gradient_transform::{validate_work_dtype,representable};
 
 type Placement=Vec<(u64,Vec<usize>,u32,u32,DType,bool)>;
 
+mod weighted;
+pub use weighted::*;
+mod reshard;
+
 /// Exact continuation counters for globally summed, already reduce-scattered local gradients.
 #[derive(Clone,Debug,PartialEq,Serialize,Deserialize)]
 pub struct FullyShardedAccumulationState {
