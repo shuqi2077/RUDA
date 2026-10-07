@@ -1,6 +1,7 @@
 use ruda_model::tensor::{Tensor,FloatDType,backend::Backend};
 use crate::transformer::AdaptedGroupedQueryAttention;
 use super::{GroupedQueryAttention,PackedSequenceLayout,PackedAttentionOptions,packed_scaled_dot_product_attention};
+use super::{PackedDocumentAttentionMask,packed_scaled_dot_product_attention_masked};
 
 fn heads<B: Backend>(query: Tensor<B,2>,key: Tensor<B,2>,value: Tensor<B,2>,
     query_heads: usize,kv_heads: usize,width: usize) -> (Tensor<B,3>,Tensor<B,3>,Tensor<B,3>) {
@@ -25,6 +26,18 @@ fn context<B: Backend>(query: Tensor<B,3>,key: Tensor<B,3>,value: Tensor<B,3>,
 }
 
 impl<B: Backend> GroupedQueryAttention<B> {
+    /// Actual per-document masks/bias and the original native output projection.
+    pub fn forward_packed_masked_projected(&self,query: Tensor<B,3>,key: Tensor<B,3>,value: Tensor<B,3>,
+        query_layout: &PackedSequenceLayout,key_layout: &PackedSequenceLayout,masks: &[PackedDocumentAttentionMask<B>],
+        options: PackedAttentionOptions) -> Tensor<B,2> {
+        let [queries,heads,width] = query.dims();
+        assert_eq!((heads,width),(self.query_heads,self.head_dimension),"masked packed query heads differ");
+        assert_eq!((key.dims()[1],key.dims()[2]),(self.kv_heads,self.head_dimension),"masked packed key heads differ");
+        assert_eq!((value.dims()[1],value.dims()[2]),(self.kv_heads,self.head_dimension),"masked packed value heads differ");
+        let context = packed_scaled_dot_product_attention_masked(query,key,value,query_layout,key_layout,masks,options,Some(&self.dropout));
+        self.output.forward(context.reshape([queries,heads*width]))
+    }
+
     /// Actual flat [tokens,width] projections -> [tokens,heads,head_dimension].
     /// Query and memory token counts may differ; boundaries are passed at attention.
     pub fn project_packed(&self,query: Tensor<B,2>,key: Tensor<B,2>,value: Tensor<B,2>)
@@ -63,6 +76,18 @@ impl<B: Backend> GroupedQueryAttention<B> {
 }
 
 impl<B: Backend> AdaptedGroupedQueryAttention<B> {
+    /// Masked independent-document attention with actual A/B gradients and score bias.
+    pub fn forward_packed_masked_projected(&self,query: Tensor<B,3>,key: Tensor<B,3>,value: Tensor<B,3>,
+        query_layout: &PackedSequenceLayout,key_layout: &PackedSequenceLayout,masks: &[PackedDocumentAttentionMask<B>],
+        options: PackedAttentionOptions) -> Tensor<B,2> {
+        let [queries,heads,width] = query.dims();
+        assert_eq!((heads,width),(self.query_heads,self.head_dimension),"masked adapted packed query heads differ");
+        assert_eq!((key.dims()[1],key.dims()[2]),(self.kv_heads,self.head_dimension),"masked adapted packed key heads differ");
+        assert_eq!((value.dims()[1],value.dims()[2]),(self.kv_heads,self.head_dimension),"masked adapted packed value heads differ");
+        let context = packed_scaled_dot_product_attention_masked(query,key,value,query_layout,key_layout,masks,options,Some(&self.dropout));
+        self.output.forward(context.reshape([queries,heads*width]))
+    }
+
     /// Actual flat dense/LoRA projections -> packed heads, with original A/B gradients.
     pub fn project_packed(&self,query: Tensor<B,2>,key: Tensor<B,2>,value: Tensor<B,2>)
         -> (Tensor<B,3>,Tensor<B,3>,Tensor<B,3>) {

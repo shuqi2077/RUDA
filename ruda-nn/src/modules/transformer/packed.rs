@@ -1,5 +1,5 @@
 use ruda_model::tensor::{Tensor,Int,FloatDType,backend::Backend};
-use crate::attention::{PackedSequenceLayout,PackedAttentionOptions};
+use crate::attention::{PackedSequenceLayout,PackedAttentionOptions,PackedDocumentAttentionMask};
 use super::{DenseTransformerBlock,DenseTransformerStack,AdaptedTransformerBlock,AdaptedTransformerStack,AdaptedStackLayer,
     DenseCrossAttentionBlock,DenseEncoderDecoderLayer,DenseEncoderDecoderStack,TransformerEmbeddings};
 use super::dense::residual_branch;
@@ -9,6 +9,22 @@ fn check_input<B: Backend>(input: &Tensor<B,2>,layout: &PackedSequenceLayout) {
 }
 
 impl<B: Backend> DenseTransformerBlock<B> {
+    /// Actual per-document visibility/bias and explicit packed Q/K positions.
+    pub fn forward_packed_masked_with_positions<F>(&self,input: Tensor<B,2>,layout: &PackedSequenceLayout,
+        masks: &[PackedDocumentAttentionMask<B>],options: PackedAttentionOptions,positions: F) -> Tensor<B,2>
+    where F: FnOnce(Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
+        check_input(&input,layout);
+        assert_eq!(masks.len(),layout.documents(),"packed block masks/document count differs");
+        let hidden = residual_branch(input,&self.attention_norm,&self.residual_dropout,self.norm_first,|source| {
+            let (query,key,value) = self.attention.project_packed(source.clone(),source.clone(),source);
+            let geometry = (query.dims(),key.dims());
+            let (query,key) = positions(query,key);
+            assert_eq!((query.dims(),key.dims()),geometry,"masked packed positions changed geometry");
+            self.attention.forward_packed_masked_projected(query,key,value,layout,layout,masks,options)
+        });
+        residual_branch(hidden,&self.feed_forward_norm,&self.residual_dropout,self.norm_first,|source|self.feed_forward.forward(source))
+    }
+
     /// Actual packed documents with explicit causal/window rules and native autodiff.
     pub fn forward_packed(&self,input: Tensor<B,2>,layout: &PackedSequenceLayout,options: PackedAttentionOptions) -> Tensor<B,2> {
         self.forward_packed_with_positions(input,layout,options,|query,key|(query,key))
@@ -38,6 +54,22 @@ impl<B: Backend> DenseTransformerBlock<B> {
 }
 
 impl<B: Backend> AdaptedTransformerBlock<B> {
+    /// Native adapter training with actual per-document score bias and visibility.
+    pub fn forward_packed_masked_with_positions<F>(&self,input: Tensor<B,2>,layout: &PackedSequenceLayout,
+        masks: &[PackedDocumentAttentionMask<B>],options: PackedAttentionOptions,positions: F) -> Tensor<B,2>
+    where F: FnOnce(Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
+        check_input(&input,layout);
+        assert_eq!(masks.len(),layout.documents(),"adapted packed masks/document count differs");
+        let hidden = residual_branch(input,&self.attention_norm,&self.residual_dropout,self.norm_first,|source| {
+            let (query,key,value) = self.attention.project_packed(source.clone(),source.clone(),source);
+            let geometry = (query.dims(),key.dims());
+            let (query,key) = positions(query,key);
+            assert_eq!((query.dims(),key.dims()),geometry,"masked adapted packed positions changed geometry");
+            self.attention.forward_packed_masked_projected(query,key,value,layout,layout,masks,options)
+        });
+        residual_branch(hidden,&self.feed_forward_norm,&self.residual_dropout,self.norm_first,|source|self.feed_forward.forward(source))
+    }
+
     /// Packed native adapter training with actual independent-document attention.
     pub fn forward_packed(&self,input: Tensor<B,2>,layout: &PackedSequenceLayout,options: PackedAttentionOptions) -> Tensor<B,2> {
         self.forward_packed_with_positions(input,layout,options,|query,key|(query,key))
@@ -60,6 +92,16 @@ impl<B: Backend> AdaptedTransformerBlock<B> {
 }
 
 impl<B: Backend> AdaptedStackLayer<B> {
+    /// Actual masked packed document execution on either dense/adapted layer type.
+    pub fn forward_packed_masked_with_positions<F>(&self,input: Tensor<B,2>,layout: &PackedSequenceLayout,
+        masks: &[PackedDocumentAttentionMask<B>],options: PackedAttentionOptions,positions: F) -> Tensor<B,2>
+    where F: FnOnce(Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
+        match self {
+            Self::Dense(block)=>block.forward_packed_masked_with_positions(input,layout,masks,options,positions),
+            Self::Adapted(block)=>block.forward_packed_masked_with_positions(input,layout,masks,options,positions),
+        }
+    }
+
     /// Run either actual dense or actual adapted layer on flat native documents.
     pub fn forward_packed(&self,input: Tensor<B,2>,layout: &PackedSequenceLayout,options: PackedAttentionOptions) -> Tensor<B,2> {
         match self {Self::Dense(block)=>block.forward_packed(input,layout,options),Self::Adapted(block)=>block.forward_packed(input,layout,options)}
