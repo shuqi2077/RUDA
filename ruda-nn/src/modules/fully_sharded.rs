@@ -24,6 +24,8 @@ mod model;
 pub use model::*;
 mod module_parameter_record;
 pub use module_parameter_record::*;
+mod native_head;
+pub use native_head::{FullyShardedGreedySelection,FullyShardedTopKSelection};
 
 /// Explicit construction context preserving one local autograd leaf per source ID.
 /// Reuse a context for all tied layers, then drop it after model construction. It

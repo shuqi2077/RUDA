@@ -32,6 +32,7 @@ mod selection;
 pub use selection::VocabParallelGreedySelection;
 mod topk;
 pub use topk::VocabParallelTopKSelection;
+pub(crate) use topk::full_logits_topk;
 mod normalization_inference;
 mod native_projections;
 pub(crate) use native_projections::{inference_gather,inference_scatter,inference_sum};

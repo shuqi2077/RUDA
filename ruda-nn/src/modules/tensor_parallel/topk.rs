@@ -36,6 +36,31 @@ fn select<B:Backend>(scores:Tensor<B,2>,ids:Tensor<B,2,Int>,mut valid:Tensor<B,2
     (Tensor::cat(score_columns,1),Tensor::cat(index_columns,1))
 }
 
+/// The same native candidate policy for a complete-class head on an independent data rank.
+/// No tensor/data transport is used: data ranks may own different prompts, scores and visibility.
+pub(crate) fn full_logits_topk<B:Backend>(logits:Tensor<B,2>,k:usize,visible:Option<Tensor<B,1,Bool>>)
+    -> VocabParallelTopKSelection<B> {
+    floating(logits.dtype());let [rows,width]=logits.dims();
+    assert!(width>0 && k<=width,"complete-class native top-k geometry differs");
+    let limit=i64::try_from(width).expect("complete-class native class IDs exceed signed index range");
+    if let Some(mask)=&visible {
+        assert_eq!(mask.dims(),[rows],"complete-class candidate row visibility differs");
+        assert_eq!(mask.device(),logits.device(),"complete-class visibility must share the score device");
+    }
+    let device=logits.device();
+    if rows==0 || k==0 {
+        return VocabParallelTopKSelection {scores:Tensor::zeros([rows,k],(&device,DType::F32)),
+            indices:Tensor::zeros([rows,k],(&device,DType::I64)),valid:Tensor::zeros([rows,k],&device)};
+    }
+    let logits=logits.cast(DType::F32);
+    let ids=Tensor::<B,1,Int>::arange(0..limit,(&device,DType::I64)).reshape([1,width]).expand([rows,width]);
+    let mut valid=logits.clone().is_nan().bool_not();
+    if let Some(mask)=visible {valid=valid.bool_and(mask.reshape([rows,1]).expand([rows,width]));}
+    let (scores,indices)=select(logits,ids,valid,k);
+    let valid=indices.clone().not_equal(integer(i64::MAX,[rows,k],&device));
+    VocabParallelTopKSelection {scores,indices:indices.mask_fill(valid.clone().bool_not(),-1),valid}
+}
+
 impl VocabParallelLossLayout {
     /// Exact native FP32/ignore-NaN top-k over actual real global classes, without full-logit gathering.
     /// All scores, masks and candidate comparisons stay on the backend; sorting never invokes a host fallback.
