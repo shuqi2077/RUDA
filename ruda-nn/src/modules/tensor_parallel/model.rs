@@ -12,6 +12,10 @@ mod training;
 mod inference;
 mod adapter_record;
 pub use adapter_record::TensorParallelModelAdapterRecord;
+mod packed;
+mod cached;
+#[cfg(feature="std")]
+mod batches;
 
 /// Complete native single-stream Transformer assembled from actual local model partitions.
 /// Input tables, exact selected/unselected layer order, optional final normalization and
