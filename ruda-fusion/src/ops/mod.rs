@@ -6,6 +6,7 @@ mod distributed;
 mod int_tensor;
 mod module;
 mod qtensor;
+mod frozen_awq;
 mod tensor;
 mod transaction;
 mod unary;

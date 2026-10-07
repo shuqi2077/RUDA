@@ -8,6 +8,10 @@ on:
       - 'ruda-nn/**'
       - 'ruda-autodiff/**'
       - 'ruda-tensor/**'
+      - 'ruda-tensor-device/**'
+      - 'ruda-fusion/**'
+      - 'ruBLAS/**'
+      - 'ruCCL/**'
       - 'ruda-model/**'
       - 'ruda-dataset/**'
       - 'ruLLM/**'
@@ -56,6 +60,8 @@ jobs:
         run: |
           cargo check --locked -p ruda-optim --no-default-features --lib
           cargo check --locked -p ruda-optim --features collective,gradient-guard --lib
+      - name: Compile native CUDA and fusion training dispatch
+        run: cargo check --locked -p ruda-nn --no-default-features --features std,cuda,fusion,tensor-parallel --lib
       - name: Compile resumable dataset loading
         run: |
           cargo check --locked -p ruda-model --features dataset --lib
