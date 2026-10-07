@@ -72,7 +72,7 @@ impl<B: Backend> TransformerEmbeddings<B> {
     }
 
     /// Explicit arithmetic and output storage for mixed-storage input tables.
-    /// Casting weight VALUES retains derivatives to the original table parameters.
+    /// Cast only looked-up rows, retaining derivatives without a full-table shadow.
     pub fn forward_with_compute_dtype(&self,input_ids: Tensor<B,2,Int>,position_ids: Option<Tensor<B,2,Int>>,
         token_type_ids: Option<Tensor<B,2,Int>>,compute: FloatDType,output: FloatDType) -> Tensor<B,3> {
         self.forward_impl(input_ids,position_ids,token_type_ids,Some(compute)).cast(output)
@@ -96,13 +96,14 @@ impl<B: Backend> TransformerEmbeddings<B> {
                 if compute.is_none() { assert_eq!(weight.dtype(),storage,"mixed table storage requires an explicit compute dtype"); }
             }
         }
-        let weight = if let Some(dtype) = compute { token_weight.cast(dtype) } else { token_weight };
-        let mut hidden = ruda_model::tensor::module::embedding(weight,input_ids);
+        let hidden = ruda_model::tensor::module::embedding(token_weight,input_ids);
+        let mut hidden = if let Some(dtype) = compute { hidden.cast(dtype) } else { hidden };
         for (table,ids) in [(&self.position,position_ids),(&self.token_type,token_type_ids)] {
             if let (Some(table),Some(ids)) = (table,ids) {
                 let weight = table.weight.val();
-                let weight = if let Some(dtype) = compute { weight.cast(dtype) } else { weight };
-                hidden = hidden + ruda_model::tensor::module::embedding(weight,ids);
+                let rows = ruda_model::tensor::module::embedding(weight,ids);
+                let rows = if let Some(dtype) = compute { rows.cast(dtype) } else { rows };
+                hidden = hidden + rows;
             }
         }
         if let Some(norm) = &self.normalization { hidden = norm.forward(hidden); }

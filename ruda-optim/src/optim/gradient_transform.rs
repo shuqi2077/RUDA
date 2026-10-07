@@ -54,9 +54,9 @@ struct Metadata<'a> {
 
 impl<B: AutodiffBackend> ModuleVisitor<B> for Metadata<'_> {
     fn visit_float<const D: usize>(&mut self, param: &Param<Tensor<B,D>>) {
-        if self.error.is_some() || !self.seen.insert(param.id) { return; }
+        if self.error.is_some() { return; }
         let Some(primitive) = self.gradients.container.get::<B::InnerBackend>(&param.id) else { return; };
-        self.matched += 1;
+        if self.seen.insert(param.id) { self.matched += 1; }
         if matches!(primitive.dtype(),DType::QFloat(_)) {
             self.error = Some(GradientTransformError::QuantizedGradient(param.id));
             return;
