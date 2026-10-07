@@ -47,7 +47,7 @@ impl<B:Backend> FullyShardedAwqTransformerModel<B> {
 }
 
 macro_rules! awq_model_execution {
-    ($backend:ty,[$($generics:tt)*],$gather:ident,$embed:ident,$forward:ident,$packed:ident) => {
+    ($backend:ty,[$($generics:tt)*],$gather:ident,$embed:ident,$forward:ident,$packed:ident,$hidden:ident,$packed_hidden:ident) => {
         impl<$($generics)*> FullyShardedAwqTransformerHead<$backend> {
             /// Transient exact original head over actual packed/floating local values.
             pub fn $gather<C:IntegerTensorCollective<B>>(&self,communicator:C) -> Result<AwqTransformerHead<$backend>,C::Error> {
@@ -61,20 +61,35 @@ macro_rules! awq_model_execution {
             }
         }
         impl<$($generics)*> FullyShardedAwqTransformerModel<$backend> {
-            /// Complete actual native ID-to-logits graph. All architecture-owned positions,
-            /// optional table IDs and loss supervision remain explicit original caller inputs.
+            /// Complete actual native ID-to-logits graph with explicit original inputs.
             pub fn $forward<C,F>(&self,input:FullyShardedTransformerInput<$backend>,masks:DenseAttentionMask<$backend>,
+                options:DenseAttentionOptions,communicator:C,positions:F)
+                -> Result<Tensor<$backend,3>,FullyShardedAwqError<C::Error,<$backend as FrozenAwqOps>::AwqError>>
+                where C:IntegerTensorCollective<B>,F:FnMut(usize,Tensor<$backend,4>,Tensor<$backend,4>)->(Tensor<$backend,4>,Tensor<$backend,4>) {
+                let hidden=self.$hidden(input,masks,options,communicator.clone(),positions)?;
+                self.head.$forward(hidden,communicator)
+            }
+            /// Actual final hidden states for chunked logits or pooled sequence heads.
+            pub fn $hidden<C,F>(&self,input:FullyShardedTransformerInput<$backend>,masks:DenseAttentionMask<$backend>,
                 options:DenseAttentionOptions,communicator:C,positions:F)
                 -> Result<Tensor<$backend,3>,FullyShardedAwqError<C::Error,<$backend as FrozenAwqOps>::AwqError>>
                 where C:IntegerTensorCollective<B>,F:FnMut(usize,Tensor<$backend,4>,Tensor<$backend,4>)->(Tensor<$backend,4>,Tensor<$backend,4>) {
                 let hidden=self.embeddings.$embed(input,communicator.clone()).map_err(FullyShardedAwqError::Collective)?;
                 let hidden=self.backbone.$forward(hidden,masks,options,communicator.clone(),positions)?;
                 let hidden=if let Some(norm)=&self.normalization {norm.$gather(communicator.clone()).map_err(FullyShardedAwqError::Collective)?.forward(hidden)} else {hidden};
-                self.head.$forward(hidden,communicator)
+                Ok(hidden)
             }
             /// Actual flat-document complete model. The native input helper preserves
             /// original token/position/type metadata and explicit mixed lookup-row dtypes.
             pub fn $packed<C,F>(&self,input:FullyShardedTransformerInput<$backend,1>,layout:&PackedSequenceLayout,
+                masks:Option<&[PackedDocumentAttentionMask<$backend>]>,options:PackedAttentionOptions,communicator:C,positions:F)
+                -> Result<Tensor<$backend,2>,FullyShardedAwqError<C::Error,<$backend as FrozenAwqOps>::AwqError>>
+                where C:IntegerTensorCollective<B>,F:FnMut(usize,Tensor<$backend,3>,Tensor<$backend,3>)->(Tensor<$backend,3>,Tensor<$backend,3>) {
+                let hidden=self.$packed_hidden(input,layout,masks,options,communicator.clone(),positions)?;
+                self.head.$forward(hidden,communicator)
+            }
+            /// Actual packed final hidden states without constructing a full token-logit tensor.
+            pub fn $packed_hidden<C,F>(&self,input:FullyShardedTransformerInput<$backend,1>,layout:&PackedSequenceLayout,
                 masks:Option<&[PackedDocumentAttentionMask<$backend>]>,options:PackedAttentionOptions,communicator:C,positions:F)
                 -> Result<Tensor<$backend,2>,FullyShardedAwqError<C::Error,<$backend as FrozenAwqOps>::AwqError>>
                 where C:IntegerTensorCollective<B>,F:FnMut(usize,Tensor<$backend,3>,Tensor<$backend,3>)->(Tensor<$backend,3>,Tensor<$backend,3>) {
@@ -83,13 +98,13 @@ macro_rules! awq_model_execution {
                     .reshape([layout.tokens(),self.embeddings.hidden_width()]);
                 let hidden=self.backbone.$packed(hidden,layout,masks,options,communicator.clone(),positions)?;
                 let hidden=if let Some(norm)=&self.normalization {norm.$gather(communicator.clone()).map_err(FullyShardedAwqError::Collective)?.forward(hidden)} else {hidden};
-                self.head.$forward(hidden,communicator)
+                Ok(hidden)
             }
         }
     };
 }
-awq_model_execution!(B,[B:FrozenAwqOps],gather_inference,forward_inference,forward_inference,forward_packed_inference);
-awq_model_execution!(Autodiff<B,S>,[B:FrozenAwqOps,S:CheckpointStrategy],gather,forward,forward,forward_packed);
+awq_model_execution!(B,[B:FrozenAwqOps],gather_inference,forward_inference,forward_inference,forward_packed_inference,forward_hidden_inference,forward_packed_hidden_inference);
+awq_model_execution!(Autodiff<B,S>,[B:FrozenAwqOps,S:CheckpointStrategy],gather,forward,forward,forward_packed,forward_hidden,forward_packed_hidden);
 
 impl<B:FrozenAwqOps> FullyShardedAwqTransformerModel<B> {
     /// Original complete new-token inference with positioned native KV cache and actual logits.

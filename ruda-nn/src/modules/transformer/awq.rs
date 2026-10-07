@@ -71,6 +71,11 @@ impl<B:Backend> AwqGroupedQueryAttention<B> {
     }
 }
 impl<B:FrozenAwqOps> AwqGroupedQueryAttention<B> {
+    fn check_packed_heads(&self,query:&Tensor<B,3>,key:&Tensor<B,3>,value:&Tensor<B,3>) {
+        assert_eq!((query.dims()[1],query.dims()[2]),(self.query_heads,self.head_dimension),"packed query head geometry differs");
+        assert_eq!((key.dims()[1],key.dims()[2]),(self.kv_heads,self.head_dimension),"packed key head geometry differs");
+        assert_eq!((value.dims()[1],value.dims()[2]),(self.kv_heads,self.head_dimension),"packed value head geometry differs");
+    }
     /// Original loaded Q/K/V projections with exposed dense head axes for RoPE.
     pub fn project(&self,query:Tensor<B,3>,key:Tensor<B,3>,value:Tensor<B,3>)
         -> Result<(Tensor<B,4>,Tensor<B,4>,Tensor<B,4>),B::AwqError> {
@@ -107,7 +112,7 @@ impl<B:FrozenAwqOps> AwqGroupedQueryAttention<B> {
     pub fn forward_packed_projected(&self,query:Tensor<B,3>,key:Tensor<B,3>,value:Tensor<B,3>,
         query_layout:&PackedSequenceLayout,key_layout:&PackedSequenceLayout,options:PackedAttentionOptions)
         -> Result<Tensor<B,2>,B::AwqError> {
-        let tokens=query.dims()[0];
+        self.check_packed_heads(&query,&key,&value);let tokens=query.dims()[0];
         let context=packed_scaled_dot_product_attention(query,key,value,query_layout,key_layout,options,Some(&self.dropout));
         self.output.forward(context.reshape([tokens,self.query_heads*self.head_dimension]))
     }
@@ -115,7 +120,7 @@ impl<B:FrozenAwqOps> AwqGroupedQueryAttention<B> {
     pub fn forward_packed_masked_projected(&self,query:Tensor<B,3>,key:Tensor<B,3>,value:Tensor<B,3>,
         query_layout:&PackedSequenceLayout,key_layout:&PackedSequenceLayout,masks:&[PackedDocumentAttentionMask<B>],options:PackedAttentionOptions)
         -> Result<Tensor<B,2>,B::AwqError> {
-        let tokens=query.dims()[0];
+        self.check_packed_heads(&query,&key,&value);let tokens=query.dims()[0];
         let context=packed_scaled_dot_product_attention_masked(query,key,value,query_layout,key_layout,masks,options,Some(&self.dropout));
         self.output.forward(context.reshape([tokens,self.query_heads*self.head_dimension]))
     }
