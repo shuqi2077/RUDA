@@ -8,6 +8,9 @@ use super::{ColumnParallelLinear,RowParallelLinear,TensorParallelGroupedQueryAtt
     TensorParallelFeedForward,TensorParallelAdaptedFeedForward,TensorParallelTransformerBlock,TensorParallelAdaptedTransformerBlock,
     TensorParallelTransformerStack,TensorParallelAdaptedTransformerStack,TensorParallelAdaptedStackLayer};
 
+mod decoder;
+pub use decoder::*;
+
 /// Explicit feature axis of a loaded full projection, not a guessed rank/world layout.
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub enum TensorParallelProjectionAxis {

@@ -3,8 +3,22 @@ use super::{TensorParallelAdaptedTransformerBlock,TensorParallelAdaptedStackLaye
 use super::super::transformer::residual;
 use crate::{attention::{DenseAttentionMask,DenseAttentionOptions},cache::ProjectedKvCache};
 use ruda_model::tensor::Bool;
+use crate::attention::{PackedSequenceLayout,PackedAttentionOptions,PackedDocumentAttentionMask};
 
 impl<B: Backend> TensorParallelAdaptedTransformerBlock<B> {
+    /// Native packed adapted self-attention alone, retaining exact independent-document boundaries.
+    pub fn forward_packed_attention_inference<C,F>(&self,input: Tensor<B,2>,layout: &PackedSequenceLayout,
+        masks: Option<&[PackedDocumentAttentionMask<B>]>,options: PackedAttentionOptions,communicator: C,positions: F) -> Result<Tensor<B,2>,C::Error>
+        where C: BroadcastTensorCollective<B>,F: FnOnce(Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
+        assert_eq!(input.dims()[0],layout.tokens(),"native adapted packed self boundaries differ from actual rows");
+        residual(input,&self.attention_norm,self.norm_first,|source| {
+            let (query,key,value) = self.attention.local.project_packed(source.clone(),source.clone(),source);
+            let geometry = (query.dims(),key.dims());let (query,key) = positions(query,key);
+            assert_eq!((query.dims(),key.dims()),geometry,"native adapted packed self positions changed local heads");
+            self.attention.forward_packed_projected_inference(query,key,value,layout,layout,masks,options,communicator)
+        },|branch|self.residual_dropout.forward(branch))
+    }
+
     /// Native adapted self-attention stage alone, before an actual source-memory stage.
     pub fn forward_attention_inference<C,F>(&self,input: Tensor<B,3>,masks: DenseAttentionMask<B>,options: DenseAttentionOptions,
         communicator: C,positions: F) -> Result<Tensor<B,3>,C::Error>
@@ -34,6 +48,21 @@ impl<B: Backend> TensorParallelAdaptedTransformerBlock<B> {
 }
 
 impl<B: Backend,S: CheckpointStrategy> TensorParallelAdaptedTransformerBlock<Autodiff<B,S>> {
+    /// Actual packed adapted self-attention stage, before the original paired-source stage.
+    pub fn forward_packed_attention<C,K,F>(&self,input: Tensor<Autodiff<B,S>,2>,layout: &PackedSequenceLayout,
+        masks: Option<&[PackedDocumentAttentionMask<Autodiff<B,S>>]>,options: PackedAttentionOptions,groups: &AttentionParallelGroups<C,K>,positions: F)
+        -> Result<Tensor<Autodiff<B,S>,2>,C::Error>
+        where C: BroadcastTensorCollective<B>,K: BroadcastTensorCollective<B,Error=C::Error>,
+            F: FnOnce(Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>)->(Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>) {
+        assert_eq!(input.dims()[0],layout.tokens(),"adapted parallel packed self boundaries differ from actual rows");
+        residual(input,&self.attention_norm,self.norm_first,|source| {
+            let (query,key,value) = self.attention.project_packed(source.clone(),source.clone(),source,groups)?;
+            let geometry = (query.dims(),key.dims());let (query,key) = positions(query,key);
+            assert_eq!((query.dims(),key.dims()),geometry,"adapted parallel packed self positions changed local geometry");
+            self.attention.forward_packed_projected(query,key,value,layout,layout,masks,options,groups.heads.clone())
+        },|branch|self.residual_dropout.forward(branch))
+    }
+
     /// Actual selected adapters on the self-attention stage, retaining original norm/residual order.
     pub fn forward_attention_with_positions<C,K,F>(&self,input: Tensor<Autodiff<B,S>,3>,masks: DenseAttentionMask<Autodiff<B,S>>,options: DenseAttentionOptions,
         groups: &AttentionParallelGroups<C,K>,positions: F) -> Result<Tensor<Autodiff<B,S>,3>,C::Error>
@@ -70,6 +99,14 @@ impl<B: Backend,S: CheckpointStrategy> TensorParallelAdaptedTransformerBlock<Aut
 }
 
 impl<B: Backend> TensorParallelAdaptedStackLayer<B> {
+    /// Actual native packed dense/adapted attention stage before source memory.
+    pub fn forward_packed_attention_inference<C,F>(&self,input: Tensor<B,2>,layout: &PackedSequenceLayout,
+        masks: Option<&[PackedDocumentAttentionMask<B>]>,options: PackedAttentionOptions,communicator: C,positions: F) -> Result<Tensor<B,2>,C::Error>
+        where C: BroadcastTensorCollective<B>,F: FnOnce(Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
+        match self {Self::Dense(block)=>block.forward_packed_attention_inference(input,layout,masks,options,communicator,positions),
+            Self::Adapted(block)=>block.forward_packed_attention_inference(input,layout,masks,options,communicator,positions)}
+    }
+
     /// Native actual dense/adapted self-attention stage before explicit cross-attention.
     pub fn forward_attention_inference<C,F>(&self,input: Tensor<B,3>,masks: DenseAttentionMask<B>,options: DenseAttentionOptions,communicator: C,positions: F)
         -> Result<Tensor<B,3>,C::Error>
@@ -94,6 +131,16 @@ impl<B: Backend> TensorParallelAdaptedStackLayer<B> {
 }
 
 impl<B: Backend,S: CheckpointStrategy> TensorParallelAdaptedStackLayer<Autodiff<B,S>> {
+    /// Actual selected/unselected packed self stage, preserving the original layer choice.
+    pub fn forward_packed_attention<C,K,F>(&self,input: Tensor<Autodiff<B,S>,2>,layout: &PackedSequenceLayout,
+        masks: Option<&[PackedDocumentAttentionMask<Autodiff<B,S>>]>,options: PackedAttentionOptions,groups: &AttentionParallelGroups<C,K>,positions: F)
+        -> Result<Tensor<Autodiff<B,S>,2>,C::Error>
+        where C: BroadcastTensorCollective<B>,K: BroadcastTensorCollective<B,Error=C::Error>,
+            F: FnOnce(Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>)->(Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>) {
+        match self {Self::Dense(block)=>block.forward_packed_attention(input,layout,masks,options,groups,positions),
+            Self::Adapted(block)=>block.forward_packed_attention(input,layout,masks,options,groups,positions)}
+    }
+
     /// Original selected/unselected self-attention stage with explicit local positions/groups.
     pub fn forward_attention_with_positions<C,K,F>(&self,input: Tensor<Autodiff<B,S>,3>,masks: DenseAttentionMask<Autodiff<B,S>>,options: DenseAttentionOptions,
         groups: &AttentionParallelGroups<C,K>,positions: F) -> Result<Tensor<Autodiff<B,S>,3>,C::Error>

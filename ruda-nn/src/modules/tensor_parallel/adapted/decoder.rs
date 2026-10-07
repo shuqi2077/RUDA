@@ -7,6 +7,7 @@ use ruda_model::tensor::Bool;
 
 mod layer;
 mod stack;
+mod packed;
 pub use layer::*;
 pub use stack::*;
 
