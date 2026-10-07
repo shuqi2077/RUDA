@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 use ruda_autodiff::{Autodiff,checkpoint::strategy::CheckpointStrategy,tensor_parallel as region};
-use ruda_model::tensor::{DType,Int,IntDType,Tensor,ElementConversion,backend::Backend,module::{embedding,linear}};
+use ruda_model::tensor::{DType,Int,IntDType,Tensor,TensorData,TensorPrimitive,ElementConversion,backend::Backend,module::{embedding,linear}};
 use region::BroadcastTensorCollective;
 use super::{Embedding,VocabParallelEmbedding,VocabParallelLossLayout,VocabParallelProjection};
 
@@ -46,6 +46,59 @@ impl<B: Backend> VocabParallelEmbedding<B> {
         assert_eq!(local.weight.val().dims()[0],interval.len(),"embedding rows differ from the rank's actual interval");
         Self::from_shard(local,interval.start,layout.vocabulary_size(),padding_index)
     }
+
+    fn local_lookup(&self,tokens:Tensor<B,2,Int>,layout:&VocabParallelLossLayout,rank:u32,world:u32,freeze_padding:bool) -> Tensor<B,3> {
+        assert_eq!(world as usize,layout.world_size(),"embedding topology and layout differ");
+        let interval = layout.interval(rank as usize);let mut weight = self.local.weight.val();let [width,features] = weight.dims();
+        assert_eq!(width,interval.len(),"embedding storage and rank interval differ");
+        assert_eq!(self.vocabulary_start,interval.start,"embedding starts at a different global token ID");
+        assert_eq!(self.vocabulary_size,layout.vocabulary_size(),"embedding logical vocabulary differs from layout");
+        assert_eq!(tokens.device(),weight.device(),"token indices and local embedding must share the device");
+        let [batch,length] = tokens.dims();
+        if batch == 0 || length == 0 {return weight.slice([0..0,0..features]).reshape([batch,length,features]);}
+        let tokens = tokens.cast(IntDType::I64);
+        let constant = |value:i64|Tensor::<B,2,Int>::from_data(TensorData::new(alloc::vec![value],[1,1]),(&tokens.device(),DType::I64)).expand([batch,length]);
+        let invalid = tokens.clone().lower_elem(0).bool_or(tokens.clone().greater_equal(constant(layout.vocabulary_size() as i64)));
+        assert!(!invalid.any().into_scalar().elem::<bool>(),"token lies outside the logical vocabulary");
+        let start = constant(interval.start as i64);
+        let outside = tokens.clone().lower(start.clone()).bool_or(tokens.clone().greater_equal(constant(interval.end.min(layout.vocabulary_size()) as i64)));
+        let indices = (tokens-start).mask_fill(outside.clone(),0);
+        if let Some(padding) = self.padding_index {assert!(padding < layout.vocabulary_size(),"configured embedding padding is not a real class");}
+        if interval.end > layout.vocabulary_size() || (freeze_padding && self.padding_index.is_some_and(|index|interval.contains(&index))) {
+            let rows = Tensor::<B,1,Int>::arange(interval.start as i64..interval.end as i64,(&weight.device(),DType::I64));
+            let weight_device = weight.device();
+            let scalar = |value:i64|Tensor::<B,1,Int>::from_data(TensorData::new(alloc::vec![value],[1]),(&weight_device,DType::I64)).expand([width]);
+            if interval.end > layout.vocabulary_size() {
+                let padding = rows.clone().greater_equal(scalar(layout.vocabulary_size() as i64)).reshape([width,1]).expand([width,features]);
+                weight = weight.mask_fill(padding,0);
+            }
+            if let Some(padding) = self.padding_index.filter(|index|freeze_padding && interval.contains(index)) {
+                assert!(padding < layout.vocabulary_size(),"configured embedding padding is not a real class");
+                let frozen = rows.equal(scalar(padding as i64)).reshape([width,1]).expand([width,features]);
+                weight = weight.clone().mask_where(frozen,weight.detach());
+            }
+        }
+        embedding(weight,indices).mask_fill(outside.reshape([batch,length,1]).expand([batch,length,features]),0)
+    }
+
+    /// Native-backend replicated lookup from actual unequal vocabulary intervals.
+    /// Uses the existing native embedding kernel, excludes declared storage padding and retains
+    /// actual configured padding-row values. Global indices/offsets remain explicit I64 operands.
+    pub fn forward_inference_with_layout<C:BroadcastTensorCollective<B>>(&self,tokens:Tensor<B,2,Int>,communicator:C,layout:&VocabParallelLossLayout)
+        -> Result<Tensor<B,3>,C::Error> {
+        let empty = tokens.dims().contains(&0);
+        let local = self.local_lookup(tokens,layout,communicator.rank(),communicator.world_size(),false);
+        if empty || communicator.world_size() == 1 {Ok(local)} else {Ok(Tensor::from_primitive(TensorPrimitive::Float(communicator.all_reduce_sum(local.into_primitive().tensor())?)))}
+    }
+
+    /// Actual packed token lookup on the native inference backend; document boundaries are caller-owned.
+    pub fn forward_packed_inference_with_layout<C:BroadcastTensorCollective<B>>(&self,tokens:Tensor<B,1,Int>,communicator:C,layout:&VocabParallelLossLayout)
+        -> Result<Tensor<B,2>,C::Error> {
+        let count = tokens.dims()[0];
+        self.forward_inference_with_layout(tokens.reshape([1,count]),communicator,layout).map(|values| {
+            let features = values.dims()[2];values.reshape([count,features])
+        })
+    }
 }
 
 impl<B: Backend,S: CheckpointStrategy> VocabParallelEmbedding<Autodiff<B,S>> {
@@ -55,32 +108,16 @@ impl<B: Backend,S: CheckpointStrategy> VocabParallelEmbedding<Autodiff<B,S>> {
     /// and gradients. The configured padding row retains its value but is detached.
     pub fn forward_with_layout<C: BroadcastTensorCollective<B>>(&self,tokens: Tensor<Autodiff<B,S>,2,Int>,
         communicator: C,layout: &VocabParallelLossLayout) -> Result<Tensor<Autodiff<B,S>,3>,C::Error> {
-        assert_eq!(communicator.world_size() as usize,layout.world_size(),"embedding topology and layout differ");
-        let interval = layout.interval(communicator.rank() as usize);
-        let [width,features] = self.local.weight.val().dims();
-        assert_eq!(width,interval.len(),"embedding storage and rank interval differ");
-        assert_eq!(self.vocabulary_start,interval.start,"embedding starts at a different global token ID");
-        assert_eq!(self.vocabulary_size,layout.vocabulary_size(),"embedding logical vocabulary differs from layout");
-        assert_eq!(tokens.device(),self.local.weight.val().device(),"token indices and local embedding must share the device");
-        let [batch,length] = tokens.dims();
-        let mut weight = self.local.weight.val();
-        if batch == 0 || length == 0 {return Ok(weight.slice([0..0,0..features]).reshape([batch,length,features]));}
-        let tokens = tokens.cast(IntDType::I64);
-        let invalid = tokens.clone().lower_elem(0).bool_or(tokens.clone().greater_equal_elem(layout.vocabulary_size() as i64));
-        assert!(!invalid.any().into_scalar().elem::<bool>(),"token lies outside the logical vocabulary");
-        let outside = tokens.clone().lower_elem(interval.start as i64)
-            .bool_or(tokens.clone().greater_equal_elem(interval.end.min(layout.vocabulary_size()) as i64));
-        let indices = tokens.sub_scalar(interval.start as i64).mask_fill(outside.clone(),0);
-        let rows = Tensor::<Autodiff<B,S>,1,Int>::arange(interval.start as i64..interval.end as i64,(&weight.device(),DType::I64));
-        let padding = rows.clone().greater_equal_elem(layout.vocabulary_size() as i64).reshape([width,1]).expand([width,features]);
-        weight = weight.mask_fill(padding,0);
-        if let Some(padding) = self.padding_index {
-            assert!(padding < layout.vocabulary_size(),"configured embedding padding is not a real class");
-            let frozen = rows.equal_elem(padding as i64).reshape([width,1]).expand([width,features]);
-            weight = weight.clone().mask_where(frozen,weight.detach());
-        }
-        let output = embedding(weight,indices).mask_fill(outside.reshape([batch,length,1]).expand([batch,length,features]),0);
-        region::reduce_from_region(output,communicator)
+        let empty = tokens.dims().contains(&0);let output = self.local_lookup(tokens,layout,communicator.rank(),communicator.world_size(),true);
+        if empty {Ok(output)} else {region::reduce_from_region(output,communicator)}
+    }
+
+    /// Native packed training lookup, preserving original shared leaves and padding-row derivatives.
+    pub fn forward_packed_with_layout<C:BroadcastTensorCollective<B>>(&self,tokens:Tensor<Autodiff<B,S>,1,Int>,communicator:C,layout:&VocabParallelLossLayout)
+        -> Result<Tensor<Autodiff<B,S>,2>,C::Error> {
+        let count = tokens.dims()[0];self.forward_with_layout(tokens.reshape([1,count]),communicator,layout).map(|values| {
+            let features = values.dims()[2];values.reshape([count,features])
+        })
     }
 }
 

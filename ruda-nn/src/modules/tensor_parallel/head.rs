@@ -50,7 +50,7 @@ fn check_input<B:Backend,const D:usize>(input:&Tensor<B,D>,projection:&Linear<B>
     assert_eq!(input.device(),projection.weight.val().device(),"parallel head input/weight devices differ");
 }
 
-fn transformed<B:Backend,F,const D:usize>(dropout:&Dropout,input:Tensor<B,D>,apply:F) -> Tensor<B,D>
+pub(super) fn transformed<B:Backend,F,const D:usize>(dropout:&Dropout,input:Tensor<B,D>,apply:F) -> Tensor<B,D>
     where F:FnOnce(&Dropout,Tensor<B,D>)->Tensor<B,D> {
     let shape = input.dims();let device = input.device();let dtype = input.dtype();let output = apply(dropout,input);
     assert!(output.dims() == shape && output.device() == device && output.dtype() == dtype,
