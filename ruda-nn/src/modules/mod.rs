@@ -20,6 +20,7 @@ mod dropout;
 mod embedding;
 mod linear;
 mod lora;
+mod lora_record;
 /// Explicit tensor-parallel linear projections for replicated-loss model partitions.
 #[cfg(feature = "tensor-parallel")]
 pub mod tensor_parallel;
@@ -46,6 +47,7 @@ pub use dropout::*;
 pub use embedding::*;
 pub use linear::*;
 pub use lora::*;
+pub use lora_record::*;
 pub use mhc::*;
 #[cfg(feature = "sparse")]
 pub use sparse_linear::*;
