@@ -17,7 +17,7 @@ fn gather_indices<B:Backend,C:BroadcastTensorCollective<B>>(indices:Tensor<B,2,I
     let mask = Tensor::<B,2,Int>::from_data(TensorData::new(alloc::vec![65535_i64],[1,1]),(&indices.device(),DType::I64)).expand([rows,1]);
     let mut words = Vec::with_capacity(4);
     for word in 0usize..4 {
-        let part = indices.clone().bitwise_right_shift_scalar((word*16).elem()).bitwise_and(mask.clone());
+        let part = indices.clone().bitwise_right_shift_scalar(((word*16) as i32).elem()).bitwise_and(mask.clone());
         // Each exact 16-bit word is representable in FP32 independently of device-default dtype.
         words.push(Tensor::<B,2>::from_primitive(TensorPrimitive::Float(B::int_into_float(part.into_primitive(),FloatDType::F32))));
     }
@@ -29,7 +29,7 @@ fn gather_indices<B:Backend,C:BroadcastTensorCollective<B>>(indices:Tensor<B,2,I
     let mut result:Option<Tensor<B,2,Int>> = None;
     for word in 0usize..4 {
         let part = gathered.clone().slice_dim(1,word..word+1).into_primitive().tensor();
-        let part = Tensor::<B,2,Int>::from_primitive(B::float_into_int(part,IntDType::I64)).bitwise_left_shift_scalar((word*16).elem());
+        let part = Tensor::<B,2,Int>::from_primitive(B::float_into_int(part,IntDType::I64)).bitwise_left_shift_scalar(((word*16) as i32).elem());
         result = Some(match result {Some(value)=>value.bitwise_or(part),None=>part});
     }
     Ok(result.expect("four actual candidate words").reshape([communicator.world_size() as usize,rows]))
