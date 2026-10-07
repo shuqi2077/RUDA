@@ -3,6 +3,26 @@ use serde::{Serialize,Deserialize};
 use ruda_model::{record::{Record,PrecisionSettings},tensor::{Tensor,TensorPrimitive,DType,Bool,BroadcastTensorCollective,backend::Backend}};
 use super::{Muon,MuonState,MuonError,MuonShardedError,MomentumState,LearningRate};
 
+pub(crate) fn repartition_flat_buffer<B:Backend>(sources:&[Tensor<B,1>],elements:usize,rank:u32,world:u32) -> Result<Tensor<B,1>,MuonError> {
+    let first=sources.first().ok_or(MuonError::InvalidConfig("complete original flat buffer rank set is empty"))?;
+    if elements==0 || world==0 || rank>=world {return Err(MuonError::InvalidConfig("invalid original flat buffer geometry/topology"));}
+    let old=elements.div_ceil(sources.len());let size=elements.div_ceil(world as usize);
+    old.checked_mul(sources.len()).ok_or(MuonError::InvalidConfig("original flat buffer padded size overflows"))?;
+    size.checked_mul(world as usize).ok_or(MuonError::InvalidConfig("destination flat buffer padded size overflows"))?;
+    for source in sources {
+        if source.dims()!=[old] {return Err(MuonError::ShapeMismatch("original flat buffer rank interval"));}
+        if source.dtype()!=first.dtype() {return Err(MuonError::DTypeMismatch("original flat buffer rank interval"));}
+        if source.device()!=first.device() {return Err(MuonError::DeviceMismatch("original flat buffer rank interval"));}
+    }
+    let start=rank as usize*size;let end=(start+size).min(elements);
+    let mut destination=Tensor::zeros([size],(&first.device(),first.dtype()));
+    for (source_rank,source) in sources.iter().enumerate() {
+        let source_start=source_rank*old;let begin=start.max(source_start);let finish=end.min((source_start+old).min(elements));
+        if begin<finish {destination=destination.slice_assign([begin-start..finish-start],source.clone().slice([begin-source_start..finish-source_start]));}
+    }
+    Ok(destination)
+}
+
 /// Original complete matrix backed by equal padded rank-ordered flat element intervals.
 /// Unlike row/column TP shards, an interval may cut across any original matrix row.
 #[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
@@ -92,6 +112,17 @@ impl<B:Backend> MuonFlatShardedState<B> {
     }
     /// Move only actual local momentum, retaining the original topology/algorithm state.
     pub fn to_device(mut self,device:&B::Device) -> Self {self.local.momentum=self.local.momentum.to_device(device);self}
+    /// Offline complete-rank-set conversion of original actual momentum, without a full matrix allocation.
+    /// Move sources to one destination device first and repartition model/master/data continuation separately.
+    pub fn repartition_from_ranks(sources:&[Self],rank:u32,world:u32) -> Result<Self,MuonError> {
+        let first=sources.first().ok_or(MuonError::InvalidConfig("complete original flat Muon state set is empty"))?;
+        let old_world=u32::try_from(sources.len()).map_err(|_|MuonError::InvalidConfig("flat Muon source rank count overflows"))?;
+        for (source_rank,source) in sources.iter().enumerate() {source.validate_placement(source_rank as u32,old_world,&first.layout)?;}
+        let elements=first.layout.shape[0].checked_mul(first.layout.shape[1]).ok_or(MuonError::InvalidConfig("flat Muon original state size overflows"))?;
+        let buffers=sources.iter().map(|source|source.momentum().clone()).collect::<Vec<_>>();
+        let velocity=repartition_flat_buffer(&buffers,elements,rank,world)?;
+        Ok(Self {version:1,rank,world,layout:first.layout.clone(),local:MuonState::new(MomentumState::new(velocity))})
+    }
 }
 impl<B:Backend> Record<B> for MuonFlatShardedState<B> {
     type Item<P:PrecisionSettings>=(u32,u32,u32,MuonFlatShardLayout,DType,<MuonState<B,1> as Record<B>>::Item<P>);

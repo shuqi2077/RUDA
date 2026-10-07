@@ -25,6 +25,7 @@ mod sharded;
 pub use sharded::*;
 mod flat_sharded;
 pub use flat_sharded::*;
+pub(crate) use flat_sharded::repartition_flat_buffer;
 
 /// Momentum convention. Checkpoint buffers are NOT interchangeable between modes.
 #[derive(Clone, Default, Debug, Copy, PartialEq, Eq, Serialize, Deserialize)]

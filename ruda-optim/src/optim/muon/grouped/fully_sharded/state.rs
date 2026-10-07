@@ -1,5 +1,6 @@
 use super::*;
 use ruda_model::tensor::backend::Backend;
+mod partition;
 
 /// Actual one-role local optimizer state: native Muon/AdamW or explicitly selected FP32 master variants.
 /// Payload choice is checked against the original parameter routing and numerical configuration on load.

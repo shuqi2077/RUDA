@@ -73,7 +73,7 @@ impl<B:AutodiffBackend,C:BroadcastTensorCollective<B::InnerBackend>> ModuleVisit
             }
             return;
         }
-        if D!=1 {self.error=Some(MuonShardedError::Muon(MuonError::ExpectedMatrix {rank:D}));return;}
+        if D!=1 {self.error=Some(MuonShardedError::Muon(MuonError::ShapeMismatch("FSDP model leaves must be flat vectors")));return;}
         #[cfg(feature="distributed")]
         if value.is_distributed() {self.error=Some(MuonShardedError::Muon(MuonError::UnsupportedDistributed));return;}
         let Some(&index)=self.indices.get(&param.id) else {self.error=Some(MuonShardedError::Muon(MuonError::UnknownParameter(param.id.val())));return;};
@@ -82,7 +82,7 @@ impl<B:AutodiffBackend,C:BroadcastTensorCollective<B::InnerBackend>> ModuleVisit
             self.error=Some(MuonShardedError::Muon(error));return;
         }
         if binding.use_muon && !signature.1 {self.error=Some(MuonShardedError::Muon(MuonError::FrozenParameter(param.id.val())));return;}
-        if self.master && signature.1 && !matches!(value.dtype(),DType::F32|DType::F16|DType::BF16) {
+        if self.master && signature.1 && !matches!(inner.dtype(),DType::F32|DType::F16|DType::BF16) {
             self.error=Some(MuonShardedError::Muon(MuonError::InvalidConfig("FP32 FSDP masters require FP32/FP16/BF16 model storage")));return;
         }
         let gradient=if signature.1 {self.grads.and_then(|grads|grads.get::<B::InnerBackend,1>(param.id))} else {None};
