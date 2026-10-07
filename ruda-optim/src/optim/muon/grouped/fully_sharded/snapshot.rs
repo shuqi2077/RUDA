@@ -4,7 +4,7 @@ use ruda_model::tensor::backend::Backend;
 pub(super) struct Snapshot<B:AutodiffBackend> {pub manifest:FlatManifest,pub values:TensorContainer<ParamId>,backend:PhantomData<B>}
 
 pub(super) fn parameter_geometry(shape:&[usize],rank:u32,world:u32,local:usize) -> Result<(usize,usize),MuonError> {
-    if shape.is_empty() || shape.contains(&0) || world==0 || rank>=world {return Err(MuonError::InvalidConfig("positive original FSDP axes and valid rank/world are required"));}
+    if shape.contains(&0) || world==0 || rank>=world {return Err(MuonError::InvalidConfig("positive original FSDP axes and valid rank/world are required"));}
     let elements=shape.iter().try_fold(1usize,|total,axis|total.checked_mul(*axis)).ok_or(MuonError::InvalidConfig("original FSDP parameter size overflows"))?;
     let slots=elements.div_ceil(world as usize);
     slots.checked_mul(world as usize).ok_or(MuonError::InvalidConfig("padded FSDP parameter size overflows"))?;

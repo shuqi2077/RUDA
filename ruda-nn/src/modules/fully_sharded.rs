@@ -117,7 +117,7 @@ impl<B:Backend> ShardingContext<B> {
 pub struct ShardedParameter<B:Backend> {
     /// Rank-local storage; padding lies only after the logical element count.
     pub local:Param<Tensor<B,1>>,
-    /// Full logical dimensions, excluding padding.
+    /// Full logical dimensions, excluding padding; an empty axis list preserves an actual rank-zero scalar.
     pub logical_shape:Vec<usize>,
     /// Owner of this equal contiguous slice.
     pub rank:usize,
@@ -129,7 +129,7 @@ impl<B:Backend> ShardedParameter<B> {
     /// Construct from an already loaded local checkpoint slice; no full tensor is needed.
     pub fn from_local(local:Param<Tensor<B,1>>,logical_shape:Vec<usize>,rank:usize,world_size:usize)->Self {
         assert!(world_size>0 && rank<world_size,"invalid parameter shard topology");
-        assert!(!logical_shape.is_empty() && logical_shape.iter().all(|&n|n>0),"logical parameter dimensions must be positive");
+        assert!(logical_shape.iter().all(|&n|n>0),"logical parameter dimensions must be positive");
         let elements=logical_shape.iter().try_fold(1usize,|n,&d|n.checked_mul(d)).expect("logical parameter size overflow");
         assert_eq!(local.val().dims(),[elements.div_ceil(world_size)],"local parameter slice length differs");
         assert!(matches!(local.val().dtype(),DType::F32|DType::F16|DType::BF16),"floating parameter storage required");

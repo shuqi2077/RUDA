@@ -258,7 +258,7 @@ fn work_dtype(state:&FullyShardedAccumulationState) -> Result<FloatDType,FullySh
     }Ok(dtype)
 }
 fn elements(shape:&[usize]) -> Result<usize,FullyShardedAccumulationError> {
-    if shape.is_empty() || shape.contains(&0) {return Err(FullyShardedAccumulationError::Placement("positive original logical axes required"));}
+    if shape.contains(&0) {return Err(FullyShardedAccumulationError::Placement("positive original logical axes required"));}
     shape.iter().try_fold(1usize,|total,axis|total.checked_mul(*axis)).ok_or(FullyShardedAccumulationError::Placement("original parameter size overflows"))
 }
 pub(super) fn inspect<B:AutodiffBackend,M:AutodiffModule<B>>(module:&M,placement:&Placement,match_storage:bool) -> Result<Placement,FullyShardedAccumulationError> {

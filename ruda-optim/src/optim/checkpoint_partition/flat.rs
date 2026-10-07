@@ -53,7 +53,7 @@ pub trait FlatOptimizerCheckpointState<B:Backend,const D:usize>:OptimizerCheckpo
 /// Original logical axes and exact equal padded data-shard ownership for native optimizer history.
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub struct FlatOptimizerTensorShard {
-    /// Actual original parameter geometry, not the local fragment's row/matrix interpretation.
+    /// Actual original parameter geometry; [] is a rank-zero scalar, not an invented [1] logical axis.
     pub global_shape:Vec<usize>,
     /// Actual original data group owner.
     pub rank:u32,
@@ -67,7 +67,7 @@ impl FlatOptimizerTensorShard {
     }
     /// Original logical element count and physical local slot count, with checked topology arithmetic.
     pub fn geometry(&self) -> Result<(usize,usize),OptimizerShardError> {
-        if self.global_shape.is_empty() || self.global_shape.contains(&0) || self.world_size==0 || self.rank>=self.world_size {
+        if self.global_shape.contains(&0) || self.world_size==0 || self.rank>=self.world_size {
             return Err(OptimizerShardError::Placement("positive original FSDP axes and valid data rank/world required"));
         }
         let count=self.global_shape.iter().try_fold(1usize,|total,axis|total.checked_mul(*axis)).ok_or(OptimizerShardError::Placement("original flat parameter size overflows"))?;
