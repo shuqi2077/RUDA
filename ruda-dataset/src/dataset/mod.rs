@@ -1,9 +1,11 @@
 mod base;
 mod in_memory;
+mod indexed_jsonl;
 mod iterator;
 
 pub use base::*;
 pub use in_memory::*;
+pub use indexed_jsonl::*;
 pub use iterator::*;
 
 #[cfg(any(test, feature = "fake"))]

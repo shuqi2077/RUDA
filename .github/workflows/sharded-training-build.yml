@@ -9,6 +9,7 @@ on:
       - 'ruda-autodiff/**'
       - 'ruda-tensor/**'
       - 'ruda-model/**'
+      - 'ruda-dataset/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/sharded-training-build.yml'
