@@ -117,6 +117,31 @@ macro_rules! head_objectives {
                 -> Result<crate::loss::CausalLoss<Autodiff<B,S>>,C::Error> {
                 criterion.forward_sharded_packed_hidden(hidden,labels,packed,layout,communicator,|rows,group|self.forward(rows,group.clone(),layout,false),label_smoothing)
             }
+
+            /// Native local vocabulary log probabilities normalized over all real global classes.
+            /// Shared normalizer gradients combine complete class-shard contributions, not DP averages.
+            pub fn forward_log_probabilities<C:BroadcastTensorCollective<B>>(&self,hidden:Tensor<Autodiff<B,S>,2>,communicator:C,
+                layout:&VocabParallelLossLayout,visible:Option<Tensor<Autodiff<B,S>,1,Bool>>) -> Result<Tensor<Autodiff<B,S>,2>,C::Error> {
+                let logits = self.forward(hidden,communicator.clone(),layout,false)?;
+                layout.log_softmax(logits,communicator,visible)
+            }
+
+            /// Native complete-class KL distillation with actual local teacher distributions.
+            /// This criterion decides probability/log-target space; no teacher detachment or temperature is inferred.
+            pub fn forward_kl_terms<C:BroadcastTensorCollective<B>>(&self,hidden:Tensor<Autodiff<B,S>,2>,targets:Tensor<Autodiff<B,S>,2>,
+                criterion:&crate::loss::KLDivLoss,communicator:C,layout:&VocabParallelLossLayout,visible:Option<Tensor<Autodiff<B,S>,1,Bool>>)
+                -> Result<LossTerms<Autodiff<B,S>>,C::Error> {
+                let logits = self.forward(hidden,communicator.clone(),layout,false)?;
+                criterion.forward_sharded_logits_terms(logits,targets,layout,communicator,visible)
+            }
+
+            /// Actual per-token class-sharded KL from hidden states and explicit teacher targets.
+            pub fn forward_token_kl_terms<C:BroadcastTensorCollective<B>>(&self,hidden:Tensor<Autodiff<B,S>,3>,targets:Tensor<Autodiff<B,S>,3>,
+                criterion:&crate::loss::KLDivLoss,communicator:C,layout:&VocabParallelLossLayout,visible:Option<Tensor<Autodiff<B,S>,2,Bool>>)
+                -> Result<LossTerms<Autodiff<B,S>,2>,C::Error> {
+                let logits = self.forward(hidden,communicator.clone(),layout,false)?;
+                criterion.forward_sharded_token_logits_terms(logits,targets,layout,communicator,visible)
+            }
         }
     };
 }

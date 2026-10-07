@@ -63,9 +63,16 @@ struct Statistics<B: Backend,S: CheckpointStrategy> {
     weights: Option<Tensor<Autodiff<B,S>,2>>,
 }
 
-fn floating(dtype: DType) {
+pub(super) fn floating(dtype: DType) {
     assert!(matches!(dtype,DType::F16|DType::BF16|DType::F32|DType::Flex32|DType::F64),
         "vocabulary loss requires native floating operands");
+}
+
+pub(super) fn work_dtype<B:Backend,C:BroadcastTensorCollective<B>>(double:bool,device:&B::Device,communicator:&C) -> Result<DType,C::Error> {
+    let flag = Tensor::<B,1>::full([1],if double {1.} else {0.},(device,DType::F32));
+    let flag = communicator.all_reduce_sum(flag.into_primitive().tensor())?;
+    let double = Tensor::<B,1>::from_primitive(TensorPrimitive::Float(flag)).greater_elem(0).any().into_scalar().elem::<bool>();
+    Ok(if double {DType::F64} else {DType::F32})
 }
 
 fn product<B: Backend,S: CheckpointStrategy>(value: Tensor<Autodiff<B,S>,2>,coefficient: Tensor<Autodiff<B,S>,2>)
@@ -111,10 +118,7 @@ impl VocabParallelCrossEntropy {
             double |= weights.dtype() == DType::F64;
         }
         // One identical scalar collective selects a work dtype across uneven shards.
-        let flag = Tensor::<B,1>::full([1],if double {1.} else {0.},(&logits.device(),DType::F32));
-        let flag = communicator.all_reduce_sum(flag.into_primitive().tensor())?;
-        let double = Tensor::<B,1>::from_primitive(TensorPrimitive::Float(flag)).greater_elem(0).any().into_scalar().elem::<bool>();
-        let dtype = if double {DType::F64} else {DType::F32};
+        let dtype = work_dtype::<B,C>(double,&logits.device(),communicator)?;
         let logits = logits.cast(dtype);
         let real = Tensor::<Autodiff<B,S>,1,Int>::arange(interval.start as i64..interval.end as i64,(&logits.device(),DType::I64))
             .lower_elem(self.layout.vocabulary_size as i64).reshape([1,width]).expand([rows,width]);
@@ -245,5 +249,41 @@ impl VocabParallelCrossEntropy {
         let visible = visible.map(|mask| {assert_eq!(mask.dims(),[batch,tokens],"parallel soft token visibility differs");mask.reshape([rows])});
         self.forward_soft_terms(logits.reshape([rows,width]),targets.reshape([rows,width]),communicator,visible,class_weights)
             .map(|terms|terms.reshape([batch,tokens]))
+    }
+}
+
+impl VocabParallelLossLayout {
+    /// Normalize actual local logit shards over every real global class without gathering logits.
+    /// Returns native FP32 or globally selected FP64 log probabilities. Stored padding is -Inf;
+    /// explicitly excluded rows are zero and must keep that selection in downstream objectives.
+    /// Backward SUMs class-shard contributions to the shared normalizer for one logical TP loss.
+    pub fn log_softmax<B,S,C>(&self,logits:Tensor<Autodiff<B,S>,2>,communicator:C,visible:Option<Tensor<Autodiff<B,S>,1,Bool>>)
+        -> Result<Tensor<Autodiff<B,S>,2>,C::Error>
+        where B:Backend,S:CheckpointStrategy,C:BroadcastTensorCollective<B> {
+        self.log_softmax_for_dtype(logits,communicator,visible,None)
+    }
+
+    pub(super) fn log_softmax_for_dtype<B,S,C>(&self,logits:Tensor<Autodiff<B,S>,2>,communicator:C,
+        visible:Option<Tensor<Autodiff<B,S>,1,Bool>>,target_dtype:Option<DType>) -> Result<Tensor<Autodiff<B,S>,2>,C::Error>
+        where B:Backend,S:CheckpointStrategy,C:BroadcastTensorCollective<B> {
+        let criterion = VocabParallelCrossEntropy::new(self.clone(),0.,None);
+        let valid = criterion.visibility(&logits,visible);let [rows,width] = logits.dims();
+        let Statistics {shifted,log_sum,valid,..} = criterion.statistics(logits,valid,None,target_dtype,&communicator)?;
+        if rows == 0 {return Ok(shifted);}
+        let log_sum = region::copy_to_region(log_sum,communicator.clone())?;
+        let output = shifted-log_sum.reshape([rows,1]);
+        let interval = self.interval(communicator.rank() as usize);
+        let padding = Tensor::<Autodiff<B,S>,1,Int>::arange(interval.start as i64..interval.end as i64,(&output.device(),DType::I64))
+            .greater_equal_elem(self.vocabulary_size() as i64).reshape([1,width]).expand([rows,width]);
+        Ok(output.mask_fill(padding,f64::NEG_INFINITY).mask_fill(valid.bool_not().reshape([rows,1]).expand([rows,width]),0))
+    }
+
+    /// Native [batch,tokens,local_classes] log probabilities, retaining actual token axes.
+    pub fn log_softmax_tokens<B,S,C>(&self,logits:Tensor<Autodiff<B,S>,3>,communicator:C,visible:Option<Tensor<Autodiff<B,S>,2,Bool>>)
+        -> Result<Tensor<Autodiff<B,S>,3>,C::Error>
+        where B:Backend,S:CheckpointStrategy,C:BroadcastTensorCollective<B> {
+        let [batch,tokens,width] = logits.dims();let rows = batch.checked_mul(tokens).expect("parallel normalization token row count overflow");
+        let visible = visible.map(|mask| {assert_eq!(mask.dims(),[batch,tokens],"parallel normalization token visibility differs");mask.reshape([rows])});
+        self.log_softmax(logits.reshape([rows,width]),communicator,visible).map(|values|values.reshape([batch,tokens,width]))
     }
 }
