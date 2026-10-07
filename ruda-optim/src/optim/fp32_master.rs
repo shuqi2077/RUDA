@@ -11,6 +11,7 @@ use ruda_model::{
 };
 
 mod sharded_muon;
+mod flat_sharded_muon;
 
 /// Opt-in FP32 master parameters for an existing simple optimizer.
 ///

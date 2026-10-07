@@ -22,6 +22,8 @@ pub use grouped::{MuonAdamW,MuonAdamWConfig,MuonAdamWRecord,MuonShardedParameter
     Fp32MasterMuonShardedAdamW,Fp32MasterMuonShardedAdamWRecord};
 mod sharded;
 pub use sharded::*;
+mod flat_sharded;
+pub use flat_sharded::*;
 
 /// Momentum convention. Checkpoint buffers are NOT interchangeable between modes.
 #[derive(Clone, Default, Debug, Copy, PartialEq, Eq, Serialize, Deserialize)]
