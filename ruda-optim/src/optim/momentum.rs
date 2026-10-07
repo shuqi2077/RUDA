@@ -25,6 +25,11 @@ pub struct MomentumState<B: Backend, const D: usize> {
     velocity: Tensor<B, D>,
 }
 
+impl<B:Backend,const D:usize> super::OptimizerCheckpointBuffers<B,D> for MomentumState<B,D> {
+    fn visit_checkpoint_buffers<F:FnMut(&Tensor<B,D>)>(&self,visit:&mut F) {visit(&self.velocity);}
+    fn map_checkpoint_buffers<F:FnMut(Tensor<B,D>)->Tensor<B,D>>(self,map:&mut F) -> Self {Self {velocity:map(self.velocity)}}
+}
+
 /// Momentum implementation that transforms gradients.
 #[derive(Clone)]
 pub struct Momentum<B: Backend> {

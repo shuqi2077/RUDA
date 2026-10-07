@@ -147,11 +147,29 @@ pub struct RmsPropState<B: Backend, const D: usize> {
     pub momentum: Option<RmsPropMomentumState<B, D>>,
 }
 
+impl<B:Backend,const D:usize> super::OptimizerCheckpointBuffers<B,D> for RmsPropState<B,D> {
+    fn visit_checkpoint_buffers<F:FnMut(&Tensor<B,D>)>(&self,visit:&mut F) {
+        super::OptimizerCheckpointBuffers::visit_checkpoint_buffers(&self.square_avg,visit);
+        super::OptimizerCheckpointBuffers::visit_checkpoint_buffers(&self.centered,visit);
+        if let Some(momentum) = &self.momentum {super::OptimizerCheckpointBuffers::visit_checkpoint_buffers(momentum,visit);}
+    }
+    fn map_checkpoint_buffers<F:FnMut(Tensor<B,D>)->Tensor<B,D>>(self,map:&mut F) -> Self {
+        Self {square_avg:super::OptimizerCheckpointBuffers::map_checkpoint_buffers(self.square_avg,map),
+            centered:super::OptimizerCheckpointBuffers::map_checkpoint_buffers(self.centered,map),
+            momentum:self.momentum.map(|state|super::OptimizerCheckpointBuffers::map_checkpoint_buffers(state,map))}
+    }
+}
+
 /// [SquareAvgState](SquareAvgState) is to store and pass optimizer step params.
 #[derive(Record, Clone, new)]
 pub struct SquareAvgState<B: Backend, const D: usize> {
     /// Current squared average.
     pub square_avg: Tensor<B, D>,
+}
+
+impl<B:Backend,const D:usize> super::OptimizerCheckpointBuffers<B,D> for SquareAvgState<B,D> {
+    fn visit_checkpoint_buffers<F:FnMut(&Tensor<B,D>)>(&self,visit:&mut F) {visit(&self.square_avg);}
+    fn map_checkpoint_buffers<F:FnMut(Tensor<B,D>)->Tensor<B,D>>(self,map:&mut F) -> Self {Self {square_avg:map(self.square_avg)}}
 }
 
 impl<B: Backend, const D: usize> SquareAvgState<B, D> {
@@ -194,6 +212,13 @@ pub struct CenteredState<B: Backend, const D: usize> {
     pub grad_avg: Option<Tensor<B, D>>,
     /// The current average value.
     pub avg: Tensor<B, D>,
+}
+
+impl<B:Backend,const D:usize> super::OptimizerCheckpointBuffers<B,D> for CenteredState<B,D> {
+    fn visit_checkpoint_buffers<F:FnMut(&Tensor<B,D>)>(&self,visit:&mut F) {visit(&self.avg);if let Some(average) = &self.grad_avg {visit(average);}}
+    fn map_checkpoint_buffers<F:FnMut(Tensor<B,D>)->Tensor<B,D>>(self,map:&mut F) -> Self {
+        Self {avg:map(self.avg),grad_avg:self.grad_avg.map(map)}
+    }
 }
 
 impl<B: Backend, const D: usize> CenteredState<B, D> {
@@ -298,6 +323,11 @@ impl RmsPropMomentum {
 #[derive(Record, Clone, new)]
 pub struct RmsPropMomentumState<B: Backend, const D: usize> {
     buf: Tensor<B, D>,
+}
+
+impl<B:Backend,const D:usize> super::OptimizerCheckpointBuffers<B,D> for RmsPropMomentumState<B,D> {
+    fn visit_checkpoint_buffers<F:FnMut(&Tensor<B,D>)>(&self,visit:&mut F) {visit(&self.buf);}
+    fn map_checkpoint_buffers<F:FnMut(Tensor<B,D>)->Tensor<B,D>>(self,map:&mut F) -> Self {Self {buf:map(self.buf)}}
 }
 
 impl<B: Backend, const D: usize> RmsPropMomentumState<B, D> {

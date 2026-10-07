@@ -38,6 +38,15 @@ pub struct SgdState<B: Backend, const D: usize> {
     pub momentum: Option<MomentumState<B, D>>,
 }
 
+impl<B:Backend,const D:usize> super::OptimizerCheckpointBuffers<B,D> for SgdState<B,D> {
+    fn visit_checkpoint_buffers<F:FnMut(&Tensor<B,D>)>(&self,visit:&mut F) {
+        if let Some(momentum) = &self.momentum {super::OptimizerCheckpointBuffers::visit_checkpoint_buffers(momentum,visit);}
+    }
+    fn map_checkpoint_buffers<F:FnMut(Tensor<B,D>)->Tensor<B,D>>(self,map:&mut F) -> Self {
+        Self {momentum:self.momentum.map(|state|super::OptimizerCheckpointBuffers::map_checkpoint_buffers(state,map))}
+    }
+}
+
 impl SgdConfig {
     /// Build a [`Sgd`] from the config.
     pub fn build<B: Backend>(&self) -> Sgd<B> {

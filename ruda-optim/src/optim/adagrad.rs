@@ -38,6 +38,13 @@ pub struct AdaGradState<B: Backend, const D: usize> {
     lr_decay: LrDecayState<B, D>,
 }
 
+impl<B:Backend,const D:usize> super::OptimizerCheckpointBuffers<B,D> for AdaGradState<B,D> {
+    fn visit_checkpoint_buffers<F:FnMut(&Tensor<B,D>)>(&self,visit:&mut F) {super::OptimizerCheckpointBuffers::visit_checkpoint_buffers(&self.lr_decay,visit);}
+    fn map_checkpoint_buffers<F:FnMut(Tensor<B,D>)->Tensor<B,D>>(self,map:&mut F) -> Self {
+        Self {lr_decay:super::OptimizerCheckpointBuffers::map_checkpoint_buffers(self.lr_decay,map)}
+    }
+}
+
 impl<B: Backend> SimpleOptimizer<B> for AdaGrad {
     type State<const D: usize> = AdaGradState<B, D>;
 
@@ -104,6 +111,11 @@ impl AdaGradConfig {
 pub struct LrDecayState<B: Backend, const D: usize> {
     time: usize,
     sum: Tensor<B, D>,
+}
+
+impl<B:Backend,const D:usize> super::OptimizerCheckpointBuffers<B,D> for LrDecayState<B,D> {
+    fn visit_checkpoint_buffers<F:FnMut(&Tensor<B,D>)>(&self,visit:&mut F) {visit(&self.sum);}
+    fn map_checkpoint_buffers<F:FnMut(Tensor<B,D>)->Tensor<B,D>>(self,map:&mut F) -> Self {Self {time:self.time,sum:map(self.sum)}}
 }
 
 #[derive(Clone)]

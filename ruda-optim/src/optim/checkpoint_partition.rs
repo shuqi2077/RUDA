@@ -1,9 +1,34 @@
 use alloc::vec::Vec;
 use core::{fmt,ops::Range};
 use hashbrown::HashMap;
-use ruda_model::{module::ParamId,tensor::{Tensor,DType,backend::{Backend,AutodiffBackend}}};
+use ruda_model::{module::ParamId,record::Record,tensor::{Tensor,DType,backend::{Backend,AutodiffBackend}}};
 use super::{AdaptiveMomentumState,AdamState,AdamWState,Adam,AdamW,Fp32MasterOptimizer,Fp32MasterState,
-    record::{AdaptorRecord,AdaptorRecordV1}};
+    Sgd,SgdState,AdaGrad,AdaGradState,LrDecayState,RmsProp,RmsPropState,SquareAvgState,CenteredState,RmsPropMomentumState,
+    Adan,AdanState,AdaptiveNesterovMomentumState,momentum::MomentumState,record::{AdaptorRecord,AdaptorRecordV1}};
+
+/// Native same-geometry optimizer checkpoint buffers, independent of optimizer configuration.
+/// Visit/map every actual moment/history tensor in the same order, retaining scalar metadata and
+/// genuinely absent optional state. Factored or non-coordinate state needs its own placement semantics.
+pub trait OptimizerCheckpointBuffers<B:Backend,const D:usize>:Record<B>+Clone {
+    /// Visit actual stored buffers only, without tensor readback or inventing missing moments.
+    fn visit_checkpoint_buffers<F:FnMut(&Tensor<B,D>)>(&self,visit:&mut F);
+    /// Transform every actual buffer, preserving original counters/options and non-tensor state.
+    fn map_checkpoint_buffers<F:FnMut(Tensor<B,D>)->Tensor<B,D>>(self,map:&mut F) -> Self;
+}
+
+/// Slice one actual coordinate-wise native optimizer state using its exact model parameter placement.
+/// Original counter/optional-state values and buffer precision/device remain unchanged.
+pub fn partition_native_optimizer_state<B:Backend,const D:usize,S:OptimizerCheckpointBuffers<B,D>>(state:S,shard:&OptimizerTensorShard)
+    -> Result<S,OptimizerShardError> {
+    shard.validate()?;
+    if shard.global_shape.len() != D {return Err(OptimizerShardError::Shape("native state rank differs from source parameter"));}
+    let mut buffers = Vec::new();state.visit_checkpoint_buffers(&mut |value|buffers.push(value.clone()));
+    for value in &buffers {
+        shard.check(value,"native optimizer buffer")?;
+        if let Some(reference) = buffers.first() {check_buffer(value,reference,"native optimizer buffer")?;}
+    }
+    Ok(state.map_checkpoint_buffers(&mut |value|shard.slice(value)))
+}
 
 /// Explicit original tensor geometry and its actual contiguous optimizer-state shard.
 /// Use the same axis/interval as the corresponding loaded native model parameter.
@@ -89,28 +114,65 @@ macro_rules! adaptive_state {
                 Ok(Self {momentum:self.momentum.try_into_shard(shard)?})
             }
         }
-        impl<B:Backend,const D:usize> Fp32MasterState<B,D,$state<B,D>> {
-            /// Slice original FP32 master and matching native optimizer buffers as one continuation state.
-            /// A genuinely absent inner state stays absent; no zero moments or new step counter are invented.
-            pub fn try_into_shard(self,shard:&OptimizerTensorShard) -> Result<Self,OptimizerShardError> {
-                shard.check(&self.master,"FP32 master")?;
-                if self.master.dtype() != DType::F32 {return Err(OptimizerShardError::DType("master must remain FP32"));}
-                if let Some(inner) = &self.inner {
-                    check_buffer(&inner.momentum.moment_1,&self.master,"first moment/master")?;
-                    check_buffer(&inner.momentum.moment_2,&self.master,"second moment/master")?;
-                    if let Some(maximum) = &inner.momentum.max_moment_2 {check_buffer(maximum,&self.master,"AMSGrad maximum/master")?;}
-                }
-                Ok(Self {master:shard.slice(self.master),inner:self.inner.map(|state|state.try_into_shard(shard)).transpose()?})
-            }
-        }
     };
 }
 adaptive_state!(AdamState);
 adaptive_state!(AdamWState);
 
+impl<B:Backend,const D:usize,S:OptimizerCheckpointBuffers<B,D>> Fp32MasterState<B,D,S> {
+    /// Slice actual FP32 master and corresponding native same-geometry state without resetting buffers.
+    /// A genuinely absent inner state remains absent; non-FP32 or incompatible moments are rejected.
+    pub fn try_into_shard(self,shard:&OptimizerTensorShard) -> Result<Self,OptimizerShardError> {
+        shard.check(&self.master,"FP32 master")?;
+        if self.master.dtype() != DType::F32 {return Err(OptimizerShardError::DType("master must remain FP32"));}
+        let mut buffers = Vec::new();
+        if let Some(inner) = &self.inner {inner.visit_checkpoint_buffers(&mut |value|buffers.push(value.clone()));}
+        for value in &buffers {check_buffer(value,&self.master,"native moment/master")?;}
+        Ok(Self {master:shard.slice(self.master),inner:self.inner.map(|state|partition_native_optimizer_state(state,shard)).transpose()?})
+    }
+}
+
+impl<B:Backend,const D:usize> OptimizerCheckpointBuffers<B,D> for AdaptiveMomentumState<B,D> {
+    fn visit_checkpoint_buffers<F:FnMut(&Tensor<B,D>)>(&self,visit:&mut F) {
+        visit(&self.moment_1);visit(&self.moment_2);if let Some(maximum) = &self.max_moment_2 {visit(maximum);}
+    }
+    fn map_checkpoint_buffers<F:FnMut(Tensor<B,D>)->Tensor<B,D>>(self,map:&mut F) -> Self {
+        Self {time:self.time,moment_1:map(self.moment_1),moment_2:map(self.moment_2),max_moment_2:self.max_moment_2.map(map)}
+    }
+}
+
+macro_rules! adaptive_buffers {
+    ($state:ident) => {
+        impl<B:Backend,const D:usize> OptimizerCheckpointBuffers<B,D> for $state<B,D> {
+            fn visit_checkpoint_buffers<F:FnMut(&Tensor<B,D>)>(&self,visit:&mut F) {self.momentum.visit_checkpoint_buffers(visit);}
+            fn map_checkpoint_buffers<F:FnMut(Tensor<B,D>)->Tensor<B,D>>(self,map:&mut F) -> Self {Self {momentum:self.momentum.map_checkpoint_buffers(map)}}
+        }
+    };
+}
+adaptive_buffers!(AdamState);
+adaptive_buffers!(AdamWState);
+adaptive_buffers!(AdanState);
+
+impl<B:Backend,const D:usize> OptimizerCheckpointBuffers<B,D> for AdaptiveNesterovMomentumState<B,D> {
+    fn visit_checkpoint_buffers<F:FnMut(&Tensor<B,D>)>(&self,visit:&mut F) {visit(&self.exp_avg);visit(&self.exp_avg_sq);visit(&self.exp_avg_diff);visit(&self.neg_pre_grad);}
+    fn map_checkpoint_buffers<F:FnMut(Tensor<B,D>)->Tensor<B,D>>(self,map:&mut F) -> Self {
+        Self {time:self.time,exp_avg:map(self.exp_avg),exp_avg_sq:map(self.exp_avg_sq),exp_avg_diff:map(self.exp_avg_diff),neg_pre_grad:map(self.neg_pre_grad)}
+    }
+}
+
+macro_rules! native_state {
+    ($($state:ident),+) => {$(
+        impl<B:Backend,const D:usize> $state<B,D> {
+            /// Partition actual native buffers, preserving original counters and optional-state absence.
+            pub fn try_into_shard(self,shard:&OptimizerTensorShard) -> Result<Self,OptimizerShardError> {partition_native_optimizer_state(self,shard)}
+        }
+    )+};
+}
+native_state!(SgdState,MomentumState,AdaGradState,LrDecayState,RmsPropState,SquareAvgState,CenteredState,RmsPropMomentumState,AdanState,AdaptiveNesterovMomentumState);
+
 macro_rules! adaptor_partition {
     ($name:ident,$map:ident,$optimizer:ty) => {
-        /// Partition an actual native adaptive optimizer record, retaining its original version/rank/time/precision.
+        /// Partition an actual native optimizer record, retaining its original version/rank/time/precision.
         pub fn $name<B:AutodiffBackend>(record:AdaptorRecord<$optimizer,B>,shard:&OptimizerTensorShard)
             -> Result<AdaptorRecord<$optimizer,B>,OptimizerShardError> {
             Ok(AdaptorRecord::V1(match record {AdaptorRecord::V1(record)=>match record {
@@ -140,3 +202,11 @@ adaptor_partition!(partition_adam_record,partition_adam_records,Adam);
 adaptor_partition!(partition_adamw_record,partition_adamw_records,AdamW);
 adaptor_partition!(partition_adam_master_record,partition_adam_master_records,Fp32MasterOptimizer<Adam>);
 adaptor_partition!(partition_adamw_master_record,partition_adamw_master_records,Fp32MasterOptimizer<AdamW>);
+adaptor_partition!(partition_sgd_record,partition_sgd_records,Sgd<B::InnerBackend>);
+adaptor_partition!(partition_adagrad_record,partition_adagrad_records,AdaGrad);
+adaptor_partition!(partition_rmsprop_record,partition_rmsprop_records,RmsProp);
+adaptor_partition!(partition_adan_record,partition_adan_records,Adan);
+adaptor_partition!(partition_sgd_master_record,partition_sgd_master_records,Fp32MasterOptimizer<Sgd<B::InnerBackend>>);
+adaptor_partition!(partition_adagrad_master_record,partition_adagrad_master_records,Fp32MasterOptimizer<AdaGrad>);
+adaptor_partition!(partition_rmsprop_master_record,partition_rmsprop_master_records,Fp32MasterOptimizer<RmsProp>);
+adaptor_partition!(partition_adan_master_record,partition_adan_master_records,Fp32MasterOptimizer<Adan>);
