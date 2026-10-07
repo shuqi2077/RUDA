@@ -3,6 +3,9 @@ use super::sharded::ShardedReductions;
 use hashbrown::HashMap;
 use ruda_model::{record::PrecisionSettings,tensor::BroadcastTensorCollective};
 
+mod partition;
+pub use partition::LBFGSMasterTensorShard;
+
 /// Actual unique trainable parameter identity, shape and incoming model storage precision.
 #[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
 pub struct LBFGSMasterParameter {
