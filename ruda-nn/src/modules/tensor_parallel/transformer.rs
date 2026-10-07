@@ -66,6 +66,24 @@ impl<B: Backend> TensorParallelTransformerBlock<B> {
             attention_norm:self.attention_norm,feed_forward_norm:self.feed_forward_norm,residual_dropout:self.residual_dropout,norm_first:self.norm_first}
     }
 
+    /// Native self-attention stage alone, before a model's actual cross-memory stage.
+    pub fn forward_attention_inference<C,F>(&self,input: Tensor<B,3>,masks: DenseAttentionMask<B>,options: DenseAttentionOptions,
+        communicator: C,positions: F) -> Result<Tensor<B,3>,C::Error>
+        where C: BroadcastTensorCollective<B>,F: FnOnce(Tensor<B,4>,Tensor<B,4>)->(Tensor<B,4>,Tensor<B,4>) {
+        residual(input,&self.attention_norm,self.norm_first,|source| {
+            let (query,key,value) = self.attention.local.project(source.clone(),source.clone(),source);
+            let geometry = (query.dims(),key.dims());let (query,key) = positions(query,key);
+            assert_eq!((query.dims(),key.dims()),geometry,"native parallel attention positions changed local geometry");
+            self.attention.forward_projected_inference(query,key,value,masks,options,communicator)
+        },|branch|self.residual_dropout.forward(branch))
+    }
+
+    /// Native FFN stage without rerunning attention or changing normalization order.
+    pub fn forward_feed_forward_inference<C: BroadcastTensorCollective<B>>(&self,input: Tensor<B,3>,communicator: C) -> Result<Tensor<B,3>,C::Error> {
+        residual(input,&self.feed_forward_norm,self.norm_first,|source|self.feed_forward.forward_inference(source,communicator),
+            |branch|self.residual_dropout.forward(branch))
+    }
+
     /// Native inference using existing backend attention/FFN and explicit output collectives.
     /// Positions are applied to actual local Q/K heads, never to a synthetic full model.
     pub fn forward_inference<C,F>(&self,input: Tensor<B,3>,masks: DenseAttentionMask<B>,options: DenseAttentionOptions,

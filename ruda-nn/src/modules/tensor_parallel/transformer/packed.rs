@@ -2,6 +2,26 @@ use super::{Autodiff,Backend,BroadcastTensorCollective,CheckpointStrategy,Attent
 use crate::attention::{PackedSequenceLayout,PackedAttentionOptions,PackedDocumentAttentionMask};
 
 impl<B: Backend> TensorParallelTransformerBlock<B> {
+    /// Native packed attention stage alone, before an actual packed source-memory stage.
+    pub fn forward_packed_attention_inference<C,F>(&self,input: Tensor<B,2>,layout: &PackedSequenceLayout,
+        masks: Option<&[PackedDocumentAttentionMask<B>]>,options: PackedAttentionOptions,communicator: C,positions: F)
+        -> Result<Tensor<B,2>,C::Error>
+        where C: BroadcastTensorCollective<B>,F: FnOnce(Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
+        assert_eq!(input.dims()[0],layout.tokens(),"native packed attention boundaries differ from actual rows");
+        residual(input,&self.attention_norm,self.norm_first,|source| {
+            let (query,key,value) = self.attention.local.project_packed(source.clone(),source.clone(),source);
+            let geometry = (query.dims(),key.dims());let (query,key) = positions(query,key);
+            assert_eq!((query.dims(),key.dims()),geometry,"native packed attention positions changed actual heads");
+            self.attention.forward_packed_projected_inference(query,key,value,layout,layout,masks,options,communicator)
+        },|branch|self.residual_dropout.forward(branch))
+    }
+
+    /// Native packed FFN after the architecture's actual self/cross attention stages.
+    pub fn forward_packed_feed_forward_inference<C: BroadcastTensorCollective<B>>(&self,input: Tensor<B,2>,communicator: C) -> Result<Tensor<B,2>,C::Error> {
+        residual(input,&self.feed_forward_norm,self.norm_first,|source|self.feed_forward.forward_inference(source,communicator),
+            |branch|self.residual_dropout.forward(branch))
+    }
+
     /// Native independent-document inference on actual local heads and flat token rows.
     pub fn forward_packed_inference<C,F>(&self,input: Tensor<B,2>,layout: &PackedSequenceLayout,
         masks: Option<&[PackedDocumentAttentionMask<B>]>,options: PackedAttentionOptions,communicator: C,positions: F)

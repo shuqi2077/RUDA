@@ -5,6 +5,9 @@ use crate::{Dropout,attention::{DenseAttentionMask,DenseAttentionOptions},cache:
     transformer::{DenseCrossAttentionBlock,DenseTransformerNorm,DenseEncoderDecoderLayer,DenseEncoderDecoderStack}};
 use super::{AttentionParallelGroups,TensorParallelGroupedQueryAttention,TensorParallelTransformerBlock,BroadcastTensorCollective};
 
+mod native;
+mod packed;
+
 /// Original residual cross-attention with actual local Q/K/V and output-row shards.
 /// Query and memory widths, independent norms and pre/post order are unchanged.
 #[derive(Module,Debug)]

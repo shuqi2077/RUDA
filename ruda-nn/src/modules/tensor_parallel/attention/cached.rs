@@ -32,6 +32,26 @@ pub(in crate::modules::tensor_parallel) fn append<B: Backend>(query: &Tensor<B,4
 }
 
 impl<B: Backend> TensorParallelGroupedQueryAttention<B> {
+    /// Native query-only projection on this rank's actual local heads.
+    pub fn project_query_inference(&self,input: Tensor<B,3>) -> Tensor<B,4> {
+        let [batch,tokens,_] = input.dims();
+        self.local.query.forward(input).reshape([batch,tokens,self.local.query_heads,self.local.head_dimension]).swap_dims(1,2)
+    }
+
+    /// Native immutable memory projection without materializing unused query heads.
+    pub fn project_memory_inference(&self,input: Tensor<B,3>) -> (Tensor<B,4>,Tensor<B,4>) {
+        let [batch,tokens,_] = input.dims();
+        (self.local.key.forward(input.clone()).reshape([batch,tokens,self.local.kv_heads,self.local.head_dimension]).swap_dims(1,2),
+            self.local.value.forward(input).reshape([batch,tokens,self.local.kv_heads,self.local.head_dimension]).swap_dims(1,2))
+    }
+
+    /// Native inference over actual prepared source K/V and persistent source visibility.
+    pub fn forward_cached_memory_inference<C: BroadcastTensorCollective<B>>(&self,query: Tensor<B,4>,memory: &ProjectedKvCache<B>,
+        mask: DenseAttentionMask<B>,options: DenseAttentionOptions,communicator: C) -> Result<Tensor<B,3>,C::Error> {
+        let (key,value,visible) = memory.prefix().expect("prepare this rank's actual native source K/V first");
+        self.forward_projected_inference(query,key,value,masks(mask,visible),options,communicator)
+    }
+
     /// Native local-shard cached inference; query/output are reduced without head gathers.
     /// Only actual new projected K/V are appended, with persistent explicit visibility.
     pub fn forward_cached_projected_inference<C: BroadcastTensorCollective<B>>(&self,query: Tensor<B,4>,key: Tensor<B,4>,value: Tensor<B,4>,
