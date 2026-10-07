@@ -8,7 +8,7 @@ use ruda_model::module::{AutodiffModule, Module, ModuleMapper, ModuleVisitor, Pa
 use ruda_model::prelude::ToElement;
 use ruda_model::record::Record;
 use ruda_model::tensor::backend::Backend;
-use ruda_model::tensor::{Tensor, backend::AutodiffBackend, container::TensorContainer};
+use ruda_model::tensor::{Tensor, DType, backend::AutodiffBackend, container::TensorContainer};
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +21,9 @@ use num_traits::Float as _;
 mod line_search;
 mod reductions;
 mod sharded;
+mod fp32_master;
 pub use sharded::*;
+pub use fp32_master::*;
 use line_search::strong_wolfe_with_reductions;
 use reductions::{LocalReductions, VectorReductions};
 #[cfg(test)]
@@ -90,6 +92,7 @@ struct FlattenGradsVisitorInner<'a, B: AutodiffBackend> {
     grads: &'a GradientsParams,
     tensors: &'a mut Vec<Tensor<B::InnerBackend, 1>>,
     seen: HashSet<ParamId>,
+    dtype: Option<DType>,
 }
 
 impl<B: AutodiffBackend> ModuleVisitor<B> for FlattenGradsVisitorInner<'_, B> {
@@ -100,6 +103,7 @@ impl<B: AutodiffBackend> ModuleVisitor<B> for FlattenGradsVisitorInner<'_, B> {
         }
         let grad = self.grads.get::<B::InnerBackend, D>(param.id)
             .unwrap_or_else(|| tensor.inner().zeros_like());
+        let grad = if let Some(dtype) = self.dtype { grad.cast(dtype) } else { grad };
         let numel = grad.shape().num_elements();
         self.tensors.push(grad.reshape([numel]));
     }
@@ -142,12 +146,14 @@ impl<B: AutodiffBackend> ModuleVisitor<B> for FlattenParamsVisitorInner<'_, B> {
 fn flatten_grads_inner<B: AutodiffBackend, M: Module<B>>(
     module: &M,
     grads: &GradientsParams,
+    dtype: Option<DType>,
 ) -> Tensor<B::InnerBackend, 1> {
     let mut tensors = Vec::new();
     let mut visitor = FlattenGradsVisitorInner {
         grads,
         tensors: &mut tensors,
         seen: HashSet::new(),
+        dtype,
     };
     module.visit(&mut visitor);
     if tensors.is_empty() {
@@ -161,6 +167,7 @@ struct ParamsFromFlatMapperInner<'a, B: AutodiffBackend> {
     flat: &'a Tensor<B::InnerBackend, 1>,
     offset: &'a mut usize,
     updated: TensorContainer<ParamId>,
+    preserve_storage: bool,
 }
 
 impl<B: AutodiffBackend> ParamsFromFlatMapperInner<'_, B> {
@@ -183,6 +190,7 @@ impl<B: AutodiffBackend> ModuleMapper<B> for ParamsFromFlatMapperInner<'_, B> {
         let numel = tensor.shape().num_elements();
         let slice_1d = self.take_slice(numel);
         let new_inner = slice_1d.reshape(tensor.shape());
+        let new_inner = if self.preserve_storage { new_inner.cast(tensor.dtype()) } else { new_inner };
         let new_tensor = Tensor::from_inner(new_inner).require_grad();
         self.updated.register::<B>(id, new_tensor.clone().into_primitive());
         Param::from_mapped_value(id, new_tensor, mapper)
@@ -193,12 +201,14 @@ impl<B: AutodiffBackend> ModuleMapper<B> for ParamsFromFlatMapperInner<'_, B> {
 fn set_params_from_flat_inner<B: AutodiffBackend, M: Module<B>>(
     module: M,
     flat: Tensor<B::InnerBackend, 1>,
+    preserve_storage: bool,
 ) -> M {
     let mut offset = 0;
     let mut mapper = ParamsFromFlatMapperInner {
         flat: &flat,
         offset: &mut offset,
         updated: TensorContainer::new(),
+        preserve_storage,
     };
     module.map(&mut mapper)
 }
@@ -297,7 +307,9 @@ impl<B: Backend + AutodiffBackend> LBFGS<B> {
             |model| Ok(closure(model)),
             &mut LocalReductions,
             None,
+            false,
         )
+        .map(|(model, loss, _)| (model, loss))
         .unwrap_or_else(|error| match error {})
     }
 
@@ -308,7 +320,8 @@ impl<B: Backend + AutodiffBackend> LBFGS<B> {
         mut closure: F,
         reductions: &mut R,
         initial_params: Option<Tensor<B::InnerBackend, 1>>,
-    ) -> Result<(M, f64), R::Error>
+        fp32_master: bool,
+    ) -> Result<(M, f64, Option<Tensor<B::InnerBackend, 1>>), R::Error>
     where
         M: AutodiffModule<B> + Clone,
         F: FnMut(M) -> Result<(f64, GradientsParams), R::Error>,
@@ -318,21 +331,22 @@ impl<B: Backend + AutodiffBackend> LBFGS<B> {
         let (mut loss, grads) = closure(module.clone())?;
         let mut current_evals = 1;
         if self.config.max_iter == 0 || current_evals >= self.config.max_eval.unwrap() {
-            return Ok((module, loss));
+            return Ok((module, loss, initial_params));
         }
 
         let Some(mut x_flat) = initial_params.or_else(|| flatten_params_inner::<B, M>(&module)) else {
-            return Ok((module, loss));
+            return Ok((module, loss, None));
         };
         if x_flat.shape().num_elements() == 0 {
-            return Ok((module, loss));
+            return Ok((module, loss, Some(x_flat)));
         }
-        let mut flat_grad = flatten_grads_inner::<B, M>(&module, &grads);
+        let grad_dtype = if fp32_master { Some(DType::F32) } else { None };
+        let mut flat_grad = flatten_grads_inner::<B, M>(&module, &grads, grad_dtype);
 
         let opt_cond = reductions.max_abs(&flat_grad)? <= self.config.tolerance_grad;
         // optimal condition
         if opt_cond {
-            return Ok((module, loss));
+            return Ok((module, loss, Some(x_flat)));
         }
 
         // tensors cached in state
@@ -451,9 +465,9 @@ impl<B: Backend + AutodiffBackend> LBFGS<B> {
                      dir: &Tensor<B::InnerBackend, 1>| {
                         let update = dir.clone().mul_scalar(step);
                         let new_x = current_x.clone().add(update);
-                        let tmp_module = set_params_from_flat_inner::<B, M>(module.clone(), new_x);
+                        let tmp_module = set_params_from_flat_inner::<B, M>(module.clone(), new_x, fp32_master);
                         let (l, g) = closure(tmp_module)?;
-                        Ok((l, flatten_grads_inner::<B, M>(&module, &g)))
+                        Ok((l, flatten_grads_inner::<B, M>(&module, &g, grad_dtype)))
                     };
 
                 let (ls_f, ls_g, ls_t, evals) = strong_wolfe_with_reductions(
@@ -477,18 +491,18 @@ impl<B: Backend + AutodiffBackend> LBFGS<B> {
                 ls_func_evals = evals;
 
                 x_flat = x_flat.add(d.clone().mul_scalar(t));
-                module = set_params_from_flat_inner::<B, M>(module, x_flat.clone());
+                module = set_params_from_flat_inner::<B, M>(module, x_flat.clone(), fp32_master);
             } else {
                 // no line search, simply move with fixed-step
                 let step_vec = d.clone().mul_scalar(t);
                 x_flat = x_flat.add(step_vec);
-                module = set_params_from_flat_inner::<B, M>(module, x_flat.clone());
+                module = set_params_from_flat_inner::<B, M>(module, x_flat.clone(), fp32_master);
                 // re-evaluate function only if not in last iteration
                 // the reason we do this: in a stochastic setting,
                 // no use to re-evaluate that function here
                 let (new_loss, new_grads) = closure(module.clone())?;
                 loss = new_loss;
-                flat_grad = flatten_grads_inner::<B, M>(&module, &new_grads);
+                flat_grad = flatten_grads_inner::<B, M>(&module, &new_grads, grad_dtype);
                 ls_func_evals = 1;
             }
 
@@ -519,7 +533,7 @@ impl<B: Backend + AutodiffBackend> LBFGS<B> {
         state.prev_flat_grad = prev_flat_grad;
         state.prev_loss = Some(loss);
         self.state = state;
-        Ok((module, loss))
+        Ok((module, loss, Some(x_flat)))
     }
     /// Moves the optimizer state to the specified device.
     pub fn to_device(self, device: &B::Device) -> Self {

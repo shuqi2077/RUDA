@@ -123,7 +123,7 @@ impl<B: Backend> LBFGSState<B> {
             .chain(self.d.iter()).chain(self.prev_flat_grad.iter())
     }
 
-    fn validate_vectors(
+    pub(super) fn validate_vectors(
         &self,
         length: usize,
         reference: Option<&Tensor<B, 1>>,
@@ -332,8 +332,8 @@ impl<B: Backend> Record<B> for LBFGSShardedState<B> {
     }
 }
 
-struct ShardedReductions<'a, C> {
-    communicator: &'a C,
+pub(super) struct ShardedReductions<'a, C> {
+    pub(super) communicator: &'a C,
 }
 
 impl<C> ShardedReductions<'_, C> {
@@ -460,7 +460,8 @@ impl<B: AutodiffBackend> LBFGS<B> {
         }
         self.state.validate_vectors(length, Some(&parameters))?;
         self.try_step_with_reductions(
-            lr, module, closure, &mut ShardedReductions { communicator }, Some(parameters),
+            lr, module, closure, &mut ShardedReductions { communicator }, Some(parameters), false,
         )
+        .map(|(model, loss, _)| (model, loss))
     }
 }
