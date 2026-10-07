@@ -67,7 +67,7 @@ pub fn clip_fully_sharded_gradient_norm<B,M,C>(module:&M,gradients:&mut Gradient
     let mut square_sum=Tensor::<B::InnerBackend,1>::zeros([1],(device,DType::from(dtype)));
     for id in proposed.container.ids() {
         let value=proposed.get::<B::InnerBackend,1>(*id).ok_or_else(||invalid(FullyShardedAccumulationError::State))?;
-        let device=value.device();let value=value/safe_maximum.clone().to_device(&device);
+        let gradient_device=value.device();let value=value/safe_maximum.clone().to_device(&gradient_device);
         square_sum=square_sum+value.square().sum().to_device(device);
     }
     let square_sum=if world==1 {square_sum} else {Tensor::<B::InnerBackend,1>::from_primitive(TensorPrimitive::Float(

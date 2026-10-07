@@ -1,6 +1,10 @@
 use super::*;
 
 impl FullyShardedGradientsRecord {
+    /// Exact original whole-window count/scale/precision continuation, without draining saved gradients.
+    pub fn state(&self) -> &FullyShardedAccumulationState {&self.state}
+    /// Actual canonical parameter count, including globally unused/frozen leaves with no pending gradients.
+    pub fn parameter_count(&self) -> usize {self.placement.len()}
     /// Offline ownership migration of one actual pending SUM-gradient window from a complete original rank set.
     /// Values are overlap-copied, not summed again: saved FSDP buffers are already globally reduce-scattered.
     /// Original IDs, absent gradients, fixed scale and exact GLOBAL count/window counters remain unchanged.
@@ -11,6 +15,8 @@ impl FullyShardedGradientsRecord {
         if first.version!=1 || target_world==0 || target_rank>=target_world {return Err(invalid("invalid pending-gradient reshard version/topology"));}
         work_dtype(&first.state).map_err(|error|invalid(&error.to_string()))?;
         let source_world=u32::try_from(records.len()).map_err(|_|invalid("original rank count exceeds topology range"))?;
+        let canonical=first.placement.iter().map(|entry|entry.0).collect::<BTreeSet<_>>();
+        if canonical.len()!=first.placement.len() {return Err(invalid("duplicate original pending-gradient parameter identity"));}
         let mut ordered=Vec::with_capacity(records.len());let mut ranks=BTreeSet::new();
         for record in records {
             if record.version!=1 || record.state!=first.state || record.placement.len()!=first.placement.len() {

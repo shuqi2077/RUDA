@@ -18,6 +18,30 @@ impl<B:Backend> Record<B> for FullyShardedWeightedGradientsRecord<B> {
         Self {window,global_weight}
     }
 }
+impl<B:Backend> FullyShardedWeightedGradientsRecord<B> {
+    /// Exact integer continuation metadata, separately from the native fractional denominator.
+    pub fn state(&self) -> &FullyShardedAccumulationState {&self.window.state}
+    /// Actual native globally coordinated whole-window denominator.
+    pub fn global_weight(&self) -> Tensor<B,1> {self.global_weight.clone()}
+    /// Migrate one complete original rank set without another gradient or normalizer SUM.
+    /// Each saved denominator is already global and must match exactly; it is copied once.
+    pub fn reshard(records:&[Self],target_rank:u32,target_world:u32,device:&B::Device) -> Result<Self,RecorderError> {
+        let invalid=|message:&str|RecorderError::Unknown(message.to_string());
+        let first=records.first().ok_or_else(||invalid("complete original weighted pending-gradient rank set required"))?;
+        let expected=first.global_weight.clone().into_data().iter::<f64>().next().ok_or_else(||invalid("actual global weight scalar required"))?;
+        if !expected.is_finite() || expected<0.0 {return Err(invalid("saved effective weight must be finite and nonnegative"));}
+        for record in records {
+            if record.global_weight.dims()!=[1] || record.global_weight.dtype()!=record.window.state.dtype {
+                return Err(invalid("saved global weight geometry/work precision differs"));
+            }
+            let weight=record.global_weight.clone().into_data().iter::<f64>().next().ok_or_else(||invalid("actual global weight scalar required"))?;
+            if weight!=expected || (record.window.state.microbatches==0 && weight!=0.0) {return Err(invalid("actual global weights differ across saved rank windows"));}
+        }
+        let windows=records.iter().map(|record|record.window.clone()).collect::<Vec<_>>();
+        let window=FullyShardedGradientsRecord::reshard::<B>(&windows,target_rank,target_world,device)?;
+        Ok(Self {window,global_weight:first.global_weight.clone().to_device(device)})
+    }
+}
 
 /// Actual globally weighted accumulation result, preserving selected-element counts separately.
 pub struct FullyShardedWeightedAccumulatedGradients<B:Backend> {
