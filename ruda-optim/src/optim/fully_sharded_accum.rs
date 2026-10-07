@@ -6,7 +6,7 @@ use serde::{Serialize,Deserialize};
 use super::{GradientsAccumulator,GradientsParams,GradientsParamsRecord,GradientTransformError,FullyShardedOptimizerParameter};
 use super::gradient_transform::{validate_work_dtype,representable};
 
-type Placement=Vec<(u64,Vec<usize>,u32,u32,DType,bool)>;
+pub(super) type Placement=Vec<(u64,Vec<usize>,u32,u32,DType,bool)>;
 
 mod weighted;
 pub use weighted::*;
@@ -225,7 +225,7 @@ fn elements(shape:&[usize]) -> Result<usize,FullyShardedAccumulationError> {
     if shape.is_empty() || shape.contains(&0) {return Err(FullyShardedAccumulationError::Placement("positive original logical axes required"));}
     shape.iter().try_fold(1usize,|total,axis|total.checked_mul(*axis)).ok_or(FullyShardedAccumulationError::Placement("original parameter size overflows"))
 }
-fn inspect<B:AutodiffBackend,M:AutodiffModule<B>>(module:&M,placement:&Placement,match_storage:bool) -> Result<Placement,FullyShardedAccumulationError> {
+pub(super) fn inspect<B:AutodiffBackend,M:AutodiffModule<B>>(module:&M,placement:&Placement,match_storage:bool) -> Result<Placement,FullyShardedAccumulationError> {
     let mut visitor=Inspect {declared:placement.iter().map(|entry|(entry.0,entry)).collect(),found:BTreeMap::new(),match_storage,error:None};
     module.visit(&mut visitor);
     if let Some(error)=visitor.error {return Err(error);}

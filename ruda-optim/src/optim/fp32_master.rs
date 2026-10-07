@@ -76,9 +76,8 @@ impl<O> Fp32MasterOptimizer<O> {
     }
 }
 
-#[cfg(feature="collective")]
-impl<B:Backend,O:crate::data_parallel::zero2::ElementwiseShardOptimizer<B>>
-    crate::data_parallel::zero2::ElementwiseShardOptimizer<B> for Fp32MasterOptimizer<O> {
+impl<B:Backend,O:crate::ElementwiseShardOptimizer<B>>
+    crate::ElementwiseShardOptimizer<B> for Fp32MasterOptimizer<O> {
     fn validate_element_sharding(&self)->Result<(),&'static str> {
         if self.grad_clipping.is_some() {
             return Err("tensor-wide clipping must run before ZeRO-2 gradient sharding");

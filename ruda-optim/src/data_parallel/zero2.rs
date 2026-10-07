@@ -1,22 +1,9 @@
 //! Element-sharded optimizer states and reduce-scattered gradients (ZeRO-2).
 use super::*;
-use crate::{Adam, AdamW, Sgd, LearningRate, SimpleOptimizer};
+use crate::{LearningRate, SimpleOptimizer};
 use ruda_model::record::{PrecisionSettings, Record};
 
-/// An optimizer whose update is independent for each element of a parameter.
-///
-/// Matrix optimizers such as Muon must not implement this trait: flattening and
-/// independently updating fragments changes their mathematical algorithm.
-/// Tensor-wide clipping/normalization belongs before sharding, not in this update.
-pub trait ElementwiseShardOptimizer<B: Backend>: SimpleOptimizer<B> {
-    /// Reject tensor-wide operations whose meaning changes on a local slice.
-    fn validate_element_sharding(&self)->Result<(),&'static str> {Ok(())}
-    /// Dtype required for the already reduced, normalized local gradient.
-    fn shard_gradient_dtype(&self,storage:DType)->DType {storage}
-}
-impl<B: Backend> ElementwiseShardOptimizer<B> for Adam {}
-impl<B: Backend> ElementwiseShardOptimizer<B> for AdamW {}
-impl<B: Backend> ElementwiseShardOptimizer<B> for Sgd<B> {}
+pub use crate::ElementwiseShardOptimizer;
 
 /// Collective transport with equal-size axis-zero shards, preserving dtype.
 /// The selected transport's own staging/synchronization semantics still apply.
