@@ -17,9 +17,27 @@ pub enum FullyShardedActivation<B:Backend> {
     /// Parameter-free original activation, preserving all native scalar/approximation options.
     Stateless(Activation<B>),
     /// Original PReLU affine leaf and its native recorded initialization metadata.
-    PRelu { alpha:ShardedParameter<B>,alpha_value:f64 },
+    PRelu(FullyShardedPRelu<B>),
     /// Original two independently loaded native SwiGLU projections.
-    SwiGlu { inner:FullyShardedLinear<B>,outer:FullyShardedLinear<B> },
+    SwiGlu(FullyShardedSwiGlu<B>),
+}
+
+/// Original PReLU parameters and metadata in an ordinary recorded native module.
+#[derive(Module,Debug)]
+pub struct FullyShardedPRelu<B:Backend> {
+    /// Actual local affine leaf, including its original scalar/channel geometry.
+    pub alpha:ShardedParameter<B>,
+    /// Original source initialization metadata.
+    pub alpha_value:f64,
+}
+
+/// Original stateful SwiGLU projections in an ordinary recorded native module.
+#[derive(Module,Debug)]
+pub struct FullyShardedSwiGlu<B:Backend> {
+    /// Original projection preceding the native SiLU activation.
+    pub inner:FullyShardedLinear<B>,
+    /// Original independent multiplicative value projection.
+    pub outer:FullyShardedLinear<B>,
 }
 
 /// Actual last-axis normalization kind, including optional LayerNorm bias.
@@ -79,8 +97,8 @@ impl<B:Backend> ShardingContext<B> {
     /// Preserve the exact original activation and shard every actually parameterized variant.
     pub fn activation(&mut self,activation:Activation<B>) -> FullyShardedActivation<B> {
         match activation {
-            Activation::PRelu(layer)=>FullyShardedActivation::PRelu {alpha:self.parameter(layer.alpha),alpha_value:layer.alpha_value},
-            Activation::SwiGlu(layer)=>FullyShardedActivation::SwiGlu {inner:self.linear(layer.linear_inner),outer:self.linear(layer.linear_outer)},
+            Activation::PRelu(layer)=>FullyShardedActivation::PRelu(FullyShardedPRelu {alpha:self.parameter(layer.alpha),alpha_value:layer.alpha_value}),
+            Activation::SwiGlu(layer)=>FullyShardedActivation::SwiGlu(FullyShardedSwiGlu {inner:self.linear(layer.linear_inner),outer:self.linear(layer.linear_outer)}),
             other @ (Activation::Gelu(_) | Activation::Relu(_) | Activation::LeakyRelu(_) | Activation::Selu(_)
                 | Activation::Sigmoid(_) | Activation::Tanh(_) | Activation::HardSigmoid(_) | Activation::HardSwish(_)
                 | Activation::Softplus(_) | Activation::Softsign(_) | Activation::Elu(_) | Activation::Celu(_)
@@ -148,11 +166,11 @@ macro_rules! gathered_components {
                         assert!(!matches!(layer,Activation::PRelu(_)|Activation::SwiGlu(_)),"parameterized activation must use local shard storage");
                         layer.clone()
                     }
-                    Self::PRelu {alpha,alpha_value}=>Activation::PRelu(crate::activation::PRelu {
-                        alpha:Param::initialized(alpha.local.id,alpha.$gather::<C,1>(communicator)?),alpha_value:*alpha_value,
+                    Self::PRelu(layer)=>Activation::PRelu(crate::activation::PRelu {
+                        alpha:Param::initialized(layer.alpha.local.id,layer.alpha.$gather::<C,1>(communicator)?),alpha_value:layer.alpha_value,
                     }),
-                    Self::SwiGlu {inner,outer}=>Activation::SwiGlu(crate::activation::SwiGlu {
-                        linear_inner:inner.$gather(communicator.clone())?,linear_outer:outer.$gather(communicator)?,
+                    Self::SwiGlu(layer)=>Activation::SwiGlu(crate::activation::SwiGlu {
+                        linear_inner:layer.inner.$gather(communicator.clone())?,linear_outer:layer.outer.$gather(communicator)?,
                     }),
                 })
             }
