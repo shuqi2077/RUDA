@@ -67,6 +67,12 @@ torch._register_device_module("ruda", sys.modules[__name__])
 torch.utils.generate_methods_for_privateuse1_backend()
 
 _initialized = True
+_math_available = False
+if hasattr(_native, 'ruda_torch_math_api_version'):
+    _native.ruda_torch_math_api_version.restype = ctypes.c_uint32
+    if _native.ruda_torch_math_api_version() != 1:
+        raise RuntimeError('RUDA math API mismatch; rebuild the native library')
+    _math_available = True
 _random_available = False
 if hasattr(_native,'ruda_torch_random_api_version') and hasattr(_C,'initialize_random'):
     _native.ruda_torch_random_api_version.restype = ctypes.c_uint32

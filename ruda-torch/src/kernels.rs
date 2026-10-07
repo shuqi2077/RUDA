@@ -263,6 +263,28 @@ pub fn pointwise<A: Float + RudaElement, B: Float + RudaElement, O: Float + Ruda
                 out[target] = O::cast_from(result);
             }
             else if comptime!(op == 8) { out[target] = O::cast_from(x / f32::cast_from(b[offset(b, pos)])); }
+            else if comptime!(op == 121) { out[target] = O::cast_from(x.powf(f32::cast_from(b[offset(b, pos)]))); }
+            else if comptime!(op == 122 || op == 123 || op == 124) {
+                let y = f32::cast_from(b[offset(b, pos)]);
+                let modulo = x % y;
+                if comptime!(op == 123) { out[target] = O::cast_from(modulo); }
+                else if comptime!(op == 124) {
+                    let mut remainder = modulo;
+                    if modulo != 0.0 && ((y < 0.0) != (modulo < 0.0)) { remainder += y; }
+                    out[target] = O::cast_from(remainder);
+                } else {
+                    let mut quotient = (x - modulo) / y;
+                    if modulo != 0.0 && ((y < 0.0) != (modulo < 0.0)) { quotient -= 1.0; }
+                    let mut result = quotient.floor();
+                    if quotient - result > 0.5 { result += 1.0; }
+                    if quotient == 0.0 {
+                        let sign = (x / y).to_bits() & 0x80000000u32;
+                        result = f32::from_bits(sign);
+                    }
+                    if y == 0.0 { result = x / y; }
+                    out[target] = O::cast_from(result);
+                }
+            }
             else if comptime!(op == 9) { out[target] = O::cast_from(x.exp()); }
             else if comptime!(op == 10) { out[target] = O::cast_from(x.ln()); }
             else if comptime!(op == 11) { out[target] = O::cast_from(x.sqrt()); }
@@ -431,6 +453,30 @@ pub fn pointwise<A: Float + RudaElement, B: Float + RudaElement, O: Float + Ruda
                 else { out[target] = O::cast_from((1.0f32 - sigmoid) * sigmoid * f32::cast_from(out[target]) * x); }
             }
         }
+    }
+}
+
+#[ruda(launch)]
+pub fn integer_quotient<I: Numeric + RudaElement>(
+    a: &Tensor<I>, b: &Tensor<I>, out: &mut Tensor<I>, #[comptime] op: u32,
+) {
+    let position = ABSOLUTE_POS as usize;
+    if position < out.len() {
+        let x = a[offset(a, position)];
+        let y = b[offset(b, position)];
+        let zero = I::cast_from(0u32);
+        let one = I::cast_from(1u32);
+        let remainder = x % y;
+        let mut result = remainder;
+        if comptime!(op == 125 || op == 126) {
+            result = x / y;
+            if comptime!(op == 126) {
+                if remainder != zero && ((x < zero) != (y < zero)) { result -= one; }
+            }
+        } else if comptime!(op == 127) {
+            if remainder != zero && ((remainder < zero) != (y < zero)) { result += y; }
+        }
+        out[offset(out, position)] = result;
     }
 }
 

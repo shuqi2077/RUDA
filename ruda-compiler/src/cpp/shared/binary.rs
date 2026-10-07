@@ -114,7 +114,33 @@ operator!(Add, "+");
 operator!(Sub, "-");
 operator!(Div, "/");
 operator!(Mul, "*");
-operator!(Modulo, "%");
+pub struct Modulo;
+
+impl<D: Dialect> Binary<D> for Modulo {
+    fn format_scalar<Lhs: Display, Rhs: Display>(
+        f: &mut Formatter<'_>, lhs: Lhs, rhs: Rhs, item: Item<D>,
+    ) -> std::fmt::Result {
+        match item.elem {
+            Elem::F64 => write!(f, "fmod(double({lhs}), double({rhs}))"),
+            Elem::F32 | Elem::TF32 => write!(f, "fmodf(float({lhs}), float({rhs}))"),
+            Elem::F16 | Elem::BF16 | Elem::F16x2 | Elem::BF16x2 => {
+                write!(f, "{}(fmodf(float({lhs}), float({rhs})))", item.elem)
+            }
+            Elem::I8 | Elem::U8 | Elem::I16 | Elem::U16 => write!(f, "{}({lhs} % {rhs})", item.elem),
+            _ => write!(f, "{lhs} % {rhs}"),
+        }
+    }
+
+    fn unroll_vec(f: &mut Formatter<'_>, lhs: &Variable<D>, rhs: &Variable<D>, out: &Variable<D>) -> std::fmt::Result {
+        let item = out.item();
+        writeln!(f, "{} = {item}{{", out.fmt_left())?;
+        for index in 0..item.vectorization {
+            Self::format_scalar(f, lhs.index(index), rhs.index(index), item)?;
+            f.write_str(", ")?;
+        }
+        f.write_str("};\n")
+    }
+}
 operator!(Equal, "==");
 operator!(NotEqual, "!=");
 operator!(Lower, "<");

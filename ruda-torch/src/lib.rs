@@ -140,6 +140,10 @@ pub extern "C" fn ruda_torch_error() -> *const std::ffi::c_char { ERROR.with(|v|
 #[unsafe(no_mangle)]
 pub extern "C" fn ruda_torch_abi_version() -> u32 { 10 }
 
+/// Additive real-power and typed quotient/modulus operation capability.
+#[unsafe(no_mangle)]
+pub extern "C" fn ruda_torch_math_api_version() -> u32 { 1 }
+
 /// Optional process-local CUDA ordinal query; errors use the existing bridge error channel.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ruda_torch_cuda_device_index(index: *mut u32) -> i32 {
@@ -223,7 +227,7 @@ fn launch(op: u32, a: &View, b: &View, out: &View, scalar: f32) {
         LAUNCHES.fetch_add(1, Ordering::Relaxed);
         return;
     }
-    if (89..=106).contains(&op) { primitives::launch(op, a, b, out, scalar); return; }
+    if (89..=106).contains(&op) || (125..=128).contains(&op) { primitives::launch(op, a, b, out, scalar); return; }
     if (78..=88).contains(&op) {
         let client = client();
         let work = if op == 84 { out.len.checked_mul(element_bytes(out.dtype)).expect("byte length overflow") } else { out.len };
@@ -313,7 +317,7 @@ fn launch(op: u32, a: &View, b: &View, out: &View, scalar: f32) {
         LAUNCHES.fetch_add(1, Ordering::Relaxed);
         return;
     }
-    if matches!(op, 1..=5 | 8..=29 | 35..=57 | 62..=64 | 69..=72) {
+    if matches!(op, 1..=5 | 8..=29 | 35..=57 | 62..=64 | 69..=72 | 121..=124) {
         pointwise::launch(op, a, b, out, scalar);
         return;
     }
@@ -509,7 +513,7 @@ pub unsafe extern "C" fn ruda_torch_execute(op: u32, a: *const Descriptor, b: *c
         let (a, b, out) = unsafe { (View::read(&*a), View::read(&*b), View::read(&*out)) };
         match op {
             0..=4 | 8..=29 | 35..=73 => { assert_eq!(a.shape, out.shape); assert_eq!(b.shape, out.shape); }
-            78..=97 => { assert_eq!(a.shape, out.shape); assert_eq!(b.shape, out.shape); }
+            78..=97 | 121..=128 => { assert_eq!(a.shape, out.shape); assert_eq!(b.shape, out.shape); }
             98..=99 => {
                 assert!(scalar >= 0.0 && scalar.fract() == 0.0 && (scalar as usize) < a.shape.len());
                 let mut shape = a.shape.clone();

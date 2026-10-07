@@ -224,6 +224,8 @@ impl Emitter {
             Arithmetic::Cosh(op) => return self.hyperbolic(out, op.input, true),
             Arithmetic::Powi(op) => return self.integer_power(out, op.clone()),
             Arithmetic::Powf(op) => return self.floating_power(out, op.clone()),
+            Arithmetic::Modulo(op) if ty.float() => return self.floating_remainder(out, op.clone(), false),
+            Arithmetic::Remainder(op) if ty.float() => return self.floating_remainder(out, op.clone(), true),
             Arithmetic::Erf(op) => return self.error_function(out, op.input),
             Arithmetic::Recip(op) => return self.reciprocal(out, op.input),
             Arithmetic::InverseSqrt(op) => return self.emit_square_root(out, op.input, true),

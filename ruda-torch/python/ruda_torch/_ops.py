@@ -75,14 +75,19 @@ def _division_op(rounding_mode):
     if rounding_mode == "trunc":
         return 57
     if rounding_mode == "floor":
-        raise NotImplementedError("RUDA floor division is not implemented")
+        _require_math()
+        return 122
     raise RuntimeError("rounding_mode must be None, 'trunc' or 'floor'")
 
 
 def div(a, b, *, rounding_mode=None):
+    if rounding_mode in ('floor', 'trunc'):
+        return _typed_division(a, b, rounding_mode=rounding_mode)
     return _binary(_division_op(rounding_mode), a, b)
 
 def div_(a, b, *, rounding_mode=None):
+    if rounding_mode in ('floor', 'trunc'):
+        return _typed_division(a, b, rounding_mode=rounding_mode, inplace=True)
     return _binary(_division_op(rounding_mode), a, b, inplace=True)
 
 def mm(a, b):
@@ -290,7 +295,93 @@ def pow_scalar(a, exponent):
     if isinstance(exponent, int) and not isinstance(exponent, bool) and a.dtype in _dtypes:
         indices = _typed_value(exponent, torch.int64, a.device).expand(a.shape)
         return _apply(96, a, indices)
-    raise NotImplementedError("RUDA power supports integer scalar exponents for floating tensors; non-integral exponents are not implemented")
+    if a.dtype not in _dtypes or not isinstance(exponent, numbers.Real):
+        raise RuntimeError('RUDA real power requires a supported floating base and real exponent')
+    if exponent == 0.5:
+        return _apply(11, a)
+    if exponent == -0.5:
+        return _apply(12, a)
+    if exponent == -1:
+        return _apply(27, a)
+    _require_math()
+    return _apply(121, a, _typed_value(exponent, a.dtype, a.device))
+
+
+def _require_math():
+    from . import _math_available
+    if not _math_available:
+        raise RuntimeError('this operation requires the RUDA native math extension; rebuild the native library')
+
+
+def pow_tensor(a, exponent):
+    if not isinstance(exponent, torch.Tensor) or exponent.device != a.device:
+        raise RuntimeError('RUDA tensor power requires an exponent tensor on the base device')
+    dtype = torch.result_type(a, exponent)
+    if dtype not in _dtypes:
+        raise RuntimeError('RUDA tensor power requires a supported floating result dtype')
+    base = a.to(dtype)
+    if exponent.dtype in (torch.int64, torch.int32, torch.int16, torch.int8):
+        return _apply(96, base, exponent)
+    _require_math()
+    return _apply(121, base, exponent.to(dtype))
+
+
+def pow_scalar_base(base, exponent):
+    if not isinstance(base, numbers.Real):
+        raise RuntimeError('RUDA scalar-base power requires a real scalar')
+    dtype = torch.result_type(exponent, base)
+    if dtype not in _dtypes:
+        raise RuntimeError('RUDA scalar-base power requires a supported floating result dtype')
+    tensor = _typed_value(base, dtype, exponent.device)
+    return pow_tensor(tensor, exponent)
+
+
+def _math_out(result, out):
+    if out.device != result.device or not torch.can_cast(result.dtype, out.dtype):
+        raise RuntimeError('RUDA math output must share the device and allow result dtype casting')
+    _C.prepare_index_output(out, list(result.shape))
+    out.copy_(result)
+    return out
+
+
+def _power_inplace(a, exponent):
+    _C.check_inplace(a, exponent if isinstance(exponent, torch.Tensor) else a)
+    result = pow_tensor(a, exponent) if isinstance(exponent, torch.Tensor) else pow_scalar(a, exponent)
+    return _primitive_result(result, a, True)
+
+
+def _floating_modulus(a, b, *, floor, inplace=False):
+    _require_math()
+    if inplace:
+        _C.check_inplace(a, b if isinstance(b, torch.Tensor) else a)
+    left, right, dtype = _primitive_operands(a, b)
+    if dtype == torch.bool:
+        raise RuntimeError('RUDA modulus is not defined for a bool result')
+    op = (124 if floor else 123) if dtype in _dtypes else (127 if floor else 128)
+    result = _apply(op, left, right)
+    return _primitive_result(result, a, inplace)
+
+
+def _scalar_modulus(a, b, *, floor):
+    dtype = torch.result_type(b, a)
+    return _floating_modulus(_typed_value(a, dtype, b.device), b, floor=floor)
+
+
+def _typed_division(a, b, *, rounding_mode, inplace=False):
+    if inplace:
+        _C.check_inplace(a, b if isinstance(b, torch.Tensor) else a)
+    if rounding_mode == 'floor':
+        _require_math()
+    left, right, dtype = _primitive_operands(a, b)
+    if dtype == torch.bool:
+        raise RuntimeError('RUDA rounded division is not defined for a bool result')
+    if dtype in _dtypes:
+        op = 122 if rounding_mode == 'floor' else 57
+    else:
+        _require_math()
+        op = 126 if rounding_mode == 'floor' else 125
+    result = _apply(op, left, right)
+    return _primitive_result(result, a, inplace)
 
 def activation_backward(grad, output, *, tanh=False):
     if output.dtype == torch.float32:
@@ -1105,7 +1196,32 @@ for name, function in {
     "_log_softmax_backward_data": lambda grad, y, dim, dtype: softmax_backward(grad, y, dim, dtype, logarithmic=True),
     "native_layer_norm": layer_norm, "native_layer_norm_backward": layer_norm_backward,
     "rms_norm": rms_norm,
-    "pow.Tensor_Scalar": pow_scalar, "clone": clone,
+    "pow.Tensor_Scalar": pow_scalar, "pow.Tensor_Tensor": pow_tensor, "pow.Scalar": pow_scalar_base,
+    "pow_.Scalar": _power_inplace, "pow_.Tensor": _power_inplace,
+    "pow.Tensor_Scalar_out": lambda a, exponent, *, out: _math_out(pow_scalar(a, exponent), out),
+    "pow.Tensor_Tensor_out": lambda a, exponent, *, out: _math_out(pow_tensor(a, exponent), out),
+    "pow.Scalar_out": lambda base, exponent, *, out: _math_out(pow_scalar_base(base, exponent), out),
+    "floor_divide": lambda a, b: div(a, b, rounding_mode='floor'),
+    "floor_divide.Scalar": lambda a, b: div(a, b, rounding_mode='floor'),
+    "floor_divide_.Tensor": lambda a, b: div_(a, b, rounding_mode='floor'),
+    "floor_divide_.Scalar": lambda a, b: div_(a, b, rounding_mode='floor'),
+    "floor_divide.out": lambda a, b, *, out: _math_out(div(a, b, rounding_mode='floor'), out),
+    "floor_divide.Scalar_out": lambda a, b, *, out: _math_out(div(a, b, rounding_mode='floor'), out),
+    "remainder.Tensor": lambda a, b: _floating_modulus(a, b, floor=True),
+    "remainder.Scalar": lambda a, b: _floating_modulus(a, b, floor=True),
+    "remainder.Scalar_Tensor": lambda a, b: _scalar_modulus(a, b, floor=True),
+    "remainder_.Tensor": lambda a, b: _floating_modulus(a, b, floor=True, inplace=True),
+    "remainder_.Scalar": lambda a, b: _floating_modulus(a, b, floor=True, inplace=True),
+    "remainder.Tensor_out": lambda a, b, *, out: _math_out(_floating_modulus(a, b, floor=True), out),
+    "remainder.Scalar_out": lambda a, b, *, out: _math_out(_floating_modulus(a, b, floor=True), out),
+    "remainder.Scalar_Tensor_out": lambda a, b, *, out: _math_out(_scalar_modulus(a, b, floor=True), out),
+    "fmod.Tensor": lambda a, b: _floating_modulus(a, b, floor=False),
+    "fmod.Scalar": lambda a, b: _floating_modulus(a, b, floor=False),
+    "fmod_.Tensor": lambda a, b: _floating_modulus(a, b, floor=False, inplace=True),
+    "fmod_.Scalar": lambda a, b: _floating_modulus(a, b, floor=False, inplace=True),
+    "fmod.Tensor_out": lambda a, b, *, out: _math_out(_floating_modulus(a, b, floor=False), out),
+    "fmod.Scalar_out": lambda a, b, *, out: _math_out(_floating_modulus(a, b, floor=False), out),
+    "clone": clone,
     "flip": flip, "prod": prod, "prod.dim_int": prod,
     "all": lambda a: _boolean_reduce(a, every=True),
     "all.dim": lambda a, dim, keepdim=False: _boolean_reduce(a, dim, keepdim, every=True),

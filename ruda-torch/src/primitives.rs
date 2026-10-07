@@ -1,6 +1,6 @@
-use super::{CudaRuntime, DOWNLOAD, LAUNCHES, TRUSTED_INDEX_CALLS, Ordering, View, client, cuda_device, convert, finish_dispatch, sync};
+use super::{CudaRuntime, DOWNLOAD, LAUNCHES, TRUSTED_INDEX_CALLS, Ordering, View, client, cuda_device, convert, finish_dispatch, sync, kernels};
 use ruda_core::tensor::{DType, Metadata};
-use ruda_kernel::dsl::prelude::InputScalar;
+use ruda_kernel::dsl::prelude::{InputScalar, RudaCount, RudaDim};
 use ruda_kernel::tensor::RudaTensor;
 use ruprim::elementwise::{arithmetic, binary::integer_power, unary::int::unary_basic_int};
 use ruprim::reduce::{components::instructions::ReduceOperationConfig, tensor::{KernelReduceStrategy, reduce_dim}};
@@ -57,6 +57,10 @@ fn check_indices(indices: &View, bound: usize) {
 
 pub(super) fn launch(op: u32, a: &View, b: &View, out: &View, scalar: f32) {
     assert_eq!(a.dtype, out.dtype);
+    if (125..=128).contains(&op) {
+        integer_math(op, a, b, out);
+        return;
+    }
     let result = match op {
         89..=95 => {
             assert!((4..=8).contains(&a.dtype));
@@ -125,6 +129,40 @@ pub(super) fn launch(op: u32, a: &View, b: &View, out: &View, scalar: f32) {
         _ => panic!("unsupported RUDA primitive {op}"),
     };
     store(result, out);
+}
+
+fn integer_math(op: u32, a: &View, b: &View, out: &View) {
+    assert!((4..=8).contains(&a.dtype) && a.dtype == b.dtype);
+    assert!(out.len <= u32::MAX as usize, "native integer math exceeds 32-bit kernel indexing");
+    // A repeated divisor need only be checked once along each broadcast axis.
+    let shape: Vec<usize> = b.shape.iter().zip(&b.strides)
+        .map(|(&size, &stride)| if stride == 0 { 1 } else { size }).collect();
+    let divisor = View { handle: b.handle.clone(), len: shape.iter().product(),
+        shape, strides: b.strides.clone(), dtype: b.dtype };
+    let zeros = ruprim::elementwise::comparison::equal_elem(tensor(&divisor),
+        InputScalar::new(0i64, dtype(b.dtype)), DType::U32);
+    let status = ruprim::reduce::tensor::reduce(zeros, None,
+        KernelReduceStrategy::Unspecified, ReduceOperationConfig::Max)
+        .expect("RUDA integer divisor validation failed");
+    sync(&client());
+    let excess = status.handle.size_in_used().checked_sub(4).expect("invalid divisor status size");
+    let bytes = client().read_one(status.handle.offset_end(excess)).expect("RUDA divisor status readback failed");
+    DOWNLOAD.fetch_add(4, Ordering::Relaxed);
+    assert_eq!(bytes.len(), 4);
+    assert_eq!(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]), 0, "integer division by zero");
+    let runtime = client();
+    let count = u32::try_from(out.len.div_ceil(128)).expect("integer math grid overflow");
+    macro_rules! run {
+        ($dtype:ty) => { kernels::integer_quotient::launch::<$dtype, CudaRuntime>(
+            &runtime, RudaCount::Static(count, 1, 1), RudaDim::new_1d(128),
+            a.arg(), b.arg(), out.arg(), op) };
+    }
+    unsafe { match a.dtype {
+        4 => run!(i64), 5 => run!(i32), 6 => run!(i16), 7 => run!(i8), 8 => run!(u8),
+        _ => unreachable!(),
+    } }
+    finish_dispatch(&runtime);
+    LAUNCHES.fetch_add(1, Ordering::Relaxed);
 }
 
 pub(super) fn store(result: RudaTensor<CudaRuntime>, out: &View) {
