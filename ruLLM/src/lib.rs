@@ -18,7 +18,7 @@ pub use generation::*;
 pub use huggingface::*;
 pub use llama::{
     LlamaAttention, LlamaConfig, LlamaConfigError, LlamaDecoderLayer, LlamaFeedForward,
-    LlamaForCausalLm, LlamaKvCache, LlamaLayerCache, PackedLlamaForCausalLm,
+    LlamaForCausalLm, LlamaKvCache, LlamaKvCacheRecord, LlamaLayerCache, PackedLlamaForCausalLm,
 };
 pub use llama::awq::{AwqBackend, AwqLlamaForCausalLm};
 pub use continuous_batch::{

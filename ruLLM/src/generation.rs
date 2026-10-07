@@ -18,19 +18,21 @@ pub use control::{
 };
 mod sampling;
 mod speculative;
+mod session;
+pub use session::*;
 pub use speculative::{
     SpeculativeGenerationConfig, SpeculativeGenerationOutput, SpeculativeModel,
     SpeculativeStats, generate_causal_speculative, generate_causal_speculative_stream,
 };
 pub use awq::{generate_greedy_awq, generate_sampled_awq};
 pub use sampling::{
-    SamplingConfig, SamplingGenerationConfig, TokenSampler, generate_causal_sampled, generate_sampled,
+    SamplingConfig, SamplingGenerationConfig, TokenSampler, TokenSamplerState, generate_causal_sampled, generate_sampled,
     generate_sampled_packed, generate_sampled_packed_ruda, generate_causal_sampled_stream,
 };
 
 /// Deterministic autoregressive decoding options. Sampling is deliberately not
 /// hidden behind this type: each step selects the exact maximum logit.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GreedyGenerationConfig {
     pub max_new_tokens: usize,
     pub eos_token_ids: Vec<i32>,
@@ -45,7 +47,7 @@ impl Default for GreedyGenerationConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TokenGenerationOutput {
     /// Prompt followed by every generated token.
     pub token_ids: Vec<i32>,
@@ -65,7 +67,7 @@ impl Display for GenerationError {
 
 impl Error for GenerationError {}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CausalModelLimits {
     pub vocab_size: usize,
     pub max_sequence_length: usize,

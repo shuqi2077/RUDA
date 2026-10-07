@@ -10,6 +10,7 @@ on:
       - 'ruda-tensor/**'
       - 'ruda-model/**'
       - 'ruda-dataset/**'
+      - 'ruLLM/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/sharded-training-build.yml'
@@ -58,3 +59,5 @@ jobs:
       - name: Compile resumable dataset loading
         run: |
           cargo check --locked -p ruda-model --features dataset --lib
+      - name: Compile native generation continuation
+        run: cargo check --locked -p ruda-llm --lib

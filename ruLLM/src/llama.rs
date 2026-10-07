@@ -18,6 +18,8 @@ use crate::ruda_inference;
 pub(crate) mod awq;
 pub(crate) mod rope;
 mod packed_training;
+mod cache_record;
+pub use cache_record::LlamaKvCacheRecord;
 #[cfg(test)]
 mod causal_training_tests;
 use rope::qwen2_rope;

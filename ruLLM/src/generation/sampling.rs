@@ -14,9 +14,11 @@ use ruda_tensor_device::{BoolElement, DeviceBackend, DeviceRuntime, FloatElement
 
 mod distribution;
 use distribution::SamplingWorkspace;
+mod state;
+pub use state::TokenSamplerState;
 
 /// Temperature, top-k, then nucleus filtering for categorical token sampling.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SamplingConfig {
     /// Finite and strictly positive. Use the greedy API for deterministic argmax.
     pub temperature: f64,
