@@ -11,6 +11,8 @@ type Placement=Vec<(u64,Vec<usize>,u32,u32,DType,bool)>;
 mod weighted;
 pub use weighted::*;
 mod reshard;
+mod norm;
+pub use norm::*;
 
 /// Exact continuation counters for globally summed, already reduce-scattered local gradients.
 #[derive(Clone,Debug,PartialEq,Serialize,Deserialize)]
@@ -173,6 +175,16 @@ impl<M> FullyShardedGradientsAccumulator<M> {
             .unscaled_for::<B,M>(module,self.state.global_count.max(1) as f64,dtype)?;
         let state=self.state.clone();self.accumulator.grads();self.state.global_count=0;self.state.microbatches=0;
         Ok(FullyShardedAccumulatedGradients {gradients,state})
+    }
+    /// Explicit native-storage optimizer handoff after whole-window work-precision normalization.
+    /// Work gradients are narrowed only here, at the caller's request; FP32-master paths use finish_mean.
+    pub fn finish_native_mean<B:AutodiffBackend>(&mut self,module:&M) -> Result<FullyShardedAccumulatedGradients,FullyShardedAccumulationError>
+        where M:AutodiffModule<B> {
+        if self.state.microbatches==0 {return Err(FullyShardedAccumulationError::EmptyWindow);}
+        inspect::<B,M>(module,&self.placement,true)?;let dtype=work_dtype(&self.state)?;
+        let gradients=self.accumulator.pending().unscaled_for::<B,M>(module,self.state.loss_scale,dtype)?
+            .unscaled_for::<B,M>(module,self.state.global_count.max(1) as f64,dtype)?.cast_to_parameter_storage::<B,M>(module)?;
+        let mut result=self.finish_sums();result.gradients=gradients;Ok(result)
     }
     /// Save actual pending local buffers and exact placement/options/counters together, without clearing them.
     pub fn try_to_record<B:AutodiffBackend>(&self) -> Result<FullyShardedGradientsRecord,RecorderError> where M:AutodiffModule<B> {

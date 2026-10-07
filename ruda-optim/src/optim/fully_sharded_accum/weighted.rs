@@ -1,4 +1,5 @@
 use super::*;
+use ruda_model::tensor::TensorData;
 
 /// Actual native global fractional weight and matching pending local gradients/counters/placement.
 #[derive(Clone)]
@@ -7,13 +8,13 @@ pub struct FullyShardedWeightedGradientsRecord<B:Backend> {
     global_weight:Tensor<B,1>,
 }
 impl<B:Backend> Record<B> for FullyShardedWeightedGradientsRecord<B> {
-    type Item<S:PrecisionSettings>=(<FullyShardedGradientsRecord as Record<B>>::Item<S>,<Tensor<B,1> as Record<B>>::Item<S>);
+    type Item<S:PrecisionSettings>=(<FullyShardedGradientsRecord as Record<B>>::Item<S>,TensorData);
     fn into_item<S:PrecisionSettings>(self) -> Self::Item<S> {
-        (<FullyShardedGradientsRecord as Record<B>>::into_item::<S>(self.window),<Tensor<B,1> as Record<B>>::into_item::<S>(self.global_weight))
+        (<FullyShardedGradientsRecord as Record<B>>::into_item::<S>(self.window),self.global_weight.into_data())
     }
     fn from_item<S:PrecisionSettings>(item:Self::Item<S>,device:&B::Device) -> Self {
         let window=<FullyShardedGradientsRecord as Record<B>>::from_item::<S>(item.0,device);
-        let global_weight=<Tensor<B,1> as Record<B>>::from_item::<S>(item.1,device).cast(window.state.dtype);
+        let global_weight=Tensor::from_data(item.1.convert_dtype(window.state.dtype),(device,window.state.dtype));
         Self {window,global_weight}
     }
 }
@@ -87,7 +88,7 @@ impl<M:AutodiffModule<B>,B:AutodiffBackend> FullyShardedWeightedGradientsAccumul
         let mut result=self.finish_sums();result.window.gradients=gradients;Ok(result)
     }
     /// Snapshot pending gradients/counters and the actual native fractional normalizer together.
-    /// Full-precision recorder settings retain the caller-selected F32/F64 normalizer arithmetic.
+    /// The scalar normalizer retains exact F32/F64 storage independently of parameter recorder precision.
     pub fn try_to_record(&self) -> Result<FullyShardedWeightedGradientsRecord<B::InnerBackend>,RecorderError> {
         Ok(FullyShardedWeightedGradientsRecord {window:self.window.try_to_record::<B>()?,global_weight:self.global_weight.clone()})
     }

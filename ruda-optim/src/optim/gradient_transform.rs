@@ -74,6 +74,16 @@ impl<B: AutodiffBackend> ModuleVisitor<B> for Metadata<'_> {
 }
 
 impl GradientsParams {
+    /// Explicitly cast present derivatives to each actual parameter's native floating storage.
+    /// Invoke after work-precision accumulation/normalization when using a native-storage optimizer.
+    /// FP32-master optimizers should retain their work gradients instead; no precision policy is inferred.
+    pub fn cast_to_parameter_storage<B:AutodiffBackend,M:AutodiffModule<B>>(&self,module:&M) -> Result<Self,GradientTransformError> {
+        self.validate_for::<B,M>(module)?;
+        let mut visitor=StorageTransform {source:self,result:Self::new(),seen:BTreeSet::new(),error:None};
+        module.visit(&mut visitor);
+        if let Some(error)=visitor.error {return Err(error);}
+        Ok(visitor.result)
+    }
     /// Check module membership, actual dimensions and device without reading values.
     /// Tied parameter IDs are counted once; absent gradients stay absent.
     pub fn validate_for<B: AutodiffBackend,M: AutodiffModule<B>>(
@@ -122,6 +132,24 @@ impl GradientsParams {
         let mut visitor = Transform {source:self,result:Self::new(),seen:BTreeSet::new(),dtype,scalar,divide};
         module.visit(&mut visitor);
         Ok(visitor.result)
+    }
+}
+
+struct StorageTransform<'a> {
+    source:&'a GradientsParams,
+    result:GradientsParams,
+    seen:BTreeSet<ParamId>,
+    error:Option<GradientTransformError>,
+}
+impl<B:AutodiffBackend> ModuleVisitor<B> for StorageTransform<'_> {
+    fn visit_float<const D:usize>(&mut self,param:&Param<Tensor<B,D>>) {
+        if self.error.is_some() || !self.seen.insert(param.id) {return;}
+        let Some(gradient)=self.source.get::<B::InnerBackend,D>(param.id) else {return;};
+        let storage=param.val().dtype();
+        if !matches!(storage,DType::F16|DType::BF16|DType::F32|DType::Flex32|DType::F64) {
+            self.error=Some(GradientTransformError::InvalidDType);return;
+        }
+        self.result.register(param.id,gradient.cast(storage));
     }
 }
 
