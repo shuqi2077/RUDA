@@ -46,6 +46,21 @@ pub enum AdaptedStackLayer<B: Backend> {
 }
 
 impl<B: Backend> AdaptedStackLayer<B> {
+    /// Actual self-attention stage, before inserting an encoder-memory stage.
+    pub fn forward_attention_with_positions<F>(&self,input: Tensor<B,3>,masks: DenseAttentionMask<B>,
+        options: DenseAttentionOptions,positions: F) -> Tensor<B,3>
+    where F: FnOnce(Tensor<B,4>,Tensor<B,4>)->(Tensor<B,4>,Tensor<B,4>) {
+        match self {
+            Self::Dense(block)=>block.forward_attention_with_positions(input,masks,options,positions),
+            Self::Adapted(block)=>block.forward_attention_with_positions(input,masks,options,positions),
+        }
+    }
+
+    /// Actual final FFN stage, with its original normalization and residual order.
+    pub fn forward_feed_forward(&self,input: Tensor<B,3>) -> Tensor<B,3> {
+        match self {Self::Dense(block)=>block.forward_feed_forward(input),Self::Adapted(block)=>block.forward_feed_forward(input)}
+    }
+
     /// Run the actual layer without selecting a model family.
     pub fn forward(&self,input: Tensor<B,3>,masks: DenseAttentionMask<B>,options: DenseAttentionOptions) -> Tensor<B,3> {
         match self {Self::Dense(block)=>block.forward(input,masks,options),Self::Adapted(block)=>block.forward(input,masks,options)}

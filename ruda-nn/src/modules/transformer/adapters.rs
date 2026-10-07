@@ -229,7 +229,14 @@ impl<B: Backend> AdaptedTransformerBlock<B> {
     pub fn forward_with_positions<F>(&self,input: Tensor<B,3>,masks: DenseAttentionMask<B>,
         options: DenseAttentionOptions,positions: F) -> Tensor<B,3>
     where F: FnOnce(Tensor<B,4>,Tensor<B,4>)->(Tensor<B,4>,Tensor<B,4>) {
-        let hidden = residual_branch(input,&self.attention_norm,&self.residual_dropout,self.norm_first,|source| {
+        self.forward_feed_forward(self.forward_attention_with_positions(input,masks,options,positions))
+    }
+
+    /// Apply only self-attention and its residual/norm, before a decoder memory stage.
+    pub fn forward_attention_with_positions<F>(&self,input: Tensor<B,3>,masks: DenseAttentionMask<B>,
+        options: DenseAttentionOptions,positions: F) -> Tensor<B,3>
+    where F: FnOnce(Tensor<B,4>,Tensor<B,4>)->(Tensor<B,4>,Tensor<B,4>) {
+        residual_branch(input,&self.attention_norm,&self.residual_dropout,self.norm_first,|source| {
             let (query,key,value) = self.attention.project(source.clone(),source.clone(),source);
             let query_shape = query.dims();
             let key_shape = key.dims();
@@ -237,8 +244,13 @@ impl<B: Backend> AdaptedTransformerBlock<B> {
             assert_eq!(query.dims(),query_shape,"adapted query position transform changed geometry");
             assert_eq!(key.dims(),key_shape,"adapted key position transform changed geometry");
             self.attention.forward_projected(query,key,value,masks,options)
-        });
-        residual_branch(hidden,&self.feed_forward_norm,&self.residual_dropout,self.norm_first,|source|self.feed_forward.forward(source))
+        })
+    }
+
+    /// Apply only the actual adapted FFN and its independent residual/norm.
+    pub fn forward_feed_forward(&self,hidden: Tensor<B,3>) -> Tensor<B,3> {
+        residual_branch(hidden,&self.feed_forward_norm,&self.residual_dropout,self.norm_first,
+            |source|self.feed_forward.forward(source))
     }
 
     /// Consume all selected adapters into the original dense block for inference.

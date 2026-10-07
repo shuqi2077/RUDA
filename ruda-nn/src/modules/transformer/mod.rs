@@ -7,6 +7,7 @@ mod embeddings;
 mod adapters;
 mod adapter_record;
 mod adapted_stack;
+mod adapted_decoder;
 mod packed;
 
 pub use decoder::*;
@@ -18,3 +19,4 @@ pub use embeddings::*;
 pub use adapters::*;
 pub use adapter_record::*;
 pub use adapted_stack::*;
+pub use adapted_decoder::*;
