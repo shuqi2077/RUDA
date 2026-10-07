@@ -4,6 +4,8 @@ use ruda_model::{module::{Module, Param}, tensor::{Tensor, Int, backend::Backend
 use region::BroadcastTensorCollective;
 use super::{fully_sharded::{ShardedParameter, FullyShardedLinear, ShardingContext}, tensor_parallel};
 
+mod native;
+
 impl<B:Backend> ShardingContext<B> {
     /// Partition a caller-loaded output-column TP shard with shared DP leaves.
     pub fn tensor_column(&mut self,layer:tensor_parallel::ColumnParallelLinear<B>)->FullyShardedColumnParallelLinear<B> {

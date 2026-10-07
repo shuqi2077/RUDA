@@ -33,6 +33,8 @@ pub use selection::VocabParallelGreedySelection;
 mod topk;
 pub use topk::VocabParallelTopKSelection;
 mod normalization_inference;
+mod native_projections;
+pub(crate) use native_projections::{inference_gather,inference_scatter,inference_sum};
 mod embeddings;
 pub use embeddings::TensorParallelTransformerEmbeddings;
 mod model;
