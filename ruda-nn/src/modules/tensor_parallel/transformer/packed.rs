@@ -1,6 +1,24 @@
 use super::{Autodiff,Backend,BroadcastTensorCollective,CheckpointStrategy,AttentionParallelGroups,TensorParallelTransformerBlock,Tensor,residual};
 use crate::attention::{PackedSequenceLayout,PackedAttentionOptions,PackedDocumentAttentionMask};
 
+impl<B: Backend> TensorParallelTransformerBlock<B> {
+    /// Native independent-document inference on actual local heads and flat token rows.
+    pub fn forward_packed_inference<C,F>(&self,input: Tensor<B,2>,layout: &PackedSequenceLayout,
+        masks: Option<&[PackedDocumentAttentionMask<B>]>,options: PackedAttentionOptions,communicator: C,positions: F)
+        -> Result<Tensor<B,2>,C::Error>
+        where C: BroadcastTensorCollective<B>,F: FnOnce(Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
+        assert_eq!(input.dims()[0],layout.tokens(),"native parallel packed boundaries differ from actual rows");
+        let hidden = residual(input,&self.attention_norm,self.norm_first,|source| {
+            let (query,key,value) = self.attention.local.project_packed(source.clone(),source.clone(),source);
+            let geometry = (query.dims(),key.dims());let (query,key) = positions(query,key);
+            assert_eq!((query.dims(),key.dims()),geometry,"native parallel packed positions changed local heads");
+            self.attention.forward_packed_projected_inference(query,key,value,layout,layout,masks,options,communicator.clone())
+        },|branch|self.residual_dropout.forward(branch))?;
+        residual(hidden,&self.feed_forward_norm,self.norm_first,|source|self.feed_forward.forward_inference(source,communicator),
+            |branch|self.residual_dropout.forward(branch))
+    }
+}
+
 impl<B: Backend,S: CheckpointStrategy> TensorParallelTransformerBlock<Autodiff<B,S>> {
     /// Actual packed documents with rank-local heads and explicit optional per-document masks.
     /// Neither labels nor synthetic separators determine document boundaries.

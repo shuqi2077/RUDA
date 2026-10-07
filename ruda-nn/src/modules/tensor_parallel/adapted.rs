@@ -7,6 +7,7 @@ mod attention;
 mod feed_forward;
 mod transformer;
 mod stack;
+mod packed;
 pub use attention::*;
 pub use feed_forward::*;
 pub use transformer::*;

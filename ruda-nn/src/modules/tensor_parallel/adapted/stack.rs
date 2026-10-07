@@ -5,6 +5,7 @@ use super::super::TensorParallelTransformerBlock;
 use crate::{attention::{DenseAttentionMask,DenseAttentionOptions},cache::{TransformerKvCache,ProjectedKvCache},
     transformer::{AdaptedStackLayer,AdaptedTransformerStack,StackAdapterRecord}};
 use ruda_model::{record::RecorderError,tensor::Bool};
+use crate::attention::{PackedSequenceLayout,PackedAttentionOptions,PackedDocumentAttentionMask};
 
 /// Actual selected/unselected layer kinds, with no blanket base freezing.
 #[derive(Module,Debug)]
@@ -41,6 +42,14 @@ impl<B: Backend> TensorParallelAdaptedStackLayer<B> {
         match self {Self::Dense(block)=>block.forward_cached_inference(input,visible,cache,masks,options,communicator,positions),
             Self::Adapted(block)=>block.forward_cached_inference(input,visible,cache,masks,options,communicator,positions)}
     }
+
+    /// Flat-token native inference on the actual selected/unselected layer kind.
+    pub fn forward_packed_inference<C,F>(&self,input: Tensor<B,2>,layout: &PackedSequenceLayout,masks: Option<&[PackedDocumentAttentionMask<B>]>,
+        options: PackedAttentionOptions,communicator: C,positions: F) -> Result<Tensor<B,2>,C::Error>
+        where C: BroadcastTensorCollective<B>,F: FnOnce(Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
+        match self {Self::Dense(block)=>block.forward_packed_inference(input,layout,masks,options,communicator,positions),
+            Self::Adapted(block)=>block.forward_packed_inference(input,layout,masks,options,communicator,positions)}
+    }
 }
 
 impl<B: Backend,S: CheckpointStrategy> TensorParallelAdaptedStackLayer<Autodiff<B,S>> {
@@ -61,6 +70,16 @@ impl<B: Backend,S: CheckpointStrategy> TensorParallelAdaptedStackLayer<Autodiff<
             F: FnOnce(Tensor<Autodiff<B,S>,4>,Tensor<Autodiff<B,S>,4>,usize)->(Tensor<Autodiff<B,S>,4>,Tensor<Autodiff<B,S>,4>) {
         match self {Self::Dense(block)=>block.forward_cached(input,visible,cache,masks,options,groups,positions),
             Self::Adapted(block)=>block.forward_cached(input,visible,cache,masks,options,groups,positions)}
+    }
+
+    /// Actual packed documents and selected adapters, with explicit local positions/groups.
+    pub fn forward_packed<C,K,F>(&self,input: Tensor<Autodiff<B,S>,2>,layout: &PackedSequenceLayout,
+        masks: Option<&[PackedDocumentAttentionMask<Autodiff<B,S>>]>,options: PackedAttentionOptions,
+        groups: &AttentionParallelGroups<C,K>,positions: F) -> Result<Tensor<Autodiff<B,S>,2>,C::Error>
+        where C: BroadcastTensorCollective<B>,K: BroadcastTensorCollective<B,Error=C::Error>,
+            F: FnOnce(Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>)->(Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>) {
+        match self {Self::Dense(block)=>block.forward_packed(input,layout,masks,options,groups,positions),
+            Self::Adapted(block)=>block.forward_packed(input,layout,masks,options,groups,positions)}
     }
 }
 
@@ -116,12 +135,26 @@ impl<B: Backend> TensorParallelAdaptedTransformerStack<B> {
         cache.finish_chunk(next);
         Ok(input)
     }
+
+    /// Native flat-token layer sequence with caller-owned per-layer packed policies.
+    pub fn forward_packed_inference_with<E,F>(&self,mut input: Tensor<B,2>,mut layer: F) -> Result<Tensor<B,2>,E>
+        where F: FnMut(usize,&TensorParallelAdaptedStackLayer<B>,Tensor<B,2>)->Result<Tensor<B,2>,E> {
+        for (index,block) in self.layers.iter().enumerate() {input = layer(index,block,input)?;}
+        Ok(input)
+    }
 }
 
 impl<B: Backend,S: CheckpointStrategy> TensorParallelAdaptedTransformerStack<Autodiff<B,S>> {
     /// Original layer sequence with no guessed architecture/head/normalization additions.
     pub fn forward_with<E,F>(&self,mut input: Tensor<Autodiff<B,S>,3>,mut layer: F) -> Result<Tensor<Autodiff<B,S>,3>,E>
         where F: FnMut(usize,&TensorParallelAdaptedStackLayer<Autodiff<B,S>>,Tensor<Autodiff<B,S>,3>)->Result<Tensor<Autodiff<B,S>,3>,E> {
+        for (index,block) in self.layers.iter().enumerate() {input = layer(index,block,input)?;}
+        Ok(input)
+    }
+
+    /// Actual flat-token packed training through all original layer choices in order.
+    pub fn forward_packed_with<E,F>(&self,mut input: Tensor<Autodiff<B,S>,2>,mut layer: F) -> Result<Tensor<Autodiff<B,S>,2>,E>
+        where F: FnMut(usize,&TensorParallelAdaptedStackLayer<Autodiff<B,S>>,Tensor<Autodiff<B,S>,2>)->Result<Tensor<Autodiff<B,S>,2>,E> {
         for (index,block) in self.layers.iter().enumerate() {input = layer(index,block,input)?;}
         Ok(input)
     }
