@@ -46,6 +46,7 @@ impl<M,B,C> MuonShardedAdamW<M,B,C>
         }
         if record.adamw.keys().any(|id|!known.contains_key(id) || self.indices.contains_key(id)) {return Err(MuonError::IncompatibleRecord);}
         validate_adam_records(&record.adamw,&self.manifest)?;
+        drop(known);
         self.states = record.muon;self.adamw = self.adamw.load_record(record.adamw);
         Ok(self)
     }
