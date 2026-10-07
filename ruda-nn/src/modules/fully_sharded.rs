@@ -10,6 +10,8 @@ use ruda_autodiff::tensor_parallel::BroadcastTensorCollective;
 
 mod native;
 mod gathered;
+mod components;
+pub use components::*;
 
 /// Explicit construction context preserving one local autograd leaf per source ID.
 /// Reuse a context for all tied layers, then drop it after model construction. It
