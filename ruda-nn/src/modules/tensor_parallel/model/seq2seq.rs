@@ -4,6 +4,8 @@ use crate::{cache::EncoderDecoderKvCache,transformer::AdaptedProjection};
 
 mod training;
 mod inference;
+#[cfg(feature="std")]
+mod batches;
 
 /// Complete native paired model with independently declared source/target tables and vocabularies.
 /// Every encoder and decoder stage is the actual locally loaded dense/adapted module.
@@ -117,7 +119,15 @@ impl<B:Backend,S:CheckpointStrategy> TensorParallelEncoderDecoderModel<Autodiff<
     pub fn encode_with<C,F>(&self,input:TensorParallelTransformerInput<Autodiff<B,S>>,communicator:C,layout:&VocabParallelLossLayout,layer:F)
         -> Result<Tensor<Autodiff<B,S>,3>,C::Error>
         where C:BroadcastTensorCollective<B>,F:FnMut(usize,&TensorParallelAdaptedStackLayer<Autodiff<B,S>>,Tensor<Autodiff<B,S>,3>)->Result<Tensor<Autodiff<B,S>,3>,C::Error> {
-        let hidden = input.embed(&self.source_embeddings,communicator,layout)?;
+        self.encode_with_dropout(input,communicator,layout,layer,|dropout,input|dropout.forward(input))
+    }
+
+    /// Explicit corresponding source-input dropout before the original native encoder layer graph.
+    pub fn encode_with_dropout<C,F,I>(&self,input:TensorParallelTransformerInput<Autodiff<B,S>>,communicator:C,
+        layout:&VocabParallelLossLayout,layer:F,input_dropout:I) -> Result<Tensor<Autodiff<B,S>,3>,C::Error>
+        where C:BroadcastTensorCollective<B>,F:FnMut(usize,&TensorParallelAdaptedStackLayer<Autodiff<B,S>>,Tensor<Autodiff<B,S>,3>)->Result<Tensor<Autodiff<B,S>,3>,C::Error>,
+            I:FnOnce(&Dropout,Tensor<Autodiff<B,S>,3>)->Tensor<Autodiff<B,S>,3> {
+        let hidden = input.embed_with_dropout(&self.source_embeddings,communicator,layout,input_dropout)?;
         self.encoder.forward_with(hidden,layer).map(|hidden|self.source_finish(hidden))
     }
 
@@ -125,7 +135,15 @@ impl<B:Backend,S:CheckpointStrategy> TensorParallelEncoderDecoderModel<Autodiff<
     pub fn encode_packed_with<C,F>(&self,input:TensorParallelTransformerInput<Autodiff<B,S>,1>,packed:&PackedSequenceLayout,
         communicator:C,layout:&VocabParallelLossLayout,layer:F) -> Result<Tensor<Autodiff<B,S>,2>,C::Error>
         where C:BroadcastTensorCollective<B>,F:FnMut(usize,&TensorParallelAdaptedStackLayer<Autodiff<B,S>>,Tensor<Autodiff<B,S>,2>)->Result<Tensor<Autodiff<B,S>,2>,C::Error> {
-        let hidden = input.into_batched(packed).embed(&self.source_embeddings,communicator,layout)?;
+        self.encode_packed_with_dropout(input,packed,communicator,layout,layer,|dropout,input|dropout.forward(input))
+    }
+
+    /// Explicit shared source lookup dropout over real flat rows, without adding padded source tokens.
+    pub fn encode_packed_with_dropout<C,F,I>(&self,input:TensorParallelTransformerInput<Autodiff<B,S>,1>,packed:&PackedSequenceLayout,
+        communicator:C,layout:&VocabParallelLossLayout,layer:F,input_dropout:I) -> Result<Tensor<Autodiff<B,S>,2>,C::Error>
+        where C:BroadcastTensorCollective<B>,F:FnMut(usize,&TensorParallelAdaptedStackLayer<Autodiff<B,S>>,Tensor<Autodiff<B,S>,2>)->Result<Tensor<Autodiff<B,S>,2>,C::Error>,
+            I:FnOnce(&Dropout,Tensor<Autodiff<B,S>,3>)->Tensor<Autodiff<B,S>,3> {
+        let hidden = input.into_batched(packed).embed_with_dropout(&self.source_embeddings,communicator,layout,input_dropout)?;
         let width = hidden.dims()[2];self.encoder.forward_packed_with(hidden.reshape([packed.tokens(),width]),layer).map(|hidden|self.source_finish(hidden))
     }
 
@@ -134,7 +152,15 @@ impl<B:Backend,S:CheckpointStrategy> TensorParallelEncoderDecoderModel<Autodiff<
         layout:&VocabParallelLossLayout,layer:F) -> Result<Tensor<Autodiff<B,S>,3>,C::Error>
         where C:BroadcastTensorCollective<B>,F:FnMut(usize,&TensorParallelAdaptedEncoderDecoderLayer<Autodiff<B,S>>,Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>)
             ->Result<Tensor<Autodiff<B,S>,3>,C::Error> {
-        self.dense_memory(&input.tokens,&memory);let hidden = input.embed(&self.target_embeddings,communicator,layout)?;
+        self.decode_hidden_with_dropout(input,memory,communicator,layout,layer,|dropout,input|dropout.forward(input))
+    }
+
+    /// Explicit corresponding target-input dropout with complete native cross-source derivatives.
+    pub fn decode_hidden_with_dropout<C,F,I>(&self,input:TensorParallelTransformerInput<Autodiff<B,S>>,memory:Tensor<Autodiff<B,S>,3>,communicator:C,
+        layout:&VocabParallelLossLayout,layer:F,input_dropout:I) -> Result<Tensor<Autodiff<B,S>,3>,C::Error>
+        where C:BroadcastTensorCollective<B>,F:FnMut(usize,&TensorParallelAdaptedEncoderDecoderLayer<Autodiff<B,S>>,Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>)
+            ->Result<Tensor<Autodiff<B,S>,3>,C::Error>,I:FnOnce(&Dropout,Tensor<Autodiff<B,S>,3>)->Tensor<Autodiff<B,S>,3> {
+        self.dense_memory(&input.tokens,&memory);let hidden = input.embed_with_dropout(&self.target_embeddings,communicator,layout,input_dropout)?;
         self.decoder.forward_with(hidden,memory,layer).map(|hidden|self.target_finish(hidden))
     }
 
@@ -143,7 +169,15 @@ impl<B:Backend,S:CheckpointStrategy> TensorParallelEncoderDecoderModel<Autodiff<
         target:&PackedSequenceLayout,communicator:C,layout:&VocabParallelLossLayout,layer:F) -> Result<Tensor<Autodiff<B,S>,2>,C::Error>
         where C:BroadcastTensorCollective<B>,F:FnMut(usize,&TensorParallelAdaptedEncoderDecoderLayer<Autodiff<B,S>>,Tensor<Autodiff<B,S>,2>,Tensor<Autodiff<B,S>,2>)
             ->Result<Tensor<Autodiff<B,S>,2>,C::Error> {
-        self.packed_memory(&input.tokens,&memory,source,target);let hidden = input.into_batched(target).embed(&self.target_embeddings,communicator,layout)?;
+        self.decode_packed_hidden_with_dropout(input,memory,source,target,communicator,layout,layer,|dropout,input|dropout.forward(input))
+    }
+
+    /// Explicit shared target lookup dropout over actual packed paired documents.
+    pub fn decode_packed_hidden_with_dropout<C,F,I>(&self,input:TensorParallelTransformerInput<Autodiff<B,S>,1>,memory:Tensor<Autodiff<B,S>,2>,source:&PackedSequenceLayout,
+        target:&PackedSequenceLayout,communicator:C,layout:&VocabParallelLossLayout,layer:F,input_dropout:I) -> Result<Tensor<Autodiff<B,S>,2>,C::Error>
+        where C:BroadcastTensorCollective<B>,F:FnMut(usize,&TensorParallelAdaptedEncoderDecoderLayer<Autodiff<B,S>>,Tensor<Autodiff<B,S>,2>,Tensor<Autodiff<B,S>,2>)
+            ->Result<Tensor<Autodiff<B,S>,2>,C::Error>,I:FnOnce(&Dropout,Tensor<Autodiff<B,S>,3>)->Tensor<Autodiff<B,S>,3> {
+        self.packed_memory(&input.tokens,&memory,source,target);let hidden = input.into_batched(target).embed_with_dropout(&self.target_embeddings,communicator,layout,input_dropout)?;
         let width = hidden.dims()[2];self.decoder.forward_with(hidden.reshape([target.tokens(),width]),memory,layer).map(|hidden|self.target_finish(hidden))
     }
 }
