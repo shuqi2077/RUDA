@@ -114,12 +114,26 @@ impl<B: Backend,S: CheckpointStrategy> TensorParallelAdaptedTransformerBlock<Aut
     /// Explicit actual per-target adapter and replicated residual dropout transforms.
     pub fn forward_packed_with_dropout<C,K,F,A,G,R>(&self,input: Tensor<Autodiff<B,S>,2>,layout: &PackedSequenceLayout,
         masks: Option<&[PackedDocumentAttentionMask<Autodiff<B,S>>]>,options: PackedAttentionOptions,groups: &AttentionParallelGroups<C,K>,positions: F,
-        mut attention_dropout: A,feed_forward_dropout: G,mut branch_output: R) -> Result<Tensor<Autodiff<B,S>,2>,C::Error>
+        attention_dropout: A,feed_forward_dropout: G,branch_output: R) -> Result<Tensor<Autodiff<B,S>,2>,C::Error>
         where C: BroadcastTensorCollective<B>,K: BroadcastTensorCollective<B,Error=C::Error>,
             F: FnOnce(Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>)->(Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>),
             A: FnMut(AttentionAdapterTarget,&Dropout,Tensor<Autodiff<B,S>,2>)->Tensor<Autodiff<B,S>,2>,
             G: FnMut(FeedForwardAdapterTarget,&Dropout,Tensor<Autodiff<B,S>,2>)->Tensor<Autodiff<B,S>,2>,
             R: FnMut(TensorParallelResidualStage,Tensor<Autodiff<B,S>,2>)->Tensor<Autodiff<B,S>,2> {
+        self.forward_packed_with_transforms(input,layout,masks,options,groups,positions,attention_dropout,feed_forward_dropout,branch_output,
+            |module,input|Ok(module.forward(input)))
+    }
+
+    /// Actual packed graph with independent adapter, shared-residual and activation-state transforms.
+    pub fn forward_packed_with_transforms<C,K,F,A,G,R,V>(&self,input: Tensor<Autodiff<B,S>,2>,layout: &PackedSequenceLayout,
+        masks: Option<&[PackedDocumentAttentionMask<Autodiff<B,S>>]>,options: PackedAttentionOptions,groups: &AttentionParallelGroups<C,K>,positions: F,
+        mut attention_dropout: A,feed_forward_dropout: G,mut branch_output: R,activation: V) -> Result<Tensor<Autodiff<B,S>,2>,C::Error>
+        where C: BroadcastTensorCollective<B>,K: BroadcastTensorCollective<B,Error=C::Error>,
+            F: FnOnce(Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>)->(Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>),
+            A: FnMut(AttentionAdapterTarget,&Dropout,Tensor<Autodiff<B,S>,2>)->Tensor<Autodiff<B,S>,2>,
+            G: FnMut(FeedForwardAdapterTarget,&Dropout,Tensor<Autodiff<B,S>,2>)->Tensor<Autodiff<B,S>,2>,
+            R: FnMut(TensorParallelResidualStage,Tensor<Autodiff<B,S>,2>)->Tensor<Autodiff<B,S>,2>,
+            V: FnOnce(&crate::activation::Activation<Autodiff<B,S>>,Tensor<Autodiff<B,S>,2>)->Result<Tensor<Autodiff<B,S>,2>,C::Error> {
         assert_eq!(input.dims()[0],layout.tokens(),"adapted parallel packed boundaries differ from actual rows");
         let hidden = residual(input,&self.attention_norm,self.norm_first,|source| {
             let (query,key,value) = self.attention.project_packed_with_adapter_dropout(source.clone(),source.clone(),source,groups,&mut attention_dropout)?;
@@ -129,7 +143,7 @@ impl<B: Backend,S: CheckpointStrategy> TensorParallelAdaptedTransformerBlock<Aut
                 |module,input|attention_dropout(AttentionAdapterTarget::Output,module,input))
         },|branch|branch_output(TensorParallelResidualStage::Attention,branch))?;
         residual(hidden,&self.feed_forward_norm,self.norm_first,
-            |source|self.feed_forward.forward_with_adapter_dropout(source,groups.heads.clone(),feed_forward_dropout),
+            |source|self.feed_forward.forward_with_transforms(source,groups.heads.clone(),feed_forward_dropout,activation),
             |branch|branch_output(TensorParallelResidualStage::FeedForward,branch))
     }
 }

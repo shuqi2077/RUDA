@@ -1,6 +1,6 @@
 use super::{Autodiff,Backend,BroadcastTensorCollective,CheckpointStrategy,AttentionParallelGroups,Dropout,Module,Tensor,geometry};
 use super::{TensorParallelAdaptedGroupedQueryAttention,TensorParallelAdaptedFeedForward};
-use super::super::transformer::residual;
+use super::super::transformer::{residual,TensorParallelResidualStage};
 use crate::{attention::{DenseAttentionMask,DenseAttentionOptions},cache::ProjectedKvCache,
     transformer::{AdaptedTransformerBlock,DenseTransformerNorm,AttentionAdapterTarget,FeedForwardAdapterTarget}};
 use ruda_model::tensor::Bool;
@@ -81,21 +81,36 @@ impl<B: Backend,S: CheckpointStrategy> TensorParallelAdaptedTransformerBlock<Aut
     /// Caller-owned actual per-target dropout at each adapter A dtype. Column input
     /// dropout and full-residual dropout must follow the declared replica semantics.
     pub fn forward_with_adapter_dropout<C,K,F,A,G>(&self,input: Tensor<Autodiff<B,S>,3>,masks: DenseAttentionMask<Autodiff<B,S>>,options: DenseAttentionOptions,
-        groups: &AttentionParallelGroups<C,K>,positions: F,mut attention_dropout: A,feed_forward_dropout: G) -> Result<Tensor<Autodiff<B,S>,3>,C::Error>
+        groups: &AttentionParallelGroups<C,K>,positions: F,attention_dropout: A,feed_forward_dropout: G) -> Result<Tensor<Autodiff<B,S>,3>,C::Error>
         where C: BroadcastTensorCollective<B>,K: BroadcastTensorCollective<B,Error=C::Error>,
             F: FnOnce(Tensor<Autodiff<B,S>,4>,Tensor<Autodiff<B,S>,4>)->(Tensor<Autodiff<B,S>,4>,Tensor<Autodiff<B,S>,4>),
             A: FnMut(AttentionAdapterTarget,&Dropout,Tensor<Autodiff<B,S>,3>)->Tensor<Autodiff<B,S>,3>,
             G: FnMut(FeedForwardAdapterTarget,&Dropout,Tensor<Autodiff<B,S>,3>)->Tensor<Autodiff<B,S>,3> {
+        self.forward_with_transforms(input,masks,options,groups,positions,attention_dropout,feed_forward_dropout,
+            |_,branch|self.residual_dropout.forward(branch),|module,input|Ok(module.forward(input)))
+    }
+
+    /// Explicit adapter dropout, replicated residual dropout and actual activation parameter placement.
+    /// Caller-provided transforms preserve the model's declared rank groups and original layer order.
+    pub fn forward_with_transforms<C,K,F,A,G,R,V>(&self,input: Tensor<Autodiff<B,S>,3>,masks: DenseAttentionMask<Autodiff<B,S>>,options: DenseAttentionOptions,
+        groups: &AttentionParallelGroups<C,K>,positions: F,mut attention_dropout: A,feed_forward_dropout: G,mut branch_output: R,activation: V)
+        -> Result<Tensor<Autodiff<B,S>,3>,C::Error>
+        where C: BroadcastTensorCollective<B>,K: BroadcastTensorCollective<B,Error=C::Error>,
+            F: FnOnce(Tensor<Autodiff<B,S>,4>,Tensor<Autodiff<B,S>,4>)->(Tensor<Autodiff<B,S>,4>,Tensor<Autodiff<B,S>,4>),
+            A: FnMut(AttentionAdapterTarget,&Dropout,Tensor<Autodiff<B,S>,3>)->Tensor<Autodiff<B,S>,3>,
+            G: FnMut(FeedForwardAdapterTarget,&Dropout,Tensor<Autodiff<B,S>,3>)->Tensor<Autodiff<B,S>,3>,
+            R: FnMut(TensorParallelResidualStage,Tensor<Autodiff<B,S>,3>)->Tensor<Autodiff<B,S>,3>,
+            V: FnOnce(&crate::activation::Activation<Autodiff<B,S>>,Tensor<Autodiff<B,S>,3>)->Result<Tensor<Autodiff<B,S>,3>,C::Error> {
         let hidden = residual(input,&self.attention_norm,self.norm_first,|source| {
             let (query,key,value) = self.attention.project_with_adapter_dropout(source.clone(),source.clone(),source,groups,&mut attention_dropout)?;
             let geometry = (query.dims(),key.dims());let (query,key) = positions(query,key);
             assert_eq!((query.dims(),key.dims()),geometry,"adapted parallel positions changed actual head geometry");
             self.attention.forward_projected_with_adapter_dropout(query,key,value,masks,options,groups.heads.clone(),
                 |module,input|attention_dropout(AttentionAdapterTarget::Output,module,input))
-        },|branch|self.residual_dropout.forward(branch))?;
+        },|branch|branch_output(TensorParallelResidualStage::Attention,branch))?;
         residual(hidden,&self.feed_forward_norm,self.norm_first,
-            |source|self.feed_forward.forward_with_adapter_dropout(source,groups.heads.clone(),feed_forward_dropout),
-            |branch|self.residual_dropout.forward(branch))
+            |source|self.feed_forward.forward_with_transforms(source,groups.heads.clone(),feed_forward_dropout,activation),
+            |branch|branch_output(TensorParallelResidualStage::FeedForward,branch))
     }
 
     /// Detached-history inference with actual selected adapters and no base merge/replay.
