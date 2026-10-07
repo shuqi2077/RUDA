@@ -59,7 +59,8 @@ impl<B:Backend> VocabParallelTransformerHead<B> {
         same_embedding(&embedding,&head.projection);
         let embedding = VocabParallelEmbedding::from_full_with_layout(embedding,layout,rank,padding_index);
         let bias = head.projection.bias.map(|bias|rows(bias,layout,rank));
-        let head = Self::from_embedding(&embedding,bias,head.normalization,head.dropout,layout,rank);
+        let weight = head.projection.weight.map(|_|embedding.local.weight.val());
+        let head = Self::from_projection(VocabParallelProjection {weight,bias},head.normalization,head.dropout,layout,rank);
         (embedding,head)
     }
 }
@@ -103,7 +104,7 @@ impl<B:Backend> VocabParallelAdaptedTransformerHead<B> {
                 && full.adapter_a.weight.id != full.adapter_b.weight.id,"tied full adapter roles require compatible explicit local loading");
         }
         let embedding = VocabParallelEmbedding::from_full_with_layout(embedding,layout,rank,padding_index);
-        let base = VocabParallelProjection::from_embedding(&embedding,full.base.bias.map(|bias|rows(bias,layout,rank)));
+        let base = VocabParallelProjection {weight:full.base.weight.map(|_|embedding.local.weight.val()),bias:full.base.bias.map(|bias|rows(bias,layout,rank))};
         let projection = VocabParallelLoRAProjection::from_adapters(base,full.adapter_a,
             ColumnParallelLinear::from_full(full.adapter_b,interval).local,full.dropout,full.scale);
         let head = Self::from_projection(projection,head.normalization,head.dropout,layout,rank);

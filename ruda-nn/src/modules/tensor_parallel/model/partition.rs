@@ -23,7 +23,7 @@ pub struct TensorParallelTransformerModelPartition {
     pub padding_index:Option<usize>,
 }
 
-fn head_weight<B:Backend>(head:&TensorParallelOutputHead<B>) -> ParamId {
+pub(super) fn head_weight<B:Backend>(head:&TensorParallelOutputHead<B>) -> ParamId {
     match head {
         TensorParallelOutputHead::Linear(head)=>head.local.projection.weight.id,
         TensorParallelOutputHead::AdaptedLinear(head)=>head.local.projection.base.weight.id,

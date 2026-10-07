@@ -20,7 +20,8 @@ pub use partition::TensorParallelTransformerModelPartition;
 #[cfg(feature="std")]
 mod batches;
 mod seq2seq;
-pub use seq2seq::{TensorParallelEncoderDecoderModel,TensorParallelEncoderDecoderAdapterRecord,TensorParallelPairedVocabularies};
+pub use seq2seq::{TensorParallelEncoderDecoderModel,TensorParallelEncoderDecoderAdapterRecord,TensorParallelPairedVocabularies,
+    TensorParallelEncoderDecoderModelPartition};
 
 /// Complete native single-stream Transformer assembled from actual local model partitions.
 /// Input tables, exact selected/unselected layer order, optional final normalization and

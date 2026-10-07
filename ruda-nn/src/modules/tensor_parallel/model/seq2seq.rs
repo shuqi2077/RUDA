@@ -6,6 +6,8 @@ mod training;
 mod inference;
 mod adapter_record;
 pub use adapter_record::{TensorParallelEncoderDecoderAdapterRecord,TensorParallelPairedVocabularies};
+mod partition;
+pub use partition::TensorParallelEncoderDecoderModelPartition;
 #[cfg(feature="std")]
 mod batches;
 
