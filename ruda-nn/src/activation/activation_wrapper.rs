@@ -9,6 +9,7 @@ use ruda_model::config::Config;
 use ruda_model::module::Module;
 use ruda_model::tensor::Tensor;
 use ruda_model::tensor::backend::Backend;
+use super::Silu;
 
 /// [`Activation`] Configuration.
 #[derive(Config, Debug)]
@@ -70,6 +71,9 @@ pub enum ActivationConfig {
 
     /// [`Shrink`] activation layer.
     Shrink(ShrinkConfig),
+
+    /// [`Silu`] activation layer.
+    Silu,
 }
 
 impl From<PReluConfig> for ActivationConfig {
@@ -143,6 +147,7 @@ impl ActivationConfig {
     pub fn init<B: Backend>(&self, device: &B::Device) -> Activation<B> {
         match self {
             ActivationConfig::Relu => Relu.into(),
+            ActivationConfig::Silu => Silu.into(),
             ActivationConfig::LeakyRelu(conf) => conf.init().into(),
             ActivationConfig::Gelu => Gelu::new().into(),
             ActivationConfig::GeluApproximate => Gelu::new_approximate().into(),
@@ -225,6 +230,13 @@ pub enum Activation<B: Backend> {
 
     /// [`Shrink`] activation layer.
     Shrink(Shrink),
+
+    /// [`Silu`] activation layer.
+    Silu(Silu),
+}
+
+impl<B: Backend> From<Silu> for Activation<B> {
+    fn from(layer: Silu) -> Self { Self::Silu(layer) }
 }
 
 impl<B: Backend> From<Gelu> for Activation<B> {
@@ -340,6 +352,7 @@ impl<B: Backend> Activation<B> {
     pub fn forward<const D: usize>(&self, input: Tensor<B, D>) -> Tensor<B, D> {
         match self {
             Activation::Relu(layer) => layer.forward(input),
+            Activation::Silu(layer) => layer.forward(input),
             Activation::LeakyRelu(layer) => layer.forward(input),
             Activation::Gelu(layer) => layer.forward(input),
             Activation::PRelu(layer) => layer.forward(input),

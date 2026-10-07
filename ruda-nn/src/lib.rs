@@ -16,7 +16,7 @@ pub mod activation;
 pub use activation::{
     celu::*, elu::*, gelu::*, glu::*, hard_shrink::*, hard_sigmoid::*, leaky_relu::*, prelu::*,
     relu::*, selu::*, shrink::*, sigmoid::*, soft_shrink::*, softplus::*, softsign::*, swiglu::*,
-    tanh::*, thresholded_relu::*,
+    tanh::*, thresholded_relu::*, silu::*,
 };
 
 mod padding;

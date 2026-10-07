@@ -2,7 +2,7 @@
 use ruda_model::config::Config;
 use ruda_model::module::{Content, DisplaySettings, Module, ModuleDisplay};
 use ruda_model::tensor::backend::Backend;
-use ruda_model::tensor::{Distribution, Tensor};
+use ruda_model::tensor::{Bool, Distribution, Tensor};
 
 /// Configuration to create a [Dropout](Dropout) layer using the [init function](DropoutConfig::init).
 #[derive(Config, Debug)]
@@ -29,7 +29,7 @@ pub struct Dropout {
 impl DropoutConfig {
     /// Initialize a new [dropout](Dropout) module.
     pub fn init(&self) -> Dropout {
-        if self.prob < 0.0 || self.prob > 1.0 {
+        if !self.prob.is_finite() || self.prob < 0.0 || self.prob > 1.0 {
             panic!(
                 "Dropout probability should be between 0 and 1, but got {}",
                 self.prob
@@ -51,6 +51,11 @@ impl Dropout {
     pub fn forward<B: Backend, const D: usize>(&self, input: Tensor<B, D>) -> Tensor<B, D> {
         if !B::ad_enabled(&input.device()) || self.prob == 0.0 {
             return input;
+        }
+
+        if self.prob == 1.0 {
+            let excluded = Tensor::<B,D,Bool>::zeros(input.dims(),&input.device()).bool_not();
+            return input.mask_fill(excluded,0);
         }
 
         let prob_keep = 1.0 - self.prob;
