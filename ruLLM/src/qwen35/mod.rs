@@ -1,6 +1,8 @@
 mod attention;
 mod batching;
 pub use batching::Qwen35BatchCache;
+mod cache_record;
+pub use cache_record::{Qwen35CacheRecord,Qwen35LayerCacheState};
 mod config;
 mod delta;
 mod layer;

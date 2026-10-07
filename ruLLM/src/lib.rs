@@ -13,6 +13,7 @@ pub use qwen35::{LoadedQwen35Vision, Qwen35VisionConfig, Qwen35VisionModel, Qwen
 pub use qwen35::{Qwen35MultimodalCache, Qwen35MultimodalModel, load_huggingface_qwen35_multimodal};
 pub use qwen35::{Qwen35ImageProcessor, Qwen35PreparedImages, Qwen35RgbImage};
 pub use qwen35::Qwen35BatchCache;
+pub use qwen35::{Qwen35CacheRecord,Qwen35LayerCacheState};
 
 pub use generation::*;
 pub use huggingface::*;
