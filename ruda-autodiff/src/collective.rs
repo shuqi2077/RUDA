@@ -13,6 +13,9 @@ use ruda_tensor::{
     primitive::TensorPrimitive,
 };
 
+mod scope;
+pub use scope::{CollectiveScope,ScopedTensorCollective,ScopedCollectiveError};
+
 #[derive(Debug)]
 struct Collective<C>(PhantomData<C>);
 
@@ -81,6 +84,8 @@ where
     S: CheckpointStrategy,
     C: TensorCollective<B>,
 {
+    let scope=communicator.autodiff_context().and_then(|context|context.downcast_ref::<CollectiveScope<B,S>>()).cloned();
+    let ordered=ordered || scope.is_some();
     let tensor = tensor.into_primitive().tensor();
     let output = if gathered {
         communicator.all_gather_float(tensor.primitive)
@@ -95,7 +100,9 @@ where
         OpsKind::Tracked(prep) => prep.finish((communicator, gathered, ordered), output),
         OpsKind::UnTracked(prep) => prep.finish(output),
     };
-    Ok(Tensor::from_primitive(TensorPrimitive::Float(output)))
+    let output=Tensor::from_primitive(TensorPrimitive::Float(output));
+    if let Some(scope)=scope {scope.capture(output.clone());}
+    Ok(output)
 }
 
 /// Gather leading-axis shards; backward sums and scatters all ranks' gradients.

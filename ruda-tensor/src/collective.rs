@@ -9,6 +9,9 @@ pub trait TensorCollective<B: Backend>: Clone + Debug + Send + 'static {
     type Error: Debug;
     /// Number of participating ranks, greater than zero.
     fn world_size(&self) -> u32;
+    /// Optional typed AD execution context carried by an explicit communicator wrapper.
+    /// Native transports and ordinary AD calls retain no context by default.
+    fn autodiff_context(&self) -> Option<&(dyn core::any::Any+Send+Sync)> {None}
     /// Gather equal leading-axis shards in rank order, retaining the input dtype.
     fn all_gather_float(&self, value: FloatTensor<B>) -> Result<FloatTensor<B>, Self::Error>;
     /// Sum tensors across ranks and return this rank's equal leading-axis shard.
