@@ -64,6 +64,12 @@ impl LayerNormConfig {
 }
 
 impl<B: Backend> LayerNorm<B> {
+    /// Assemble actual loaded affine leaves and the original epsilon without initialization.
+    pub fn from_parameters(gamma: Param<Tensor<B,1>>,beta: Option<Param<Tensor<B,1>>>,epsilon:f64) -> Self {
+        if let Some(beta) = &beta {assert_eq!(gamma.val().dims(),beta.val().dims(),"LayerNorm affine dimensions differ");}
+        Self {gamma,beta,epsilon}
+    }
+
     /// The configured normalization epsilon, independent of parameter storage.
     pub fn epsilon(&self) -> f64 { self.epsilon }
 
