@@ -3,6 +3,7 @@ mod boolean;
 mod integer;
 mod neural;
 mod quantized;
+mod frozen_awq;
 mod float;
 mod transaction;
 #[cfg(feature = "sparse")]

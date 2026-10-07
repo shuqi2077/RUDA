@@ -1,7 +1,7 @@
 use super::*;
 use alloc::{sync::Arc,vec::Vec};
 use core::fmt;
-use ruda_tensor::{DType,TensorData,tensor::{Bool,FloatTensor}};
+use ruda_tensor::{DType,TensorData,collective::IntegerTensorCollective,tensor::{Bool,FloatTensor,IntTensor}};
 use crate::NodeId;
 #[cfg(feature="std")]
 use parking_lot::Mutex;
@@ -63,6 +63,9 @@ impl<C:ReplicatedTensorCollective<B>,B:Backend,S:CheckpointStrategy> ReplicatedT
 impl<C:BroadcastTensorCollective<B>,B:Backend,S:CheckpointStrategy> BroadcastTensorCollective<B> for ScopedTensorCollective<C,B,S> {
     fn rank(&self) -> u32 {self.inner.rank()}
     fn broadcast_float(&self,value:FloatTensor<B>,root:u32) -> Result<FloatTensor<B>,Self::Error> {self.inner.broadcast_float(value,root)}
+}
+impl<C:IntegerTensorCollective<B>,B:Backend,S:CheckpointStrategy> IntegerTensorCollective<B> for ScopedTensorCollective<C,B,S> {
+    fn all_gather_int(&self,value:IntTensor<B>) -> Result<IntTensor<B>,Self::Error> {self.inner.all_gather_int(value)}
 }
 
 impl<B:Backend,S:CheckpointStrategy> CollectiveScope<B,S> {

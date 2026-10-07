@@ -53,6 +53,13 @@ impl<B: Backend> ruda_tensor::collective::BroadcastTensorCollective<B>
     }
 }
 
+impl<B: Backend> ruda_tensor::collective::IntegerTensorCollective<B>
+    for RankCommunicator<TensorDevice<B>> {
+    fn all_gather_int(&self, value: B::IntTensorPrimitive) -> Result<B::IntTensorPrimitive, Self::Error> {
+        RankCommunicator::all_gather_int(self, value)
+    }
+}
+
 impl<B: Backend> RankCommunicator<TensorDevice<B>> {
     /// Gather equal-size floating tensors along axis zero in rank order.
     /// Retains dtype, remaining axes and input snapshots; transfers are host-staged.

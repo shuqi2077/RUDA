@@ -33,7 +33,8 @@ pub use options::*;
 pub use transaction::*;
 
 pub use crate::tensor::IndexingUpdateOp;
-pub use crate::collective::{TensorCollective,ReplicatedTensorCollective,BroadcastTensorCollective};
+pub use crate::collective::{TensorCollective,ReplicatedTensorCollective,BroadcastTensorCollective,IntegerTensorCollective};
+pub use crate::frozen_awq::{FrozenAwqOps, FrozenAwqError};
 
 // Re-exported types
 pub use crate::{

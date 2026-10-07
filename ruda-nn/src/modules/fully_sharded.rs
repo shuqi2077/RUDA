@@ -28,6 +28,8 @@ mod native_head;
 pub use native_head::{FullyShardedGreedySelection,FullyShardedTopKSelection};
 mod training;
 pub use training::*;
+mod awq;
+pub use awq::*;
 
 /// Explicit construction context preserving one local autograd leaf per source ID.
 /// Reuse a context for all tied layers, then drop it after model construction. It
@@ -36,18 +38,20 @@ pub struct ShardingContext<B:Backend> {
     rank:usize,
     world_size:usize,
     parameters:BTreeMap<ParamId,ShardedParameter<B>>,
+    packed_parameters:BTreeMap<ParamId,ShardedPackedParameter<B>>,
 }
 
 impl<B:Backend> ShardingContext<B> {
     /// Select the actual data-axis topology; no communicator or device is inferred.
     pub fn new(rank:usize,world_size:usize)->Self {
         assert!(world_size>0 && rank<world_size,"invalid sharding context topology");
-        Self{rank,world_size,parameters:BTreeMap::new()}
+        Self{rank,world_size,parameters:BTreeMap::new(),packed_parameters:BTreeMap::new()}
     }
 
     /// Return the same local Param/autograd leaf for each alias of a source ID.
     /// Reusing an ID with different logical metadata or trainability is an error.
     pub fn parameter<const D:usize>(&mut self,parameter:Param<Tensor<B,D>>)->ShardedParameter<B> {
+        assert!(!self.packed_parameters.contains_key(&parameter.id),"one source ID cannot identify both packed and floating storage");
         let value=parameter.val();
         if let Some(shard)=self.parameters.get(&parameter.id) {
             let local=shard.local.val();
@@ -76,6 +80,36 @@ impl<B:Backend> ShardingContext<B> {
     /// Shard a caller-injected adapter without duplicating shared local leaves.
     pub fn lora(&mut self,layer:crate::LoRALinear<B>)->FullyShardedLoRALinear<B> {
         FullyShardedLoRALinear{base:self.linear(layer.base),adapter_a:self.linear(layer.adapter_a),
+            adapter_b:self.linear(layer.adapter_b),dropout:layer.dropout,scale:layer.scale}
+    }
+
+    /// Share the actual rank-local words for every explicitly tied packed source ID.
+    pub fn packed_parameter<const D:usize>(&mut self,parameter:Param<Tensor<B,D,Int>>)->ShardedPackedParameter<B> {
+        assert!(!self.parameters.contains_key(&parameter.id),"one source ID cannot identify both packed and floating storage");
+        let value=parameter.val();
+        if let Some(shard)=self.packed_parameters.get(&parameter.id) {
+            assert_eq!(shard.logical_shape,value.dims().to_vec(),"tied packed source shapes differ");
+            assert_eq!(shard.local.val().dtype(),value.dtype(),"tied packed source dtypes differ");
+            assert_eq!(shard.local.val().device(),value.device(),"tied packed source devices differ");
+            return shard.clone();
+        }
+        let id=parameter.id;
+        let shard=ShardedPackedParameter::from_full(parameter,self.rank,self.world_size);
+        self.packed_parameters.insert(id,shard.clone());shard
+    }
+
+    /// Shard original packed words, zero points, frozen scales and optional bias.
+    pub fn awq(&mut self,layer:crate::FrozenAwqLinear<B>)->FullyShardedAwqLinear<B> {
+        layer.validate();
+        FullyShardedAwqLinear::from_shards(
+            self.packed_parameter(layer.qweight),self.packed_parameter(layer.qzeros),
+            self.parameter(layer.scales),layer.bias.map(|bias|self.parameter(bias)),layer.group_size,
+        )
+    }
+
+    /// Shard both the immutable packed base and the actual trainable adapters.
+    pub fn awq_lora(&mut self,layer:crate::AwqLoRALinear<B>)->FullyShardedAwqLoRALinear<B> {
+        FullyShardedAwqLoRALinear {base:self.awq(layer.base),adapter_a:self.linear(layer.adapter_a),
             adapter_b:self.linear(layer.adapter_b),dropout:layer.dropout,scale:layer.scale}
     }
 

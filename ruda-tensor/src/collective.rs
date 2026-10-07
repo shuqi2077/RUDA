@@ -1,5 +1,5 @@
 //! Explicit rank communicators for floating tensor collectives.
-use crate::{Backend, tensor::FloatTensor};
+use crate::{Backend, tensor::{FloatTensor, IntTensor}};
 use core::fmt::Debug;
 
 /// Matching rank-ordered collectives used by differentiable sharded tensors.
@@ -34,4 +34,12 @@ pub trait BroadcastTensorCollective<B: Backend>: ReplicatedTensorCollective<B> {
         value: FloatTensor<B>,
         root: u32,
     ) -> Result<FloatTensor<B>, Self::Error>;
+}
+
+/// Exact packed-integer storage transport in addition to floating rank collectives.
+/// Immutable packed parameters do not acquire a floating surrogate or derivative.
+pub trait IntegerTensorCollective<B: Backend>: BroadcastTensorCollective<B> {
+    /// Rank-ordered leading-axis gather retaining the original integer dtype and
+    /// bit patterns. Implementations must not cast packed words through floating point.
+    fn all_gather_int(&self, value: IntTensor<B>) -> Result<IntTensor<B>, Self::Error>;
 }

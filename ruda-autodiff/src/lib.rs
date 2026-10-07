@@ -20,6 +20,7 @@ pub mod checkpoint;
 pub mod collective;
 /// Model-parallel regions with replicated-loss, rather than independent-loss, derivatives.
 pub mod tensor_parallel;
+mod frozen_awq;
 #[cfg(feature = "distributed")]
 /// Distributed utils.
 pub mod distributed;

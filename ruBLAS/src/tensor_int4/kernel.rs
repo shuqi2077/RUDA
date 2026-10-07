@@ -47,3 +47,90 @@ pub(super) fn awq_gemm<F: Float>(
     }
     output[position] = value;
 }
+
+/// Mixed activation/weight storage with the same rounded AWQ coefficients.
+#[ruda(launch)]
+pub(super) fn awq_gemm_mixed<G: Float, W: Float>(
+    input: &Array<G>,
+    qweight: &Array<i32>,
+    qzeros: &Array<i32>,
+    scales: &Array<W>,
+    bias: &Array<W>,
+    output: &mut Array<G>,
+    input_features: u32,
+    output_features: u32,
+    group_size: u32,
+    has_bias: u32,
+    #[define(G)] _input_dtype: StorageType,
+    #[define(W)] _weight_dtype: StorageType,
+) {
+    let position = ABSOLUTE_POS;
+    if position >= output.len() { terminate!(); }
+    let k = input_features as usize;
+    let n = output_features as usize;
+    let row = position / n;
+    let column = position % n;
+    let packed_columns = n / 8;
+    let lane = column % 8;
+    let shift = ((lane % 2) * 4 + lane / 2) as u32 * 4;
+    let mut sum = 0.0f32;
+    let mut inner = 0usize;
+    while inner < k {
+        let group = inner / group_size as usize;
+        let word = u32::cast_from(qweight[inner * packed_columns + column / 8]);
+        let zero_word = u32::cast_from(qzeros[group * packed_columns + column / 8]);
+        let quant = (word >> shift) & 15u32;
+        let zero = (zero_word >> shift) & 15u32;
+        let weight = W::cast_from(
+            (f32::cast_from(quant) - f32::cast_from(zero))
+                * f32::cast_from(scales[group * n + column]),
+        );
+        sum += f32::cast_from(input[row * k + inner]) * f32::cast_from(weight);
+        inner += 1;
+    }
+    let mut value = G::cast_from(sum);
+    if has_bias != 0 { value += G::cast_from(bias[column]); }
+    output[position] = value;
+}
+
+/// Input VJP reads packed AWQ words directly, without materializing a dense weight.
+#[ruda(launch)]
+pub(super) fn awq_input_backward<G: Float, W: Float>(
+    gradient: &Array<G>,
+    qweight: &Array<i32>,
+    qzeros: &Array<i32>,
+    scales: &Array<W>,
+    output: &mut Array<G>,
+    input_features: u32,
+    output_features: u32,
+    group_size: u32,
+    #[define(G)] _gradient_dtype: StorageType,
+    #[define(W)] _weight_dtype: StorageType,
+) {
+    let position = ABSOLUTE_POS;
+    if position >= output.len() { terminate!(); }
+    let k = input_features as usize;
+    let n = output_features as usize;
+    let row = position / k;
+    let inner = position % k;
+    let group = inner / group_size as usize;
+    let packed_columns = n / 8;
+    let mut sum = 0.0f32;
+    let mut column = 0usize;
+    while column < n {
+        let lane = column % 8;
+        let shift = ((lane % 2) * 4 + lane / 2) as u32 * 4;
+        let word = u32::cast_from(qweight[inner * packed_columns + column / 8]);
+        let zero_word = u32::cast_from(qzeros[group * packed_columns + column / 8]);
+        let quant = (word >> shift) & 15u32;
+        let zero = (zero_word >> shift) & 15u32;
+        // W rounding must match forward even when G is FP32 and W is FP16/BF16.
+        let weight = W::cast_from(
+            (f32::cast_from(quant) - f32::cast_from(zero))
+                * f32::cast_from(scales[group * n + column]),
+        );
+        sum += f32::cast_from(gradient[row * n + column]) * f32::cast_from(weight);
+        column += 1;
+    }
+    output[position] = G::cast_from(sum);
+}

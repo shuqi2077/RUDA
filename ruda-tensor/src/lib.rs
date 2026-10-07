@@ -22,6 +22,8 @@ pub mod device;
 pub mod primitive;
 pub mod ops;
 pub mod collective;
+/// Native frozen AWQ projections and their packed-weight input derivatives.
+pub mod frozen_awq;
 #[cfg(feature = "distributed")]
 pub mod distributed;
 
