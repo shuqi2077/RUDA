@@ -14,6 +14,10 @@ pub mod token_batch;
 #[cfg(feature = "std")]
 pub mod causal;
 
+/// Explicit aligned encoder-decoder examples and paired packed/padded collation.
+#[cfg(feature = "std")]
+pub mod seq2seq;
+
 /// Dataset module.
 #[cfg(feature = "dataset")]
 pub mod dataset {

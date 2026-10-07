@@ -2,6 +2,8 @@ mod binary_cross_entropy;
 mod cosine_embedding;
 mod cross_entropy;
 mod causal_lm;
+#[cfg(feature = "std")]
+mod seq2seq;
 mod ctc;
 mod huber;
 mod kldiv;
