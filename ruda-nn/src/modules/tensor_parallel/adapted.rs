@@ -6,9 +6,11 @@ use super::{AttentionParallelGroups,BroadcastTensorCollective};
 mod attention;
 mod feed_forward;
 mod transformer;
+mod stack;
 pub use attention::*;
 pub use feed_forward::*;
 pub use transformer::*;
+pub use stack::*;
 
 fn geometry<B: Backend>(layer: &AdaptedProjection<B>) -> [usize;2] {
     match layer {AdaptedProjection::Dense(layer)=>layer.weight.val().dims(),AdaptedProjection::LoRA(layer)=>layer.base.weight.val().dims()}

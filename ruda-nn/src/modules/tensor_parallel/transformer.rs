@@ -60,6 +60,12 @@ impl<B: Backend> TensorParallelTransformerBlock<B> {
             feed_forward_norm:block.feed_forward_norm,residual_dropout:block.residual_dropout,norm_first:block.norm_first}
     }
 
+    /// Return the original local module container without weight gathering or ID changes.
+    pub fn into_local_block(self) -> DenseTransformerBlock<B> {
+        DenseTransformerBlock {attention:self.attention.local,feed_forward:self.feed_forward.local,
+            attention_norm:self.attention_norm,feed_forward_norm:self.feed_forward_norm,residual_dropout:self.residual_dropout,norm_first:self.norm_first}
+    }
+
     /// Native inference using existing backend attention/FFN and explicit output collectives.
     /// Positions are applied to actual local Q/K heads, never to a synthetic full model.
     pub fn forward_inference<C,F>(&self,input: Tensor<B,3>,masks: DenseAttentionMask<B>,options: DenseAttentionOptions,
