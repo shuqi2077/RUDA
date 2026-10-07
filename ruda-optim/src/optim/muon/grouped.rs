@@ -16,6 +16,11 @@ use crate::{
 };
 use super::{Muon, MuonConfig, MuonError};
 
+mod sharded;
+pub use sharded::*;
+mod record_validation;
+use record_validation::validate_adam_records;
+
 type Manifest = Vec<(u64, Vec<usize>, bool, String)>;
 type MuonRecords<B: AutodiffBackend> = HashMap<ParamId, AdaptorRecord<Muon<<B as AutodiffBackend>::InnerBackend>, B>>;
 type AdamRecords<B: AutodiffBackend> = HashMap<ParamId, AdaptorRecord<AdamW, B>>;
@@ -175,36 +180,7 @@ impl<M: AutodiffModule<B>, B: AutodiffBackend> MuonAdamW<M, B> {
                 _ => return Err(MuonError::IncompatibleRecord),
             }
         }
-        for (id, state) in &record.adamw {
-            let expected = self.manifest.iter().find(|entry| entry.0 == id.val())
-                .ok_or(MuonError::IncompatibleRecord)?;
-            macro_rules! check_adam {
-                ($state:expr) => {{
-                    let m = &$state.momentum;
-                    if m.time == 0 || m.moment_1.shape().to_vec() != expected.1
-                        || m.moment_2.shape().to_vec() != expected.1
-                        || format!("{:?}", m.moment_1.dtype()) != expected.3
-                        || format!("{:?}", m.moment_2.dtype()) != expected.3
-                        || m.max_moment_2.as_ref().is_some_and(|v|
-                            v.shape().to_vec() != expected.1 || format!("{:?}", v.dtype()) != expected.3) {
-                        return Err(MuonError::IncompatibleRecord);
-                    }
-                }};
-            }
-            match state {
-                AdaptorRecord::V1(state) => match state {
-                    AdaptorRecordV1::Rank0(v) => check_adam!(v),
-                    AdaptorRecordV1::Rank1(v) => check_adam!(v),
-                    AdaptorRecordV1::Rank2(v) => check_adam!(v),
-                    AdaptorRecordV1::Rank3(v) => check_adam!(v),
-                    AdaptorRecordV1::Rank4(v) => check_adam!(v),
-                    AdaptorRecordV1::Rank5(v) => check_adam!(v),
-                    AdaptorRecordV1::Rank6(v) => check_adam!(v),
-                    AdaptorRecordV1::Rank7(v) => check_adam!(v),
-                    AdaptorRecordV1::Rank8(v) => check_adam!(v),
-                },
-            }
-        }
+        validate_adam_records(&record.adamw,&self.manifest)?;
         self.muon = self.muon.load_record(record.muon);
         self.adamw = self.adamw.load_record(record.adamw);
         Ok(self)

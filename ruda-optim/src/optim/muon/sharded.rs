@@ -74,6 +74,10 @@ impl<B: Backend> MuonShardedState<B> {
     pub fn layout(&self) -> &MuonMatrixShardLayout {&self.layout}
     /// Actual complete matrix shape used for orientation and learning-rate scaling.
     pub fn global_shape(&self) -> [usize;2] {self.global_shape}
+    /// Validate the original record schema and actual matrix/rank placement without tensor updates.
+    pub fn validate_placement(&self,rank: u32,layout: &MuonMatrixShardLayout,global_shape: [usize;2]) -> Result<(),MuonError> {
+        if self.version != 1 || self.rank != rank || &self.layout != layout || self.global_shape != global_shape {Err(MuonError::IncompatibleRecord)} else {Ok(())}
+    }
     /// Read actual native local momentum without gathering the complete buffer.
     pub fn momentum(&self) -> &Tensor<B,2> {self.local.momentum.velocity()}
     /// Move only this rank's actual momentum while retaining its original placement metadata.
@@ -120,6 +124,19 @@ fn gather_matrix<B,C>(value: Tensor<B,2>,layout: &MuonMatrixShardLayout,communic
 }
 
 impl<B: Backend> Muon<B> {
+    /// Validate actual shard/state metadata without launching an update or a collective.
+    /// Returns the original full matrix shape used by the native numerical configuration.
+    pub fn validate_step_sharded<C>(&self,lr: LearningRate,tensor: &Tensor<B,2>,grad: &Tensor<B,2>,state: Option<&MuonShardedState<B>>,
+        layout: &MuonMatrixShardLayout,communicator: &C) -> Result<[usize;2],MuonShardedError<C::Error>>
+        where C: BroadcastTensorCollective<B> {
+        let shape = layout.global_shape(communicator.rank(),communicator.world_size(),tensor.dims()).map_err(MuonShardedError::Muon)?;
+        if let Some(state) = state {
+            state.validate_placement(communicator.rank(),layout,shape).map_err(MuonShardedError::Muon)?;
+        }
+        self.validate_step_shape(lr,tensor,grad,state.map(|state|&state.local),&shape).map_err(MuonShardedError::Muon)?;
+        Ok(shape)
+    }
+
     /// Explicit model-parallel full-matrix Muon, with native SGD/EMA/Nesterov and local momentum.
     /// Norms, orientation, quintic coefficients and LR scaling use the original complete matrix.
     /// Column-oriented shards reduce the full native left Gram matrix each iteration. Row-oriented
@@ -132,13 +149,7 @@ impl<B: Backend> Muon<B> {
         layout: &MuonMatrixShardLayout,communicator: C) -> Result<(Tensor<B,2>,MuonShardedState<B>),MuonShardedError<C::Error>>
         where C: BroadcastTensorCollective<B> {
         let rank = communicator.rank();let world = communicator.world_size();
-        let shape = layout.global_shape(rank,world,tensor.dims()).map_err(MuonShardedError::Muon)?;
-        if let Some(state) = &state {
-            if state.version != 1 || state.rank != rank || &state.layout != layout || state.global_shape != shape {
-                return Err(MuonShardedError::Muon(MuonError::IncompatibleRecord));
-            }
-        }
-        self.validate_step_shape(lr,&tensor,&grad,state.as_ref().map(|state|&state.local),&shape).map_err(MuonShardedError::Muon)?;
+        let shape = self.validate_step_sharded(lr,&tensor,&grad,state.as_ref(),layout,&communicator)?;
         let (update,momentum) = self.momentum_update(grad,state.map(|state|state.local));
         let transposed = shape[0] > shape[1];let oriented_axis = if transposed {1-layout.axis} else {layout.axis};
         let update = if world == 1 {self.zeropower_via_newtonschulz(update)} else if oriented_axis == 0 {

@@ -18,7 +18,7 @@ use ruda_model::tensor::DType;
 mod error;
 pub use error::MuonError;
 mod grouped;
-pub use grouped::{MuonAdamW, MuonAdamWConfig, MuonAdamWRecord};
+pub use grouped::{MuonAdamW,MuonAdamWConfig,MuonAdamWRecord,MuonShardedParameter,MuonShardedAdamW,MuonShardedAdamWRecord};
 mod sharded;
 pub use sharded::*;
 
