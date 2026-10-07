@@ -1,6 +1,6 @@
 use ruda_model::{config::Config,module::Module,tensor::{Bool,Int,Tensor,backend::Backend}};
 use crate::{Linear,LinearConfig,Dropout,DropoutConfig,
-    pool::{pool_sequence,SequencePooling,SequencePoolOutput}};
+    pool::{pool_sequence,pool_packed_sequences,SequencePooling,SequencePoolOutput},attention::PackedSequenceLayout};
 use super::{DenseTransformerNorm,DenseTransformerNormConfig};
 
 /// Native sequence/token classification projection without model-specific labels.
@@ -80,5 +80,11 @@ impl<B: Backend> TransformerHead<B> {
     /// Use an already pooled actual tensor and retain its visibility/count metadata.
     pub fn forward_pooled(&self,pooled: SequencePoolOutput<B>) -> SequenceHeadOutput<B> {
         SequenceHeadOutput {logits:self.forward(pooled.values),valid_rows:pooled.valid_rows,token_counts:pooled.token_counts}
+    }
+
+    /// Classify actual packed documents independently, preserving empty-row/count metadata.
+    pub fn forward_packed_sequences(&self,hidden: Tensor<B,2>,layout: &PackedSequenceLayout,
+        visible: Option<Tensor<B,1,Bool>>,pooling: SequencePooling) -> SequenceHeadOutput<B> {
+        self.forward_pooled(pool_packed_sequences(hidden,layout,visible,pooling))
     }
 }

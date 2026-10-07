@@ -1,4 +1,6 @@
 use ruda_model::{config::Config,tensor::{Bool,DType,FloatDType,Int,IntDType,Tensor,backend::Backend}};
+use alloc::vec::Vec;
+use crate::attention::PackedSequenceLayout;
 
 /// Explicit reduction over real tokens, independent of left/right padding.
 #[derive(Config,Debug,Copy)]
@@ -83,4 +85,42 @@ pub fn gather_sequence_positions<B: Backend>(hidden: Tensor<B,3>,positions: Tens
     assert_eq!(positions.dims(),[batch],"one explicit pooling position per sequence is required");
     assert_eq!(positions.device(),hidden.device(),"sequence position/device mismatch");
     hidden.gather(1,positions.reshape([batch,1,1]).expand([batch,1,width])).reshape([batch,width])
+}
+
+/// Pool each actual packed document independently, including empty documents.
+/// Optional True entries select contributing real tokens; no prompt span is guessed.
+/// Returned counts describe pooling, not loss supervision or physical batch padding.
+pub fn pool_packed_sequences<B: Backend>(hidden: Tensor<B,2>,layout: &PackedSequenceLayout,
+    visible: Option<Tensor<B,1,Bool>>,pooling: SequencePooling) -> SequencePoolOutput<B> {
+    let [tokens,width] = hidden.dims();
+    assert!(width > 0,"packed pooling requires a feature axis");
+    assert_eq!(tokens,layout.tokens(),"packed pooling boundaries differ from actual payload");
+    let device = hidden.device();
+    if let Some(mask) = &visible {
+        assert_eq!(mask.dims(),[tokens],"packed pooling visibility differs from actual tokens");
+        assert_eq!(mask.device(),device,"packed pooling payload/mask devices differ");
+    }
+    if layout.documents() == 0 {
+        let excluded = Tensor::<B,2,Bool>::zeros(hidden.dims(),&device).bool_not();
+        let storage = hidden.dtype();
+        let compute = if storage == DType::F64 { DType::F64 } else { DType::F32 };
+        let zero = hidden.cast(compute).mask_fill(excluded,0).sum().reshape([1,1]);
+        return SequencePoolOutput {values:(Tensor::<B,2>::zeros([0,width],(&device,compute))+zero).cast(storage),
+            valid_rows:Tensor::<B,1,Bool>::zeros([0],&device),token_counts:Tensor::<B,1,Int>::zeros([0],(&device,DType::I64))};
+    }
+    let mut values = Vec::with_capacity(layout.documents());
+    let mut valid = Vec::with_capacity(layout.documents());
+    let mut counts = Vec::with_capacity(layout.documents());
+    for boundary in layout.boundaries().windows(2) {
+        let length = boundary[1]-boundary[0];
+        let input = hidden.clone().slice_dim(0,boundary[0]..boundary[1]).reshape([1,length,width]);
+        let mask = if let Some(mask) = &visible {
+            mask.clone().slice_dim(0,boundary[0]..boundary[1]).reshape([1,length])
+        } else { Tensor::<B,2,Bool>::zeros([1,length],&device).bool_not() };
+        let pooled = pool_sequence(input,mask,pooling);
+        values.push(pooled.values);
+        valid.push(pooled.valid_rows);
+        counts.push(pooled.token_counts);
+    }
+    SequencePoolOutput {values:Tensor::cat(values,0),valid_rows:Tensor::cat(valid,0),token_counts:Tensor::cat(counts,0)}
 }
