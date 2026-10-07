@@ -76,7 +76,8 @@ impl<B:Backend,S:CheckpointStrategy> CollectiveScope<B,S> {
         if !primitive.is_tracked() {return;}
         let node=primitive.node.id;
         let dims=value.dims();
-        let value=if dims.contains(&0) {value} else {value.slice(core::array::from_fn(|_|0..1))};
+        let ranges:[core::ops::Range<usize>;D]=core::array::from_fn(|_|0..1);
+        let value=if dims.contains(&0) {value} else {value.slice(ranges)};
         // True-mask replacement gives a safe zero and zero derivative even if the original
         // weight coordinate is Inf/NaN; multiplying an arbitrary value by zero would not.
         let mask=Tensor::<Autodiff<B,S>,D,Bool>::zeros(value.dims(),&value.device()).bool_not();
