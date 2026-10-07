@@ -10,6 +10,7 @@ use super::{ColumnParallelLinear,RowParallelLinear,TensorParallelGroupedQueryAtt
 
 mod decoder;
 pub use decoder::*;
+mod vocabulary;
 
 /// Explicit feature axis of a loaded full projection, not a guessed rank/world layout.
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
