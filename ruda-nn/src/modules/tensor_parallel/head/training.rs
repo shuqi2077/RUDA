@@ -122,3 +122,4 @@ macro_rules! head_objectives {
 }
 head_objectives!(TensorParallelTransformerHead);
 head_objectives!(TensorParallelAdaptedTransformerHead);
+pub(super) use head_objectives;

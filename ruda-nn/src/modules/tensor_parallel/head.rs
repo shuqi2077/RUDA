@@ -9,6 +9,9 @@ use super::{BroadcastTensorCollective,ColumnParallelLinear,VocabParallelLossLayo
     partition_parallel_projection,TensorParallelProjectionAxis};
 
 mod training;
+mod vocabulary;
+pub use vocabulary::VocabParallelTransformerHead;
+mod inference;
 
 /// Actual native Transformer head with rank-local output classes and replicated hidden states.
 /// The supplied class layout and transport determine the logical vocabulary, never a model name.

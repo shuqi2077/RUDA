@@ -4,6 +4,39 @@ use ruda_model::tensor::{DType,Int,IntDType,Tensor,ElementConversion,backend::Ba
 use region::BroadcastTensorCollective;
 use super::{Embedding,VocabParallelEmbedding,VocabParallelLossLayout,VocabParallelProjection};
 
+impl<B:Backend> VocabParallelProjection<B> {
+    fn values_with_layout<const D:usize>(&self,input:&Tensor<B,D>,layout:&VocabParallelLossLayout,rank:u32,world:u32)
+        -> (Tensor<B,2>,Option<Tensor<B,1>>) {
+        assert!(D > 0,"vocabulary projection needs a feature axis");
+        assert_eq!(world as usize,layout.world_size(),"projection topology and layout differ");
+        let interval = layout.interval(rank as usize);let weight = self.weight.val();let [width,features] = weight.dims();
+        assert_eq!(width,interval.len(),"projection rows differ from the actual rank interval");
+        assert_eq!(input.dims()[D-1],features,"projection input width differs from local hidden width");
+        assert_eq!(input.device(),weight.device(),"projection input and weight must share the device");
+        let bias = self.bias.as_ref().map(|bias| {
+            let value = bias.val();
+            assert_eq!(value.dims(),[width],"projection bias differs from local vocabulary storage");
+            assert_eq!(value.device(),weight.device(),"projection bias and weight must share the device");value
+        });
+        if interval.end <= layout.vocabulary_size() {return (weight,bias);}
+        let rows = Tensor::<B,1,Int>::arange(interval.start as i64..interval.end as i64,(&weight.device(),DType::I64));
+        let padding = rows.greater_equal_elem(layout.vocabulary_size() as i64);
+        let weight = weight.mask_fill(padding.clone().reshape([width,1]).expand([width,features]),0);
+        let bias = bias.map(|value|value.mask_fill(padding,0));
+        (weight,bias)
+    }
+
+    /// Native-backend uneven vocabulary projection with explicitly optional real-logit gathering.
+    /// Retains the original embedding/head storage and tie. No padding-mask transform is performed
+    /// on an all-real shard, avoiding an unnecessary floating conversion of packed native weights.
+    pub fn forward_inference_with_layout<C:BroadcastTensorCollective<B>,const D:usize>(&self,input:Tensor<B,D>,communicator:C,
+        layout:&VocabParallelLossLayout,gather_output:bool) -> Result<Tensor<B,D>,C::Error> {
+        let (weight,bias) = self.values_with_layout(&input,layout,communicator.rank(),communicator.world_size());
+        let logits = linear(input,weight.transpose(),bias);
+        if gather_output {layout.gather_logits_inference(logits,communicator)} else {Ok(logits)}
+    }
+}
+
 impl<B: Backend> VocabParallelEmbedding<B> {
     /// Retain a supplied local embedding and its parameter ID with an explicit
     /// uneven layout. No complete vocabulary weight is initialized or downloaded.
@@ -58,23 +91,7 @@ impl<B: Backend,S: CheckpointStrategy> VocabParallelProjection<Autodiff<B,S>> {
     /// Pass gather_output=false to feed VocabParallelCrossEntropy directly.
     pub fn forward_with_layout<C: BroadcastTensorCollective<B>,const D: usize>(&self,input: Tensor<Autodiff<B,S>,D>,
         communicator: C,layout: &VocabParallelLossLayout,gather_output: bool) -> Result<Tensor<Autodiff<B,S>,D>,C::Error> {
-        assert!(D > 0,"vocabulary projection needs a feature axis");
-        assert_eq!(communicator.world_size() as usize,layout.world_size(),"projection topology and layout differ");
-        let interval = layout.interval(communicator.rank() as usize);
-        let weight = self.weight.val();
-        let [width,features] = weight.dims();
-        assert_eq!(width,interval.len(),"projection rows differ from the actual rank interval");
-        assert_eq!(input.dims()[D-1],features,"projection input width differs from local hidden width");
-        assert_eq!(input.device(),weight.device(),"projection input and weight must share the device");
-        let rows = Tensor::<Autodiff<B,S>,1,Int>::arange(interval.start as i64..interval.end as i64,(&weight.device(),DType::I64));
-        let padding = rows.greater_equal_elem(layout.vocabulary_size() as i64);
-        let weight = weight.mask_fill(padding.clone().reshape([width,1]).expand([width,features]),0);
-        let bias = self.bias.as_ref().map(|bias| {
-            let value = bias.val();
-            assert_eq!(value.dims(),[width],"projection bias differs from local vocabulary storage");
-            assert_eq!(value.device(),weight.device(),"projection bias and weight must share the device");
-            value.mask_fill(padding,0)
-        });
+        let (weight,bias) = self.values_with_layout(&input,layout,communicator.rank(),communicator.world_size());
         let input = region::copy_to_region(input,communicator.clone())?;
         let logits = linear(input,weight.transpose(),bias);
         if gather_output {layout.gather_logits(logits,communicator)} else {Ok(logits)}
