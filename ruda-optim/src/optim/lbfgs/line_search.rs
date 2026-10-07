@@ -1,4 +1,5 @@
 use super::{Backend, Tensor, ToElement};
+use super::reductions::VectorReductions;
 use alloc::vec;
 #[cfg(not(feature = "std"))]
 #[allow(unused_imports)]
@@ -54,7 +55,33 @@ struct LineSearchSample<B: Backend> {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(super) fn strong_wolfe<B: Backend, F>(
+    obj_func: &mut F,
+    x: &Tensor<B, 1>,
+    t: f64,
+    d: &Tensor<B, 1>,
+    f: f64,
+    g: Tensor<B, 1>,
+    gtd: f64,
+    c1: f64,
+    c2: f64,
+    tolerance_change: f64,
+    max_ls: usize,
+) -> (f64, Tensor<B, 1>, f64, usize)
+where
+    F: FnMut(&Tensor<B, 1>, f64, &Tensor<B, 1>) -> (f64, Tensor<B, 1>),
+{
+    strong_wolfe_with_reductions(
+        &mut |current, step, direction| Ok(obj_func(current, step, direction)),
+        x, t, d, f, g, gtd, c1, c2, tolerance_change, max_ls,
+        &mut super::reductions::LocalReductions,
+    )
+    .unwrap_or_else(|error| match error {})
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn strong_wolfe_with_reductions<B: Backend, F, R>(
     // obj_func(x,step size,direction) -> (loss,grad)
     obj_func: &mut F,
     x: &Tensor<B, 1>,
@@ -68,19 +95,21 @@ pub(super) fn strong_wolfe<B: Backend, F>(
     c2: f64,
     tolerance_change: f64,
     max_ls: usize,
-) -> (f64, Tensor<B, 1>, f64, usize)
+    reductions: &mut R,
+) -> Result<(f64, Tensor<B, 1>, f64, usize), R::Error>
 where
-    F: FnMut(&Tensor<B, 1>, f64, &Tensor<B, 1>) -> (f64, Tensor<B, 1>),
+    F: FnMut(&Tensor<B, 1>, f64, &Tensor<B, 1>) -> Result<(f64, Tensor<B, 1>), R::Error>,
+    R: VectorReductions<B>,
 {
     if max_ls == 0 {
-        return (f, g, 0.0, 0);
+        return Ok((f, g, 0.0, 0));
     }
-    let d_norm = d.clone().abs().max().into_scalar().to_f64();
+    let d_norm = reductions.max_abs(d)?;
 
     // evaluate objective and gradient using initial step
-    let (mut f_new, mut g_new) = obj_func(x, t, d);
+    let (mut f_new, mut g_new) = obj_func(x, t, d)?;
     let mut ls_func_evals = 1;
-    let mut gtd_new = g_new.clone().dot(d.clone()).into_scalar().to_f64();
+    let mut gtd_new = reductions.dot(&g_new, d)?.into_scalar().to_f64();
 
     // bracket an interval [t_prev,t] containing a point satisfying the Wolfe criteria
     let (mut t_prev, mut f_prev, mut g_prev, mut gtd_prev) = (0.0, f, g.clone(), gtd);
@@ -169,13 +198,13 @@ where
 
         // next step
         t = t_next;
-        (f_new, g_new) = obj_func(x, t, d);
+        (f_new, g_new) = obj_func(x, t, d)?;
         ls_func_evals += 1;
-        gtd_new = g_new.clone().dot(d.clone()).into_scalar().to_f64();
+        gtd_new = reductions.dot(&g_new, d)?.into_scalar().to_f64();
         ls_iter += 1;
     }
     if let Some(sample) = wolfe_bracket {
-        return (sample.f, sample.g, sample.t, ls_func_evals);
+        return Ok((sample.f, sample.g, sample.t, ls_func_evals));
     }
 
     let mut bracket = bracket.unwrap_or_else(|| {
@@ -244,10 +273,10 @@ where
         }
 
         // Evaluate new point
-        (f_new, g_new) = obj_func(x, t, d);
+        (f_new, g_new) = obj_func(x, t, d)?;
 
         ls_func_evals += 1;
-        gtd_new = g_new.clone().dot(d.clone()).into_scalar().to_f64();
+        gtd_new = reductions.dot(&g_new, d)?.into_scalar().to_f64();
 
         let armijo_holds = f_new <= (f + c1 * t * gtd) && f_new < bracket[low_idx].f;
 
@@ -260,7 +289,7 @@ where
             };
         } else {
             if gtd_new.abs() <= -c2 * gtd {
-                return (f_new, g_new, t, ls_func_evals);
+                return Ok((f_new, g_new, t, ls_func_evals));
             }
 
             if gtd_new * (bracket[high_idx].t - bracket[low_idx].t) >= 0.0 {
@@ -288,11 +317,10 @@ where
         }
     }
     // return stuff
-    (
+    Ok((
         bracket[low_idx].f,
         bracket[low_idx].g.clone(),
         bracket[low_idx].t,
         ls_func_evals,
-    )
+    ))
 }
-

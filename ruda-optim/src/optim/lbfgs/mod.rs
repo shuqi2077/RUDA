@@ -19,9 +19,13 @@ use alloc::vec::Vec;
 use num_traits::Float as _;
 
 mod line_search;
-use line_search::strong_wolfe;
+mod reductions;
+mod sharded;
+pub use sharded::*;
+use line_search::strong_wolfe_with_reductions;
+use reductions::{LocalReductions, VectorReductions};
 #[cfg(test)]
-use line_search::cubic_interpolate;
+use line_search::{cubic_interpolate, strong_wolfe};
 
 /// Strategy for the line search optimization phase
 #[derive(Clone, Default, Debug, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -282,41 +286,63 @@ impl<B: Backend + AutodiffBackend> LBFGS<B> {
     }
 
     /// A single optimization step for any tensor that represents the parameters of a model.
-    pub fn step<M, F>(&mut self, lr: LearningRate, mut module: M, mut closure: F) -> (M, f64)
+    pub fn step<M, F>(&mut self, lr: LearningRate, module: M, mut closure: F) -> (M, f64)
     where
         M: AutodiffModule<B> + Clone,
         F: FnMut(M) -> (f64, GradientsParams),
     {
+        self.try_step_with_reductions(
+            lr,
+            module,
+            |model| Ok(closure(model)),
+            &mut LocalReductions,
+            None,
+        )
+        .unwrap_or_else(|error| match error {})
+    }
+
+    fn try_step_with_reductions<M, F, R>(
+        &mut self,
+        lr: LearningRate,
+        mut module: M,
+        mut closure: F,
+        reductions: &mut R,
+        initial_params: Option<Tensor<B::InnerBackend, 1>>,
+    ) -> Result<(M, f64), R::Error>
+    where
+        M: AutodiffModule<B> + Clone,
+        F: FnMut(M) -> Result<(f64, GradientsParams), R::Error>,
+        R: VectorReductions<B::InnerBackend>,
+    {
         // evaluate initial f(x) and df/dx
-        let (mut loss, grads) = closure(module.clone());
+        let (mut loss, grads) = closure(module.clone())?;
         let mut current_evals = 1;
         if self.config.max_iter == 0 || current_evals >= self.config.max_eval.unwrap() {
-            return (module, loss);
+            return Ok((module, loss));
         }
 
-        let Some(mut x_flat) = flatten_params_inner::<B, M>(&module) else {
-            return (module, loss);
+        let Some(mut x_flat) = initial_params.or_else(|| flatten_params_inner::<B, M>(&module)) else {
+            return Ok((module, loss));
         };
         if x_flat.shape().num_elements() == 0 {
-            return (module, loss);
+            return Ok((module, loss));
         }
         let mut flat_grad = flatten_grads_inner::<B, M>(&module, &grads);
 
-        let opt_cond =
-            flat_grad.clone().abs().max().into_scalar().to_f64() <= self.config.tolerance_grad;
+        let opt_cond = reductions.max_abs(&flat_grad)? <= self.config.tolerance_grad;
         // optimal condition
         if opt_cond {
-            return (module, loss);
+            return Ok((module, loss));
         }
 
         // tensors cached in state
-        let mut d = self
-            .state
+        let mut state = self.state.clone();
+        let mut d = state
             .d
             .take()
             .unwrap_or_else(|| flat_grad.clone().neg());
-        let mut t = self.state.t.unwrap_or(lr);
-        let mut prev_flat_grad = self.state.prev_flat_grad.take();
+        let mut t = state.t.unwrap_or(lr);
+        let mut prev_flat_grad = state.prev_flat_grad.take();
 
         let mut n_iter = 0;
 
@@ -324,36 +350,36 @@ impl<B: Backend + AutodiffBackend> LBFGS<B> {
         while n_iter < self.config.max_iter {
             // keep track of nb of iterations
             n_iter += 1;
-            self.state.g_iter += 1;
+            state.g_iter += 1;
 
             // compute gradient descent direction
-            if self.state.g_iter == 1 {
+            if state.g_iter == 1 {
                 d = flat_grad.clone().neg();
-                self.state.history_s.clear();
-                self.state.history_y.clear();
+                state.history_s.clear();
+                state.history_y.clear();
             } else {
                 // do lbfgs update (update memory)
                 if let Some(pg) = prev_flat_grad.as_ref() {
                     let y = flat_grad.clone().sub(pg.clone());
                     let s = d.clone().mul_scalar(t);
 
-                    let ys = y.clone().dot(s.clone()).into_scalar().to_f64();
+                    let ys = reductions.dot(&y, &s)?.into_scalar().to_f64();
 
                     if ys > 1e-10 && self.config.history_size > 0 {
                         // updating memory
-                        if self.state.history_s.len() >= self.config.history_size {
+                        if state.history_s.len() >= self.config.history_size {
                             // shift history by one (limited-memory)
-                            self.state.history_s.remove(0);
-                            self.state.history_y.remove(0);
+                            state.history_s.remove(0);
+                            state.history_y.remove(0);
                         }
-                        self.state.history_s.push(s);
-                        self.state.history_y.push(y);
+                        state.history_s.push(s);
+                        state.history_y.push(y);
                     }
                 }
 
                 // compute the approximate (L-BFGS) inverse Hessian
                 // multiplied by the gradient
-                let num_old = self.state.history_s.len();
+                let num_old = state.history_s.len();
                 let mut q = flat_grad.clone().neg();
                 let mut alphas: Vec<Tensor<B::InnerBackend, 1>> =
                     vec![Tensor::zeros([1], &flat_grad.device()); num_old];
@@ -362,33 +388,32 @@ impl<B: Backend + AutodiffBackend> LBFGS<B> {
                     // multiply by initial Hessian
                     // r/d is the final direction
                     for i in (0..num_old).rev() {
-                        let s = &self.state.history_s[i];
-                        let y = &self.state.history_y[i];
-                        let rho = y.clone().dot(s.clone()).powf_scalar(-1.0);
-                        let alpha = rho.clone().mul(s.clone().dot(q.clone()));
+                        let s = &state.history_s[i];
+                        let y = &state.history_y[i];
+                        let rho = reductions.dot(y, s)?.powf_scalar(-1.0);
+                        let alpha = rho.clone().mul(reductions.dot(s, &q)?);
                         alphas[i] = alpha.clone();
                         q = q.sub(y.clone().mul(alpha));
                     }
 
-                    let last_s = &self.state.history_s[num_old - 1];
-                    let last_y = &self.state.history_y[num_old - 1];
-                    let ys = last_y.clone().dot(last_s.clone());
-                    let yy = last_y.clone().dot(last_y.clone());
+                    let last_s = &state.history_s[num_old - 1];
+                    let last_y = &state.history_y[num_old - 1];
+                    let ys = reductions.dot(last_y, last_s)?;
+                    let yy = reductions.dot(last_y, last_y)?;
                     let h_diag = ys.div(yy);
 
                     let mut r = q.mul(h_diag);
 
-                    for ((s, y), alpha) in self
-                        .state
+                    for ((s, y), alpha) in state
                         .history_s
                         .iter()
-                        .zip(self.state.history_y.iter())
+                        .zip(state.history_y.iter())
                         .zip(alphas)
                         .take(num_old)
                     {
-                        let rho = y.clone().dot(s.clone()).powf_scalar(-1.0);
+                        let rho = reductions.dot(y, s)?.powf_scalar(-1.0);
 
-                        let beta = rho.mul(y.clone().dot(r.clone()));
+                        let beta = rho.mul(reductions.dot(y, &r)?);
 
                         r = r.add(s.clone().mul(alpha.sub(beta)));
                     }
@@ -402,15 +427,15 @@ impl<B: Backend + AutodiffBackend> LBFGS<B> {
             let prev_loss_iter = loss;
 
             // compute step len
-            if self.state.g_iter == 1 {
-                let grad_l1 = flat_grad.clone().abs().sum().into_scalar().to_f64();
+            if state.g_iter == 1 {
+                let grad_l1 = reductions.sum_abs(&flat_grad)?;
                 t = (1.0f64 / grad_l1).min(1.0) * lr;
             } else {
                 t = lr;
             }
 
             // directional derivative
-            let gtd = flat_grad.clone().dot(d.clone()).into_scalar().to_f64();
+            let gtd = reductions.dot(&flat_grad, &d)?.into_scalar().to_f64();
 
             if gtd > -self.config.tolerance_change {
                 break;
@@ -427,11 +452,11 @@ impl<B: Backend + AutodiffBackend> LBFGS<B> {
                         let update = dir.clone().mul_scalar(step);
                         let new_x = current_x.clone().add(update);
                         let tmp_module = set_params_from_flat_inner::<B, M>(module.clone(), new_x);
-                        let (l, g) = closure(tmp_module);
-                        (l, flatten_grads_inner::<B, M>(&module, &g))
+                        let (l, g) = closure(tmp_module)?;
+                        Ok((l, flatten_grads_inner::<B, M>(&module, &g)))
                     };
 
-                let (ls_f, ls_g, ls_t, evals) = strong_wolfe(
+                let (ls_f, ls_g, ls_t, evals) = strong_wolfe_with_reductions(
                     &mut obj_func,
                     &x_flat,
                     t,
@@ -443,7 +468,8 @@ impl<B: Backend + AutodiffBackend> LBFGS<B> {
                     0.9,
                     self.config.tolerance_change,
                     self.config.max_eval.unwrap() - current_evals,
-                );
+                    reductions,
+                )?;
 
                 loss = ls_f;
                 flat_grad = ls_g;
@@ -460,7 +486,7 @@ impl<B: Backend + AutodiffBackend> LBFGS<B> {
                 // re-evaluate function only if not in last iteration
                 // the reason we do this: in a stochastic setting,
                 // no use to re-evaluate that function here
-                let (new_loss, new_grads) = closure(module.clone());
+                let (new_loss, new_grads) = closure(module.clone())?;
                 loss = new_loss;
                 flat_grad = flatten_grads_inner::<B, M>(&module, &new_grads);
                 ls_func_evals = 1;
@@ -475,12 +501,11 @@ impl<B: Backend + AutodiffBackend> LBFGS<B> {
                 break;
             }
 
-            if flat_grad.clone().abs().max().into_scalar().to_f64() <= self.config.tolerance_grad {
+            if reductions.max_abs(&flat_grad)? <= self.config.tolerance_grad {
                 break;
             }
 
-            if d.clone().mul_scalar(t).abs().max().into_scalar().to_f64()
-                <= self.config.tolerance_change
+            if reductions.max_abs(&d.clone().mul_scalar(t))? <= self.config.tolerance_change
             {
                 break;
             }
@@ -489,11 +514,12 @@ impl<B: Backend + AutodiffBackend> LBFGS<B> {
                 break;
             }
         }
-        self.state.d = Some(d);
-        self.state.t = Some(t);
-        self.state.prev_flat_grad = prev_flat_grad;
-        self.state.prev_loss = Some(loss);
-        (module, loss)
+        state.d = Some(d);
+        state.t = Some(t);
+        state.prev_flat_grad = prev_flat_grad;
+        state.prev_loss = Some(loss);
+        self.state = state;
+        Ok((module, loss))
     }
     /// Moves the optimizer state to the specified device.
     pub fn to_device(self, device: &B::Device) -> Self {
