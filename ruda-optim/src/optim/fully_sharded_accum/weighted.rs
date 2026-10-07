@@ -1,6 +1,20 @@
 use super::*;
 use ruda_model::tensor::TensorData;
 
+/// Exact fractional denominator/ownership continuation, without duplicating pending local gradients.
+pub struct FullyShardedWeightedAccumulationContract<B:AutodiffBackend> {
+    continuation:FullyShardedAccumulationContract,
+    global_weight:Tensor<B::InnerBackend,1>,
+}
+impl<B:AutodiffBackend> Record<B> for FullyShardedWeightedAccumulationContract<B> {
+    type Item<S:PrecisionSettings>=(FullyShardedAccumulationContract,TensorData);
+    fn into_item<S:PrecisionSettings>(self) -> Self::Item<S> {(self.continuation,self.global_weight.into_data())}
+    fn from_item<S:PrecisionSettings>(item:Self::Item<S>,device:&B::Device) -> Self {
+        let dtype=item.0.state.dtype;
+        Self {continuation:item.0,global_weight:Tensor::from_data(item.1.convert_dtype(dtype),(device,dtype))}
+    }
+}
+
 /// Actual native global fractional weight and matching pending local gradients/counters/placement.
 #[derive(Clone)]
 pub struct FullyShardedWeightedGradientsRecord<B:Backend> {
@@ -59,6 +73,20 @@ pub struct FullyShardedWeightedGradientsAccumulator<M,B:AutodiffBackend> {
     global_weight:Tensor<B::InnerBackend,1>,
 }
 impl<M:AutodiffModule<B>,B:AutodiffBackend> FullyShardedWeightedGradientsAccumulator<M,B> {
+    /// Capture original global weight/counters/ownership without resetting or copying gradient buffers.
+    pub fn continuation(&self) -> FullyShardedWeightedAccumulationContract<B> {
+        FullyShardedWeightedAccumulationContract {continuation:self.window.continuation(),global_weight:self.global_weight.clone()}
+    }
+    pub(crate) fn inner(&self) -> &GradientsAccumulator<M> {self.window.inner()}
+    /// Reattach native weighted continuation to the same combined-record pending local derivatives.
+    pub fn from_accumulator(module:&M,accumulator:GradientsAccumulator<M>,continuation:FullyShardedWeightedAccumulationContract<B>)
+        -> Result<Self,FullyShardedAccumulationError> {
+        if continuation.global_weight.dims()!=[1] || continuation.global_weight.dtype()!=continuation.continuation.state.dtype {
+            return Err(FullyShardedAccumulationError::State);
+        }
+        let window=FullyShardedGradientsAccumulator::from_accumulator::<B>(module,accumulator,continuation.continuation)?;
+        Ok(Self {window,global_weight:continuation.global_weight})
+    }
     /// Bind actual local shards and explicit work precision/scale; normalizer arithmetic stays native.
     pub fn new<C:BroadcastTensorCollective<B::InnerBackend>>(module:&M,parameters:&[FullyShardedOptimizerParameter<C>],
         dtype:FloatDType,loss_scale:f64,device:&B::Device) -> Result<Self,FullyShardedAccumulationError> {

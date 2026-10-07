@@ -14,6 +14,8 @@ mod tests;
 
 mod model_state;
 pub use model_state::{ModelStateTrainingRecord,TrainableParameterContract};
+mod fully_sharded;
+pub use fully_sharded::{RestoredFullyShardedTraining,RestoredFullyShardedWeightedTraining};
 
 /// One record containing the trainable state and a caller-defined continuation record.
 ///

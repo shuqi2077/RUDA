@@ -32,6 +32,27 @@ impl<B:Backend> Record<B> for FullyShardedAccumulationState {
     fn from_item<S:PrecisionSettings>(item:Self,_device:&B::Device) -> Self {item}
 }
 
+/// Logical ownership and exact normalization continuation, without a second copy of pending gradients.
+#[derive(Clone,Debug,PartialEq,Serialize,Deserialize)]
+pub struct FullyShardedAccumulationContract {
+    state:FullyShardedAccumulationState,
+    placement:Placement,
+}
+impl<B:Backend> Record<B> for FullyShardedAccumulationContract {
+    type Item<S:PrecisionSettings>=Self;
+    fn into_item<S:PrecisionSettings>(self) -> Self {self}
+    fn from_item<S:PrecisionSettings>(item:Self,_device:&B::Device) -> Self {item}
+}
+impl FullyShardedAccumulationContract {
+    /// Exact saved scale/count/precision and actual issued-window count.
+    pub fn state(&self) -> &FullyShardedAccumulationState {&self.state}
+    /// Match the actual local module after native model-state restoration, without reading values.
+    pub fn validate_for<B:AutodiffBackend,M:AutodiffModule<B>>(&self,module:&M) -> Result<(),FullyShardedAccumulationError> {
+        work_dtype(&self.state)?;inspect::<B,M>(module,&self.placement,true)?;
+        if self.state.microbatches==0 && self.state.global_count!=0 {return Err(FullyShardedAccumulationError::State);}Ok(())
+    }
+}
+
 /// Pending native local gradients together with their exact normalization and logical shard ownership.
 #[derive(Clone,Debug)]
 pub struct FullyShardedGradientsRecord {
@@ -97,6 +118,21 @@ pub struct FullyShardedGradientsAccumulator<M> {
     placement:Placement,
 }
 impl<M> FullyShardedGradientsAccumulator<M> {
+    /// Same original ownership/counters, without copying or resetting pending native gradients.
+    pub fn continuation(&self) -> FullyShardedAccumulationContract {FullyShardedAccumulationContract {state:self.state.clone(),placement:self.placement.clone()}}
+    pub(crate) fn inner(&self) -> &GradientsAccumulator<M> {&self.accumulator}
+    /// Reattach exact original FSDP continuation to gradients restored by a combined native training record.
+    pub fn from_accumulator<B:AutodiffBackend>(module:&M,accumulator:GradientsAccumulator<M>,continuation:FullyShardedAccumulationContract)
+        -> Result<Self,FullyShardedAccumulationError> where M:AutodiffModule<B> {
+        continuation.validate_for::<B,M>(module)?;accumulator.pending().validate_for::<B,M>(module)?;
+        if continuation.state.microbatches==0 && !accumulator.pending().is_empty() {return Err(FullyShardedAccumulationError::State);}
+        for id in accumulator.pending().container.ids() {
+            let spec=continuation.placement.iter().find(|entry|entry.0==id.val()).ok_or(FullyShardedAccumulationError::State)?;
+            let value=accumulator.pending().container.get::<B::InnerBackend>(id).ok_or(FullyShardedAccumulationError::State)?;
+            if !spec.5 || value.dtype()!=continuation.state.dtype {return Err(FullyShardedAccumulationError::State);}
+        }
+        Ok(Self {accumulator,state:continuation.state,placement:continuation.placement})
+    }
     /// Bind the actual module and explicit original logical placements before issuing an accumulation window.
     /// Existing optimizer parameter bindings are reused only for identity/shape/topology, not Muon role selection.
     pub fn new<B,C>(module:&M,parameters:&[FullyShardedOptimizerParameter<C>],dtype:FloatDType,loss_scale:f64)
