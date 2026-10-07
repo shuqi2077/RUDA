@@ -12,6 +12,8 @@ mod adapted_decoder;
 mod decoder_adapter_record;
 mod packed;
 mod packed_decoder;
+mod cached;
+mod cached_decoder;
 
 pub use decoder::*;
 pub use encoder::*;

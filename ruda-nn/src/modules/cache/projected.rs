@@ -27,6 +27,12 @@ impl<B: Backend> ProjectedKvCache<B> {
     /// Whether the retained prefix has no token slots.
     pub fn is_empty(&self) -> bool { self.length == 0 }
 
+    /// Whether actual K/V geometry has been supplied, including an initialized zero-length memory.
+    pub fn is_initialized(&self) -> bool { self.key.is_some() }
+
+    /// Actual batch-row count when payload geometry is known; no tensor readback occurs.
+    pub fn batch_size(&self) -> Option<usize> { self.key.as_ref().map(|key|key.dims()[0]) }
+
     /// Actual allocated token-axis capacity, not the absolute model context length.
     pub fn capacity(&self) -> usize { self.capacity }
 

@@ -93,8 +93,9 @@ impl<B: Backend> ProjectedKvCacheRecord<B> {
                 self.start_position.checked_add(shape[2]).ok_or_else(||invalid("absolute cache position overflow"))?;
                 check_data(&key)?; check_data(&value)?; check_data(&visible)?;
                 let dtype = key.dtype;
+                let visible_dtype = visible.dtype;
                 ProjectedKvCache::from_projected(Tensor::from_data(key,(device,dtype)),Tensor::from_data(value,(device,dtype)),
-                    Some(Tensor::from_data(visible,device)),self.start_position)
+                    Some(Tensor::from_data(visible,(device,visible_dtype))),self.start_position)
             },
         };
         cache.initial_capacity = self.initial_capacity;
