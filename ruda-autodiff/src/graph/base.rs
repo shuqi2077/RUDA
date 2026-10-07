@@ -15,6 +15,8 @@ pub trait Step: Send + core::fmt::Debug {
     fn node(&self) -> NodeId;
     /// The parents of the node associated to the step.
     fn parents(&self) -> &[Parent];
+    /// Whether this operation requests creation-ordered backward for the current graph.
+    fn ordered_backward(&self) -> bool {false}
 
     #[cfg(feature = "distributed")]
     /// Returns the [`DistributedParams`] of the node's tensor associated to the step.

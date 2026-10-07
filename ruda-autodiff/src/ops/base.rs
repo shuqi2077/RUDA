@@ -273,6 +273,10 @@ where
         self.ops.node.order
     }
 
+    fn ordered_backward(&self) -> bool {
+        T::ordered_backward(&self.ops.state)
+    }
+
     #[cfg(feature = "distributed")]
     fn distributed_params(&self) -> Option<DistributedParams> {
         self.ops.node.distributed_params.clone()

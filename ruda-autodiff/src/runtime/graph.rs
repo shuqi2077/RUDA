@@ -78,6 +78,13 @@ impl core::fmt::Debug for Graph {
 static STATE: Mutex<Option<GraphLocator>> = Mutex::new(None);
 
 impl GraphMutexClient {
+    pub(crate) fn gradient_paths(&self,root:NodeId,candidates:&[NodeId]) -> Vec<bool> {
+        let graph=STATE.lock().as_ref().and_then(|locator|locator.graphs.get(&root).cloned());
+        match graph {
+            Some(graph)=>graph.state.lock().server.gradient_paths(root,candidates),
+            None=>candidates.iter().map(|candidate|*candidate==root).collect(),
+        }
+    }
     /// Retrieves or creates a graph for the given [NodeId] and parent dependencies.
     ///
     /// # Parameters

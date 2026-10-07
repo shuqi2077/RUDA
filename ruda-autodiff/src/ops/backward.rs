@@ -22,6 +22,10 @@ where
     /// Associated type to compute the backward pass.
     type State: Clone + Send + core::fmt::Debug + 'static;
 
+    /// Opt this graph into reverse forward-creation order for matching rank collectives.
+    /// Ordinary operations and graphs retain the existing depth-based schedule by default.
+    fn ordered_backward(_state:&Self::State) -> bool {false}
+
     /// The backward pass.
     fn backward(
         self,

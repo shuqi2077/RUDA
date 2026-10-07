@@ -48,6 +48,14 @@ pub trait NodeCleaner {
 }
 
 impl AutodiffServer {
+    pub(crate) fn gradient_paths(&self,root:NodeId,candidates:&[NodeId]) -> Vec<bool> {
+        let mut pending=alloc::vec![root];let mut visited=crate::collections::HashSet::new();
+        while let Some(node)=pending.pop() {
+            if !visited.insert(node) {continue;}
+            if let Some(step)=self.steps.get(&node) {pending.extend(step.parents().iter().map(|parent|parent.id));}
+        }
+        candidates.iter().map(|candidate|visited.contains(candidate)).collect()
+    }
     pub fn extend(&mut self, other: AutodiffServer) {
         self.steps.extend(other.steps);
         self.actions_builder.extend(other.actions_builder);
@@ -181,11 +189,18 @@ impl AutodiffServer {
         mut grads: Gradients,
         mut checkpointer: Checkpointer,
     ) -> Gradients {
-        tape.into_iter().rev().for_each(|steps| {
-            steps
-                .into_iter()
-                .for_each(|step| step.step(&mut grads, &mut checkpointer))
-        });
+        if tape.iter().flatten().any(|step|step.ordered_backward()) {
+            // Standard AD nodes are created after all their parents. Reversing their actual
+            // creation IDs is topological and preserves the inverse forward collective order
+            // even when ranks build different loss chunks, branches or cast depths.
+            let mut steps=tape.into_iter().flatten().collect::<Vec<_>>();
+            steps.sort_unstable_by_key(|step|core::cmp::Reverse(step.node().value));
+            for step in steps {step.step(&mut grads,&mut checkpointer);}
+        } else {
+            tape.into_iter().rev().for_each(|steps| {
+                steps.into_iter().for_each(|step|step.step(&mut grads,&mut checkpointer))
+            });
+        }
 
         // For checkpointing tests
         #[cfg(feature = "export_tests")]
