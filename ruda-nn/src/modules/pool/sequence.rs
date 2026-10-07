@@ -96,13 +96,14 @@ pub fn pool_packed_sequences<B: Backend>(hidden: Tensor<B,2>,layout: &PackedSequ
     assert!(width > 0,"packed pooling requires a feature axis");
     assert_eq!(tokens,layout.tokens(),"packed pooling boundaries differ from actual payload");
     let device = hidden.device();
+    let storage = hidden.dtype();
+    assert!(matches!(storage,DType::F16|DType::BF16|DType::F32|DType::F64),"packed pooling requires supported floating storage");
     if let Some(mask) = &visible {
         assert_eq!(mask.dims(),[tokens],"packed pooling visibility differs from actual tokens");
         assert_eq!(mask.device(),device,"packed pooling payload/mask devices differ");
     }
     if layout.documents() == 0 {
         let excluded = Tensor::<B,2,Bool>::zeros(hidden.dims(),&device).bool_not();
-        let storage = hidden.dtype();
         let compute = if storage == DType::F64 { DType::F64 } else { DType::F32 };
         let zero = hidden.cast(compute).mask_fill(excluded,0).sum().reshape([1,1]);
         return SequencePoolOutput {values:(Tensor::<B,2>::zeros([0,width],(&device,compute))+zero).cast(storage),
