@@ -4,6 +4,7 @@ mod integer;
 mod neural;
 mod quantized;
 mod frozen_awq;
+mod frozen_nf4;
 mod float;
 mod transaction;
 #[cfg(feature = "sparse")]

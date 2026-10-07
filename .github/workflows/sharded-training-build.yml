@@ -12,6 +12,7 @@ on:
       - 'ruda-fusion/**'
       - 'ruBLAS/**'
       - 'ruCCL/**'
+      - 'ruda-torch/**'
       - 'ruda-model/**'
       - 'ruda-dataset/**'
       - 'ruLLM/**'
@@ -61,7 +62,9 @@ jobs:
           cargo check --locked -p ruda-optim --no-default-features --lib
           cargo check --locked -p ruda-optim --features collective,gradient-guard --lib
       - name: Compile native CUDA and fusion training dispatch
-        run: cargo check --locked -p ruda-nn --no-default-features --features std,cuda,fusion,tensor-parallel --lib
+        run: |
+          cargo check --locked -p ruda-nn --no-default-features --features std,cuda,fusion,tensor-parallel --lib
+          cargo check --locked -p ruda-torch-native --lib
       - name: Compile resumable dataset loading
         run: |
           cargo check --locked -p ruda-model --features dataset --lib

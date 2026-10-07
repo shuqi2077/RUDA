@@ -7,6 +7,7 @@ mod int_tensor;
 mod module;
 mod qtensor;
 mod frozen_awq;
+mod frozen_nf4;
 mod tensor;
 mod transaction;
 mod unary;

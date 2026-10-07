@@ -24,6 +24,8 @@ pub mod ops;
 pub mod collective;
 /// Native frozen AWQ projections and their packed-weight input derivatives.
 pub mod frozen_awq;
+/// Original RUDA byte-packed NF4 frozen projections and input derivatives.
+pub mod frozen_nf4;
 #[cfg(feature = "distributed")]
 pub mod distributed;
 

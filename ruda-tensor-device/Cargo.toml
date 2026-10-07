@@ -116,7 +116,7 @@ features = ["std", "tensor"]
 path = "../ruBLAS"
 version = "0.1.35"
 default-features = false
-features = ["kernel-ir", "std", "tensor-vector", "tensor-matmul", "tensor-int4"]
+features = ["kernel-ir", "std", "tensor-vector", "tensor-matmul", "tensor-int4", "tensor-nf4"]
 
 
 [dependencies.rudnn]

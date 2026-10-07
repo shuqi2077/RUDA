@@ -5,7 +5,7 @@ use ruda_tensor::{TensorMetadata,frozen_awq::FrozenAwqOps,tensor::{FloatTensor,I
 // This packed GEMM is a native execution boundary, not an elementwise fusion.
 // Resolve existing native handles without downloading model values to the host.
 // Returning the native Result here retains synchronous launch/validation errors.
-fn register_output<B:FusionBackend>(output:FloatTensor<B>) -> FloatTensor<Fusion<B>> {
+pub(super) fn register_output<B:FusionBackend>(output:FloatTensor<B>) -> FloatTensor<Fusion<B>> {
     let client=get_client::<B>(&B::float_device(&output));
     let shape=output.shape();let dtype=output.dtype();
     let handle=B::float_tensor_handle(output);

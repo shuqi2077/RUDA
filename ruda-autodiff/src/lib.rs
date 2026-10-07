@@ -21,6 +21,7 @@ pub mod collective;
 /// Model-parallel regions with replicated-loss, rather than independent-loss, derivatives.
 pub mod tensor_parallel;
 mod frozen_awq;
+mod frozen_nf4;
 #[cfg(feature = "distributed")]
 /// Distributed utils.
 pub mod distributed;
