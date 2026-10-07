@@ -5,6 +5,7 @@ mod dense;
 mod heads;
 mod embeddings;
 mod adapters;
+mod adapter_record;
 
 pub use decoder::*;
 pub use encoder::*;
@@ -13,3 +14,4 @@ pub use dense::*;
 pub use heads::*;
 pub use embeddings::*;
 pub use adapters::*;
+pub use adapter_record::*;
