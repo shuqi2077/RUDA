@@ -6,6 +6,10 @@ pub mod dataloader;
 #[cfg(feature = "std")]
 pub mod sampler;
 
+/// Token-budget batches retaining committed distributed sample order.
+#[cfg(feature = "std")]
+pub mod token_batch;
+
 /// Dataset module.
 #[cfg(feature = "dataset")]
 pub mod dataset {

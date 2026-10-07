@@ -316,8 +316,10 @@ class SFTTrainer:
         self.packed_input=bool(getattr(template,'packed_input',False))
         self.sampler=sampler
         if sampler is not None:
-            from .training_data import StatefulShardSampler
-            if not isinstance(sampler,StatefulShardSampler):raise TypeError('sampler must provide committed StatefulShardSampler cursors')
+            from .training_data import StatefulShardSampler,TokenBudgetBatchSampler
+            if not isinstance(sampler,(StatefulShardSampler,TokenBudgetBatchSampler)):raise TypeError('sampler must provide committed sample or token-budget batch cursors')
+            if isinstance(sampler,TokenBudgetBatchSampler) and (sampler.layout=='packed')!=self.packed_input:
+                raise ValueError('token-budget layout must match the finetuner and its actual collator')
         self.gradient_overlap, self.bucket_bytes = gradient_overlap, bucket_bytes
         if type(gradient_overlap) is not bool or type(bucket_bytes) is not int or bucket_bytes <= 0:
             raise ValueError('gradient_overlap must be bool and bucket_bytes positive')

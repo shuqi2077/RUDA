@@ -230,6 +230,9 @@ impl StatefulShardSampler {
     /// Capture a lossless sampler record for TrainingRecord's application state.
     pub fn state(&self) -> SamplerState { self.state.clone() }
 
+    /// Immutable source length without cloning the recorded epoch order.
+    pub fn source_length(&self) -> usize { self.state.source_length }
+
     /// Number of samples actually consumed in this local scope.
     pub fn committed(&self) -> usize { self.state.committed }
 
@@ -238,6 +241,9 @@ impl StatefulShardSampler {
 
     /// Actual rank-local work remaining to be consumed, including prefetch.
     pub fn remaining(&self) -> usize { self.state.indices.len() - self.state.committed }
+
+    /// Actual unissued sample indices in this rank's recorded epoch order.
+    pub fn unissued_indices(&self) -> &[usize] { &self.state.indices[self.issued..] }
 
     /// Commit only a prefix of samples already issued by this sampler.
     pub fn commit(&mut self, count: usize) -> Result<(), SamplerError> {

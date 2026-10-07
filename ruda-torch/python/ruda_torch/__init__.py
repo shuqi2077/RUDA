@@ -247,6 +247,6 @@ from .tensor_parallel_optim import TensorParallelMuon,MeshShardedMuon
 from .sharded_mesh import ShardedDataTensorParallelGroup
 from .pipeline_trainer import PipelineTrainer
 from .pipeline_ties import PipelineTiedParameters
-from .training_data import StatefulShardSampler,collate_varlen_causal_lm
+from .training_data import StatefulShardSampler,TokenBudgetBatchSampler,collate_varlen_causal_lm
 from .varlen_attention import varlen_scaled_dot_product_attention
 from .causal_finetuning import PackedCausalLMFinetuner

@@ -145,6 +145,145 @@ class StatefulShardSampler(Sampler):
         return result
 
 
+class TokenBudgetBatchSampler(Sampler):
+    """Actual token-cost batching without changing the committed sample order.
+
+    lengths contains the immutable encoded length of EVERY original example.
+    layout='packed' budgets the sum of actual tokens; 'padded' budgets the
+    rectangular rows times maximum length. The caller's collator must honor
+    that layout. Oversized examples are rejected, never truncated or split.
+
+    This owns one StatefulShardSampler iterator; do not iterate that sampler
+    separately while this loader is active. Pass this batch sampler itself to
+    SFTTrainer to checkpoint lengths, batch policy and committed sample cursor.
+    DP batch counts may differ: use the coordinator's explicit participation
+    contract, rather than inventing duplicate examples to equalize them.
+    """
+    def __init__(self, sampler, lengths, *, maximum_tokens, layout, maximum_examples=None):
+        if not isinstance(sampler, StatefulShardSampler):
+            raise TypeError('token batching requires a StatefulShardSampler')
+        if type(maximum_tokens) is not int or maximum_tokens <= 0:
+            raise ValueError('maximum_tokens must be a positive integer')
+        if maximum_examples is not None and (type(maximum_examples) is not int or maximum_examples <= 0):
+            raise ValueError('maximum_examples must be None or a positive integer')
+        if layout not in ('packed', 'padded'):
+            raise ValueError('select actual packed or padded token cost')
+        lengths = tuple(lengths)
+        if len(lengths) != sampler.length or any(type(length) is not int or not 0 < length <= maximum_tokens for length in lengths):
+            raise ValueError('supply one nonempty, budget-fitting encoded length per original source example')
+        self.sampler, self.lengths = sampler, lengths
+        self.maximum_tokens, self.maximum_examples, self.layout = maximum_tokens, maximum_examples, layout
+
+    @property
+    def committed(self):
+        return self.sampler.committed
+
+    @property
+    def issued(self):
+        return self.sampler.issued
+
+    @property
+    def remaining_examples(self):
+        return self.sampler.remaining
+
+    def _plan(self, start):
+        self.sampler._prepare()
+        positions = self.sampler._positions
+        if start >= len(positions):
+            return None
+        indices, tokens, maximum, slots = [], 0, 0, 0
+        for position in range(start, len(positions)):
+            if self.maximum_examples is not None and len(indices) == self.maximum_examples:
+                break
+            index = int(self.sampler._indices[positions[position]])
+            length = self.lengths[index]
+            new_maximum = max(maximum, length)
+            new_slots = tokens + length if self.layout == 'packed' else (len(indices) + 1) * new_maximum
+            if new_slots > self.maximum_tokens:
+                break
+            indices.append(index)
+            tokens, maximum, slots = tokens + length, new_maximum, new_slots
+        if not indices:
+            raise ValueError('next actual sample does not fit the recorded token budget')
+        return {'indices': indices, 'real_tokens': tokens, 'maximum_sequence_length': maximum, 'token_slots': slots}
+
+    def peek(self):
+        """Next exact work plan without issuing or committing any examples."""
+        return self._plan(self.issued)
+
+    def __iter__(self):
+        while (plan := self.peek()) is not None:
+            self.sampler.issued += len(plan['indices'])
+            yield plan['indices']
+
+    def __len__(self):
+        """Number of unissued actual batches; prefetch is not treated as committed."""
+        position, count = self.issued, 0
+        while (plan := self._plan(position)) is not None:
+            position += len(plan['indices'])
+            count += 1
+        return count
+
+    def commit(self, examples):
+        self.sampler.commit(examples)
+
+    def rewind_uncommitted(self):
+        self.sampler.rewind_uncommitted()
+
+    def set_epoch(self, epoch):
+        self.sampler.set_epoch(epoch)
+
+    def state_dict(self):
+        return {'version': 1, 'sampler': self.sampler.state_dict(), 'lengths': list(self.lengths),
+                'maximum_tokens': self.maximum_tokens, 'maximum_examples': self.maximum_examples, 'layout': self.layout}
+
+    def validate_state_dict(self, state):
+        expected = {'version', 'sampler', 'lengths', 'maximum_tokens', 'maximum_examples', 'layout'}
+        if not isinstance(state, dict) or set(state) != expected or type(state['version']) is not int or state['version'] != 1:
+            raise ValueError('unsupported token batch checkpoint')
+        if not isinstance(state['lengths'], list) or any(type(length) is not int for length in state['lengths']) or tuple(state['lengths']) != self.lengths:
+            raise ValueError('token batch encoded lengths changed')
+        if type(state['maximum_tokens']) is not int or state['maximum_tokens'] != self.maximum_tokens:
+            raise ValueError('token batch token limit changed')
+        maximum_examples = state['maximum_examples']
+        if (maximum_examples is not None and type(maximum_examples) is not int) or maximum_examples != self.maximum_examples or state['layout'] != self.layout:
+            raise ValueError('token batch example limit or layout changed')
+        self.sampler.validate_state_dict(state['sampler'])
+
+    def load_state_dict(self, state):
+        self.validate_state_dict(state)
+        self.sampler.load_state_dict(state['sampler'])
+
+    @staticmethod
+    def consolidate(states):
+        """Retain actual unconsumed examples and exact cost metadata across DP ranks."""
+        states = list(states)
+        if not states:
+            raise ValueError('supply every data-rank token batch checkpoint')
+        first = states[0]
+        fixed = ('version', 'lengths', 'maximum_tokens', 'maximum_examples', 'layout')
+        for state in states:
+            record = state['sampler']
+            sampler = StatefulShardSampler(record['length'], source_id=record['source_id'], rank=record['rank'],
+                replicas=record['replicas'], shuffle=record['shuffle'], seed=record['seed'], tail=record['tail'])
+            batcher = TokenBudgetBatchSampler(sampler, state['lengths'], maximum_tokens=state['maximum_tokens'],
+                maximum_examples=state['maximum_examples'], layout=state['layout'])
+            batcher.validate_state_dict(state)
+            if any(state[key] != first[key] for key in fixed):
+                raise ValueError('data ranks use different encoded lengths or token batch policies')
+        result = {key: copy.deepcopy(first[key]) for key in fixed}
+        result['sampler'] = StatefulShardSampler.consolidate(state['sampler'] for state in states)
+        return result
+
+    @classmethod
+    def from_consolidated(cls, state, *, rank, replicas):
+        if set(state) != {'version', 'sampler', 'lengths', 'maximum_tokens', 'maximum_examples', 'layout'} or type(state['version']) is not int or state['version'] != 1:
+            raise ValueError('unsupported consolidated token batch checkpoint')
+        sampler = StatefulShardSampler.from_consolidated(state['sampler'], rank=rank, replicas=replicas)
+        return cls(sampler, state['lengths'], maximum_tokens=state['maximum_tokens'],
+                   maximum_examples=state['maximum_examples'], layout=state['layout'])
+
+
 def collate_varlen_causal_lm(samples,*,ignore_index=-100):
     """Pack explicit labels WITHOUT cross-document next-token targets or truncation.
 
