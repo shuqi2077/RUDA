@@ -1,4 +1,4 @@
-use alloc::{collections::BTreeMap,format,string::ToString,vec::Vec};
+use alloc::{collections::{BTreeMap,BTreeSet},format,string::ToString,vec::Vec};
 use core::marker::PhantomData;
 use ruda_model::{
     module::{AutodiffModule,ModuleVisitor,Param},
@@ -59,18 +59,21 @@ impl TrainableParameterContract {
 
 struct PendingCheck<'a> {
     gradients: &'a GradientsParams,
+    active_ids: BTreeSet<u64>,
     frozen: bool,
 }
 impl<B: AutodiffBackend> ModuleVisitor<B> for PendingCheck<'_> {
     fn visit_float<const D: usize>(&mut self,param: &Param<Tensor<B,D>>) {
-        if !param.val().is_require_grad() && self.gradients.get::<B::InnerBackend,D>(param.id).is_some() { self.frozen = true; }
+        if !param.val().is_require_grad() && !self.active_ids.contains(&param.id.val())
+            && self.gradients.get::<B::InnerBackend,D>(param.id).is_some() { self.frozen = true; }
     }
 }
 
 fn check_pending<B: AutodiffBackend,M: AutodiffModule<B>>(model: &M,accumulator: &GradientsAccumulator<M>)
     -> Result<(),RecorderError> {
     accumulator.pending().validate_for::<B,M>(model).map_err(|error|RecorderError::Unknown(error.to_string()))?;
-    let mut visitor = PendingCheck {gradients:accumulator.pending(),frozen:false};
+    let active_ids = TrainableParameterContract::capture::<B,M>(model)?.entries.into_iter().map(|(id,_,_)|id).collect();
+    let mut visitor = PendingCheck {gradients:accumulator.pending(),active_ids,frozen:false};
     model.visit(&mut visitor);
     if visitor.frozen { return Err(invalid("pending gradients include a frozen parameter")); }
     Ok(())
