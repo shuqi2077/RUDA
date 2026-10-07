@@ -49,7 +49,7 @@ impl<B: Backend,const D: usize> CategoricalLossTerms<B,D> {
     }
 }
 
-fn check_float(dtype: DType) {
+pub(super) fn check_float(dtype: DType) {
     assert!(matches!(dtype,DType::F16|DType::BF16|DType::F32|DType::Flex32|DType::F64),"classification operands must use floating storage");
 }
 
@@ -83,7 +83,7 @@ fn probabilities<B: Backend>(criterion: &CrossEntropyLoss<B>,inputs: Tensor<B,2>
     if criterion.logits {log_softmax(inputs,1)} else {inputs.log()}
 }
 
-fn product<B: Backend,const D: usize>(value: Tensor<B,D>,coefficient: Tensor<B,D>) -> Tensor<B,D> {
+pub(super) fn product<B: Backend,const D: usize>(value: Tensor<B,D>,coefficient: Tensor<B,D>) -> Tensor<B,D> {
     let zero_infinity = coefficient.clone().equal_elem(0).bool_and(value.clone().is_inf());
     value.mask_fill(zero_infinity,0)*coefficient
 }
