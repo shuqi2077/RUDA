@@ -17,7 +17,7 @@ pub struct LightningIndexerConfig {
     pub num_heads: usize,
     #[config(default = 16)]
     pub head_dim: usize,
-    #[config(default = None)]
+    #[config(default = "None")]
     pub query_dim: Option<usize>,
     #[config(default = 32)]
     pub topk: usize,
@@ -91,7 +91,7 @@ impl LightningIndexerConfig {
     pub fn init<B: Backend>(&self, device: &B::Device) -> LightningIndexer<B> {
         let query_dim = self.query_dim.unwrap_or(self.width);
         assert!(self.width > 0 && query_dim > 0 && self.num_heads > 0 && self.head_dim > 0
-            && self.query_chunk_size > 0 && self.key_chunk_size > 0 && self.epsilon.is_finite() && self.epsilon > 0.0,
+            && self.topk > 0 && self.query_chunk_size > 0 && self.key_chunk_size > 0 && self.epsilon.is_finite() && self.epsilon > 0.0,
             "invalid indexer dimensions/chunk budget/epsilon");
         let query_output = self.num_heads.checked_mul(self.head_dim).expect("indexer query width overflow");
         let query = LinearConfig::new(query_dim, query_output).with_bias(false).init(device);
@@ -114,7 +114,7 @@ impl<B: Backend> LightningIndexer<B> {
         let [query_dim, query_output] = query.weight.val().dims();
         let [width, num_heads] = head_weight.weight.val().dims();
         assert!(width > 0 && query_dim > 0 && num_heads > 0 && query_output > 0
-            && query_output.is_multiple_of(num_heads) && query_chunk_size > 0 && key_chunk_size > 0,
+            && query_output.is_multiple_of(num_heads) && topk > 0 && query_chunk_size > 0 && key_chunk_size > 0,
             "invalid loaded indexer geometry/budget");
         let head_dim = query_output / num_heads;
         assert!(rotary.rope_dim <= head_dim, "indexer rotary width exceeds a head");
