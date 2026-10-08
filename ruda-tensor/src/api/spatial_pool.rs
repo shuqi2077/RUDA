@@ -1,7 +1,7 @@
-use super::{BasicOps, DType, Int, Tensor, backend::Backend};
+use super::{BasicOps, DType, Int, Tensor, TensorPrimitive, backend::Backend};
 use super::ops::PadMode;
 use super::module::{
-    adaptive_avg_pool1d, adaptive_avg_pool2d, avg_pool1d, avg_pool2d,
+    avg_pool1d, avg_pool2d,
     max_pool1d, max_pool2d, max_pool1d_with_indices, max_pool2d_with_indices,
 };
 
@@ -148,17 +148,13 @@ pub fn avg_pool3d<B: Backend>(
 /// Adaptive average pooling to explicit `[depth, height, width]` extents.
 ///
 /// Native adaptive pooling bins are retained, including overlapping bins and
-/// output extents larger than the input. No host reduction or interpolation is
-/// used, and gradients flow through the original pooling and layout operations.
+/// output extents larger than the input. Dispatches the backend's volume pooling
+/// operation; backends without a specialized kernel retain native separable pooling.
 pub fn adaptive_avg_pool3d<B: Backend>(
     input: Tensor<B, 5>,
     output_size: [usize; 3],
 ) -> Tensor<B, 5> {
-    let [batch, channels, depth, _, _] = input.dims();
-    let planes = adaptive_avg_pool2d(volume_planes(input), [output_size[1], output_size[2]]);
-    let [_, _, height, width] = planes.dims();
-    let lines = adaptive_avg_pool1d(plane_depth_lines(planes, batch, depth), output_size[0]);
-    depth_lines_volume(lines, batch, channels, height, width)
+    Tensor::new(TensorPrimitive::Float(B::adaptive_avg_pool3d(input.primitive.tensor(), output_size)))
 }
 
 fn average_excluding_explicit_padding<B: Backend, const D: usize, const N: usize>(
