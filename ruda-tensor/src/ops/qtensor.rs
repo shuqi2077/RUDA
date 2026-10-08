@@ -508,6 +508,11 @@ pub trait QTensorOps<B: Backend> {
     ///
     /// The result of multiplying the two tensors together using matrix multiplication.
     fn q_matmul(lhs: TensorPrimitive<B>, rhs: TensorPrimitive<B>) -> TensorPrimitive<B> {
+        Self::q_matmul_default(lhs, rhs)
+    }
+
+    /// Existing dequantized arithmetic and propagation contract for unsupported native combinations.
+    fn q_matmul_default(lhs: TensorPrimitive<B>, rhs: TensorPrimitive<B>) -> TensorPrimitive<B> {
         let mut propagation = QuantPropagation::Inhibit;
         let mut scheme = QuantScheme::default();
 

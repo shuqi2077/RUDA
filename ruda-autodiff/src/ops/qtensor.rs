@@ -3,12 +3,13 @@
 //! of rounding. Tracked integer scales opt into a clipped learned-step estimator.
 //! Scales use FP32 and a positive floor; no calibration gradient is invented.
 use ruda_tensor::{
-    Backend, ExecutionError, TensorData, TensorMetadata,
+    Backend, ExecutionError, TensorData, TensorMetadata, TensorPrimitive, QTensorPrimitive,
     ops::{QTensorOps, FloatTensorOps},
     tensor::{Device, FloatTensor, IntTensor, QuantizedTensor,
         quantization::QuantizationParametersPrimitive},
 };
-use ruda_core::tensor::{FloatDType, IntDType, QuantScheme, Shape};
+use ruda_core::tensor::{DType, FloatDType, IntDType, QuantScheme, QuantPropagation, Shape};
+use super::OpsKind;
 use crate::{
     Autodiff, checkpoint::{strategy::CheckpointStrategy, base::Checkpointer},
     grads::Gradients, ops::{Backward, Ops, unary},
@@ -99,6 +100,46 @@ fn learned_quantize<B: Backend, C: CheckpointStrategy>(
 }
 
 impl<B: Backend, C: CheckpointStrategy> QTensorOps<Self> for Autodiff<B, C> {
+    fn q_matmul(lhs: TensorPrimitive<Self>, rhs: TensorPrimitive<Self>) -> TensorPrimitive<Self> {
+        match (lhs, rhs) {
+            (TensorPrimitive::Float(input), TensorPrimitive::QFloat(weight))
+                if input.rank() == 2 && weight.rank() == 2 && weight.surrogate.is_none()
+                    && weight.primitive.propagation() == QuantPropagation::Inhibit
+                    && matches!(input.dtype(), DType::F16 | DType::BF16 | DType::F32) => {
+                #[derive(Debug)]
+                struct FrozenQuantizedMatmul;
+                impl<B: Backend> Backward<B, 1> for FrozenQuantizedMatmul {
+                    type State = (QuantizedTensor<B>, FloatDType);
+                    fn backward(self, ops: Ops<Self::State, 1>, grads: &mut Gradients, _: &mut Checkpointer) {
+                        let (weight, storage) = ops.state;
+                        unary::<B, _>(ops.parents, ops.node, grads, |grad| {
+                            let weight = B::q_swap_dims(weight, 0, 1);
+                            let output = match B::q_matmul(TensorPrimitive::Float(grad), TensorPrimitive::QFloat(weight)) {
+                                TensorPrimitive::Float(output) => output,
+                                TensorPrimitive::QFloat(output) => B::dequantize(output, storage),
+                            };
+                            B::float_cast(output, storage)
+                        });
+                    }
+                }
+                let storage = input.dtype().into();
+                let project = |input, weight| match B::q_matmul(TensorPrimitive::Float(input), TensorPrimitive::QFloat(weight)) {
+                    TensorPrimitive::Float(output) => output,
+                    TensorPrimitive::QFloat(output) => B::dequantize(output, storage),
+                };
+                let output = match FrozenQuantizedMatmul.prepare::<C>([input.node.clone()]).compute_bound().stateful() {
+                    OpsKind::Tracked(prep) => {
+                        let output = project(input.primitive, weight.primitive.clone());
+                        prep.finish((weight.primitive, storage), output)
+                    }
+                    OpsKind::UnTracked(prep) => prep.finish(project(input.primitive, weight.primitive)),
+                };
+                TensorPrimitive::Float(output)
+            }
+            (lhs, rhs) => Self::q_matmul_default(lhs, rhs),
+        }
+    }
+
     fn q_from_data(data: TensorData, device: &Device<Self>) -> QuantizedTensor<Self> {
         AutodiffQTensor::untracked(B::q_from_data(data, device))
     }
