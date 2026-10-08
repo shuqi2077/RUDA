@@ -54,7 +54,7 @@ pub fn all_to_all_v_coordinated<B:Backend,S:CheckpointStrategy,C:VariableTensorC
     if world==0 || communicator.rank()>=world {return Err(ScopedCollectiveError::Protocol("coordinated row exchange has invalid original topology"));}
     let tracked=if world==1 {input.is_tracked()} else {
         let device=B::float_device(&input.primitive);
-        let flag=ruda_tensor::Tensor::<B,1,ruda_tensor::Int>::from_data(TensorData::new(alloc::vec![u8::from(input.is_tracked())],[1]),(&device,DType::U8));
+        let flag=Tensor::<B,1,ruda_tensor::api::Int>::from_data(TensorData::new(alloc::vec![u8::from(input.is_tracked())],[1]),(&device,DType::U8));
         let flags=communicator.all_gather_int(flag.into_primitive()).map_err(ScopedCollectiveError::Collective)?;
         if flags.shape()[..]!=[world as usize] || flags.dtype()!=DType::U8 || B::int_device(&flags)!=device {
             return Err(ScopedCollectiveError::Protocol("row-exchange gradient-dependence metadata changed native shape/storage/device"));}
