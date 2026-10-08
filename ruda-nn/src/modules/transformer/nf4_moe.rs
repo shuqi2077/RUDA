@@ -3,9 +3,9 @@ use core::fmt;
 use ruda_model::{module::Module,tensor::{Tensor,Int,Bool,MoeDispatchOps,FrozenNf4SwiGluOps,backend::Backend}};
 use crate::{Nf4MoeLayer,Nf4MoeError,NativeMoeLayerError,Dropout,
     attention::{DenseAttentionMask,DenseAttentionOptions,PackedSequenceLayout,PackedAttentionOptions,PackedDocumentAttentionMask},
-    cache::{ProjectedKvCache,TransformerKvCache},loss::{CausalCrossEntropyConfig,CausalLoss}};
+    cache::{ProjectedKvCache,TransformerKvCache},loss::{CausalCrossEntropyConfig,CausalLoss},pool::SequencePooling};
 use super::{TransformerProjectionShape,TransformerProjection,ProjectedGroupedQueryAttention,ProjectedFeedForward,ProjectedTransformerBlock,
-    NativeMoeTransformerBlock,NativeMoeTransformerError,DenseTransformerNorm,TransformerEmbeddings,ProjectedTransformerHead,ProjectedTransformerInput};
+    NativeMoeTransformerBlock,NativeMoeTransformerError,DenseTransformerNorm,TransformerEmbeddings,ProjectedTransformerHead,ProjectedTransformerInput,SequenceHeadOutput};
 use super::{dense::try_residual_branch,native_attention::{attention_branch,packed_attention_branch,cached_attention_branch},
     projected_paired_model::{embed_projected,embed_packed_projected,check_block}};
 
@@ -209,6 +209,33 @@ impl<B:MoeDispatchOps+FrozenNf4SwiGluOps,P:TransformerProjection<B>> Nf4MoeTrans
         -> Result<Tensor<B,2>,Nf4MoeTransformerError<P::Error,B::MoeError,B::Nf4GroupedError>>
         where F:FnMut(usize,Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
         self.forward_packed_with(input,layout,|index,layer,hidden|layer.forward_packed_with_positions(hidden,layout,masks,options,|query,key|positions(index,query,key)))
+    }
+    /// Complete chunked native training objective with original actual dense positions/masks.
+    pub fn forward_causal_with_positions<F>(&self,input:ProjectedTransformerInput<B>,labels:Tensor<B,2,Int>,masks:DenseAttentionMask<B>,options:DenseAttentionOptions,
+        criterion:&CausalCrossEntropyConfig,label_smoothing:f64,mut positions:F) -> Result<CausalLoss<B>,Nf4MoeTransformerError<P::Error,B::MoeError,B::Nf4GroupedError>>
+        where F:FnMut(usize,Tensor<B,4>,Tensor<B,4>)->(Tensor<B,4>,Tensor<B,4>) {
+        self.forward_causal_with(input,labels,criterion,label_smoothing,
+            |index,layer,hidden|layer.forward_with_positions(hidden,masks.clone(),options,|query,key|positions(index,query,key)))
+    }
+    /// Complete packed native training graph with exact document boundaries and original positions.
+    pub fn forward_packed_causal_with_positions<F>(&self,input:ProjectedTransformerInput<B,1>,labels:Tensor<B,1,Int>,layout:&PackedSequenceLayout,
+        masks:Option<&[PackedDocumentAttentionMask<B>]>,options:PackedAttentionOptions,criterion:&CausalCrossEntropyConfig,label_smoothing:f64,mut positions:F)
+        -> Result<CausalLoss<B>,Nf4MoeTransformerError<P::Error,B::MoeError,B::Nf4GroupedError>>
+        where F:FnMut(usize,Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
+        self.forward_packed_causal_with(input,labels,layout,criterion,label_smoothing,
+            |index,layer,hidden|layer.forward_packed_with_positions(hidden,layout,masks,options,|query,key|positions(index,query,key)))
+    }
+    /// Original visible-token sequence pooling with actual native head and source-selected policy.
+    pub fn forward_sequence_with<F>(&self,input:ProjectedTransformerInput<B>,visible:Tensor<B,2,Bool>,pooling:SequencePooling,layer:F)
+        -> Result<SequenceHeadOutput<B>,Nf4MoeTransformerError<P::Error,B::MoeError,B::Nf4GroupedError>>
+        where F:FnMut(usize,&Nf4MoeTransformerLayer<B,P>,Tensor<B,3>)->Result<Tensor<B,3>,Nf4MoeTransformerError<P::Error,B::MoeError,B::Nf4GroupedError>> {
+        self.head.forward_sequence(self.forward_hidden_with(input,layer)?,visible,pooling).map_err(Nf4MoeTransformerError::Projection)
+    }
+    /// Original independent-document sequence pooling, retaining true empty-row/token metadata.
+    pub fn forward_packed_sequences_with<F>(&self,input:ProjectedTransformerInput<B,1>,layout:&PackedSequenceLayout,visible:Option<Tensor<B,1,Bool>>,pooling:SequencePooling,layer:F)
+        -> Result<SequenceHeadOutput<B>,Nf4MoeTransformerError<P::Error,B::MoeError,B::Nf4GroupedError>>
+        where F:FnMut(usize,&Nf4MoeTransformerLayer<B,P>,Tensor<B,2>)->Result<Tensor<B,2>,Nf4MoeTransformerError<P::Error,B::MoeError,B::Nf4GroupedError>> {
+        self.head.forward_packed_sequences(self.forward_packed_hidden_with(input,layout,layer)?,layout,visible,pooling).map_err(Nf4MoeTransformerError::Projection)
     }
     /// Original new-token KV execution and complete stack boundary; partial errors
     /// retain the same caller-owned cache restore contract as the native model.

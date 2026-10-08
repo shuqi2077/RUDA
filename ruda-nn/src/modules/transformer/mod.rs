@@ -25,6 +25,7 @@ mod moe;
 mod moe_model;
 mod moe_adapters;
 mod nf4_moe;
+mod nf4_moe_adapters;
 #[cfg(feature="tensor-parallel")]
 mod expert_parallel;
 
@@ -50,5 +51,6 @@ pub use moe::*;
 pub use moe_model::*;
 pub use moe_adapters::*;
 pub use nf4_moe::*;
+pub use nf4_moe_adapters::*;
 #[cfg(feature="tensor-parallel")]
 pub use expert_parallel::*;

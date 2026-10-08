@@ -47,7 +47,7 @@ impl<B:Backend,P:AdaptTransformerProjection<B>> NativeMoeFeedForward<B,P> {
     }
 }
 impl<B:Backend,P:AdaptTransformerProjection<B>> NativeMoeTransformerBlock<B,P> {
-    fn validate_adapters(&self,config:&TransformerAdapterConfig,attention:&[AttentionAdapterTarget],router:bool,shared:&[FeedForwardAdapterTarget]) {
+    pub(super) fn validate_adapters(&self,config:&TransformerAdapterConfig,attention:&[AttentionAdapterTarget],router:bool,shared:&[FeedForwardAdapterTarget]) {
         assert!(!attention.is_empty() || router || !shared.is_empty(),"selected routed block requires an actual native projection target");
         self.attention.validate_adapters(config,attention);self.feed_forward.validate_adapters(config,router,shared);
     }
