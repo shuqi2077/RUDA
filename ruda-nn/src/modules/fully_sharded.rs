@@ -72,6 +72,8 @@ mod expert_parallel;
 pub use expert_parallel::*;
 mod mhc_expert_parallel;
 pub use mhc_expert_parallel::*;
+mod owned_transformer;
+pub use owned_transformer::*;
 
 /// Explicit construction context preserving one local autograd leaf per source ID.
 /// Reuse a context for all tied layers, then drop it after model construction. It
