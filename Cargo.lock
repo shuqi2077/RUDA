@@ -6010,7 +6010,7 @@ dependencies = [
 
 [[package]]
 name = "ruda-store"
-version = "0.21.43"
+version = "0.21.44"
 dependencies = [
  "byteorder",
  "bytes",
