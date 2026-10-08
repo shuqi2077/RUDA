@@ -5,3 +5,4 @@ pub mod silu;
 pub mod gelu;
 pub mod prelu;
 pub mod leaky_relu;
+pub mod exponential_relu;

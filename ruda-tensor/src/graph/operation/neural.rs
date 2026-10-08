@@ -2,6 +2,25 @@ use super::*;
 
 #[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
 #[allow(missing_docs)]
+pub struct ExponentialReluOpIr {
+    pub x: TensorIr,
+    pub alpha: ScalarIr,
+    pub continuous: bool,
+    pub out: TensorIr,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
+pub struct ExponentialReluBackwardOpIr {
+    pub x: TensorIr,
+    pub grad: TensorIr,
+    pub alpha: ScalarIr,
+    pub continuous: bool,
+    pub out: TensorIr,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
 pub struct LeakyReluOpIr {
     pub x: TensorIr,
     pub negative_slope: ScalarIr,

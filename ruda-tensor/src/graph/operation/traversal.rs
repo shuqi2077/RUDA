@@ -1101,6 +1101,8 @@ impl ModuleOperationIr {
             ModuleOperationIr::SiluNative(repr) => Box::new([&repr.input].into_iter()),
             ModuleOperationIr::GeluNative(repr) => Box::new([&repr.x].into_iter()),
             ModuleOperationIr::GeluNativeBackward(repr) => Box::new([&repr.x, &repr.grad].into_iter()),
+            ModuleOperationIr::ExponentialReluNative(repr) => Box::new([&repr.x].into_iter()),
+            ModuleOperationIr::ExponentialReluNativeBackward(repr) => Box::new([&repr.x, &repr.grad].into_iter()),
             ModuleOperationIr::LeakyReluNative(repr) => Box::new([&repr.x].into_iter()),
             ModuleOperationIr::LeakyReluNativeBackward(repr) => Box::new([&repr.x, &repr.grad].into_iter()),
             ModuleOperationIr::PreluNative(repr) => Box::new([&repr.x, &repr.alpha].into_iter()),
@@ -1261,6 +1263,8 @@ impl ModuleOperationIr {
             ModuleOperationIr::SiluNative(repr) => Box::new([&repr.out].into_iter()),
             ModuleOperationIr::GeluNative(repr) => Box::new([&repr.out].into_iter()),
             ModuleOperationIr::GeluNativeBackward(repr) => Box::new([&repr.out].into_iter()),
+            ModuleOperationIr::ExponentialReluNative(repr) => Box::new([&repr.out].into_iter()),
+            ModuleOperationIr::ExponentialReluNativeBackward(repr) => Box::new([&repr.out].into_iter()),
             ModuleOperationIr::LeakyReluNative(repr) => Box::new([&repr.out].into_iter()),
             ModuleOperationIr::LeakyReluNativeBackward(repr) => Box::new([&repr.out].into_iter()),
             ModuleOperationIr::PreluNative(repr) => Box::new([&repr.out].into_iter()),
@@ -1554,6 +1558,13 @@ impl ModuleOperationIr {
                 repr.x.mark_read_only(nodes, &mut output);
             }
             ModuleOperationIr::GeluNativeBackward(repr) => {
+                repr.x.mark_read_only(nodes, &mut output);
+                repr.grad.mark_read_only(nodes, &mut output);
+            }
+            ModuleOperationIr::ExponentialReluNative(repr) => {
+                repr.x.mark_read_only(nodes, &mut output);
+            }
+            ModuleOperationIr::ExponentialReluNativeBackward(repr) => {
                 repr.x.mark_read_only(nodes, &mut output);
                 repr.grad.mark_read_only(nodes, &mut output);
             }

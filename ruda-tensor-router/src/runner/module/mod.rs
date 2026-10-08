@@ -15,6 +15,8 @@ impl<B: BackendIr> Runner<B> {
         op: &ModuleOperationIr,
     ) {
         match op {
+            ModuleOperationIr::ExponentialReluNative(desc) => self.apply_exponential_relu_native(handles, desc),
+            ModuleOperationIr::ExponentialReluNativeBackward(desc) => self.apply_exponential_relu_native_backward(handles, desc),
             ModuleOperationIr::LeakyReluNative(desc) => self.apply_leaky_relu_native(handles, desc),
             ModuleOperationIr::LeakyReluNativeBackward(desc) => self.apply_leaky_relu_native_backward(handles, desc),
             ModuleOperationIr::PreluNative(desc) => self.apply_prelu_native(handles, desc),

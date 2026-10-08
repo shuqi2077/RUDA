@@ -81,6 +81,18 @@ where
     I: IntElement,
     BT: BoolElement,
 {
+    fn exponential_relu_native(tensor: FloatTensor<Self>, alpha: f64, continuous: bool) -> FloatTensor<Self> {
+        if group_storage_supported(&tensor) && tensor.meta.num_elements() <= u32::MAX as usize {
+            ruprim::elementwise::unary::exponential_relu::launch(tensor, alpha as f32, continuous)
+        } else { ruda_tensor::ops::activation_training::exponential_relu_native::<Self>(tensor, alpha, continuous) }
+    }
+
+    fn exponential_relu_native_backward(tensor: FloatTensor<Self>, grad: FloatTensor<Self>, alpha: f64, continuous: bool) -> FloatTensor<Self> {
+        if [&tensor, &grad].into_iter().all(|value| group_storage_supported(value) && value.meta.num_elements() <= u32::MAX as usize) {
+            ruprim::elementwise::unary::exponential_relu::launch_backward(tensor, grad, alpha as f32, continuous)
+        } else { ruda_tensor::ops::activation_training::exponential_relu_native_backward::<Self>(tensor, grad, alpha, continuous) }
+    }
+
     fn leaky_relu_native(tensor: FloatTensor<Self>, negative_slope: f64) -> FloatTensor<Self> {
         if group_storage_supported(&tensor) && tensor.meta.num_elements() <= u32::MAX as usize {
             ruprim::elementwise::unary::leaky_relu::launch(tensor, negative_slope as f32)

@@ -1198,6 +1198,21 @@ impl DequantizeOpIr {
 
 // Operations with multiple outputs
 
+impl ExponentialReluOpIr {
+    pub fn create(x: TensorIr, alpha: f64, continuous: bool, new_id: impl FnOnce() -> TensorId) -> Self {
+        let out = TensorIr::uninit(new_id(), x.shape.clone(), x.dtype);
+        Self { x, alpha: ScalarIr::Float(alpha), continuous, out }
+    }
+}
+
+impl ExponentialReluBackwardOpIr {
+    pub fn create(x: TensorIr, grad: TensorIr, alpha: f64, continuous: bool, new_id: impl FnOnce() -> TensorId) -> Self {
+        assert_eq!(x.shape, grad.shape, "ELU/CELU gradient shape differs");
+        let out = TensorIr::uninit(new_id(), x.shape.clone(), x.dtype);
+        Self { x, grad, alpha: ScalarIr::Float(alpha), continuous, out }
+    }
+}
+
 impl LeakyReluOpIr {
     pub fn create(x: TensorIr, negative_slope: f64, new_id: impl FnOnce() -> TensorId) -> Self {
         let out = TensorIr::uninit(new_id(), x.shape.clone(), x.dtype);

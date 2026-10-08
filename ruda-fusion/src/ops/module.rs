@@ -32,6 +32,32 @@ macro_rules! make_ops {
 }
 
 impl<B: FusionBackend> ModuleOps<Fusion<B>> for Fusion<B> {
+    fn exponential_relu_native(x: FloatTensor<Self>, alpha: f64, continuous: bool) -> FloatTensor<Self> {
+        make_ops!(ExponentialReluNativeOps, ExponentialReluOpIr, |desc: &ExponentialReluOpIr, handles: &mut HandleContainer<B::Handle>| {
+            let x = handles.get_float_tensor::<B>(&desc.x);
+            handles.register_float_tensor::<B>(&desc.out.id, B::exponential_relu_native(x, desc.alpha.elem(), desc.continuous));
+        });
+        let streams = OperationStreams::with_inputs([&x]);
+        let client = x.client.clone();
+        let desc = ExponentialReluOpIr::create(x.into_ir(), alpha, continuous, || client.create_empty_handle());
+        client.register(streams, OperationIr::Module(ModuleOperationIr::ExponentialReluNative(desc.clone())),
+            ExponentialReluNativeOps::<B>::new(desc)).output()
+    }
+
+    fn exponential_relu_native_backward(x: FloatTensor<Self>, grad: FloatTensor<Self>, alpha: f64, continuous: bool) -> FloatTensor<Self> {
+        make_ops!(ExponentialReluNativeBackwardOps, ExponentialReluBackwardOpIr,
+            |desc: &ExponentialReluBackwardOpIr, handles: &mut HandleContainer<B::Handle>| {
+                let x = handles.get_float_tensor::<B>(&desc.x);
+                let grad = handles.get_float_tensor::<B>(&desc.grad);
+                handles.register_float_tensor::<B>(&desc.out.id, B::exponential_relu_native_backward(x, grad, desc.alpha.elem(), desc.continuous));
+            });
+        let streams = OperationStreams::with_inputs([&x, &grad]);
+        let client = x.client.clone();
+        let desc = ExponentialReluBackwardOpIr::create(x.into_ir(), grad.into_ir(), alpha, continuous, || client.create_empty_handle());
+        client.register(streams, OperationIr::Module(ModuleOperationIr::ExponentialReluNativeBackward(desc.clone())),
+            ExponentialReluNativeBackwardOps::<B>::new(desc)).output()
+    }
+
     fn leaky_relu_native(x: FloatTensor<Self>, negative_slope: f64) -> FloatTensor<Self> {
         make_ops!(LeakyReluNativeOps, LeakyReluOpIr, |desc: &LeakyReluOpIr, handles: &mut HandleContainer<B::Handle>| {
             let x = handles.get_float_tensor::<B>(&desc.x);

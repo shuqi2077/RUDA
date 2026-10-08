@@ -1,5 +1,34 @@
 use crate::{Backend, DType, FloatDType, TensorMetadata, tensor::FloatTensor};
 
+/// Same-device ELU/CELU using the supplied alpha and original nonpositive exponential branch.
+pub fn exponential_relu_native<B: Backend>(input: FloatTensor<B>, alpha: f64, continuous: bool) -> FloatTensor<B> {
+    let storage: FloatDType = input.dtype().into();
+    let compute = if input.dtype() == DType::F64 { FloatDType::F64 } else { FloatDType::F32 };
+    let input = B::float_cast(input, compute);
+    let bool_dtype = crate::get_device_settings::<B>(&B::float_device(&input)).bool_dtype;
+    let nonpositive = B::float_lower_equal_elem(input.clone(), 0f32.into(), bool_dtype);
+    let exponent = if continuous { B::float_div_scalar(input.clone(), alpha.into()) } else { input.clone() };
+    let value = B::float_mul_scalar(B::float_sub_scalar(B::float_exp(exponent), 1f32.into()), alpha.into());
+    B::float_cast(B::float_mask_where(input, nonpositive, value), storage)
+}
+
+/// Independent original-primal VJP, retaining actual multiplication/division by alpha in CELU.
+pub fn exponential_relu_native_backward<B: Backend>(input: FloatTensor<B>, grad: FloatTensor<B>, alpha: f64,
+    continuous: bool) -> FloatTensor<B> {
+    assert_eq!(input.shape(), grad.shape(), "ELU/CELU gradient shape differs");
+    if input.shape().num_elements() == 0 { return input; }
+    let storage: FloatDType = input.dtype().into();
+    let compute = if input.dtype() == DType::F64 || grad.dtype() == DType::F64 { FloatDType::F64 } else { FloatDType::F32 };
+    let input = B::float_cast(input, compute);
+    let grad = B::float_cast(grad, compute);
+    let bool_dtype = crate::get_device_settings::<B>(&B::float_device(&input)).bool_dtype;
+    let nonpositive = B::float_lower_equal_elem(input.clone(), 0f32.into(), bool_dtype);
+    let exponent = if continuous { B::float_div_scalar(input, alpha.into()) } else { input };
+    let value = B::float_mul(B::float_mul_scalar(grad.clone(), alpha.into()), B::float_exp(exponent));
+    let value = if continuous { B::float_div_scalar(value, alpha.into()) } else { value };
+    B::float_cast(B::float_mask_where(grad, nonpositive, value), storage)
+}
+
 /// Same-device working-storage LeakyReLU with the original supplied scalar slope.
 pub fn leaky_relu_native<B: Backend>(input: FloatTensor<B>, negative_slope: f64) -> FloatTensor<B> {
     let storage: FloatDType = input.dtype().into();

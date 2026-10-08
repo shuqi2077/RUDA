@@ -47,6 +47,11 @@ impl ModuleDisplay for Celu {
 }
 
 impl Celu {
+    /// Native working-storage forward and original-alpha first-order derivative; default forward is unchanged.
+    pub fn forward_native<B: Backend, const D: usize>(&self, input: Tensor<B, D>) -> Tensor<B, D> {
+        ruda_model::tensor::activation::celu_native(input, self.alpha)
+    }
+
     /// Forward pass for the Celu layer.
     ///
     /// See [celu](ruda_tensor::api::activation::celu) for more information.

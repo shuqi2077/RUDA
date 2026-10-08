@@ -275,6 +275,10 @@ pub enum ModuleOperationIr {
     LeakyReluNative(LeakyReluOpIr),
     /// Original-primal first-order LeakyReLU VJP.
     LeakyReluNativeBackward(LeakyReluBackwardOpIr),
+    /// Working-storage ELU/CELU using the original alpha and mathematical mode.
+    ExponentialReluNative(ExponentialReluOpIr),
+    /// Original-primal first-order ELU/CELU VJP.
+    ExponentialReluNativeBackward(ExponentialReluBackwardOpIr),
 }
 
 /// Basic operations that can be done on any tensor type.

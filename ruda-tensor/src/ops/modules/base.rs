@@ -208,6 +208,16 @@ pub use ruda_core::tensor::spatial::AttentionModuleOptions;
 
 /// Module operations trait.
 pub trait ModuleOps<B: Backend> {
+    /// Working-storage ELU, or CELU when continuous is true, using the original alpha.
+    fn exponential_relu_native(tensor: FloatTensor<B>, alpha: f64, continuous: bool) -> FloatTensor<B> {
+        super::activation_training::exponential_relu_native::<B>(tensor, alpha, continuous)
+    }
+
+    /// Original selected ELU/CELU mode's independent first-order input derivative.
+    fn exponential_relu_native_backward(tensor: FloatTensor<B>, grad: FloatTensor<B>, alpha: f64, continuous: bool) -> FloatTensor<B> {
+        super::activation_training::exponential_relu_native_backward::<B>(tensor, grad, alpha, continuous)
+    }
+
     /// Working-storage LeakyReLU using the actual scalar negative slope.
     fn leaky_relu_native(tensor: FloatTensor<B>, negative_slope: f64) -> FloatTensor<B> {
         super::activation_training::leaky_relu_native::<B>(tensor, negative_slope)

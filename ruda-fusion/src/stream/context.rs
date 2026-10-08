@@ -610,6 +610,14 @@ impl RelativeOps for ModuleOperationIr {
                 x: desc.x.to_relative(converter), grad: desc.grad.to_relative(converter),
                 approximate: desc.approximate, out: desc.out.to_relative(converter),
             }),
+            ModuleOperationIr::ExponentialReluNative(desc) => ModuleOperationIr::ExponentialReluNative(ExponentialReluOpIr {
+                x: desc.x.to_relative(converter), alpha: desc.alpha.to_relative(converter), continuous: desc.continuous,
+                out: desc.out.to_relative(converter),
+            }),
+            ModuleOperationIr::ExponentialReluNativeBackward(desc) => ModuleOperationIr::ExponentialReluNativeBackward(ExponentialReluBackwardOpIr {
+                x: desc.x.to_relative(converter), grad: desc.grad.to_relative(converter), alpha: desc.alpha.to_relative(converter),
+                continuous: desc.continuous, out: desc.out.to_relative(converter),
+            }),
             ModuleOperationIr::LeakyReluNative(desc) => ModuleOperationIr::LeakyReluNative(LeakyReluOpIr {
                 x: desc.x.to_relative(converter), negative_slope: desc.negative_slope.to_relative(converter), out: desc.out.to_relative(converter),
             }),

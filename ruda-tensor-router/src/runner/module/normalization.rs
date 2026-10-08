@@ -1,6 +1,17 @@
 use super::*;
 
 impl<B: BackendIr> Runner<B> {
+    pub(super) fn apply_exponential_relu_native(&self, handles: &mut HandleContainer<B::Handle>, desc: &ExponentialReluOpIr) {
+        let x = handles.get_float_tensor::<B>(&desc.x);
+        handles.register_float_tensor::<B>(&desc.out.id, B::exponential_relu_native(x, desc.alpha.elem(), desc.continuous));
+    }
+
+    pub(super) fn apply_exponential_relu_native_backward(&self, handles: &mut HandleContainer<B::Handle>, desc: &ExponentialReluBackwardOpIr) {
+        let x = handles.get_float_tensor::<B>(&desc.x);
+        let grad = handles.get_float_tensor::<B>(&desc.grad);
+        handles.register_float_tensor::<B>(&desc.out.id, B::exponential_relu_native_backward(x, grad, desc.alpha.elem(), desc.continuous));
+    }
+
     pub(super) fn apply_leaky_relu_native(&self, handles: &mut HandleContainer<B::Handle>, desc: &LeakyReluOpIr) {
         let x = handles.get_float_tensor::<B>(&desc.x);
         handles.register_float_tensor::<B>(&desc.out.id, B::leaky_relu_native(x, desc.negative_slope.elem()));

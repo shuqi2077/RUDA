@@ -66,6 +66,26 @@ fn causal_attention_probabilities<B: Backend>(
 }
 
 impl<B: Backend, C: CheckpointStrategy> ModuleOps<Autodiff<B, C>> for Autodiff<B, C> {
+    fn exponential_relu_native(tensor: AutodiffTensor<B>, alpha: f64, continuous: bool) -> AutodiffTensor<B> {
+        #[derive(Debug)]
+        struct ExponentialRelu;
+        impl<B: Backend> Backward<B, 1> for ExponentialRelu {
+            type State = (NodeId, f64, bool);
+            fn backward(self, ops: Ops<Self::State, 1>, grads: &mut Gradients, checkpointer: &mut Checkpointer) {
+                let (input, alpha, continuous) = ops.state;
+                let input = checkpointer.retrieve_node_output(input);
+                unary::<B, _>(ops.parents, ops.node, grads, |grad| B::exponential_relu_native_backward(input, grad, alpha, continuous));
+            }
+        }
+        match ExponentialRelu.prepare::<C>([tensor.node.clone()]).compute_bound().stateful() {
+            OpsKind::Tracked(mut prep) => {
+                let input = prep.checkpoint(&tensor);
+                prep.finish((input, alpha, continuous), B::exponential_relu_native(tensor.primitive, alpha, continuous))
+            }
+            OpsKind::UnTracked(prep) => prep.finish(B::exponential_relu_native(tensor.primitive, alpha, continuous)),
+        }
+    }
+
     fn leaky_relu_native(tensor: AutodiffTensor<B>, negative_slope: f64) -> AutodiffTensor<B> {
         #[derive(Debug)]
         struct LeakyRelu;

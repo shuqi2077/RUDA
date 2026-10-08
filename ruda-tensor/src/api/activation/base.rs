@@ -2,6 +2,16 @@ use crate::api::backend::Backend;
 use crate::api::check::TensorCheck;
 use crate::api::{Tensor, TensorPrimitive, check, s};
 
+/// Native ELU with original alpha, nonpositive exponential branch and FP32 half-storage training.
+pub fn elu_native<const D: usize, B: Backend>(tensor: Tensor<B, D>, alpha: f64) -> Tensor<B, D> {
+    Tensor::from_primitive(TensorPrimitive::Float(B::exponential_relu_native(tensor.into_primitive().tensor(), alpha, false)))
+}
+
+/// Native CELU retaining original alpha and the original nonpositive exponential branch.
+pub fn celu_native<const D: usize, B: Backend>(tensor: Tensor<B, D>, alpha: f64) -> Tensor<B, D> {
+    Tensor::from_primitive(TensorPrimitive::Float(B::exponential_relu_native(tensor.into_primitive().tensor(), alpha, true)))
+}
+
 /// Native working-storage LeakyReLU, using the supplied scalar slope and an original-primal training VJP.
 pub fn leaky_relu_native<const D: usize, B: Backend>(tensor: Tensor<B, D>, negative_slope: f64) -> Tensor<B, D> {
     Tensor::from_primitive(TensorPrimitive::Float(B::leaky_relu_native(tensor.into_primitive().tensor(), negative_slope)))

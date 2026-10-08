@@ -12,6 +12,18 @@ use ruda_tensor::graph::*;
 use crate::{BackendRouter, RunnerChannel, RunnerClient};
 
 impl<R: RunnerChannel> ModuleOps<Self> for BackendRouter<R> {
+    fn exponential_relu_native(x: FloatTensor<Self>, alpha: f64, continuous: bool) -> FloatTensor<Self> {
+        let client = x.client.clone();
+        let desc = ExponentialReluOpIr::create(x.into_ir(), alpha, continuous, || client.create_empty_handle());
+        client.register(OperationIr::Module(ModuleOperationIr::ExponentialReluNative(desc))).output()
+    }
+
+    fn exponential_relu_native_backward(x: FloatTensor<Self>, grad: FloatTensor<Self>, alpha: f64, continuous: bool) -> FloatTensor<Self> {
+        let client = x.client.clone();
+        let desc = ExponentialReluBackwardOpIr::create(x.into_ir(), grad.into_ir(), alpha, continuous, || client.create_empty_handle());
+        client.register(OperationIr::Module(ModuleOperationIr::ExponentialReluNativeBackward(desc))).output()
+    }
+
     fn leaky_relu_native(x: FloatTensor<Self>, negative_slope: f64) -> FloatTensor<Self> {
         let client = x.client.clone();
         let desc = LeakyReluOpIr::create(x.into_ir(), negative_slope, || client.create_empty_handle());
