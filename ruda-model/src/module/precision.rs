@@ -1,8 +1,10 @@
 use super::{ModuleMapper, Param, ParamId};
+use alloc::collections::BTreeSet;
 use ruda_tensor::{FloatDType, api::Tensor, backend::Backend, tensor::TensorContainer};
 
 pub(super) struct DtypeMapper {
     dtype: FloatDType,
+    selected: Option<BTreeSet<ParamId>>,
     converted: TensorContainer<(ParamId, bool)>,
 }
 
@@ -10,13 +12,20 @@ impl DtypeMapper {
     pub(super) fn new(dtype: FloatDType) -> Self {
         Self {
             dtype,
+            selected: None,
             converted: TensorContainer::new(),
         }
+    }
+    pub(super) fn new_selected(dtype: FloatDType, parameters: &[ParamId]) -> Self {
+        Self { dtype, selected: Some(parameters.iter().copied().collect()), converted: TensorContainer::new() }
     }
 }
 
 impl<B: Backend> ModuleMapper<B> for DtypeMapper {
     fn map_float<const D: usize>(&mut self, param: Param<Tensor<B, D>>) -> Param<Tensor<B, D>> {
+        if self.selected.as_ref().is_some_and(|selected| !selected.contains(&param.id)) {
+            return param;
+        }
         let (id, tensor, mapper) = param.consume();
         let requires_grad = tensor.is_require_grad();
         let key = (id, requires_grad);

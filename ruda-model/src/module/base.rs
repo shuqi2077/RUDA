@@ -125,6 +125,15 @@ pub trait Module<B: Backend>: Clone + Send + core::fmt::Debug {
         self.map(&mut super::precision::DtypeMapper::new(dtype))
     }
 
+    /// Convert only explicitly selected floating parameter IDs, retaining original
+    /// unselected tensors and integer/bool storage. Shared selected roles reuse the
+    /// same converted node per ID/trainability, preserving Param mappers and flags.
+    /// IDs not present in the module are not mapped; an empty selection changes nothing.
+    /// Converted trainable values are new leaves, as with [`Module::to_dtype`].
+    fn to_dtype_selected(self, dtype: ruda_tensor::FloatDType, parameter_ids: &[ParamId]) -> Self {
+        self.map(&mut super::precision::DtypeMapper::new_selected(dtype, parameter_ids))
+    }
+
     /// Each tensor in the module tree will not require grad.
     ///
     /// # Warnings
