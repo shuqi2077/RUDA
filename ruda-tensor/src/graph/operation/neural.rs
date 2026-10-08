@@ -1,5 +1,30 @@
 use super::*;
 
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
+pub struct LayerNormOpIr {
+    pub x: TensorIr,
+    pub gamma: TensorIr,
+    pub beta: Option<TensorIr>,
+    pub epsilon: ScalarIr,
+    pub out: TensorIr,
+    pub mean: TensorIr,
+    pub rstd: TensorIr,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
+pub struct LayerNormBackwardOpIr {
+    pub x: TensorIr,
+    pub gamma: TensorIr,
+    pub grad: TensorIr,
+    pub mean: TensorIr,
+    pub rstd: TensorIr,
+    pub input_grad: TensorIr,
+    pub weight_grad: TensorIr,
+    pub bias_grad: TensorIr,
+}
+
 
 #[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
 #[allow(missing_docs)]

@@ -24,6 +24,15 @@ fn norm_tensor<R: DeviceRuntime>(
         ruda_core::tensor::Metadata::new(buffer.shape, buffer.strides), device, buffer.dtype)
 }
 
+fn native_norm_supported<R: DeviceRuntime>(tensor: &crate::RudaTensor<R>) -> bool {
+    let hardware = &tensor.client.properties().hardware;
+    let plane = hardware.plane_size_max;
+    matches!(tensor.dtype, ruda_core::tensor::DType::F32 | ruda_core::tensor::DType::F16 | ruda_core::tensor::DType::BF16)
+        && tensor.meta.num_elements() <= u32::MAX as usize
+        && tensor.meta.shape().last().is_some_and(|width| *width <= u32::MAX as usize)
+        && plane.is_power_of_two() && plane <= hardware.max_ruda_dim.0 && hardware.max_ruda_dim.1 >= 4
+}
+
 impl<R, F, I, BT> ModuleOps<Self> for DeviceBackend<R, F, I, BT>
 where
     R: DeviceRuntime,
@@ -31,23 +40,30 @@ where
     I: IntElement,
     BT: BoolElement,
 {
-    fn has_layer_norm_backward() -> bool { R::has_native_layer_norm() }
+    fn has_layer_norm_backward() -> bool { true }
 
     fn layer_norm(
         tensor: FloatTensor<Self>, gamma: FloatTensor<Self>,
         beta: Option<FloatTensor<Self>>, epsilon: f64,
     ) -> FloatTensor<Self> {
-        if R::has_native_layer_norm() {
-            Self::layer_norm_with_stats(tensor, gamma, beta, epsilon).output
-        } else {
-            Self::layer_norm_default(tensor, gamma, beta, epsilon)
-        }
+        Self::layer_norm_with_stats(tensor, gamma, beta, epsilon).output
     }
 
     fn layer_norm_with_stats(
         tensor: FloatTensor<Self>, gamma: FloatTensor<Self>,
         beta: Option<FloatTensor<Self>>, epsilon: f64,
     ) -> ruda_tensor::ops::LayerNormOutput<Self> {
+        if !R::has_native_layer_norm() {
+            if native_norm_supported(&tensor) && native_norm_supported(&gamma)
+                && beta.as_ref().is_none_or(native_norm_supported)
+                && (epsilon as f32).is_finite() && (epsilon as f32) > 0.0 {
+                let [output, mean, rstd] = rudnn::normalization::layer_norm_with_stats(
+                    tensor, gamma, beta, epsilon as f32,
+                ).expect("invalid native LayerNorm bindings");
+                return ruda_tensor::ops::LayerNormOutput { output, mean, rstd };
+            }
+            return ruda_tensor::ops::normalization::layer_norm_with_stats::<Self>(tensor, gamma, beta, epsilon);
+        }
         let client = tensor.client.clone();
         let device = tensor.device.clone();
         for other in core::iter::once(&gamma).chain(beta.iter()) {
@@ -65,6 +81,16 @@ where
         tensor: FloatTensor<Self>, gamma: FloatTensor<Self>, grad: FloatTensor<Self>,
         mean: FloatTensor<Self>, rstd: FloatTensor<Self>,
     ) -> ruda_tensor::ops::LayerNormBackward<Self> {
+        if !R::has_native_layer_norm() {
+            if native_norm_supported(&tensor) && native_norm_supported(&gamma) && native_norm_supported(&grad)
+                && mean.dtype == ruda_core::tensor::DType::F32 && rstd.dtype == ruda_core::tensor::DType::F32 {
+                let [input, weight, bias] = rudnn::normalization::layer_norm_backward(
+                    tensor, gamma, grad, mean, rstd,
+                ).expect("invalid native LayerNorm backward bindings");
+                return ruda_tensor::ops::LayerNormBackward { input, weight, bias };
+            }
+            return ruda_tensor::ops::normalization::layer_norm_backward::<Self>(tensor, gamma, grad, mean, rstd);
+        }
         let client = tensor.client.clone();
         let device = tensor.device.clone();
         for other in [&gamma, &grad, &mean, &rstd] {

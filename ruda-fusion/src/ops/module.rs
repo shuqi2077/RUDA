@@ -32,6 +32,59 @@ macro_rules! make_ops {
 }
 
 impl<B: FusionBackend> ModuleOps<Fusion<B>> for Fusion<B> {
+    fn has_layer_norm_backward() -> bool { B::has_layer_norm_backward() }
+
+    fn layer_norm(x: FloatTensor<Self>, gamma: FloatTensor<Self>, beta: Option<FloatTensor<Self>>, epsilon: f64)
+        -> FloatTensor<Self> {
+        if B::has_layer_norm_backward() { Self::layer_norm_with_stats(x, gamma, beta, epsilon).output }
+        else { Self::layer_norm_default(x, gamma, beta, epsilon) }
+    }
+
+    fn layer_norm_with_stats(x: FloatTensor<Self>, gamma: FloatTensor<Self>, beta: Option<FloatTensor<Self>>, epsilon: f64)
+        -> ruda_tensor::ops::LayerNormOutput<Self> {
+        make_ops!(LayerNormOps, LayerNormOpIr, |desc: &LayerNormOpIr, handles: &mut HandleContainer<B::Handle>| {
+            let x = handles.get_float_tensor::<B>(&desc.x);
+            let gamma = handles.get_float_tensor::<B>(&desc.gamma);
+            let beta = desc.beta.as_ref().map(|value| handles.get_float_tensor::<B>(value));
+            let out = B::layer_norm_with_stats(x, gamma, beta, desc.epsilon.elem());
+            handles.register_float_tensor::<B>(&desc.out.id, out.output);
+            handles.register_float_tensor::<B>(&desc.mean.id, out.mean);
+            handles.register_float_tensor::<B>(&desc.rstd.id, out.rstd);
+        });
+        let mut streams = OperationStreams::with_inputs([&x, &gamma]);
+        if let Some(beta) = &beta { streams.tensor(beta); }
+        let client = x.client.clone();
+        let desc = LayerNormOpIr::create(x.into_ir(), gamma.into_ir(), beta.map(|value| value.into_ir()), epsilon,
+            || client.create_empty_handle());
+        let [output, mean, rstd] = client.register(streams, OperationIr::Module(ModuleOperationIr::LayerNorm(desc.clone())),
+            LayerNormOps::<B>::new(desc)).outputs();
+        ruda_tensor::ops::LayerNormOutput { output, mean, rstd }
+    }
+
+    fn layer_norm_backward(x: FloatTensor<Self>, gamma: FloatTensor<Self>, grad: FloatTensor<Self>,
+        mean: FloatTensor<Self>, rstd: FloatTensor<Self>) -> ruda_tensor::ops::LayerNormBackward<Self> {
+        make_ops!(LayerNormBackwardOps, LayerNormBackwardOpIr,
+            |desc: &LayerNormBackwardOpIr, handles: &mut HandleContainer<B::Handle>| {
+                let x = handles.get_float_tensor::<B>(&desc.x);
+                let gamma = handles.get_float_tensor::<B>(&desc.gamma);
+                let grad = handles.get_float_tensor::<B>(&desc.grad);
+                let mean = handles.get_float_tensor::<B>(&desc.mean);
+                let rstd = handles.get_float_tensor::<B>(&desc.rstd);
+                let out = B::layer_norm_backward(x, gamma, grad, mean, rstd);
+                handles.register_float_tensor::<B>(&desc.input_grad.id, out.input);
+                handles.register_float_tensor::<B>(&desc.weight_grad.id, out.weight);
+                handles.register_float_tensor::<B>(&desc.bias_grad.id, out.bias);
+            });
+        let streams = OperationStreams::with_inputs([&x, &gamma, &grad, &mean, &rstd]);
+        let client = x.client.clone();
+        let desc = LayerNormBackwardOpIr::create(x.into_ir(), gamma.into_ir(), grad.into_ir(), mean.into_ir(), rstd.into_ir(),
+            || client.create_empty_handle());
+        let [input, weight, bias] = client.register(streams,
+            OperationIr::Module(ModuleOperationIr::LayerNormBackward(desc.clone())),
+            LayerNormBackwardOps::<B>::new(desc)).outputs();
+        ruda_tensor::ops::LayerNormBackward { input, weight, bias }
+    }
+
     // linear and its backward ops fall back to the default ModuleOps impl,
     // which decomposes into matmul + add / matmul + sum. This preserves
     // downstream fusion in ruda-fusion, which matches on those

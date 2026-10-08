@@ -20,6 +20,9 @@ pub mod pool;
 /// Native-dimensional interpolation using the backend's original spatial filters.
 pub mod interpolation;
 
+/// Saved-statistics normalization and complete first-order gradients.
+pub mod normalization;
+
 /// Module for grid_sample operations
 pub mod grid_sample;
 

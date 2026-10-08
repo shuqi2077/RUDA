@@ -4,6 +4,7 @@ mod linear;
 mod loss;
 mod pooling;
 mod spectral;
+mod normalization;
 
 use super::*;
 
@@ -14,6 +15,8 @@ impl<B: BackendIr> Runner<B> {
         op: &ModuleOperationIr,
     ) {
         match op {
+            ModuleOperationIr::LayerNorm(desc) => self.apply_layer_norm(handles, desc),
+            ModuleOperationIr::LayerNormBackward(desc) => self.apply_layer_norm_backward(handles, desc),
             ModuleOperationIr::Embedding(desc) => self.apply_embedding(handles, desc),
             ModuleOperationIr::EmbeddingBackward(desc) => {
                 self.apply_embedding_backward(handles, desc)

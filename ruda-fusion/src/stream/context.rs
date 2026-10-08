@@ -579,6 +579,18 @@ impl RelativeOps for ModuleOperationIr {
                 x: desc.x.to_relative(converter), grad: desc.grad.to_relative(converter),
                 output_size: desc.output_size, options: desc.options.clone(), out: desc.out.to_relative(converter),
             }),
+            ModuleOperationIr::LayerNorm(desc) => ModuleOperationIr::LayerNorm(LayerNormOpIr {
+                x: desc.x.to_relative(converter), gamma: desc.gamma.to_relative(converter),
+                beta: desc.beta.as_ref().map(|value| value.to_relative(converter)),
+                epsilon: desc.epsilon.to_relative(converter), out: desc.out.to_relative(converter),
+                mean: desc.mean.to_relative(converter), rstd: desc.rstd.to_relative(converter),
+            }),
+            ModuleOperationIr::LayerNormBackward(desc) => ModuleOperationIr::LayerNormBackward(LayerNormBackwardOpIr {
+                x: desc.x.to_relative(converter), gamma: desc.gamma.to_relative(converter),
+                grad: desc.grad.to_relative(converter), mean: desc.mean.to_relative(converter),
+                rstd: desc.rstd.to_relative(converter), input_grad: desc.input_grad.to_relative(converter),
+                weight_grad: desc.weight_grad.to_relative(converter), bias_grad: desc.bias_grad.to_relative(converter),
+            }),
             ModuleOperationIr::Interpolate(desc) => {
                 ModuleOperationIr::Interpolate(InterpolateOpIr {
                     x: desc.x.to_relative(converter),

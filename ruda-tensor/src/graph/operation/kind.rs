@@ -239,6 +239,10 @@ pub enum ModuleOperationIr {
     Interpolate3d(Interpolate3dOpIr),
     /// Native volume resizing derivatives.
     Interpolate3dBackward(Interpolate3dBackwardOpIr),
+    /// Saved-statistics last-axis LayerNorm.
+    LayerNorm(LayerNormOpIr),
+    /// Complete first-order LayerNorm derivatives using saved statistics.
+    LayerNormBackward(LayerNormBackwardOpIr),
 }
 
 /// Basic operations that can be done on any tensor type.

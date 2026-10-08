@@ -1198,6 +1198,42 @@ impl DequantizeOpIr {
 
 // Operations with multiple outputs
 
+impl LayerNormOpIr {
+    pub fn create(x: TensorIr, gamma: TensorIr, beta: Option<TensorIr>, epsilon: f64,
+        mut new_id: impl FnMut() -> TensorId) -> Self {
+        let width = *x.shape.last().expect("LayerNorm input must have an axis");
+        assert!(width > 0, "LayerNorm final axis must be nonempty");
+        assert_eq!(gamma.shape, Shape::new([width]), "LayerNorm weight shape differs");
+        if let Some(beta) = &beta { assert_eq!(beta.shape, gamma.shape, "LayerNorm bias shape differs"); }
+        assert!(epsilon.is_finite() && epsilon > 0.0, "LayerNorm epsilon must be finite and positive");
+        let stats_shape = Shape::new([x.shape.num_elements() / width]);
+        let stats_dtype = if x.dtype == DType::F64 { DType::F64 } else { DType::F32 };
+        let out = TensorIr::uninit(new_id(), x.shape.clone(), x.dtype);
+        let mean = TensorIr::uninit(new_id(), stats_shape.clone(), stats_dtype);
+        let rstd = TensorIr::uninit(new_id(), stats_shape, stats_dtype);
+        Self { x, gamma, beta, epsilon: ScalarIr::Float(epsilon), out, mean, rstd }
+    }
+}
+
+impl LayerNormBackwardOpIr {
+    pub fn create(x: TensorIr, gamma: TensorIr, grad: TensorIr, mean: TensorIr, rstd: TensorIr,
+        mut new_id: impl FnMut() -> TensorId) -> Self {
+        let width = *x.shape.last().expect("LayerNorm input must have an axis");
+        assert!(width > 0, "LayerNorm final axis must be nonempty");
+        assert_eq!(gamma.shape, Shape::new([width]), "LayerNorm weight shape differs");
+        assert_eq!(grad.shape, x.shape, "LayerNorm gradient shape differs");
+        assert_eq!(mean.shape, Shape::new([x.shape.num_elements() / width]), "LayerNorm mean shape differs");
+        assert_eq!(rstd.shape, mean.shape, "LayerNorm reciprocal deviation shape differs");
+        let input_grad = TensorIr::uninit(new_id(), x.shape.clone(), x.dtype);
+        let weight_grad = TensorIr::uninit(new_id(), gamma.shape.clone(), gamma.dtype);
+        let bias_dtype = if [&x, &gamma, &grad, &mean, &rstd].iter().any(|value| value.dtype == DType::F64) {
+            DType::F64
+        } else { DType::F32 };
+        let bias_grad = TensorIr::uninit(new_id(), gamma.shape.clone(), bias_dtype);
+        Self { x, gamma, grad, mean, rstd, input_grad, weight_grad, bias_grad }
+    }
+}
+
 impl ReduceDimWithIndicesOpIr {
     pub fn create(
         tensor: TensorIr,

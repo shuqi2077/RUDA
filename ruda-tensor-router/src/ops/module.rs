@@ -12,6 +12,31 @@ use ruda_tensor::graph::*;
 use crate::{BackendRouter, RunnerChannel, RunnerClient};
 
 impl<R: RunnerChannel> ModuleOps<Self> for BackendRouter<R> {
+    fn has_layer_norm_backward() -> bool { true }
+
+    fn layer_norm(x: FloatTensor<Self>, gamma: FloatTensor<Self>, beta: Option<FloatTensor<Self>>, epsilon: f64)
+        -> FloatTensor<Self> {
+        Self::layer_norm_with_stats(x, gamma, beta, epsilon).output
+    }
+
+    fn layer_norm_with_stats(x: FloatTensor<Self>, gamma: FloatTensor<Self>, beta: Option<FloatTensor<Self>>, epsilon: f64)
+        -> ruda_tensor::ops::LayerNormOutput<Self> {
+        let client = x.client.clone();
+        let desc = LayerNormOpIr::create(x.into_ir(), gamma.into_ir(), beta.map(|value| value.into_ir()), epsilon,
+            || client.create_empty_handle());
+        let [output, mean, rstd] = client.register(OperationIr::Module(ModuleOperationIr::LayerNorm(desc))).outputs();
+        ruda_tensor::ops::LayerNormOutput { output, mean, rstd }
+    }
+
+    fn layer_norm_backward(x: FloatTensor<Self>, gamma: FloatTensor<Self>, grad: FloatTensor<Self>,
+        mean: FloatTensor<Self>, rstd: FloatTensor<Self>) -> ruda_tensor::ops::LayerNormBackward<Self> {
+        let client = x.client.clone();
+        let desc = LayerNormBackwardOpIr::create(x.into_ir(), gamma.into_ir(), grad.into_ir(), mean.into_ir(), rstd.into_ir(),
+            || client.create_empty_handle());
+        let [input, weight, bias] = client.register(OperationIr::Module(ModuleOperationIr::LayerNormBackward(desc))).outputs();
+        ruda_tensor::ops::LayerNormBackward { input, weight, bias }
+    }
+
     fn linear(
         x: FloatTensor<Self>,
         weight: FloatTensor<Self>,

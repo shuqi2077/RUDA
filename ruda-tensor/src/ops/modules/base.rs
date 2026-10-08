@@ -20,7 +20,7 @@ pub struct LayerNormBackward<B: Backend> {
     pub input: FloatTensor<B>,
     /// Scale gradient, summed over all leading dimensions.
     pub weight: FloatTensor<B>,
-    /// Bias gradient, summed over all leading dimensions.
+    /// Bias gradient, summed over all leading dimensions in the accumulation dtype.
     pub bias: FloatTensor<B>,
 }
 
@@ -871,18 +871,18 @@ pub trait ModuleOps<B: Backend> {
 
     /// Native forward with statistics retained for backward.
     fn layer_norm_with_stats(
-        _tensor: FloatTensor<B>, _gamma: FloatTensor<B>,
-        _beta: Option<FloatTensor<B>>, _epsilon: f64,
+        tensor: FloatTensor<B>, gamma: FloatTensor<B>,
+        beta: Option<FloatTensor<B>>, epsilon: f64,
     ) -> LayerNormOutput<B> {
-        unimplemented!("native LayerNorm statistics unavailable")
+        super::normalization::layer_norm_with_stats::<B>(tensor, gamma, beta, epsilon)
     }
 
     /// Native backward using the exact statistics returned by forward.
     fn layer_norm_backward(
-        _tensor: FloatTensor<B>, _gamma: FloatTensor<B>, _grad: FloatTensor<B>,
-        _mean: FloatTensor<B>, _rstd: FloatTensor<B>,
+        tensor: FloatTensor<B>, gamma: FloatTensor<B>, grad: FloatTensor<B>,
+        mean: FloatTensor<B>, rstd: FloatTensor<B>,
     ) -> LayerNormBackward<B> {
-        unimplemented!("native LayerNorm backward unavailable")
+        super::normalization::layer_norm_backward::<B>(tensor, gamma, grad, mean, rstd)
     }
 
     /// Differentiable primitive composition for backends without native LayerNorm backward.

@@ -1,9 +1,11 @@
 mod kernel;
 mod softmax;
 mod rms;
+mod training;
 
 pub use softmax::softmax_last_axis;
 pub use rms::rms_norm;
+pub use training::{layer_norm_backward, layer_norm_with_stats};
 
 use ruda_core::{device::Device, tensor::DType};
 use ruda_kernel::{

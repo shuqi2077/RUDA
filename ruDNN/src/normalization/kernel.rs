@@ -28,18 +28,12 @@ fn combine(left: Moments, right: Moments) -> Moments {
     Moments { mean, m2, count }
 }
 
-#[ruda(launch)]
-pub(crate) fn layer_norm<F: Float>(
+#[ruda]
+fn row_statistics<F: Float>(
     input: &Array<F>,
-    gamma: &Array<f32>,
-    beta: &Array<f32>,
-    output: &mut Array<F>,
     width: u32,
     epsilon: f32,
-    #[comptime] has_beta: bool,
-    #[comptime] _source: String,
-    #[define(F)] _dtype: StorageType,
-) {
+) -> (f32, f32) {
     let row = RUDA_POS_X as usize;
     let width = width as usize;
     let thread = UNIT_POS as usize;
@@ -116,6 +110,22 @@ pub(crate) fn layer_norm<F: Float>(
     sync_ruda();
     let mean = means[0];
     let inverse_std = (variances[0] + epsilon).inverse_sqrt();
+    (mean, inverse_std)
+}
+
+#[ruda(launch)]
+pub(crate) fn layer_norm<F: Float>(
+    input: &Array<F>, gamma: &Array<f32>, beta: &Array<f32>, output: &mut Array<F>,
+    width: u32, epsilon: f32,
+    #[comptime] has_beta: bool,
+    #[comptime] _source: String,
+    #[define(F)] _dtype: StorageType,
+) {
+    let (mean, inverse_std) = row_statistics(input, width, epsilon);
+    let row = RUDA_POS_X as usize;
+    let width = width as usize;
+    let thread = UNIT_POS as usize;
+    let threads = RUDA_DIM as usize;
     let mut column = thread;
     while column < width {
         let value = f32::cast_from(input[row * width + column]);
@@ -130,4 +140,130 @@ pub(crate) fn layer_norm<F: Float>(
         }
         column += threads;
     }
+}
+
+#[ruda(launch)]
+pub(crate) fn layer_norm_training<F: Float, W: Float, B: Float>(
+    input: &Array<F>, gamma: &Array<W>, beta: &Array<B>, output: &mut Array<F>,
+    mean: &mut Array<f32>, rstd: &mut Array<f32>, width: u32, epsilon: f32,
+    #[comptime] has_beta: bool,
+    #[define(F, W, B)] _types: [StorageType; 3],
+) {
+    let (mu, inverse_std) = row_statistics(input, width, epsilon);
+    let row = RUDA_POS_X as usize;
+    if UNIT_POS == 0 { mean[row] = mu; rstd[row] = inverse_std; }
+    let width = width as usize;
+    let mut column = UNIT_POS as usize;
+    while column < width {
+        let normalized = inverse_std * (f32::cast_from(input[row * width + column]) - mu);
+        let mut value = f32::cast_from(gamma[column]) * normalized;
+        if has_beta { value = fma(f32::cast_from(gamma[column]), normalized, f32::cast_from(beta[column])); }
+        output[row * width + column] = F::cast_from(value);
+        if width - column <= RUDA_DIM as usize { break; }
+        column += RUDA_DIM as usize;
+    }
+}
+
+#[ruda]
+fn block_sum_pair(first: f32, second: f32) -> (f32, f32) {
+    let mut first_parts = SharedMemory::<f32>::new(4usize);
+    let mut second_parts = SharedMemory::<f32>::new(4usize);
+    let first = plane_sum(first);
+    let second = plane_sum(second);
+    if UNIT_POS_X == 0 {
+        first_parts[UNIT_POS_Y as usize] = first;
+        second_parts[UNIT_POS_Y as usize] = second;
+    }
+    sync_ruda();
+    if UNIT_POS == 0 {
+        let mut first_total = 0.0f32;
+        let mut second_total = 0.0f32;
+        #[unroll]
+        for plane in 0usize..4usize {
+            first_total += first_parts[plane];
+            second_total += second_parts[plane];
+        }
+        first_parts[0] = first_total;
+        second_parts[0] = second_total;
+    }
+    sync_ruda();
+    (first_parts[0], second_parts[0])
+}
+
+#[ruda(launch)]
+pub(crate) fn layer_norm_input_backward<F: Float, W: Float, G: Float>(
+    input: &Array<F>, gamma: &Array<W>, grad: &Array<G>, mean: &Array<f32>, rstd: &Array<f32>,
+    output: &mut Array<F>, width: u32,
+    #[define(F, W, G)] _types: [StorageType; 3],
+) {
+    let row = RUDA_POS_X as usize;
+    let width = width as usize;
+    let base = row * width;
+    let mu = mean[row];
+    let inv = rstd[row];
+    let mut sum_grad = 0.0f32;
+    let mut sum_product = 0.0f32;
+    let mut column = UNIT_POS as usize;
+    while column < width {
+        let scaled = f32::cast_from(grad[base + column]) * f32::cast_from(gamma[column]);
+        let normalized = (f32::cast_from(input[base + column]) - mu) * inv;
+        sum_grad += scaled;
+        sum_product += scaled * normalized;
+        if width - column <= RUDA_DIM as usize { break; }
+        column += RUDA_DIM as usize;
+    }
+    let (sum_grad, sum_product) = block_sum_pair(sum_grad, sum_product);
+    let average_grad = sum_grad / width as f32;
+    let average_product = sum_product / width as f32;
+    column = UNIT_POS as usize;
+    while column < width {
+        let scaled = f32::cast_from(grad[base + column]) * f32::cast_from(gamma[column]);
+        let normalized = (f32::cast_from(input[base + column]) - mu) * inv;
+        output[base + column] = F::cast_from(inv * (scaled - average_grad - normalized * average_product));
+        if width - column <= RUDA_DIM as usize { break; }
+        column += RUDA_DIM as usize;
+    }
+}
+
+#[ruda(launch)]
+pub(crate) fn layer_norm_affine_partial<F: Float, G: Float>(
+    input: &Array<F>, grad: &Array<G>, mean: &Array<f32>, rstd: &Array<f32>,
+    weight_parts: &mut Array<f32>, bias_parts: &mut Array<f32>, width: u32, parts: u32,
+    #[define(F, G)] _types: [StorageType; 2],
+) {
+    let position = ABSOLUTE_POS as usize;
+    if position >= weight_parts.len() { terminate!(); }
+    let width = width as usize;
+    let parts = parts as usize;
+    let column = position % width;
+    let mut row = position / width;
+    let mut weight_sum = 0.0f32;
+    let mut bias_sum = 0.0f32;
+    while row < mean.len() {
+        let value = f32::cast_from(grad[row * width + column]);
+        weight_sum += value * (f32::cast_from(input[row * width + column]) - mean[row]) * rstd[row];
+        bias_sum += value;
+        if mean.len() - row <= parts { break; }
+        row += parts;
+    }
+    weight_parts[position] = weight_sum;
+    bias_parts[position] = bias_sum;
+}
+
+#[ruda(launch)]
+pub(crate) fn layer_norm_affine_merge<W: Float>(
+    weight_parts: &Array<f32>, bias_parts: &Array<f32>,
+    weight: &mut Array<W>, bias: &mut Array<f32>, parts: u32,
+    #[define(W)] _storage: StorageType,
+) {
+    let column = ABSOLUTE_POS as usize;
+    if column >= weight.len() { terminate!(); }
+    let mut weight_sum = 0.0f32;
+    let mut bias_sum = 0.0f32;
+    for part in 0..parts as usize {
+        weight_sum += weight_parts[part * weight.len() + column];
+        bias_sum += bias_parts[part * bias.len() + column];
+    }
+    weight[column] = W::cast_from(weight_sum);
+    bias[column] = bias_sum;
 }
