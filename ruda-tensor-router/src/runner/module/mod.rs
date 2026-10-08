@@ -111,6 +111,10 @@ impl<B: BackendIr> Runner<B> {
                 self.apply_max_pool2d_with_indices_backward(handles, desc)
             }
             ModuleOperationIr::Interpolate(desc) => self.apply_interpolate(handles, desc),
+            ModuleOperationIr::Interpolate1d(desc) => self.apply_interpolate1d(handles, desc),
+            ModuleOperationIr::Interpolate3d(desc) => self.apply_interpolate3d(handles, desc),
+            ModuleOperationIr::Interpolate1dBackward(desc) => self.apply_interpolate1d_backward(handles, desc),
+            ModuleOperationIr::Interpolate3dBackward(desc) => self.apply_interpolate3d_backward(handles, desc),
             ModuleOperationIr::InterpolateBackward(desc) => {
                 self.apply_interpolate_backward(handles, desc)
             }

@@ -1088,6 +1088,10 @@ impl ModuleOperationIr {
                 Box::new([&repr.x, &repr.indices, &repr.grad].into_iter())
             }
             ModuleOperationIr::Interpolate(repr) => Box::new([&repr.x].into_iter()),
+            ModuleOperationIr::Interpolate1d(repr) => Box::new([&repr.x].into_iter()),
+            ModuleOperationIr::Interpolate3d(repr) => Box::new([&repr.x].into_iter()),
+            ModuleOperationIr::Interpolate1dBackward(repr) => Box::new([&repr.x, &repr.grad].into_iter()),
+            ModuleOperationIr::Interpolate3dBackward(repr) => Box::new([&repr.x, &repr.grad].into_iter()),
             ModuleOperationIr::InterpolateBackward(repr) => {
                 Box::new([&repr.x, &repr.grad].into_iter())
             }
@@ -1220,6 +1224,10 @@ impl ModuleOperationIr {
                 Box::new([&repr.out].into_iter())
             }
             ModuleOperationIr::Interpolate(repr) => Box::new([&repr.out].into_iter()),
+            ModuleOperationIr::Interpolate1d(repr) => Box::new([&repr.out].into_iter()),
+            ModuleOperationIr::Interpolate3d(repr) => Box::new([&repr.out].into_iter()),
+            ModuleOperationIr::Interpolate1dBackward(repr) => Box::new([&repr.out].into_iter()),
+            ModuleOperationIr::Interpolate3dBackward(repr) => Box::new([&repr.out].into_iter()),
             ModuleOperationIr::InterpolateBackward(repr) => Box::new([&repr.out].into_iter()),
             ModuleOperationIr::Rfft(repr) => Box::new([&repr.out_re, &repr.out_im].into_iter()),
             ModuleOperationIr::IRfft(repr) => Box::new([&repr.out_signal].into_iter()),
@@ -1461,6 +1469,16 @@ impl ModuleOperationIr {
             }
             ModuleOperationIr::Interpolate(repr) => {
                 repr.x.mark_read_only(nodes, &mut output);
+            }
+            ModuleOperationIr::Interpolate1d(repr) => { repr.x.mark_read_only(nodes, &mut output); }
+            ModuleOperationIr::Interpolate3d(repr) => { repr.x.mark_read_only(nodes, &mut output); }
+            ModuleOperationIr::Interpolate1dBackward(repr) => {
+                repr.x.mark_read_only(nodes, &mut output);
+                repr.grad.mark_read_only(nodes, &mut output);
+            }
+            ModuleOperationIr::Interpolate3dBackward(repr) => {
+                repr.x.mark_read_only(nodes, &mut output);
+                repr.grad.mark_read_only(nodes, &mut output);
             }
             ModuleOperationIr::InterpolateBackward(repr) => {
                 repr.x.mark_read_only(nodes, &mut output);

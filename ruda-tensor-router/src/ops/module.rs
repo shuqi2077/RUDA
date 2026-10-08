@@ -838,6 +838,34 @@ impl<R: RunnerChannel> ModuleOps<Self> for BackendRouter<R> {
             .output()
     }
 
+    fn interpolate1d(x: FloatTensor<Self>, size: usize, options: InterpolateOptions) -> FloatTensor<Self> {
+        let client = x.client.clone();
+        let desc = Interpolate1dOpIr::create(x.into_ir(), size, options.into(), || client.create_empty_handle());
+        client.register(OperationIr::Module(ModuleOperationIr::Interpolate1d(desc))).output()
+    }
+
+    fn interpolate3d(x: FloatTensor<Self>, size: [usize; 3], options: InterpolateOptions) -> FloatTensor<Self> {
+        let client = x.client.clone();
+        let desc = Interpolate3dOpIr::create(x.into_ir(), size, options.into(), || client.create_empty_handle());
+        client.register(OperationIr::Module(ModuleOperationIr::Interpolate3d(desc))).output()
+    }
+
+    fn interpolate1d_backward(x: FloatTensor<Self>, grad: FloatTensor<Self>, size: usize,
+        options: InterpolateOptions) -> FloatTensor<Self> {
+        let client = x.client.clone();
+        let desc = Interpolate1dBackwardOpIr::create(x.into_ir(), grad.into_ir(), size,
+            options.into(), || client.create_empty_handle());
+        client.register(OperationIr::Module(ModuleOperationIr::Interpolate1dBackward(desc))).output()
+    }
+
+    fn interpolate3d_backward(x: FloatTensor<Self>, grad: FloatTensor<Self>, size: [usize; 3],
+        options: InterpolateOptions) -> FloatTensor<Self> {
+        let client = x.client.clone();
+        let desc = Interpolate3dBackwardOpIr::create(x.into_ir(), grad.into_ir(), size,
+            options.into(), || client.create_empty_handle());
+        client.register(OperationIr::Module(ModuleOperationIr::Interpolate3dBackward(desc))).output()
+    }
+
     fn deform_conv2d(
         x: FloatTensor<Self>,
         offset: FloatTensor<Self>,

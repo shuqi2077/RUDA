@@ -8,6 +8,7 @@ use ruda_tensor::graph::{
     MaxPool1dWithIndicesBackwardOpIr, MaxPool1dWithIndicesOpIr, MaxPool2dOpIr,
     MaxPool2dWithIndicesBackwardOpIr, MaxPool2dWithIndicesOpIr,
     MaxPool3dOpIr, MaxPool3dWithIndicesOpIr, MaxPool3dWithIndicesBackwardOpIr,
+    Interpolate1dOpIr, Interpolate1dBackwardOpIr, Interpolate3dOpIr, Interpolate3dBackwardOpIr,
 };
 
 impl<B: BackendIr> Runner<B> {
@@ -304,6 +305,32 @@ impl<B: BackendIr> Runner<B> {
         let out = B::max_pool3d_with_indices_backward(x, grad, indices, desc.kernel_size,
             desc.stride, desc.padding, desc.dilation, desc.ceil_mode);
         handles.register_float_tensor::<B>(&desc.out.id, out.x_grad);
+    }
+
+    pub(super) fn apply_interpolate1d(&self, handles: &mut HandleContainer<B::Handle>, desc: &Interpolate1dOpIr) {
+        let x = handles.get_float_tensor::<B>(&desc.x);
+        let out = B::interpolate1d(x, desc.output_size, desc.options.clone().into());
+        handles.register_float_tensor::<B>(&desc.out.id, out);
+    }
+
+    pub(super) fn apply_interpolate3d(&self, handles: &mut HandleContainer<B::Handle>, desc: &Interpolate3dOpIr) {
+        let x = handles.get_float_tensor::<B>(&desc.x);
+        let out = B::interpolate3d(x, desc.output_size, desc.options.clone().into());
+        handles.register_float_tensor::<B>(&desc.out.id, out);
+    }
+
+    pub(super) fn apply_interpolate1d_backward(&self, handles: &mut HandleContainer<B::Handle>, desc: &Interpolate1dBackwardOpIr) {
+        let x = handles.get_float_tensor::<B>(&desc.x);
+        let grad = handles.get_float_tensor::<B>(&desc.grad);
+        let out = B::interpolate1d_backward(x, grad, desc.output_size, desc.options.clone().into());
+        handles.register_float_tensor::<B>(&desc.out.id, out);
+    }
+
+    pub(super) fn apply_interpolate3d_backward(&self, handles: &mut HandleContainer<B::Handle>, desc: &Interpolate3dBackwardOpIr) {
+        let x = handles.get_float_tensor::<B>(&desc.x);
+        let grad = handles.get_float_tensor::<B>(&desc.grad);
+        let out = B::interpolate3d_backward(x, grad, desc.output_size, desc.options.clone().into());
+        handles.register_float_tensor::<B>(&desc.out.id, out);
     }
 
     pub(super) fn apply_interpolate(

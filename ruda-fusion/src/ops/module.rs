@@ -1639,6 +1639,68 @@ impl<B: FusionBackend> ModuleOps<Fusion<B>> for Fusion<B> {
             .output()
     }
 
+    fn interpolate1d(x: FloatTensor<Self>, size: usize, options: InterpolateOptions) -> FloatTensor<Self> {
+        make_ops!(Interpolate1dOps, Interpolate1dOpIr,
+            |args: &Interpolate1dOpIr, handles: &mut HandleContainer<B::Handle>| {
+                let x = handles.get_float_tensor::<B>(&args.x);
+                let out = B::interpolate1d(x, args.output_size, args.options.clone().into());
+                handles.register_float_tensor::<B>(&args.out.id, out);
+            });
+        let streams = OperationStreams::with_inputs([&x]);
+        let client = x.client.clone();
+        let desc = Interpolate1dOpIr::create(x.into_ir(), size, options.into(), || client.create_empty_handle());
+        client.register(streams, OperationIr::Module(ModuleOperationIr::Interpolate1d(desc.clone())),
+            Interpolate1dOps::<B>::new(desc)).output()
+    }
+
+    fn interpolate3d(x: FloatTensor<Self>, size: [usize; 3], options: InterpolateOptions) -> FloatTensor<Self> {
+        make_ops!(Interpolate3dOps, Interpolate3dOpIr,
+            |args: &Interpolate3dOpIr, handles: &mut HandleContainer<B::Handle>| {
+                let x = handles.get_float_tensor::<B>(&args.x);
+                let out = B::interpolate3d(x, args.output_size, args.options.clone().into());
+                handles.register_float_tensor::<B>(&args.out.id, out);
+            });
+        let streams = OperationStreams::with_inputs([&x]);
+        let client = x.client.clone();
+        let desc = Interpolate3dOpIr::create(x.into_ir(), size, options.into(), || client.create_empty_handle());
+        client.register(streams, OperationIr::Module(ModuleOperationIr::Interpolate3d(desc.clone())),
+            Interpolate3dOps::<B>::new(desc)).output()
+    }
+
+    fn interpolate1d_backward(x: FloatTensor<Self>, grad: FloatTensor<Self>, size: usize,
+        options: InterpolateOptions) -> FloatTensor<Self> {
+        make_ops!(Interpolate1dBackwardOps, Interpolate1dBackwardOpIr,
+            |args: &Interpolate1dBackwardOpIr, handles: &mut HandleContainer<B::Handle>| {
+                let x = handles.get_float_tensor::<B>(&args.x);
+                let grad = handles.get_float_tensor::<B>(&args.grad);
+                let out = B::interpolate1d_backward(x, grad, args.output_size, args.options.clone().into());
+                handles.register_float_tensor::<B>(&args.out.id, out);
+            });
+        let streams = OperationStreams::with_inputs([&x, &grad]);
+        let client = x.client.clone();
+        let desc = Interpolate1dBackwardOpIr::create(x.into_ir(), grad.into_ir(), size,
+            options.into(), || client.create_empty_handle());
+        client.register(streams, OperationIr::Module(ModuleOperationIr::Interpolate1dBackward(desc.clone())),
+            Interpolate1dBackwardOps::<B>::new(desc)).output()
+    }
+
+    fn interpolate3d_backward(x: FloatTensor<Self>, grad: FloatTensor<Self>, size: [usize; 3],
+        options: InterpolateOptions) -> FloatTensor<Self> {
+        make_ops!(Interpolate3dBackwardOps, Interpolate3dBackwardOpIr,
+            |args: &Interpolate3dBackwardOpIr, handles: &mut HandleContainer<B::Handle>| {
+                let x = handles.get_float_tensor::<B>(&args.x);
+                let grad = handles.get_float_tensor::<B>(&args.grad);
+                let out = B::interpolate3d_backward(x, grad, args.output_size, args.options.clone().into());
+                handles.register_float_tensor::<B>(&args.out.id, out);
+            });
+        let streams = OperationStreams::with_inputs([&x, &grad]);
+        let client = x.client.clone();
+        let desc = Interpolate3dBackwardOpIr::create(x.into_ir(), grad.into_ir(), size,
+            options.into(), || client.create_empty_handle());
+        client.register(streams, OperationIr::Module(ModuleOperationIr::Interpolate3dBackward(desc.clone())),
+            Interpolate3dBackwardOps::<B>::new(desc)).output()
+    }
+
     fn attention(
         query: FloatTensor<Fusion<B>>,
         key: FloatTensor<Fusion<B>>,

@@ -269,6 +269,48 @@ pub struct InterpolateOpIr {
     pub out: TensorIr,
 }
 
+/// Native line resizing with the original spatial filter options.
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
+pub struct Interpolate1dOpIr {
+    pub x: TensorIr,
+    pub output_size: usize,
+    pub options: InterpolateOptionsIr,
+    pub out: TensorIr,
+}
+
+/// Native line resizing input gradients.
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
+pub struct Interpolate1dBackwardOpIr {
+    pub x: TensorIr,
+    pub grad: TensorIr,
+    pub output_size: usize,
+    pub options: InterpolateOptionsIr,
+    pub out: TensorIr,
+}
+
+/// Native volume resizing retaining the spatial/depth filter sequence.
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
+pub struct Interpolate3dOpIr {
+    pub x: TensorIr,
+    pub output_size: [usize; 3],
+    pub options: InterpolateOptionsIr,
+    pub out: TensorIr,
+}
+
+/// Native volume resizing input gradients.
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
+pub struct Interpolate3dBackwardOpIr {
+    pub x: TensorIr,
+    pub grad: TensorIr,
+    pub output_size: [usize; 3],
+    pub options: InterpolateOptionsIr,
+    pub out: TensorIr,
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
 #[allow(missing_docs)]
 pub struct AttentionOptionsIr {

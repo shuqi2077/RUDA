@@ -1,7 +1,7 @@
 use ruda_core::tensor::{Shape, spatial::InterpolateOptions};
 use ruda_kernel::{dsl::Runtime, tensor::{RudaTensor, permutation::permute, reshape::reshape}};
 
-use super::{interpolate, interpolate_backward};
+use super::interpolate;
 
 fn planes<R: Runtime>(input: RudaTensor<R>) -> RudaTensor<R> {
     let [batch, channels, depth, height, width] = input.meta.shape().dims();
@@ -36,9 +36,9 @@ pub fn interpolate1d<R: Runtime>(input: RudaTensor<R>, size: usize,
 pub fn interpolate1d_backward<R: Runtime>(input: RudaTensor<R>, grad: RudaTensor<R>,
     size: usize, options: InterpolateOptions) -> RudaTensor<R> {
     let [batch, channels, width] = input.meta.shape().dims();
-    let input = reshape(input, Shape::new([batch, channels, 1, width]));
     let grad = reshape(grad, Shape::new([batch, channels, 1, size]));
-    reshape(interpolate_backward(input, grad, [1, size], options), Shape::new([batch, channels, width]))
+    reshape(super::base::backward_in_shape(&input, [batch, channels, 1, width], grad, options),
+        Shape::new([batch, channels, width]))
 }
 
 /// Native spatial/depth volume resizing, preserving the original intermediate storage and filters.
@@ -50,19 +50,21 @@ pub fn interpolate3d<R: Runtime>(input: RudaTensor<R>, size: [usize; 3],
     from_lines(lines, batch, channels, size[1], size[2])
 }
 
-/// Native adjoints of both volume passes using the actual spatial activation, not a dummy input.
+/// Native adjoints of both volume passes using original geometry and storage.
 pub fn interpolate3d_backward<R: Runtime>(input: RudaTensor<R>, grad: RudaTensor<R>,
     size: [usize; 3], options: InterpolateOptions) -> RudaTensor<R> {
     let [batch, channels, depth, height, width] = input.meta.shape().dims();
     assert_eq!(grad.meta.shape().dims::<5>(), [batch, channels, size[0], size[1], size[2]],
         "volume interpolation gradient shape differs");
-    let input_planes = planes(input);
-    let spatial = interpolate(input_planes.clone(), [size[1], size[2]], options.clone());
-    let spatial_lines = depth_lines(spatial, batch, depth);
     let gradient_lines = depth_lines(planes(grad), batch, size[0]);
-    let line_gradient = interpolate_backward(spatial_lines, gradient_lines, [1, size[0]], options.clone());
+    let line_count = batch.checked_mul(channels).and_then(|n| n.checked_mul(size[1]))
+        .and_then(|n| n.checked_mul(size[2])).expect("interpolation gradient line count overflow");
+    let line_gradient = super::base::backward_in_shape(&input,
+        [line_count, 1, 1, depth], gradient_lines, options.clone());
     let spatial_gradient = planes(from_lines(line_gradient, batch, channels, size[1], size[2]));
-    let gradient = interpolate_backward(input_planes, spatial_gradient, [size[1], size[2]], options);
+    let plane_count = batch.checked_mul(depth).expect("interpolation gradient plane count overflow");
+    let gradient = super::base::backward_in_shape(&input,
+        [plane_count, channels, height, width], spatial_gradient, options);
     let gradient = reshape(gradient, Shape::new([batch, depth, channels, height, width]));
     permute(gradient, &[0, 2, 1, 3, 4])
 }

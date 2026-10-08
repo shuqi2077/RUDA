@@ -7,7 +7,6 @@ use ruda_kernel::tensor::permutation::permute_nhwc_to_nchw;
 use ruda_kernel::tensor::RudaTensor;
 use ruda_core::tensor::Shape;
 use ruda_core::tensor::DType;
-use ruda_core::tensor::TensorMetadata;
 use ruda_core::tensor::spatial::InterpolateMode;
 use ruda_core::tensor::spatial::InterpolateOptions;
 
@@ -47,6 +46,7 @@ pub fn interpolate<R: Runtime>(
         shape_out,
         input.dtype,
     );
+    if output.meta.num_elements() == 0 { return permute_nhwc_to_nchw(output); }
 
     let align_corners = options.align_corners;
     let output = match options.mode {
@@ -68,15 +68,19 @@ pub fn interpolate_backward<R: Runtime>(
     _output_size: [usize; 2],
     options: InterpolateOptions,
 ) -> RudaTensor<R> {
-    let input = permute_nchw_to_nhwc(input);
-    let out_grad = permute_nchw_to_nhwc(out_grad);
+    backward_in_shape(&input, input.meta.shape().dims(), out_grad, options)
+}
 
-    let output_shape = input.shape();
+pub(super) fn backward_in_shape<R: Runtime>(reference: &RudaTensor<R>,
+    input_shape: [usize; 4], out_grad: RudaTensor<R>, options: InterpolateOptions) -> RudaTensor<R> {
+    let out_grad = permute_nchw_to_nhwc(out_grad);
+    let [batch, channels, height, width] = input_shape;
+    let output_shape = Shape::new([batch, height, width, channels]);
     let output = empty_device_dtype(
-        input.client.clone(),
-        input.device.clone(),
+        reference.client.clone(),
+        reference.device.clone(),
         output_shape,
-        input.dtype,
+        reference.dtype,
     );
 
     let output = match options.mode {

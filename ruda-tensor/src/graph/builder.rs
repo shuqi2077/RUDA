@@ -718,6 +718,26 @@ impl_ir_create!(
 );
 
 impl_ir_create!(
+    Interpolate1dOpIr { x: TensorIr, output_size: usize, options: InterpolateOptionsIr },
+    shape = Shape::new([x.shape[0], x.shape[1], output_size]), dtype = x.dtype
+);
+
+impl_ir_create!(
+    Interpolate1dBackwardOpIr { x: TensorIr, grad: TensorIr, output_size: usize, options: InterpolateOptionsIr },
+    shape = x.shape.clone(), dtype = x.dtype
+);
+
+impl_ir_create!(
+    Interpolate3dOpIr { x: TensorIr, output_size: [usize; 3], options: InterpolateOptionsIr },
+    shape = Shape::new([x.shape[0], x.shape[1], output_size[0], output_size[1], output_size[2]]), dtype = x.dtype
+);
+
+impl_ir_create!(
+    Interpolate3dBackwardOpIr { x: TensorIr, grad: TensorIr, output_size: [usize; 3], options: InterpolateOptionsIr },
+    shape = x.shape.clone(), dtype = x.dtype
+);
+
+impl_ir_create!(
     GridSample2dOpIr {
         tensor: TensorIr,
         grid: TensorIr,

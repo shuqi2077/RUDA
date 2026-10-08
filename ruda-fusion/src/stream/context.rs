@@ -563,6 +563,22 @@ impl RelativeOps for ModuleOperationIr {
                     out: desc.out.to_relative(converter),
                 })
             }
+            ModuleOperationIr::Interpolate1d(desc) => ModuleOperationIr::Interpolate1d(Interpolate1dOpIr {
+                x: desc.x.to_relative(converter), output_size: desc.output_size,
+                options: desc.options.clone(), out: desc.out.to_relative(converter),
+            }),
+            ModuleOperationIr::Interpolate3d(desc) => ModuleOperationIr::Interpolate3d(Interpolate3dOpIr {
+                x: desc.x.to_relative(converter), output_size: desc.output_size,
+                options: desc.options.clone(), out: desc.out.to_relative(converter),
+            }),
+            ModuleOperationIr::Interpolate1dBackward(desc) => ModuleOperationIr::Interpolate1dBackward(Interpolate1dBackwardOpIr {
+                x: desc.x.to_relative(converter), grad: desc.grad.to_relative(converter),
+                output_size: desc.output_size, options: desc.options.clone(), out: desc.out.to_relative(converter),
+            }),
+            ModuleOperationIr::Interpolate3dBackward(desc) => ModuleOperationIr::Interpolate3dBackward(Interpolate3dBackwardOpIr {
+                x: desc.x.to_relative(converter), grad: desc.grad.to_relative(converter),
+                output_size: desc.output_size, options: desc.options.clone(), out: desc.out.to_relative(converter),
+            }),
             ModuleOperationIr::Interpolate(desc) => {
                 ModuleOperationIr::Interpolate(InterpolateOpIr {
                     x: desc.x.to_relative(converter),

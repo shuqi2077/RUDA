@@ -231,6 +231,14 @@ pub enum ModuleOperationIr {
     MaxPool3dWithIndices(MaxPool3dWithIndicesOpIr),
     /// Native maximum-volume gradients through saved positions.
     MaxPool3dWithIndicesBackward(MaxPool3dWithIndicesBackwardOpIr),
+    /// Native line resizing.
+    Interpolate1d(Interpolate1dOpIr),
+    /// Native line resizing derivatives.
+    Interpolate1dBackward(Interpolate1dBackwardOpIr),
+    /// Native volume resizing.
+    Interpolate3d(Interpolate3dOpIr),
+    /// Native volume resizing derivatives.
+    Interpolate3dBackward(Interpolate3dBackwardOpIr),
 }
 
 /// Basic operations that can be done on any tensor type.
