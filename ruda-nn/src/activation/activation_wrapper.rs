@@ -374,6 +374,28 @@ impl<B: Backend> Activation<B> {
     }
 }
 
+impl<B: ruda_model::tensor::NativeSwiGluOps> Activation<B> {
+    /// Explicit native SwiGLU for its actual recorded projections; other configured activations are unchanged.
+    pub fn try_forward_native<const D: usize>(&self, input: Tensor<B, D>) -> Result<Tensor<B, D>, B::SwiGluError> {
+        match self {
+            Self::SwiGlu(layer) => layer.try_forward_native(input),
+            _ => Ok(self.forward(input)),
+        }
+    }
+
+    /// Fuse only a configured SiLU gate with its actual up values.
+    /// Other activations, including trainable activation modules, retain their own computation.
+    pub fn try_forward_gated_native<const D: usize>(&self, gate: Tensor<B, D>, up: Tensor<B, D>)
+        -> Result<Tensor<B, D>, B::SwiGluError> {
+        if matches!(self, Self::Silu(_)) {
+            return ruda_model::tensor::activation::swiglu_native(gate, up);
+        }
+        let activated = self.try_forward_native(gate)?;
+        assert_eq!(activated.dims(), up.dims(), "gate activation must preserve intermediate geometry");
+        Ok(activated * up)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

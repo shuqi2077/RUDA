@@ -253,6 +253,24 @@ impl<B: Backend, S: CheckpointStrategy> TensorParallelGatedMlp<Autodiff<B, S>> {
     }
 }
 
+impl<B: ruda_model::tensor::NativeSwiGluOps, S: CheckpointStrategy> TensorParallelGatedMlp<Autodiff<B, S>> {
+    /// Existing column-copy and row-reduce regions with the actual native SwiGLU VJP.
+    /// The intermediate stays shard-local; no gather, extra bias or adapter merge is inserted.
+    pub fn try_forward_native<C: BroadcastTensorCollective<B>, const D: usize>(
+        &self, input: Tensor<Autodiff<B, S>, D>, communicator: C,
+    ) -> Result<Tensor<Autodiff<B, S>, D>, crate::transformer::NativeFeedForwardError<C::Error,
+        <Autodiff<B, S> as ruda_model::tensor::NativeSwiGluOps>::SwiGluError>> {
+        use crate::transformer::NativeFeedForwardError;
+        let gate = self.gate.forward(input.clone(), communicator.clone(), false)
+            .map_err(NativeFeedForwardError::Execution)?;
+        let up = self.up.forward(input, communicator.clone(), false)
+            .map_err(NativeFeedForwardError::Execution)?;
+        let value = ruda_model::tensor::activation::swiglu_native(gate, up)
+            .map_err(NativeFeedForwardError::Activation)?;
+        self.down.forward(value, communicator, true).map_err(NativeFeedForwardError::Execution)
+    }
+}
+
 /// Vocabulary-sharded lookup with replicated token IDs and padding-gradient semantics.
 #[derive(Module, Debug)]
 pub struct VocabParallelEmbedding<B: Backend> {

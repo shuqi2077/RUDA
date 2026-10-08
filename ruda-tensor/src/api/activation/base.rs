@@ -2,6 +2,15 @@ use crate::api::backend::Backend;
 use crate::api::check::TensorCheck;
 use crate::api::{Tensor, TensorPrimitive, check, s};
 
+/// Original native storage-rounded SwiGLU on actual equal-shaped gate and up values.
+/// Gate/up use identical F32/F16/BF16 storage; no implicit storage promotion is performed.
+/// First-order autodiff requests only the tracked inputs' derivatives; native errors propagate.
+pub fn swiglu_native<const D: usize, B: crate::expert_projection::NativeSwiGluOps>(gate: Tensor<B, D>, up: Tensor<B, D>)
+    -> Result<Tensor<B, D>, B::SwiGluError> {
+    B::native_swiglu(gate.into_primitive().tensor(), up.into_primitive().tensor())
+        .map(|output| Tensor::from_primitive(TensorPrimitive::Float(output)))
+}
+
 /// Applies the rectified linear unit function element-wise
 /// as described in the paper [Deep Learning using Rectified Linear Units (ReLU)](https://arxiv.org/pdf/1803.08375).
 ///

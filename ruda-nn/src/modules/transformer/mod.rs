@@ -33,6 +33,8 @@ mod projected_adapters;
 mod projected_decoder;
 mod projected_paired_model;
 mod native_attention;
+mod native_feed_forward;
+pub use native_feed_forward::NativeFeedForwardError;
 mod moe;
 mod moe_model;
 mod moe_adapters;

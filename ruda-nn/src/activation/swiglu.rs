@@ -92,6 +92,16 @@ impl<B: Backend> SwiGlu<B> {
     }
 }
 
+impl<B: ruda_model::tensor::NativeSwiGluOps> SwiGlu<B> {
+    /// Original two recorded projections with native storage-rounded SiLU/multiply training.
+    /// Parameters, bias and layout retain their original values and trainability.
+    pub fn try_forward_native<const D: usize>(&self, input: Tensor<B, D>) -> Result<Tensor<B, D>, B::SwiGluError> {
+        let gate = self.linear_inner.forward(input.clone());
+        let up = self.linear_outer.forward(input);
+        ruda_model::tensor::activation::swiglu_native(gate, up)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

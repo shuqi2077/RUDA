@@ -2,6 +2,8 @@ use ruda_autodiff::{Autodiff,checkpoint::strategy::CheckpointStrategy,tensor_par
 use ruda_model::{module::Module,tensor::{Tensor,backend::Backend,module::linear}};
 use crate::transformer::DenseFeedForward;
 use region::BroadcastTensorCollective;
+use ruda_model::tensor::NativeSwiGluOps;
+use crate::transformer::NativeFeedForwardError;
 
 /// Actual up/gate columns and down rows of a caller-sharded native FFN.
 /// Stateful activation parameters are the caller's actual local partition;
@@ -82,5 +84,60 @@ impl<B: Backend,S: CheckpointStrategy> TensorParallelFeedForward<Autodiff<B,S>> 
         where C: BroadcastTensorCollective<B>,K: BroadcastTensorCollective<B,Error=C::Error> {
         self.forward_with_activation(input,communicator,|module,input|
             super::copy_replicated_module_to_region::<B,S,K,_>(module.clone(),activation_group).map(|module|module.forward(input)))
+    }
+}
+
+impl<B: NativeSwiGluOps> TensorParallelFeedForward<B> {
+    fn partial_native<const D: usize>(&self, input: Tensor<B, D>) -> Result<Tensor<B, D>, B::SwiGluError> {
+        let up = self.local.up.forward(input.clone());
+        let value = if let Some(gate) = &self.local.gate {
+            self.local.activation.try_forward_gated_native(gate.forward(input), up)?
+        } else { self.local.activation.try_forward_native(up)? };
+        Ok(linear(self.local.dropout.forward(value), self.local.down.weight.val(), None))
+    }
+
+    /// Local native gate/up activation, then the original down SUM and one replicated bias addition.
+    pub fn try_forward_native_inference<C: BroadcastTensorCollective<B>, const D: usize>(
+        &self, input: Tensor<B, D>, communicator: C,
+    ) -> Result<Tensor<B, D>, NativeFeedForwardError<C::Error, B::SwiGluError>> {
+        assert!(D > 0, "parallel FFN requires a feature axis");
+        let partial = self.partial_native(input).map_err(NativeFeedForwardError::Activation)?;
+        let output = communicator.all_reduce_sum(partial.into_primitive().tensor())
+            .map_err(NativeFeedForwardError::Execution)?;
+        Ok(self.bias(Tensor::from_primitive(ruda_model::tensor::TensorPrimitive::Float(output))))
+    }
+}
+
+impl<B: NativeSwiGluOps, S: CheckpointStrategy> TensorParallelFeedForward<Autodiff<B, S>> {
+    /// One shared input-copy node for combined native gate/up VJPs; down SUM has identity backward.
+    /// Local weights remain shard-local, and bias remains outside the down reduction.
+    pub fn try_forward_native<C: BroadcastTensorCollective<B>, const D: usize>(
+        &self, input: Tensor<Autodiff<B, S>, D>, communicator: C,
+    ) -> Result<Tensor<Autodiff<B, S>, D>, NativeFeedForwardError<C::Error,
+        <Autodiff<B, S> as NativeSwiGluOps>::SwiGluError>> {
+        assert!(D > 0, "parallel FFN requires a feature axis");
+        let input = region::copy_to_region(input, communicator.clone()).map_err(NativeFeedForwardError::Execution)?;
+        let partial = self.partial_native(input).map_err(NativeFeedForwardError::Activation)?;
+        let output = region::reduce_from_region(partial, communicator).map_err(NativeFeedForwardError::Execution)?;
+        Ok(self.bias(output))
+    }
+
+    /// Explicit native activation with SUM derivatives for the caller's replicated activation parameters.
+    pub fn try_forward_native_with_replicated_activation<C, K, const D: usize>(
+        &self, input: Tensor<Autodiff<B, S>, D>, communicator: C, activation_group: K,
+    ) -> Result<Tensor<Autodiff<B, S>, D>, NativeFeedForwardError<C::Error,
+        <Autodiff<B, S> as NativeSwiGluOps>::SwiGluError>>
+        where C: BroadcastTensorCollective<B>, K: BroadcastTensorCollective<B, Error = C::Error> {
+        assert!(D > 0, "parallel FFN requires a feature axis");
+        let input = region::copy_to_region(input, communicator.clone()).map_err(NativeFeedForwardError::Execution)?;
+        let activation = super::copy_replicated_module_to_region::<B, S, K, _>(self.local.activation.clone(), activation_group)
+            .map_err(NativeFeedForwardError::Execution)?;
+        let up = self.local.up.forward(input.clone());
+        let value = if let Some(gate) = &self.local.gate {
+            activation.try_forward_gated_native(gate.forward(input), up)
+        } else { activation.try_forward_native(up) }.map_err(NativeFeedForwardError::Activation)?;
+        let partial = linear(self.local.dropout.forward(value), self.local.down.weight.val(), None);
+        let output = region::reduce_from_region(partial, communicator).map_err(NativeFeedForwardError::Execution)?;
+        Ok(self.bias(output))
     }
 }

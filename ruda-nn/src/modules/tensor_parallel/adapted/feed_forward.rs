@@ -1,5 +1,7 @@
 use super::{Autodiff,Backend,BroadcastTensorCollective,CheckpointStrategy,Dropout,Module,Tensor,column,row,row_inference,geometry};
 use crate::transformer::{AdaptedFeedForward,FeedForwardAdapterTarget};
+use crate::transformer::NativeFeedForwardError;
+use ruda_model::tensor::NativeSwiGluOps;
 
 /// Actual selected dense/LoRA up/gate columns and down rows of a native FFN.
 #[derive(Module,Debug)]
@@ -72,5 +74,86 @@ impl<B: Backend,S: CheckpointStrategy> TensorParallelAdaptedFeedForward<Autodiff
             F: FnMut(FeedForwardAdapterTarget,&Dropout,Tensor<Autodiff<B,S>,D>)->Tensor<Autodiff<B,S>,D> {
         self.forward_with_transforms(input,communicator,dropout,|module,input|
             super::super::copy_replicated_module_to_region::<B,S,K,_>(module.clone(),activation_group).map(|module|module.forward(input)))
+    }
+}
+
+impl<B: NativeSwiGluOps> TensorParallelAdaptedFeedForward<B> {
+    /// Native gate/up activation without merging local adapters or gathering the full intermediate.
+    pub fn try_forward_native_inference<C: BroadcastTensorCollective<B>, const D: usize>(
+        &self, input: Tensor<B, D>, communicator: C,
+    ) -> Result<Tensor<B, D>, NativeFeedForwardError<C::Error, B::SwiGluError>> {
+        assert!(D > 0, "adapted parallel FFN requires a feature axis");
+        let up = self.local.up.forward(input.clone());
+        let value = if let Some(gate) = &self.local.gate {
+            self.local.activation.try_forward_gated_native(gate.forward(input), up)
+        } else { self.local.activation.try_forward_native(up) }.map_err(NativeFeedForwardError::Activation)?;
+        row_inference(&self.local.down, self.local.dropout.forward(value), &communicator)
+            .map_err(NativeFeedForwardError::Execution)
+    }
+}
+
+impl<B: NativeSwiGluOps, S: CheckpointStrategy> TensorParallelAdaptedFeedForward<Autodiff<B, S>> {
+    /// Original column A SUMs, row A locality and reduced row B input, with native gate/up VJPs.
+    pub fn try_forward_native<C: BroadcastTensorCollective<B>, const D: usize>(
+        &self, input: Tensor<Autodiff<B, S>, D>, communicator: C,
+    ) -> Result<Tensor<Autodiff<B, S>, D>, NativeFeedForwardError<C::Error,
+        <Autodiff<B, S> as NativeSwiGluOps>::SwiGluError>> {
+        self.try_forward_native_with_adapter_dropout(input, communicator, |_, module, input| module.forward(input))
+    }
+
+    /// Explicit actual per-adapter dropout at the original A storage dtype, with native activation.
+    pub fn try_forward_native_with_adapter_dropout<C, F, const D: usize>(
+        &self, input: Tensor<Autodiff<B, S>, D>, communicator: C, dropout: F,
+    ) -> Result<Tensor<Autodiff<B, S>, D>, NativeFeedForwardError<C::Error,
+        <Autodiff<B, S> as NativeSwiGluOps>::SwiGluError>>
+        where C: BroadcastTensorCollective<B>,
+            F: FnMut(FeedForwardAdapterTarget, &Dropout, Tensor<Autodiff<B, S>, D>) -> Tensor<Autodiff<B, S>, D> {
+        self.try_forward_native_with_activation(input, communicator, dropout, |module, input, up| {
+            match up {
+                Some(up) => module.try_forward_gated_native(input, up),
+                None => module.try_forward_native(input),
+            }.map_err(NativeFeedForwardError::Activation)
+        })
+    }
+
+    /// Actual native activation with independently supplied replicated activation parameters and adapter dropout.
+    pub fn try_forward_native_with_replicated_activation<C, K, F, const D: usize>(
+        &self, input: Tensor<Autodiff<B, S>, D>, communicator: C, activation_group: K, dropout: F,
+    ) -> Result<Tensor<Autodiff<B, S>, D>, NativeFeedForwardError<C::Error,
+        <Autodiff<B, S> as NativeSwiGluOps>::SwiGluError>>
+        where C: BroadcastTensorCollective<B>, K: BroadcastTensorCollective<B, Error = C::Error>,
+            F: FnMut(FeedForwardAdapterTarget, &Dropout, Tensor<Autodiff<B, S>, D>) -> Tensor<Autodiff<B, S>, D> {
+        self.try_forward_native_with_activation(input, communicator, dropout, |module, input, up| {
+            let module = super::super::copy_replicated_module_to_region::<B, S, K, _>(module.clone(), activation_group)
+                .map_err(NativeFeedForwardError::Execution)?;
+            match up {
+                Some(up) => module.try_forward_gated_native(input, up),
+                None => module.try_forward_native(input),
+            }.map_err(NativeFeedForwardError::Activation)
+        })
+    }
+
+    fn try_forward_native_with_activation<C, F, A, const D: usize>(
+        &self, input: Tensor<Autodiff<B, S>, D>, communicator: C, mut dropout: F, activation: A,
+    ) -> Result<Tensor<Autodiff<B, S>, D>, NativeFeedForwardError<C::Error,
+        <Autodiff<B, S> as NativeSwiGluOps>::SwiGluError>>
+        where C: BroadcastTensorCollective<B>,
+            F: FnMut(FeedForwardAdapterTarget, &Dropout, Tensor<Autodiff<B, S>, D>) -> Tensor<Autodiff<B, S>, D>,
+            A: FnOnce(&crate::activation::Activation<Autodiff<B, S>>, Tensor<Autodiff<B, S>, D>,
+                Option<Tensor<Autodiff<B, S>, D>>) -> Result<Tensor<Autodiff<B, S>, D>,
+                NativeFeedForwardError<C::Error, <Autodiff<B, S> as NativeSwiGluOps>::SwiGluError>> {
+        assert!(D > 0, "adapted parallel FFN requires a feature axis");
+        let up = column(&self.local.up, input.clone(), &communicator, None::<&C>,
+            |module, input| dropout(FeedForwardAdapterTarget::Up, module, input))
+            .map_err(NativeFeedForwardError::Execution)?;
+        let value = if let Some(gate) = &self.local.gate {
+            let gate = column(gate, input, &communicator, None::<&C>,
+                |module, input| dropout(FeedForwardAdapterTarget::Gate, module, input))
+                .map_err(NativeFeedForwardError::Execution)?;
+            activation(&self.local.activation, gate, Some(up))?
+        } else { activation(&self.local.activation, up, None)? };
+        row(&self.local.down, self.local.dropout.forward(value), &communicator,
+            |module, input| dropout(FeedForwardAdapterTarget::Down, module, input))
+            .map_err(NativeFeedForwardError::Execution)
     }
 }
