@@ -1,5 +1,5 @@
 use core::fmt;
-use ruda_model::{module::{Module,Param},tensor::{Tensor,Int,DType,FloatDType,TensorPrimitive,MoeOps,MoeOptions,backend::Backend}};
+use ruda_model::{module::{Module,Param},tensor::{Tensor,Int,DType,FloatDType,TensorPrimitive,MoeOps,MoeOptions,MoeGradientSelection,backend::Backend}};
 use crate::transformer::{TransformerProjectionShape,TransformerProjection};
 
 /// Actual original native bias-free expert weights, retaining loaded cube layout and parameter IDs.
@@ -52,6 +52,15 @@ impl<B:MoeOps> NativeSwiGluExperts<B> {
         Ok(NativeMoeBackward {input:Tensor::from_primitive(TensorPrimitive::Float(result.input)),logits:Tensor::from_primitive(TensorPrimitive::Float(result.logits)),
             gate:Tensor::from_primitive(TensorPrimitive::Float(result.gate)),up:Tensor::from_primitive(TensorPrimitive::Float(result.up)),down:Tensor::from_primitive(TensorPrimitive::Float(result.down))})
     }
+    /// Original explicit VJP with only requested outputs. Frozen expert matrices can
+    /// propagate real upstream input derivatives without allocating FP32 weight-gradient cubes.
+    pub fn backward_selected_with_state(&self,state:B::MoeState,gradient:Tensor<B,2>,selection:MoeGradientSelection)
+        -> Result<NativeMoeBackwardSelected<B>,B::MoeError> {
+        let result=B::moe_backward_selected(state,gradient.into_primitive().tensor(),selection)?;
+        Ok(NativeMoeBackwardSelected {input:result.input.map(|value|Tensor::from_primitive(TensorPrimitive::Float(value))),
+            logits:result.logits.map(|value|Tensor::from_primitive(TensorPrimitive::Float(value))),gate:result.gate.map(|value|Tensor::from_primitive(TensorPrimitive::Float(value))),
+            up:result.up.map(|value|Tensor::from_primitive(TensorPrimitive::Float(value))),down:result.down.map(|value|Tensor::from_primitive(TensorPrimitive::Float(value)))})
+    }
 }
 /// Actual original native expert branch VJP; no optimizer or router-selection policy is inferred.
 #[derive(Debug)]
@@ -66,6 +75,20 @@ pub struct NativeMoeBackward<B:Backend> {
     pub up:Tensor<B,3>,
     /// Original FP32 down cube derivative.
     pub down:Tensor<B,3>,
+}
+/// Actual optional native derivatives; original expert cube outputs retain FP32.
+#[derive(Debug)]
+pub struct NativeMoeBackwardSelected<B:Backend> {
+    /// Requested source-token derivative.
+    pub input:Option<Tensor<B,2>>,
+    /// Requested source-logit derivative.
+    pub logits:Option<Tensor<B,2>>,
+    /// Requested original FP32 gate cube derivative.
+    pub gate:Option<Tensor<B,3>>,
+    /// Requested original FP32 up cube derivative.
+    pub up:Option<Tensor<B,3>>,
+    /// Requested original FP32 down cube derivative.
+    pub down:Option<Tensor<B,3>>,
 }
 /// Original router projection or routed native expert execution failure.
 #[derive(Debug)]

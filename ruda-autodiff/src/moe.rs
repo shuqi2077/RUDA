@@ -2,7 +2,7 @@ use crate::{Autodiff,tensor::AutodiffTensor,checkpoint::{base::Checkpointer,stra
     grads::Gradients,ops::{Backward,Ops,OpsKind,unary}};
 use core::marker::PhantomData;
 use ruda_tensor::{FloatDType,TensorMetadata,ops::FloatTensorOps,
-    moe::{MoeOps,MoeOptions,MoeRouterWeightOptions,MoeBackward,MoeAutodiffError},tensor::{FloatTensor,IntTensor}};
+    moe::{MoeOps,MoeOptions,MoeRouterWeightOptions,MoeBackward,MoeGradientSelection,MoeBackwardSelected,MoeAutodiffError},tensor::{FloatTensor,IntTensor}};
 
 /// Original opaque native state with an explicit first-order-only AD boundary.
 #[derive(Clone,Debug)]
@@ -28,9 +28,11 @@ impl<B:MoeOps> Backward<B,5> for RoutedExperts<B> {
     fn backward(self,ops:Ops<Self::State,5>,grads:&mut Gradients,_:&mut Checkpointer) {
         let (state,dtypes)=ops.state;
         let gradient=B::float_cast(grads.consume::<B>(&ops.node),dtypes[0]);
-        let result=B::moe_backward(state,gradient).unwrap_or_else(|error|panic!("native routed expert backward failed: {error:?}"));
+        let mask=ops.parents.each_ref().map(Option::is_some);
+        let result=B::moe_backward_selected(state,gradient,MoeGradientSelection {input:mask[0],logits:mask[1],gate:mask[2],up:mask[3],down:mask[4]})
+            .unwrap_or_else(|error|panic!("native routed expert backward failed: {error:?}"));
         for ((parent,gradient),dtype) in ops.parents.into_iter().zip([result.input,result.logits,result.gate,result.up,result.down]).zip(dtypes) {
-            if let Some(parent)=parent {grads.register::<B>(parent.id,B::float_cast(gradient,dtype));}
+            if let Some(parent)=parent {grads.register::<B>(parent.id,B::float_cast(gradient.expect("native MoE omitted a requested tracked parent derivative"),dtype));}
         }
     }
 }
@@ -73,5 +75,12 @@ impl<B:MoeOps,S:CheckpointStrategy> MoeOps for Autodiff<B,S> {
         let result=B::moe_backward(state.native,gradient.primitive).map_err(MoeAutodiffError::Native)?;
         Ok(MoeBackward {input:AutodiffTensor::new(result.input),logits:AutodiffTensor::new(result.logits),
             gate:AutodiffTensor::new(result.gate),up:AutodiffTensor::new(result.up),down:AutodiffTensor::new(result.down)})
+    }
+    fn moe_backward_selected(state:Self::MoeState,gradient:FloatTensor<Self>,selection:MoeGradientSelection)
+        -> Result<MoeBackwardSelected<Self>,Self::MoeError> {
+        if state.tracked_primals || gradient.is_tracked() {return Err(MoeAutodiffError::HigherDerivativeUnsupported);}
+        let result=B::moe_backward_selected(state.native,gradient.primitive,selection).map_err(MoeAutodiffError::Native)?;
+        Ok(MoeBackwardSelected {input:result.input.map(AutodiffTensor::new),logits:result.logits.map(AutodiffTensor::new),
+            gate:result.gate.map(AutodiffTensor::new),up:result.up.map(AutodiffTensor::new),down:result.down.map(AutodiffTensor::new)})
     }
 }

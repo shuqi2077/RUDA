@@ -39,7 +39,7 @@ pub use crate::collective::{TensorCollective,ReplicatedTensorCollective,Broadcas
 pub use crate::frozen_awq::{FrozenAwqOps, FrozenAwqError};
 pub use crate::frozen_nf4::{FrozenNf4Ops,FrozenNf4Error,Nf4ProjectionOptions};
 pub use crate::moe::{MoeOps,MoeOptions,MoeSelectionOptions,MoeRouterScoring,MoeRouterWeightOptions,
-    MoeExpertStrategy,MoeCombineGradientStrategy,MoeBackward,MoeAutodiffError};
+    MoeExpertStrategy,MoeCombineGradientStrategy,MoeBackward,MoeGradientSelection,MoeBackwardSelected,MoeAutodiffError};
 
 // Re-exported types
 pub use crate::{

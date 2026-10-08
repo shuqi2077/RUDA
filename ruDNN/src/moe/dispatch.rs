@@ -15,6 +15,21 @@ pub struct DispatchedTokens<R: Runtime> {
     pub(super) sorted_slots: RudaTensor<R>,
 }
 
+/// Explicit original combine outputs required by the trainable graph.
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub struct CombineGradientSelection {
+    /// Original expert-row derivative, already multiplied by routing weights exactly once.
+    pub experts:bool,
+    /// Original FP32 selected continuous-weight derivative.
+    pub weights:bool,
+}
+/// Requested original combine derivatives without unused output allocations.
+#[derive(Debug)]
+pub struct CombineBackwardSelected<R:Runtime> {
+    pub dexpert:Option<RudaTensor<R>>,
+    pub dweights:Option<RudaTensor<R>>,
+}
+
 impl<R: Runtime> RoutingPlan<R> {
     /// Compact device-side dispatch with no token dropping or host readback.
     /// Expert segments are contiguous; row order within each expert is unspecified.
@@ -142,6 +157,13 @@ impl<R: Runtime> DispatchedTokens<R> {
         grad_output: RudaTensor<R>, strategy: CombineGradientStrategy)
         -> Result<CombineBackward<R>, MoeError>
     {
+        let result=self.combine_backward_selected(expert_output,grad_output,strategy,CombineGradientSelection {experts:true,weights:true})?;
+        Ok(CombineBackward {dexpert:result.dexpert.expect("requested combine expert derivative"),dweights:result.dweights.expect("requested combine weight derivative")})
+    }
+
+    /// Original ordered combine VJP kernels, independently selecting expert-row and router-weight outputs.
+    pub fn combine_backward_selected(&self,expert_output:&RudaTensor<R>,grad_output:RudaTensor<R>,strategy:CombineGradientStrategy,
+        selection:CombineGradientSelection) -> Result<CombineBackwardSelected<R>,MoeError> {
         float_tensor(expert_output)?; float_tensor(&grad_output)?;
         if !self.values.client.same_execution_queue(&expert_output.client)
             || !self.values.client.same_execution_queue(&grad_output.client) {
@@ -154,37 +176,38 @@ impl<R: Runtime> DispatchedTokens<R> {
             || grad_output.meta.shape()[..]!=[self.routing.tokens,expert_output.meta.shape()[1]]
             || expert_output.dtype!=self.values.dtype || grad_output.dtype!=self.values.dtype
         { return Err(MoeError("MoE combine backward shape/dtype mismatch")); }
-        let width=expert_output.meta.shape()[1]; let values=empty(expert_output,[rows,width],expert_output.dtype);
-        let dweights=empty(expert_output,[self.routing.tokens,self.routing.top_k],DType::F32);
+        let width=expert_output.meta.shape()[1];let values=selection.experts.then(||empty(expert_output,[rows,width],expert_output.dtype));
+        let dweights=selection.weights.then(||empty(expert_output,[self.routing.tokens,self.routing.top_k],DType::F32));
         let size=elements(&[rows,width])?;
-        let lanes = values.client.properties().hardware.plane_size_max;
-        if strategy == CombineGradientStrategy::Plane
-            && (!matches!(lanes, 32 | 64) || lanes > values.client.properties().hardware.max_ruda_dim.0
-                || rows > values.client.properties().hardware.max_ruda_count.0 as usize) {
+        let lanes = expert_output.client.properties().hardware.plane_size_max;
+        if selection.weights && strategy == CombineGradientStrategy::Plane
+            && (!matches!(lanes, 32 | 64) || lanes > expert_output.client.properties().hardware.max_ruda_dim.0
+                || rows > expert_output.client.properties().hardware.max_ruda_count.0 as usize) {
             return Err(MoeError("parallel MoE weight gradient requires a legal full-plane grid"));
         }
-        if size!=0 { let grad=into_contiguous(grad_output); let expert=into_contiguous(expert_output.clone());
-            let dim=RudaDim::new(values.client.properties(),size);
+        if size!=0 {let grad=into_contiguous(grad_output);
+            if let Some(values)=&values {let dim=RudaDim::new(values.client.properties(),size);
             kernels::dispatch::combine_backward_values::launch::<R>(&values.client,
                 calculate_ruda_count_elemwise(&values.client,size,dim),dim,
                 grad.clone().into_array_arg(),self.routing.weights.clone().into_array_arg(),self.sorted_slots.clone().into_array_arg(),
-                values.clone().into_array_arg(),width as u32,self.routing.top_k as u32,values.dtype.into(),self.routing.weights.dtype.into());
+                values.clone().into_array_arg(),width as u32,self.routing.top_k as u32,values.dtype.into(),self.routing.weights.dtype.into());}
+            if let Some(dweights)=&dweights {let expert=into_contiguous(expert_output.clone());
             let assignments=self.routing.tokens*self.routing.top_k;
-            let dim=RudaDim::new(values.client.properties(),assignments);
+            let dim=RudaDim::new(expert_output.client.properties(),assignments);
             if strategy == CombineGradientStrategy::Plane {
-                kernels::dispatch::combine_backward_weights_plane::launch::<R>(&values.client,
+                kernels::dispatch::combine_backward_weights_plane::launch::<R>(&expert_output.client,
                     RudaCount::Static(assignments as u32, 1, 1), RudaDim::new_1d(lanes),
                     grad.into_array_arg(), expert.into_array_arg(), self.slot_rows.clone().into_array_arg(),
                     dweights.clone().into_array_arg(), width as u32, self.routing.top_k as u32,
-                    lanes as usize, values.dtype.into());
+                    lanes as usize,expert_output.dtype.into());
             } else {
-                kernels::dispatch::combine_backward_weights::launch::<R>(&values.client,
-                    calculate_ruda_count_elemwise(&values.client,assignments,dim),dim,
+                kernels::dispatch::combine_backward_weights::launch::<R>(&expert_output.client,
+                    calculate_ruda_count_elemwise(&expert_output.client,assignments,dim),dim,
                     grad.into_array_arg(),expert.into_array_arg(),self.slot_rows.clone().into_array_arg(),dweights.clone().into_array_arg(),
-                    width as u32,self.routing.top_k as u32,values.dtype.into());
-            }
+                    width as u32,self.routing.top_k as u32,expert_output.dtype.into());
+            }}
         }
-        Ok(CombineBackward{dexpert:values,dweights})
+        Ok(CombineBackwardSelected{dexpert:values,dweights})
     }
 
     /// Backward of dispatch's COPY, not of combine: sum all selected expert-row

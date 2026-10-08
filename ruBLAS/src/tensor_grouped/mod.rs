@@ -113,6 +113,23 @@ pub struct GroupedBackward<R: Runtime> {
     pub dweights: RudaTensor<R>,
 }
 
+/// Explicit requested first-order outputs; omitted outputs are not allocated or launched.
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub struct GroupedGradientSelection {
+    /// Differentiate actual input rows through the original expert matrices.
+    pub input:bool,
+    /// Accumulate the original FP32 expert matrix gradients.
+    pub weights:bool,
+}
+/// Only the actual requested original native derivatives, with no placeholder tensors.
+#[derive(Debug)]
+pub struct GroupedBackwardSelected<R:Runtime> {
+    /// Original input-storage derivative when requested.
+    pub dinput:Option<RudaTensor<R>>,
+    /// Original FP32 matrix derivative when requested.
+    pub dweights:Option<RudaTensor<R>>,
+}
+
 /// First-order backward for
 /// `Y[m,n] = sum_k input[m,k] * weights[expert(m),n,k]`.
 ///
@@ -146,6 +163,22 @@ pub unsafe fn grouped_matmul_nt_backward_segmented_with_strategy<R: Runtime>(
     input: RudaTensor<R>, weights: RudaTensor<R>, grad_output: RudaTensor<R>,
     row_experts: RudaTensor<R>, offsets: RudaTensor<R>, strategy: GroupedStrategy,
 ) -> Result<GroupedBackward<R>, GroupedMatmulError> {
+    // SAFETY: the exact original metadata invariants are forwarded unchanged.
+    let result=unsafe {grouped_matmul_nt_backward_segmented_selected(input,weights,grad_output,row_experts,offsets,strategy,
+        GroupedGradientSelection {input:true,weights:true})}?;
+    Ok(GroupedBackward {dinput:result.dinput.expect("requested grouped input derivative"),dweights:result.dweights.expect("requested grouped weight derivative")})
+}
+
+/// Original segmented VJP kernels with explicit output selection, for frozen expert fine tuning.
+/// Skipping weight gradients does not freeze or detach the input derivative.
+///
+/// # Safety
+/// The immutable offsets/row-expert invariants of the original segmented backward must hold.
+#[allow(unsafe_code)]
+pub unsafe fn grouped_matmul_nt_backward_segmented_selected<R:Runtime>(
+    input:RudaTensor<R>,weights:RudaTensor<R>,grad_output:RudaTensor<R>,row_experts:RudaTensor<R>,offsets:RudaTensor<R>,
+    strategy:GroupedStrategy,selection:GroupedGradientSelection,
+) -> Result<GroupedBackwardSelected<R>,GroupedMatmulError> {
     if input.meta.num_dims()!=2 || weights.meta.num_dims()!=3 || grad_output.meta.num_dims()!=2 {
         return Err(GroupedMatmulError("grouped backward requires [M,K], [E,N,K] and [M,N]"));
     }
@@ -183,38 +216,38 @@ pub unsafe fn grouped_matmul_nt_backward_segmented_with_strategy<R: Runtime>(
     let input=into_contiguous(input); let weights=into_contiguous(weights);
     let grad_output=into_contiguous(grad_output); let row_experts=into_contiguous(row_experts);
     let offsets=into_contiguous(offsets);
-    let dinput=empty_device_contiguous_dtype(input.client.clone(),input.device.clone(),Shape::from([m,k]),input.dtype);
-    let dweights=empty_device_contiguous_dtype(input.client.clone(),input.device.clone(),Shape::from([e,n,k]),DType::F32);
+    let dinput=selection.input.then(||empty_device_contiguous_dtype(input.client.clone(),input.device.clone(),Shape::from([m,k]),input.dtype));
+    let dweights=selection.weights.then(||empty_device_contiguous_dtype(input.client.clone(),input.device.clone(),Shape::from([e,n,k]),DType::F32));
     if cooperative {
         let plan = tile_plan.ok_or(GroupedMatmulError("missing grouped backward launch plan"))?;
         let [gx,gy,gz] = plan.dinput_grid;
-        if m != 0 {
+        if let Some(dinput)=&dinput {if m != 0 {
             backward_tensorcore::dinput::launch::<R>(&input.client,
                 RudaCount::Static(gx,gy,gz),RudaDim::new_1d(32),
                 grad_output.clone().into_array_arg(),weights.into_array_arg(),offsets.clone().into_array_arg(),
                 dinput.clone().into_array_arg(),n as u32,k as u32,input.dtype.into());
-        }
+        }}
         let [gx,gy,gz] = plan.dweight_grid;
-        backward_tensorcore::dweight::launch::<R>(&input.client,
+        if let Some(dweights)=&dweights {backward_tensorcore::dweight::launch::<R>(&input.client,
             RudaCount::Static(gx,gy,gz),RudaDim::new_1d(32),
             input.clone().into_array_arg(),grad_output.into_array_arg(),offsets.into_array_arg(),
-            dweights.clone().into_array_arg(),n as u32,k as u32,input.dtype.into());
-        return Ok(GroupedBackward { dinput, dweights });
+            dweights.clone().into_array_arg(),n as u32,k as u32,input.dtype.into());}
+        return Ok(GroupedBackwardSelected { dinput, dweights });
     }
-    if m!=0 {
+    if let Some(dinput)=&dinput {if m!=0 {
         let size=m*k; let dim=RudaDim::new(input.client.properties(),size);
         kernel::grouped_nt_dinput::launch::<R>(&input.client,
             calculate_ruda_count_elemwise(&input.client,size,dim),dim,
             grad_output.clone().into_array_arg(),weights.clone().into_array_arg(),row_experts.into_array_arg(),
             dinput.clone().into_array_arg(),e as u32,n as u32,k as u32,input.dtype.into());
-    }
+    }}
     let weight_size=e*n*k;
-    if weight_size!=0 {
+    if let Some(dweights)=&dweights {if weight_size!=0 {
         let dim=RudaDim::new(input.client.properties(),weight_size);
         kernel::grouped_nt_dweight::launch::<R>(&input.client,
             calculate_ruda_count_elemwise(&input.client,weight_size,dim),dim,
             input.clone().into_array_arg(),grad_output.into_array_arg(),offsets.into_array_arg(),dweights.clone().into_array_arg(),
             e as u32,n as u32,k as u32,input.dtype.into());
-    }
-    Ok(GroupedBackward{dinput,dweights})
+    }}
+    Ok(GroupedBackwardSelected{dinput,dweights})
 }

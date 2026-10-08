@@ -92,6 +92,34 @@ pub struct MoeBackward<B:Backend> {
     /// Original FP32 down-weight gradients.
     pub down:FloatTensor<B>,
 }
+/// Actual first-order derivatives requested by the caller or tracked AD parents.
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub struct MoeGradientSelection {
+    /// Preserve upstream input derivatives independently of expert-weight trainability.
+    pub input:bool,
+    /// Original fixed-selection logits derivative.
+    pub logits:bool,
+    /// Original FP32 gate cube derivative.
+    pub gate:bool,
+    /// Original FP32 up cube derivative.
+    pub up:bool,
+    /// Original FP32 down cube derivative.
+    pub down:bool,
+}
+/// Only requested original native derivatives; None is absence, never a synthetic zero tensor.
+#[derive(Debug)]
+pub struct MoeBackwardSelected<B:Backend> {
+    /// Requested source-token input derivative.
+    pub input:Option<FloatTensor<B>>,
+    /// Requested source-logit derivative.
+    pub logits:Option<FloatTensor<B>>,
+    /// Requested original FP32 gate cube derivative.
+    pub gate:Option<FloatTensor<B>>,
+    /// Requested original FP32 up cube derivative.
+    pub up:Option<FloatTensor<B>>,
+    /// Requested original FP32 down cube derivative.
+    pub down:Option<FloatTensor<B>>,
+}
 /// Native execution failure or an unsupported derivative of the first-order native kernels.
 #[derive(Debug)]
 pub enum MoeAutodiffError<E:fmt::Debug> {
@@ -131,4 +159,12 @@ pub trait MoeOps:Backend {
     /// Original first-order input/logits/expert derivatives. Expert gradients retain
     /// native FP32 accumulation/output; ordinary AD casts them at the parent-storage boundary.
     fn moe_backward(state:Self::MoeState,gradient:FloatTensor<Self>) -> Result<MoeBackward<Self>,Self::MoeError>;
+    /// Explicit requested VJP outputs. Device implementations can omit unneeded native launches
+    /// and allocations; the compatibility default retains exact full-backward behavior.
+    fn moe_backward_selected(state:Self::MoeState,gradient:FloatTensor<Self>,selection:MoeGradientSelection)
+        -> Result<MoeBackwardSelected<Self>,Self::MoeError> {
+        let result=Self::moe_backward(state,gradient)?;
+        Ok(MoeBackwardSelected {input:selection.input.then_some(result.input),logits:selection.logits.then_some(result.logits),
+            gate:selection.gate.then_some(result.gate),up:selection.up.then_some(result.up),down:selection.down.then_some(result.down)})
+    }
 }

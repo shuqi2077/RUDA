@@ -1,6 +1,6 @@
 use crate::{DeviceBackend,DeviceRuntime,FloatElement,IntElement,element::BoolElement};
 use ruda_tensor::{moe::{MoeOps,MoeOptions,MoeSelectionOptions,MoeRouterScoring,MoeRouterWeightOptions,
-    MoeExpertStrategy,MoeCombineGradientStrategy,MoeBackward},tensor::{FloatTensor,IntTensor}};
+    MoeExpertStrategy,MoeCombineGradientStrategy,MoeBackward,MoeGradientSelection,MoeBackwardSelected},tensor::{FloatTensor,IntTensor}};
 use rudnn::moe::{self,RoutingPlan,RouterTrainingPlan,DispatchedTokens,ExpertTrainingCache,MoeError,SwiGluExperts};
 use ruda_kernel::tensor::{RudaTensor,contiguous::into_contiguous};
 
@@ -73,5 +73,18 @@ impl<R,F,I,BT> MoeOps for DeviceBackend<R,F,I,BT>
         let experts=state.experts.backward_with_strategy(combine.dexpert,expert_strategy(state.options.backward))?;
         let input=state.dispatched.dispatch_backward(experts.dinput)?;
         Ok(MoeBackward {input,logits,gate:experts.dgate,up:experts.dup,down:experts.ddown})
+    }
+    fn moe_backward_selected(state:Self::MoeState,gradient:FloatTensor<Self>,selection:MoeGradientSelection)
+        -> Result<MoeBackwardSelected<Self>,Self::MoeError> {
+        let combine=state.dispatched.combine_backward_selected(&state.expert_output,gradient,
+            match state.options.combine_backward {MoeCombineGradientStrategy::Serial=>moe::CombineGradientStrategy::Serial,MoeCombineGradientStrategy::Plane=>moe::CombineGradientStrategy::Plane},
+            moe::CombineGradientSelection {experts:selection.input || selection.gate || selection.up || selection.down,weights:selection.logits})?;
+        let logits=combine.dweights.map(|gradient|state.router.backward(&gradient)).transpose()?;
+        let experts=combine.dexpert.map(|gradient|state.experts.backward_selected(gradient,expert_strategy(state.options.backward),
+            moe::ExpertGradientSelection {input:selection.input,gate:selection.gate,up:selection.up,down:selection.down})).transpose()?;
+        let (input,gate,up,down)=if let Some(experts)=experts {
+            (experts.dinput.map(|gradient|state.dispatched.dispatch_backward(gradient)).transpose()?,experts.dgate,experts.dup,experts.ddown)
+        } else {(None,None,None,None)};
+        Ok(MoeBackwardSelected {input,logits,gate,up,down})
     }
 }

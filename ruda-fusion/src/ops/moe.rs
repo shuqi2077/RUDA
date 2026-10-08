@@ -1,6 +1,6 @@
 use crate::{Fusion,FusionBackend,get_client,ops::NoOp,stream::OperationStreams};
 use super::frozen_awq::register_output;
-use ruda_tensor::{TensorMetadata,moe::{MoeOps,MoeOptions,MoeRouterWeightOptions,MoeBackward},tensor::{FloatTensor,IntTensor},
+use ruda_tensor::{TensorMetadata,moe::{MoeOps,MoeOptions,MoeRouterWeightOptions,MoeBackward,MoeGradientSelection,MoeBackwardSelected},tensor::{FloatTensor,IntTensor},
     graph::{InitOperationIr,OperationIr,OperationOutput}};
 
 fn resolve<B:FusionBackend>(value:FloatTensor<Fusion<B>>) -> FloatTensor<B> {value.client.clone().resolve_tensor_float::<B>(value)}
@@ -34,5 +34,11 @@ impl<B:FusionBackend+MoeOps> MoeOps for Fusion<B> {
         let result=B::moe_backward(state,resolve::<B>(gradient))?;
         Ok(MoeBackward {input:register_output::<B>(result.input),logits:register_output::<B>(result.logits),
             gate:register_output::<B>(result.gate),up:register_output::<B>(result.up),down:register_output::<B>(result.down)})
+    }
+    fn moe_backward_selected(state:Self::MoeState,gradient:FloatTensor<Self>,selection:MoeGradientSelection)
+        -> Result<MoeBackwardSelected<Self>,Self::MoeError> {
+        let result=B::moe_backward_selected(state,resolve::<B>(gradient),selection)?;
+        Ok(MoeBackwardSelected {input:result.input.map(register_output::<B>),logits:result.logits.map(register_output::<B>),
+            gate:result.gate.map(register_output::<B>),up:result.up.map(register_output::<B>),down:result.down.map(register_output::<B>)})
     }
 }

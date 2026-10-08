@@ -3,8 +3,8 @@ mod experts;
 mod kernels;
 mod routing;
 
-pub use dispatch::{DispatchedTokens,CombineBackward,CombineGradientStrategy};
-pub use experts::{SwiGluExperts, ExpertTrainingCache, ExpertTrainingOutput, ExpertBackward};
+pub use dispatch::{DispatchedTokens,CombineBackward,CombineGradientStrategy,CombineGradientSelection,CombineBackwardSelected};
+pub use experts::{SwiGluExperts,ExpertTrainingCache,ExpertTrainingOutput,ExpertBackward,ExpertGradientSelection,ExpertBackwardSelected};
 pub use routing::{RoutingOptions, RoutingPlan, route};
 
 use ruda_core::{
