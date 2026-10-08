@@ -85,7 +85,7 @@ version = "0.21.41"
 
 [dependencies.ruda-autodiff]
 path = "../ruda-autodiff"
-version = "0.21.37"
+version = "0.21.38"
 default-features = false
 optional = true
 
