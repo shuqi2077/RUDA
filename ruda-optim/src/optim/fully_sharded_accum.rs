@@ -15,6 +15,8 @@ mod norm;
 pub use norm::*;
 mod hybrid_norm;
 pub use hybrid_norm::*;
+mod placement;
+pub use placement::*;
 
 /// Exact continuation counters for globally summed, already reduce-scattered local gradients.
 #[derive(Clone,Debug,PartialEq,Serialize,Deserialize)]
@@ -148,8 +150,12 @@ impl<M> FullyShardedGradientsAccumulator<M> {
             if !ids.insert(binding.parameter) {return Err(FullyShardedAccumulationError::Placement("duplicate canonical parameter binding"));}
             placement.push((binding.parameter.val(),binding.logical_shape.clone(),binding.communicator.rank(),binding.communicator.world_size(),DType::F32,false));
         }
+        Self::bind_placement::<B>(module,placement,state)
+    }
+    fn bind_placement<B:AutodiffBackend>(module:&M,mut placement:Placement,state:FullyShardedAccumulationState)
+        -> Result<Self,FullyShardedAccumulationError> where M:AutodiffModule<B> {
         placement.sort_by_key(|entry|entry.0);
-        placement=inspect::<B,M>(module,&placement,false)?;
+        let placement=inspect::<B,M>(module,&placement,false)?;
         Ok(Self {accumulator:GradientsAccumulator::new(),state,placement})
     }
     /// Inspect actual counters without draining pending local gradients.

@@ -18,6 +18,8 @@ impl<B:AutodiffBackend> FullyShardedWeightedAccumulationContract<B> {
     }
     pub fn state(&self) -> &FullyShardedAccumulationState {self.continuation.state()}
     pub fn global_weight(&self) -> Tensor<B::InnerBackend,1> {self.global_weight.clone()}
+    /// Actual original local ownership without tensor data or normalizer readback.
+    pub fn placements(&self) -> Vec<FullyShardedParameterPlacement> {self.continuation.placements()}
 }
 impl<B:AutodiffBackend> Record<B> for FullyShardedWeightedAccumulationContract<B> {
     type Item<S:PrecisionSettings>=(FullyShardedAccumulationContract,TensorData);
@@ -46,6 +48,8 @@ impl<B:Backend> Record<B> for FullyShardedWeightedGradientsRecord<B> {
     }
 }
 impl<B:Backend> FullyShardedWeightedGradientsRecord<B> {
+    /// Saved original canonical ownership, without repartitioning pending values.
+    pub fn placements(&self) -> Vec<FullyShardedParameterPlacement> {self.window.placements()}
     /// Exact integer continuation metadata, separately from the native fractional denominator.
     pub fn state(&self) -> &FullyShardedAccumulationState {&self.window.state}
     /// Actual native globally coordinated whole-window denominator.
@@ -102,8 +106,14 @@ impl<M:AutodiffModule<B>,B:AutodiffBackend> FullyShardedWeightedGradientsAccumul
     pub fn new<C:BroadcastTensorCollective<B::InnerBackend>>(module:&M,parameters:&[FullyShardedOptimizerParameter<C>],
         dtype:FloatDType,loss_scale:f64,device:&B::Device) -> Result<Self,FullyShardedAccumulationError> {
         let window=FullyShardedGradientsAccumulator::new::<B,C>(module,parameters,dtype,loss_scale)?;
-        Ok(Self {window,global_weight:Tensor::zeros([1],(device,DType::from(dtype)))})
+        Ok(Self::from_window(window,device))
     }
+    pub(super) fn from_window(window:FullyShardedGradientsAccumulator<M>,device:&B::Device) -> Self {
+        let dtype=window.state().dtype;
+        Self {window,global_weight:Tensor::zeros([1],(device,dtype))}
+    }
+    /// Same actual original placement snapshot as the native integer window.
+    pub fn placements(&self) -> Vec<FullyShardedParameterPlacement> {self.window.placements()}
     /// Original exact integer selected-element and issued-microbatch metadata.
     pub fn state(&self) -> &FullyShardedAccumulationState {self.window.state()}
     /// Actual native accumulated GLOBAL weight, without host numerical reduction.
