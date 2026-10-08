@@ -176,40 +176,56 @@ impl<B: Backend, P: CompressedAttentionProjection<B>, F: MhcResidualBranchShape<
     }
 }
 
-impl<B: Backend, P: CompressedAttentionProjection<B>, F: MhcResidualBranch<B>> MhcResidualBlock<B, P, F> {
-    fn finish(&self, state: Tensor<B, 4>, attention: Tensor<B, 3>, mappings: MhcMappings<B>, valid: Tensor<B, 2, Bool>)
-        -> Result<Tensor<B, 4>, F::Error> {
+impl<B: Backend, P: CompressedAttentionProjection<B>, F: MhcResidualBranchShape<B>> MhcResidualBlock<B, P, F> {
+    pub(super) fn finish_with<R, G>(&self, state: Tensor<B, 4>, attention: Tensor<B, 3>, mappings: MhcMappings<B>,
+        valid: Tensor<B, 2, Bool>, branch: G) -> Result<Tensor<B, 4>, R>
+    where G: FnOnce(&F, Tensor<B, 3>) -> Result<Tensor<B, 3>, R> {
         let state = self.attention_connection.post(state, attention, mappings);
         self.ffn_connection.try_forward(state, |merged| {
-            let update = self.feed_forward.forward_branch(normalized(merged, &self.ffn_norm, self.epsilon))?;
+            let update = branch(&self.feed_forward, normalized(merged, &self.ffn_norm, self.epsilon))?;
             let [batch, tokens, _] = update.dims();
             let storage = update.dtype();
             Ok(update * valid.cast::<FloatDType>(storage.into()).reshape([batch, tokens, 1]))
         })
     }
 
-    pub fn forward(&self, state: Tensor<B, 4>, valid: Option<Tensor<B, 2, Bool>>) -> Result<Tensor<B, 4>, F::Error> {
-        self.forward_options(state, valid, false, false).map(|result| result.state)
+    /// Execute the original branch with caller-owned runtime context, never stored in a Module record.
+    pub fn try_forward_with<R, G>(&self, state: Tensor<B, 4>, valid: Option<Tensor<B, 2, Bool>>, branch: G)
+        -> Result<Tensor<B, 4>, R>
+    where G: FnOnce(&F, Tensor<B, 3>) -> Result<Tensor<B, 3>, R> {
+        self.forward_options_with(state, valid, false, false, branch).map(|result| result.state)
     }
 
-    pub fn forward_with_aux(&self, state: Tensor<B, 4>, valid: Option<Tensor<B, 2, Bool>>, indexer_warmup: bool)
-        -> Result<MhcTransformerOutput<B>, F::Error> {
-        self.forward_options(state, valid, true, indexer_warmup)
+    pub fn try_forward_with_aux<R, G>(&self, state: Tensor<B, 4>, valid: Option<Tensor<B, 2, Bool>>, indexer_warmup: bool, branch: G)
+        -> Result<MhcTransformerOutput<B>, R>
+    where G: FnOnce(&F, Tensor<B, 3>) -> Result<Tensor<B, 3>, R> {
+        self.forward_options_with(state, valid, true, indexer_warmup, branch)
     }
 
-    fn forward_options(&self, state: Tensor<B, 4>, valid: Option<Tensor<B, 2, Bool>>, auxiliary: bool, warmup: bool)
-        -> Result<MhcTransformerOutput<B>, F::Error> {
+    fn forward_options_with<R, G>(&self, state: Tensor<B, 4>, valid: Option<Tensor<B, 2, Bool>>, auxiliary: bool, warmup: bool, branch: G)
+        -> Result<MhcTransformerOutput<B>, R>
+    where G: FnOnce(&F, Tensor<B, 3>) -> Result<Tensor<B, 3>, R> {
         let (query, mappings) = self.attention_connection.pre(state.clone());
         let query = normalized(query, &self.attention_norm, self.epsilon);
         let valid = visible(&query, valid);
         let result = if auxiliary { self.attention.forward_with_aux(query, Some(valid.clone()), warmup) }
         else { CompressedAttentionOutput { output: self.attention.forward(query, Some(valid.clone())),
             indexer_loss: Tensor::zeros([1], (&state.device(), if state.dtype() == DType::F64 { DType::F64 } else { DType::F32 })) } };
-        Ok(MhcTransformerOutput { state: self.finish(state, result.output, mappings, valid)?, indexer_loss: result.indexer_loss })
+        Ok(MhcTransformerOutput { state: self.finish_with(state, result.output, mappings, valid, branch)?, indexer_loss: result.indexer_loss })
     }
 
     pub fn inference_session(&self) -> MhcResidualSession<'_, B, P, F> {
         MhcResidualSession { block: self, attention: self.attention.inference_session() }
+    }
+}
+
+impl<B: Backend, P: CompressedAttentionProjection<B>, F: MhcResidualBranch<B>> MhcResidualBlock<B, P, F> {
+    pub fn forward(&self, state: Tensor<B, 4>, valid: Option<Tensor<B, 2, Bool>>) -> Result<Tensor<B, 4>, F::Error> {
+        self.try_forward_with(state, valid, MhcResidualBranch::forward_branch)
+    }
+    pub fn forward_with_aux(&self, state: Tensor<B, 4>, valid: Option<Tensor<B, 2, Bool>>, indexer_warmup: bool)
+        -> Result<MhcTransformerOutput<B>, F::Error> {
+        self.try_forward_with_aux(state, valid, indexer_warmup, MhcResidualBranch::forward_branch)
     }
 }
 
@@ -219,7 +235,7 @@ pub struct MhcResidualSession<'a, B: Backend, P: Module<B>, F: Module<B>> {
     attention: CompressedAttentionSession<'a, B, P>,
 }
 
-impl<'a, B: Backend, P: CompressedAttentionProjection<B>, F: MhcResidualBranch<B>> MhcResidualSession<'a, B, P, F> {
+impl<'a, B: Backend, P: CompressedAttentionProjection<B>, F: MhcResidualBranchShape<B>> MhcResidualSession<'a, B, P, F> {
     pub fn position(&self) -> usize { self.attention.position() }
     pub fn clear(&mut self) { self.attention.clear(); }
     pub fn tensor_bytes(&self) -> usize { self.attention.tensor_bytes() }
@@ -231,15 +247,23 @@ impl<'a, B: Backend, P: CompressedAttentionProjection<B>, F: MhcResidualBranch<B
     }
 
     /// Publish new cache state only after the actual fallible branch succeeds.
-    pub fn forward(&mut self, state: Tensor<B, 4>, valid: Option<Tensor<B, 2, Bool>>) -> Result<Tensor<B, 4>, F::Error> {
+    pub fn try_forward_with<R, G>(&mut self, state: Tensor<B, 4>, valid: Option<Tensor<B, 2, Bool>>, branch: G)
+        -> Result<Tensor<B, 4>, R>
+    where G: FnOnce(&F, Tensor<B, 3>) -> Result<Tensor<B, 3>, R> {
         let (query, mappings) = self.block.attention_connection.pre(state.clone());
         let query = normalized(query, &self.block.attention_norm, self.block.epsilon);
         let valid = visible(&query, valid);
         let mut pending = self.attention.fork();
         let attention = pending.forward(query, Some(valid.clone()));
-        let result = self.block.finish(state, attention, mappings, valid)?;
+        let result = self.block.finish_with(state, attention, mappings, valid, branch)?;
         self.attention = pending;
         Ok(result.detach())
+    }
+}
+
+impl<'a, B: Backend, P: CompressedAttentionProjection<B>, F: MhcResidualBranch<B>> MhcResidualSession<'a, B, P, F> {
+    pub fn forward(&mut self, state: Tensor<B, 4>, valid: Option<Tensor<B, 2, Bool>>) -> Result<Tensor<B, 4>, F::Error> {
+        self.try_forward_with(state, valid, MhcResidualBranch::forward_branch)
     }
 }
 
@@ -268,27 +292,33 @@ impl<B: Backend, P: CompressedAttentionProjection<B>, F: MhcResidualBranchShape<
     }
 }
 
-impl<B: Backend, P: CompressedAttentionProjection<B>, F: MhcResidualBranch<B>> MhcResidualStack<B, P, F> {
-    pub fn forward(&self, input: Tensor<B, 3>, valid: Option<Tensor<B, 2, Bool>>) -> Result<Tensor<B, 3>, F::Error> {
+impl<B: Backend, P: CompressedAttentionProjection<B>, F: MhcResidualBranchShape<B>> MhcResidualStack<B, P, F> {
+    /// Layer index and the original branch are supplied without inferring process groups.
+    pub fn try_forward_with<R, G>(&self, input: Tensor<B, 3>, valid: Option<Tensor<B, 2, Bool>>, mut branch: G)
+        -> Result<Tensor<B, 3>, R>
+    where G: FnMut(usize, &F, Tensor<B, 3>) -> Result<Tensor<B, 3>, R> {
         let valid = visible(&input, valid);
         let [batch, tokens, _] = input.dims();
         let storage = input.dtype();
         let input = input * valid.clone().cast::<FloatDType>(storage.into()).reshape([batch, tokens, 1]);
         let mut state = self.layers[0].attention_connection.expand(input);
-        for layer in &self.layers { state = layer.forward(state, Some(valid.clone()))?; }
+        for (index, layer) in self.layers.iter().enumerate() {
+            state = layer.try_forward_with(state, Some(valid.clone()), |feed, input| branch(index, feed, input))?;
+        }
         Ok(normalized(self.layers.last().unwrap().ffn_connection.reduce(state), &self.final_norm, self.epsilon))
     }
 
-    pub fn forward_with_aux(&self, input: Tensor<B, 3>, valid: Option<Tensor<B, 2, Bool>>, indexer_warmup: bool)
-        -> Result<CompressedAttentionOutput<B>, F::Error> {
+    pub fn try_forward_with_aux<R, G>(&self, input: Tensor<B, 3>, valid: Option<Tensor<B, 2, Bool>>, indexer_warmup: bool, mut branch: G)
+        -> Result<CompressedAttentionOutput<B>, R>
+    where G: FnMut(usize, &F, Tensor<B, 3>) -> Result<Tensor<B, 3>, R> {
         let valid = visible(&input, valid);
         let [batch, tokens, _] = input.dims();
         let storage = input.dtype();
         let input = input * valid.clone().cast::<FloatDType>(storage.into()).reshape([batch, tokens, 1]);
         let mut state = self.layers[0].attention_connection.expand(input);
         let mut losses = Vec::with_capacity(self.layers.len());
-        for layer in &self.layers {
-            let result = layer.forward_with_aux(state, Some(valid.clone()), indexer_warmup)?;
+        for (index, layer) in self.layers.iter().enumerate() {
+            let result = layer.try_forward_with_aux(state, Some(valid.clone()), indexer_warmup, |feed, input| branch(index, feed, input))?;
             state = result.state;
             losses.push(result.indexer_loss);
         }
@@ -301,13 +331,23 @@ impl<B: Backend, P: CompressedAttentionProjection<B>, F: MhcResidualBranch<B>> M
     }
 }
 
+impl<B: Backend, P: CompressedAttentionProjection<B>, F: MhcResidualBranch<B>> MhcResidualStack<B, P, F> {
+    pub fn forward(&self, input: Tensor<B, 3>, valid: Option<Tensor<B, 2, Bool>>) -> Result<Tensor<B, 3>, F::Error> {
+        self.try_forward_with(input, valid, |_, feed, input| feed.forward_branch(input))
+    }
+    pub fn forward_with_aux(&self, input: Tensor<B, 3>, valid: Option<Tensor<B, 2, Bool>>, indexer_warmup: bool)
+        -> Result<CompressedAttentionOutput<B>, F::Error> {
+        self.try_forward_with_aux(input, valid, indexer_warmup, |_, feed, input| feed.forward_branch(input))
+    }
+}
+
 #[derive(Debug)]
 pub struct MhcResidualStackSession<'a, B: Backend, P: Module<B>, F: Module<B>> {
     stack: &'a MhcResidualStack<B, P, F>,
     layers: Vec<MhcResidualSession<'a, B, P, F>>,
 }
 
-impl<'a, B: Backend, P: CompressedAttentionProjection<B>, F: MhcResidualBranch<B>> MhcResidualStackSession<'a, B, P, F> {
+impl<'a, B: Backend, P: CompressedAttentionProjection<B>, F: MhcResidualBranchShape<B>> MhcResidualStackSession<'a, B, P, F> {
     pub fn position(&self) -> usize {
         let position = self.layers[0].position();
         assert!(self.layers.iter().all(|layer| layer.position() == position), "mHC residual cache positions differ");
@@ -322,16 +362,26 @@ impl<'a, B: Backend, P: CompressedAttentionProjection<B>, F: MhcResidualBranch<B
         self.layers = snapshot.layers;
     }
 
-    pub fn forward(&mut self, input: Tensor<B, 3>, valid: Option<Tensor<B, 2, Bool>>) -> Result<Tensor<B, 3>, F::Error> {
+    pub fn try_forward_with<R, G>(&mut self, input: Tensor<B, 3>, valid: Option<Tensor<B, 2, Bool>>, mut branch: G)
+        -> Result<Tensor<B, 3>, R>
+    where G: FnMut(usize, &F, Tensor<B, 3>) -> Result<Tensor<B, 3>, R> {
         let valid = visible(&input, valid);
         let [batch, tokens, _] = input.dims();
         let storage = input.dtype();
         let input = input * valid.clone().cast::<FloatDType>(storage.into()).reshape([batch, tokens, 1]);
         let mut state = self.stack.layers[0].attention_connection.expand(input);
         let mut pending: Vec<_> = self.layers.iter().map(MhcResidualSession::fork).collect();
-        for layer in &mut pending { state = layer.forward(state, Some(valid.clone()))?; }
+        for (index, layer) in pending.iter_mut().enumerate() {
+            state = layer.try_forward_with(state, Some(valid.clone()), |feed, input| branch(index, feed, input))?;
+        }
         let output = normalized(self.stack.layers.last().unwrap().ffn_connection.reduce(state), &self.stack.final_norm, self.stack.epsilon);
         self.layers = pending;
         Ok(output.detach())
+    }
+}
+
+impl<'a, B: Backend, P: CompressedAttentionProjection<B>, F: MhcResidualBranch<B>> MhcResidualStackSession<'a, B, P, F> {
+    pub fn forward(&mut self, input: Tensor<B, 3>, valid: Option<Tensor<B, 2, Bool>>) -> Result<Tensor<B, 3>, F::Error> {
+        self.try_forward_with(input, valid, |_, feed, input| feed.forward_branch(input))
     }
 }

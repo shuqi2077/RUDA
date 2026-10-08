@@ -10,6 +10,7 @@ mod compressed_adapter_record;
 mod mhc_residual;
 mod mhc_residual_packed;
 mod mhc_residual_model;
+mod mhc_residual_context;
 mod heads;
 mod adapted_head;
 mod embeddings;
@@ -39,6 +40,10 @@ mod expert_adapter_record;
 #[cfg(feature="tensor-parallel")]
 mod expert_parallel;
 #[cfg(feature="tensor-parallel")]
+mod mhc_expert_parallel;
+#[cfg(feature="tensor-parallel")]
+mod mhc_expert_partition;
+#[cfg(feature="tensor-parallel")]
 mod expert_parallel_adapters;
 #[cfg(feature="tensor-parallel")]
 mod awq_expert_parallel;
@@ -62,6 +67,7 @@ pub use compressed_training::*;
 pub use compressed_adapters::*;
 pub use compressed_adapter_record::*;
 pub use mhc_residual::*;
+pub use mhc_residual_packed::PackedMhcResidualBlockOutput;
 pub use mhc_residual_model::*;
 pub use heads::*;
 pub use adapted_head::*;
@@ -86,6 +92,10 @@ pub use expert_lora::*;
 pub use expert_adapter_record::*;
 #[cfg(feature="tensor-parallel")]
 pub use expert_parallel::*;
+#[cfg(feature="tensor-parallel")]
+pub use mhc_expert_parallel::*;
+#[cfg(feature="tensor-parallel")]
+pub use mhc_expert_partition::*;
 #[cfg(feature="tensor-parallel")]
 pub use expert_parallel_adapters::*;
 #[cfg(feature="tensor-parallel")]
