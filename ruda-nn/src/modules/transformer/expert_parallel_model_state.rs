@@ -33,11 +33,14 @@ enum StoredValue<B:Backend> {
 }
 impl<B:Backend> StoredValue<B> {
     fn into_data(self) -> TensorData {
-        read_sync(async {match self {
+        read_sync(self.into_data_async()).expect("native expert model state readback failed")
+    }
+    async fn into_data_async(self) -> Result<TensorData,RecorderError> {
+        (match self {
             Self::Float(value)=>B::float_into_data(value).await,
             Self::Integer(value)=>B::int_into_data(value).await,
             Self::Boolean(value)=>B::bool_into_data(value).await,
-        }}).expect("native expert model state readback failed")
+        }).map_err(|error|invalid(&format!("native parameter readback failed: {error:?}")))
     }
     fn from_data(kind:ExpertModelParameterKind,data:TensorData,device:&B::Device) -> Self {match kind {
         ExpertModelParameterKind::Float=>Self::Float(B::float_from_data(data,device)),
@@ -90,6 +93,32 @@ pub struct ExpertParallelModelStateRecord<B:Backend> {
     version:u32,contract_id:String,layers:usize,ownership:Vec<ExpertAdapterOwnershipEntry>,
     bindings:Vec<ExpertModelParameterBinding>,values:Vec<StoredValue<B>>,
 }
+/// Backend-independent exact native payload archive produced by asynchronous checkpoint readback.
+/// Carries actual rank-local parameters only; no gathered global weights or decoded packed bases.
+#[derive(Clone,Serialize,Deserialize)]
+#[serde(crate="ruda_model::serde")]
+pub struct ExpertParallelModelSnapshot {
+    version:u32,contract_id:String,layers:usize,ownership:Vec<ExpertAdapterOwnershipEntry>,
+    bindings:Vec<ExpertModelParameterBinding>,values:Vec<(ExpertModelParameterKind,TensorData)>,
+}
+impl<B:Backend> Record<B> for ExpertParallelModelSnapshot {
+    type Item<S:PrecisionSettings>=Self;
+    fn into_item<S:PrecisionSettings>(self) -> Self {self}
+    fn from_item<S:PrecisionSettings>(item:Self,_device:&B::Device) -> Self {item}
+}
+impl ExpertParallelModelSnapshot {
+    /// Actual saved complete expert-world intervals and rank for each owned layer.
+    pub fn ownership(&self) -> &[ExpertAdapterOwnershipEntry] {&self.ownership}
+    /// Actual original native paths, source IDs, storage and flags, without uploading any payloads.
+    pub fn bindings(&self) -> &[ExpertModelParameterBinding] {&self.bindings}
+    /// Actual per-alias payload count; original parameter save/load mappers remain independent.
+    pub fn parameter_occurrences(&self) -> usize {self.bindings.len()}
+    /// Upload original native payload storage on an explicitly selected backend/device for checked restoration.
+    pub fn into_record<B:Backend>(self,device:&B::Device) -> ExpertParallelModelStateRecord<B> {
+        ExpertParallelModelStateRecord {version:self.version,contract_id:self.contract_id,layers:self.layers,ownership:self.ownership,bindings:self.bindings,
+            values:self.values.into_iter().map(|(kind,data)|StoredValue::from_data(kind,data,device)).collect()}
+    }
+}
 impl<B:Backend> Record<B> for ExpertParallelModelStateRecord<B> {
     type Item<S:PrecisionSettings>=(u32,String,usize,Vec<ExpertAdapterOwnershipEntry>,Vec<ExpertModelParameterBinding>,Vec<(ExpertModelParameterKind,TensorData)>);
     fn into_item<S:PrecisionSettings>(self) -> Self::Item<S> {
@@ -103,6 +132,7 @@ impl<B:Backend> Record<B> for ExpertParallelModelStateRecord<B> {
 }
 impl<B:Backend> ExpertParallelModelStateRecord<B> {
     /// Snapshot only actual resident owned/non-expert parameters, applying each original parameter's save mapper.
+    /// Capture and serialize at one common completed boundary, without concurrent parameter updates.
     /// Does not gather global expert cubes, decode quantized bases or capture activation/collective history.
     pub fn capture<P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>>(model:&ExpertParallelTransformerModel<B,P,E>,contract_id:&str) -> Result<Self,RecorderError> {
         if contract_id.is_empty() {return Err(invalid("exact prepared architecture/operator contract ID is required"));}
@@ -115,6 +145,14 @@ impl<B:Backend> ExpertParallelModelStateRecord<B> {
     pub fn bindings(&self) -> &[ExpertModelParameterBinding] {&self.bindings}
     /// Actual stored parameter occurrences, retaining separate per-alias save/load mapper payloads.
     pub fn parameter_occurrences(&self) -> usize {self.bindings.len()}
+    /// Await actual native payload reads without a blocking-future requirement, retaining every original stored dtype.
+    /// The resulting archive can be the caller-selected model state of ModelStateTrainingRecord.
+    pub async fn into_snapshot(self) -> Result<ExpertParallelModelSnapshot,RecorderError> {
+        if self.bindings.len()!=self.values.len() {return Err(invalid("native payload count differs from parameter bindings"));}
+        let mut values=Vec::with_capacity(self.values.len());
+        for (binding,value) in self.bindings.iter().zip(self.values) {values.push((binding.kind,value.into_data_async().await?));}
+        Ok(ExpertParallelModelSnapshot {version:self.version,contract_id:self.contract_id,layers:self.layers,ownership:self.ownership,bindings:self.bindings,values})
+    }
     /// Validate original complete topology and actual prepared parameter/alias contracts before replacing any values.
     /// Fresh prepared IDs may differ; saved IDs become authoritative only when restoration succeeds.
     pub fn validate_for<P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>>(&self,model:&ExpertParallelTransformerModel<B,P,E>,contract_id:&str) -> Result<(),RecorderError> {
