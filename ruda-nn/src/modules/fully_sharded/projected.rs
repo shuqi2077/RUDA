@@ -20,6 +20,29 @@ pub trait GatherTransformerProjection<AB:Backend,B:Backend>:FullyShardedModule<A
     fn gather_projection<C:IntegerTensorCollective<B>>(&self,communicator:C) -> Result<Self::Gathered,C::Error>;
 }
 
+macro_rules! shard_original_projection {
+    ($source:ident,$target:ident,$method:ident) => {
+        impl<B:Backend> ShardTransformerProjection<B> for crate::$source<B> {
+            type Sharded=$target<B>;
+            fn shard(self,context:&mut ShardingContext<B>) -> Self::Sharded {context.$method(self)}
+        }
+        impl<B:Backend> GatherTransformerProjection<B,B> for $target<B> {
+            type Gathered=crate::$source<B>;
+            fn gather_projection<C:IntegerTensorCollective<B>>(&self,communicator:C) -> Result<Self::Gathered,C::Error> {self.gather_inference(communicator)}
+        }
+        impl<B:Backend,S:CheckpointStrategy> GatherTransformerProjection<Autodiff<B,S>,B> for $target<Autodiff<B,S>> {
+            type Gathered=crate::$source<Autodiff<B,S>>;
+            fn gather_projection<C:IntegerTensorCollective<B>>(&self,communicator:C) -> Result<Self::Gathered,C::Error> {self.gather(communicator)}
+        }
+    };
+}
+shard_original_projection!(Linear,FullyShardedLinear,linear);
+shard_original_projection!(LoRALinear,FullyShardedLoRALinear,lora);
+shard_original_projection!(FrozenAwqLinear,FullyShardedAwqLinear,awq);
+shard_original_projection!(AwqLoRALinear,FullyShardedAwqLoRALinear,awq_lora);
+shard_original_projection!(FrozenNf4Linear,FullyShardedNf4Linear,nf4);
+shard_original_projection!(Nf4LoRALinear,FullyShardedNf4LoRALinear,nf4_lora);
+
 impl<B:Backend> ShardTransformerProjection<B> for AwqTransformerProjection<B> {
     type Sharded=FullyShardedAwqProjection<B>;
     fn shard(self,context:&mut ShardingContext<B>) -> Self::Sharded {

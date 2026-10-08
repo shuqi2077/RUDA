@@ -26,6 +26,20 @@ impl<B:FrozenAwqOps> TransformerProjection<B> for AwqTransformerProjection<B> {
     type Error=B::AwqError;
     fn forward<const D:usize>(&self,input:Tensor<B,D>) -> Result<Tensor<B,D>,Self::Error> {self.forward(input)}
 }
+impl<B:Backend> TransformerProjectionShape<B> for FrozenAwqLinear<B> {
+    fn dimensions(&self) -> [usize;2] {self.dimensions()}
+}
+impl<B:FrozenAwqOps> TransformerProjection<B> for FrozenAwqLinear<B> {
+    type Error=B::AwqError;
+    fn forward<const D:usize>(&self,input:Tensor<B,D>) -> Result<Tensor<B,D>,Self::Error> {self.forward(input)}
+}
+impl<B:Backend> TransformerProjectionShape<B> for AwqLoRALinear<B> {
+    fn dimensions(&self) -> [usize;2] {self.base.dimensions()}
+}
+impl<B:FrozenAwqOps> TransformerProjection<B> for AwqLoRALinear<B> {
+    type Error=B::AwqError;
+    fn forward<const D:usize>(&self,input:Tensor<B,D>) -> Result<Tensor<B,D>,Self::Error> {self.forward(input)}
+}
 impl<B:Backend> TransformerProjectionShape<B> for Linear<B> {
     fn dimensions(&self) -> [usize;2] {self.weight.val().dims()}
 }
