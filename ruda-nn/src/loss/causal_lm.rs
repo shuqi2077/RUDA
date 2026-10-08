@@ -1,7 +1,7 @@
 use ruda_model::{
     config::Config,
     module::Module,
-    tensor::{DType, Int, IntDType, Bool, Tensor, activation::log_softmax, backend::Backend},
+    tensor::{DType, Int, IntDType, Bool, Tensor, activation::{log_softmax, log_softmax_native}, backend::Backend},
 };
 use crate::attention::PackedSequenceLayout;
 
@@ -134,6 +134,32 @@ impl CausalCrossEntropyConfig {
         &self,hidden:Tensor<B,2>,labels:Tensor<B,1,Int>,layout:&PackedSequenceLayout,
         project:impl Fn(Tensor<B,2>)->Result<Tensor<B,2>,E>,label_smoothing:f64,
     ) -> Result<CausalLoss<B>,E> {
+        self.try_forward_packed_hidden_impl(hidden, labels, layout, project, label_smoothing, false)
+    }
+
+    /// Explicit native log-softmax loss with the actual packed document boundaries.
+    pub fn forward_packed_hidden_native_with_smoothing<B: Backend>(
+        &self, hidden: Tensor<B, 2>, labels: Tensor<B, 1, Int>, layout: &PackedSequenceLayout,
+        project: impl Fn(Tensor<B, 2>) -> Tensor<B, 2>, label_smoothing: f64,
+    ) -> CausalLoss<B> {
+        match self.try_forward_packed_hidden_native_with_smoothing(hidden, labels, layout,
+            |rows| Ok::<_, core::convert::Infallible>(project(rows)), label_smoothing) {
+            Ok(loss) => loss, Err(never) => match never {},
+        }
+    }
+
+    /// Native packed normalization with fallible projection; no failed chunk is skipped.
+    pub fn try_forward_packed_hidden_native_with_smoothing<B: Backend, E>(
+        &self, hidden: Tensor<B, 2>, labels: Tensor<B, 1, Int>, layout: &PackedSequenceLayout,
+        project: impl Fn(Tensor<B, 2>) -> Result<Tensor<B, 2>, E>, label_smoothing: f64,
+    ) -> Result<CausalLoss<B>, E> {
+        self.try_forward_packed_hidden_impl(hidden, labels, layout, project, label_smoothing, true)
+    }
+
+    fn try_forward_packed_hidden_impl<B: Backend, E>(
+        &self, hidden: Tensor<B, 2>, labels: Tensor<B, 1, Int>, layout: &PackedSequenceLayout,
+        project: impl Fn(Tensor<B, 2>) -> Result<Tensor<B, 2>, E>, label_smoothing: f64, native: bool,
+    ) -> Result<CausalLoss<B>, E> {
         let [tokens, width] = hidden.dims();
         assert_eq!(tokens, layout.tokens(), "packed hidden states differ from document metadata");
         assert_eq!(labels.dims(), [tokens], "packed hidden and label lengths differ");
@@ -141,7 +167,7 @@ impl CausalCrossEntropyConfig {
         let labels = if self.shift {
             labels.clone().mask_fill(layout.document_starts::<B>(&labels.device()), self.ignore_index)
         } else { labels };
-        self.try_forward_hidden_with_smoothing(hidden.reshape([1, tokens, width]), labels.reshape([1, tokens]), project, label_smoothing)
+        self.try_forward_hidden_impl(hidden.reshape([1, tokens, width]), labels.reshape([1, tokens]), project, label_smoothing, native)
     }
 
     pub fn forward_logits<B: Backend>(
@@ -150,6 +176,30 @@ impl CausalCrossEntropyConfig {
         labels: Tensor<B, 2, Int>,
     ) -> CausalLoss<B> {
         self.forward_hidden(logits, labels, |rows| rows)
+    }
+
+    /// Explicit native normalized full-vocabulary objective on actual `[batch, tokens, vocabulary]` logits.
+    pub fn forward_logits_native<B: Backend>(&self, logits: Tensor<B, 3>, labels: Tensor<B, 2, Int>) -> CausalLoss<B> {
+        self.forward_hidden_native(logits, labels, |rows| rows)
+    }
+
+    /// Train a caller's unchanged decoder with native log-softmax in each vocabulary chunk.
+    pub fn forward_model_native<B: Backend, M: CausalLanguageModel<B>>(
+        &self, model: &M, tokens: Tensor<B, 2, Int>, labels: Tensor<B, 2, Int>, label_smoothing: f64,
+    ) -> CausalLoss<B> {
+        assert_eq!(tokens.dims(), labels.dims(), "tokens and labels must have matching shapes");
+        self.forward_hidden_native_with_smoothing(model.forward_hidden(tokens), labels, |rows| model.project(rows), label_smoothing)
+    }
+
+    /// Native packed objective; the model still owns and honors document-local attention.
+    pub fn forward_packed_model_native<B: Backend, M: PackedCausalLanguageModel<B>>(
+        &self, model: &M, tokens: Tensor<B, 1, Int>, labels: Tensor<B, 1, Int>,
+        layout: &PackedSequenceLayout, label_smoothing: f64,
+    ) -> CausalLoss<B> {
+        assert_eq!(tokens.dims(), labels.dims(), "packed tokens and labels differ");
+        assert_eq!(tokens.dims(), [layout.tokens()], "packed token input differs from document metadata");
+        self.forward_packed_hidden_native_with_smoothing(model.forward_packed_hidden(tokens, layout), labels, layout,
+            |rows| model.project(rows), label_smoothing)
     }
 
     /// Train any decoder implementing the hidden-state/projection contract.
@@ -223,6 +273,40 @@ impl CausalCrossEntropyConfig {
         &self,hidden:Tensor<B,3>,labels:Tensor<B,2,Int>,
         project:impl Fn(Tensor<B,2>)->Result<Tensor<B,2>,E>,label_smoothing:f64,
     ) -> Result<CausalLoss<B>,E> {
+        self.try_forward_hidden_impl(hidden, labels, project, label_smoothing, false)
+    }
+
+    /// Full-vocabulary native log-softmax, retaining the existing chunking, shift and ignore semantics.
+    pub fn forward_hidden_native<B: Backend>(
+        &self, hidden: Tensor<B, 3>, labels: Tensor<B, 2, Int>, project: impl Fn(Tensor<B, 2>) -> Tensor<B, 2>,
+    ) -> CausalLoss<B> {
+        self.forward_hidden_native_with_smoothing(hidden, labels, project, 0.0)
+    }
+
+    /// Explicit native first-order normalization with full-vocabulary label smoothing.
+    /// Projection chunks and supervised-token normalization remain unchanged.
+    pub fn forward_hidden_native_with_smoothing<B: Backend>(
+        &self, hidden: Tensor<B, 3>, labels: Tensor<B, 2, Int>,
+        project: impl Fn(Tensor<B, 2>) -> Tensor<B, 2>, label_smoothing: f64,
+    ) -> CausalLoss<B> {
+        match self.try_forward_hidden_native_with_smoothing(hidden, labels,
+            |rows| Ok::<_, core::convert::Infallible>(project(rows)), label_smoothing) {
+            Ok(loss) => loss, Err(never) => match never {},
+        }
+    }
+
+    /// Native normalization with fallible dense/LoRA/quantized projection, propagating the actual error.
+    pub fn try_forward_hidden_native_with_smoothing<B: Backend, E>(
+        &self, hidden: Tensor<B, 3>, labels: Tensor<B, 2, Int>,
+        project: impl Fn(Tensor<B, 2>) -> Result<Tensor<B, 2>, E>, label_smoothing: f64,
+    ) -> Result<CausalLoss<B>, E> {
+        self.try_forward_hidden_impl(hidden, labels, project, label_smoothing, true)
+    }
+
+    fn try_forward_hidden_impl<B: Backend, E>(
+        &self, hidden: Tensor<B, 3>, labels: Tensor<B, 2, Int>,
+        project: impl Fn(Tensor<B, 2>) -> Result<Tensor<B, 2>, E>, label_smoothing: f64, native: bool,
+    ) -> Result<CausalLoss<B>, E> {
         assert!(label_smoothing.is_finite() && (0.0..=1.0).contains(&label_smoothing), "label smoothing must be in [0,1]");
         assert!(
             self.token_chunk_size > 0,
@@ -278,7 +362,8 @@ impl CausalCrossEntropyConfig {
                 logits.dims()[1] > 0,
                 "projection vocabulary must be nonempty"
             );
-            let log_probabilities = log_softmax(logits.cast(DType::F32), 1);
+            let logits = logits.cast(DType::F32);
+            let log_probabilities = if native { log_softmax_native(logits, 1) } else { log_softmax(logits, 1) };
             let selected = log_probabilities.clone()
                 .gather(
                     1,

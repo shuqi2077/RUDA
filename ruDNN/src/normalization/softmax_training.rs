@@ -96,7 +96,7 @@ fn forward<F: Float>(input: &Array<F>, output: &mut Array<f32>, width: u32,
     column = lane;
     while column < width {
         let shifted = f32::cast_from(input[base + column]) - maximum;
-        output[base + column] = if logarithmic { shifted - f32::log(sum) } else { f32::exp(shifted) / sum };
+        output[base + column] = if logarithmic { shifted - f32::ln(sum) } else { f32::exp(shifted) / sum };
         if width - column <= step { break; }
         column += step;
     }
