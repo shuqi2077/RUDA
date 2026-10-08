@@ -261,6 +261,11 @@ impl<B:Backend,P:Module<B>> AwqTransformerStack<B,P> {
     pub fn new_kv_cache(&self,initial_capacity:usize) -> TransformerKvCache<B> {TransformerKvCache::new(self.blocks.len(),initial_capacity)}
 }
 impl<B:Backend,P:TransformerProjection<B>> AwqTransformerStack<B,P> {
+    /// Original block order with caller-owned per-layer policy, preserving arbitrary hidden axes.
+    pub fn forward_with<const D:usize,F>(&self,mut input:Tensor<B,D>,mut layer:F) -> Result<Tensor<B,D>,P::Error>
+        where F:FnMut(usize,&AwqTransformerBlock<B,P>,Tensor<B,D>)->Result<Tensor<B,D>,P::Error> {
+        for (index,block) in self.blocks.iter().enumerate() {input=layer(index,block,input)?;}Ok(input)
+    }
     /// Whole native stack with explicit per-layer projected positions.
     pub fn forward_with_positions<F>(&self,mut input:Tensor<B,3>,masks:DenseAttentionMask<B>,options:DenseAttentionOptions,mut positions:F)
         -> Result<Tensor<B,3>,P::Error> where F:FnMut(usize,Tensor<B,4>,Tensor<B,4>)->(Tensor<B,4>,Tensor<B,4>) {
