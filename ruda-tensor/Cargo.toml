@@ -186,7 +186,7 @@ optional = true
 [dependencies.rudnn]
 package = "ruDNN"
 path = "../ruDNN"
-version = "0.1.49"
+version = "0.1.50"
 default-features = false
 features = ["attention-fallback"]
 
