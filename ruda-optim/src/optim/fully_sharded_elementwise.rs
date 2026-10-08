@@ -12,6 +12,8 @@ mod grouped;
 pub use grouped::*;
 mod migration;
 pub use migration::*;
+mod recovery;
+pub use recovery::*;
 
 /// Actual native transport, local-parameter/state geometry or source-optimizer argument failure.
 #[derive(Debug)]
@@ -105,10 +107,16 @@ impl<O,M,B,C> FullyShardedElementwiseOptimizer<O,M,B,C>
         let optimizer=self.optimizer.clone();let clipping=self.clipping.clone();
         self.step_configured(module,gradients,move |_|(optimizer.clone(),clipping.clone(),lr))
     }
-    fn step_configured<F>(&mut self,module:M,mut gradients:GradientsParams,mut configuration:F) -> Result<M,FullyShardedElementwiseError<C::Error>>
+    fn step_configured<F>(&mut self,module:M,gradients:GradientsParams,configuration:F) -> Result<M,FullyShardedElementwiseError<C::Error>>
         where F:FnMut(ParamId)->(O,Option<GradientClipping>,LearningRate) {
-        inspect::<B,M>(&module,&self.placement,true).map_err(FullyShardedElementwiseError::Arguments)?;
-        gradients.validate_for::<B,M>(&module).map_err(|error|FullyShardedElementwiseError::Arguments(error.into()))?;
+        let (states,mut mapper)=self.prepare_configured(&module,gradients,configuration)?;
+        let module=module.map(&mut mapper);self.states=states;Ok(module)
+    }
+    fn prepare_configured<F>(&self,module:&M,mut gradients:GradientsParams,mut configuration:F)
+        -> Result<(HashMap<ParamId,O::State<1>>,Updates<B>),FullyShardedElementwiseError<C::Error>>
+        where F:FnMut(ParamId)->(O,Option<GradientClipping>,LearningRate) {
+        inspect::<B,M>(module,&self.placement,true).map_err(FullyShardedElementwiseError::Arguments)?;
+        gradients.validate_for::<B,M>(module).map_err(|error|FullyShardedElementwiseError::Arguments(error.into()))?;
         let mut leaves=Leaves::<B> {values:BTreeMap::new()};module.visit(&mut leaves);
         let mut states=self.states.clone();let mut mapper=Updates::<B> {values:BTreeMap::new(),canonical:TensorContainer::new()};
         for binding in &self.bindings {
@@ -141,7 +149,7 @@ impl<O,M,B,C> FullyShardedElementwiseOptimizer<O,M,B,C>
             if let Some(state)=state {states.insert(id,state);}
             mapper.values.insert(id,value);
         }
-        let module=module.map(&mut mapper);self.states=states;Ok(module)
+        Ok((states,mapper))
     }
     /// Restore actual local native histories onto the unchanged caller-prepared original numerical configuration.
     pub fn try_load_record(mut self,record:FullyShardedElementwiseRecord<B,O>) -> Result<Self,FullyShardedElementwiseError<C::Error>> {

@@ -80,6 +80,21 @@ impl<O,M,B,C> FullyShardedGroupedElementwiseOptimizer<O,M,B,C>
             let group=&groups[index];(group.optimizer.clone(),group.clipping.clone(),rates[index])
         })
     }
+    /// Same actual group options/rates and original native update expression,
+    /// returning rank-local model/gradient inputs if preparation returns an error.
+    /// No partial group history commit or automatic transport/optimizer retry.
+    pub fn try_step_recoverable_with_lrs(&mut self,rates:&[LearningRate],module:M,gradients:GradientsParams)
+        -> Result<M,FullyShardedElementwiseStepFailure<M,C::Error>> {
+        if rates.len()!=self.groups.len() || rates.iter().any(|rate|!rate.is_finite() || *rate<0.0) {
+            return Err(FullyShardedElementwiseStepFailure {module,gradients,
+                error:FullyShardedElementwiseError::Configuration("one finite nonnegative learning rate per actual native group required")});
+        }
+        let groups=&self.groups;let routes=&self.routes;
+        self.inner.step_recoverable_configured(module,gradients,|id| {
+            let index=*routes.get(&id).expect("validated canonical original optimizer route");
+            let group=&groups[index];(group.optimizer.clone(),group.clipping.clone(),rates[index])
+        })
+    }
     fn route_record(&self) -> Vec<(u64,usize)> {self.routes.iter().map(|(id,group)|(id.val(),*group)).collect()}
     /// Restore original local histories only when exact saved group membership and ownership still match.
     /// Actual numerical group configurations remain the caller-prepared original configurations.
