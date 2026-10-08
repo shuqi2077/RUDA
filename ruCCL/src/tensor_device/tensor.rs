@@ -90,13 +90,14 @@ impl<B: Backend> RankCommunicator<TensorDevice<B>> {
         }
     }
 
-    /// Gather U8/I32/I64 tensors in rank order without floating-point conversion.
+    /// Gather U8/U32/I32/I64 tensors in rank order without floating-point conversion.
     pub fn all_gather_int(
         &self,
         value: B::IntTensorPrimitive,
     ) -> Result<B::IntTensorPrimitive, TensorDeviceError> {
         match value.dtype() {
             DType::U8 => self.sharded_int::<u8>(value, None),
+            DType::U32 => self.sharded_int::<u32>(value, None),
             DType::I32 => self.sharded_int::<i32>(value, None),
             DType::I64 => self.sharded_int::<i64>(value, None),
             dtype => Err(TensorDeviceError::UnsupportedDType(dtype)),
@@ -169,7 +170,7 @@ impl<B: Backend> RankCommunicator<TensorDevice<B>> {
         Ok(B::int_reshape(output.int_tensor()?, plan.output))
     }
 
-    /// Broadcast an I32 or I64 tensor without converting integer storage to floating point.
+    /// Broadcast a U32, I32 or I64 tensor without converting integer storage to floating point.
     /// Shape, dtype and each rank's local device are retained; transfers are host-staged.
     pub fn broadcast_int(
         &self,
@@ -177,6 +178,7 @@ impl<B: Backend> RankCommunicator<TensorDevice<B>> {
         root: u32,
     ) -> Result<B::IntTensorPrimitive, TensorDeviceError> {
         match value.dtype() {
+            DType::U32 => self.integer_collective::<u32>(value, None, root),
             DType::I32 => self.integer_collective::<i32>(value, None, root),
             DType::I64 => self.integer_collective::<i64>(value, None, root),
             dtype => Err(TensorDeviceError::UnsupportedDType(dtype)),

@@ -45,6 +45,7 @@ impl<B:Backend> VariableTensorCollective<B> for RankCommunicator<TensorDevice<B>
         -> Result<VariableTensorExchange<B::IntTensorPrimitive>,Self::Error> {
         match value.dtype() {
             DType::U8=>self.exchange_int_rows::<u8>(value,send_counts),DType::I32=>self.exchange_int_rows::<i32>(value,send_counts),
+            DType::U32=>self.exchange_int_rows::<u32>(value,send_counts),
             DType::I64=>self.exchange_int_rows::<i64>(value,send_counts),dtype=>Err(TensorDeviceError::UnsupportedDType(dtype)),
         }
     }

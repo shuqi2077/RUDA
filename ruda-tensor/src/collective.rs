@@ -60,6 +60,6 @@ pub struct VariableTensorExchange<T> {
 pub trait VariableTensorCollective<B:Backend>:IntegerTensorCollective<B> {
     /// Exchange actual floating row blocks, retaining original floating storage.
     fn all_to_all_v_float(&self,value:FloatTensor<B>,send_counts:&[usize]) -> Result<VariableTensorExchange<FloatTensor<B>>,Self::Error>;
-    /// Exchange original U8/I32/I64 row blocks without a floating surrogate.
+    /// Exchange original U8/U32/I32/I64 row blocks without a floating surrogate.
     fn all_to_all_v_int(&self,value:IntTensor<B>,send_counts:&[usize]) -> Result<VariableTensorExchange<IntTensor<B>>,Self::Error>;
 }

@@ -11,7 +11,7 @@ impl<B:Backend,const D:usize> Tensor<B,D> {
     }
 }
 impl<B:Backend,const D:usize> Tensor<B,D,Int> {
-    /// Actual U8/I32/I64 source-rank row exchange without numerical widening or floating conversion.
+    /// Actual U8/U32/I32/I64 source-rank row exchange without numerical widening or floating conversion.
     pub fn all_to_all_v_int<C:VariableTensorCollective<B>>(self,communicator:C,send_counts:&[usize])
         -> Result<VariableTensorExchange<Self>,C::Error> {
         let result=communicator.all_to_all_v_int(self.into_primitive(),send_counts)?;

@@ -10,7 +10,7 @@ mod sealed {
 
 /// Storage types supported by the shared collective device adapter.
 ///
-/// The sealed implementations preserve F32/F16/BF16/U8/I32/I64 storage bits on the
+/// The sealed implementations preserve F32/F16/BF16/U8/U32/I32/I64 storage bits on the
 /// little-endian rank transport; they do not convert half values through F32.
 pub trait TensorElement: Element + sealed::Wire {
     const ELEMENT_TYPE: ElementType;
@@ -52,6 +52,7 @@ native_element!(f32, F32);
 native_element!(i32, I32);
 native_element!(i64, I64);
 native_element!(u8, U8);
+native_element!(u32, U32);
 half_element!(f16, F16);
 half_element!(bf16, BF16);
 
