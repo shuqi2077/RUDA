@@ -3,9 +3,9 @@ use ruda_model::{module::{Module,ModuleVisitor,Param,ParamId},tensor::{Tensor,In
 use ruda_autodiff::{Autodiff,checkpoint::strategy::CheckpointStrategy,collective::{CollectiveScope,ScopedTensorCollective,ScopedCollectiveError}};
 use crate::{Dropout,expert_parallel::{ExpertParallelMoeLayer,ExpertParallelMoeError,ExpertParallelSwiGluExperts,ExpertParallelGeometry,ExpertParallelReceived},attention::{DenseAttentionMask,DenseAttentionOptions,
     PackedSequenceLayout,PackedAttentionOptions,PackedDocumentAttentionMask},cache::{ProjectedKvCache,TransformerKvCache},
-    loss::CausalCrossEntropyConfig,fully_sharded::{FullyShardedLoss,complete_fully_sharded_loss}};
+    loss::CausalCrossEntropyConfig,pool::SequencePooling,fully_sharded::{FullyShardedLoss,complete_fully_sharded_loss}};
 use super::{ProjectedGroupedQueryAttention,ProjectedFeedForward,DenseTransformerNorm,NativeMoeTransformerLayer,NativeMoeTransformerError,
-    TransformerProjectionShape,TransformerProjection,TransformerEmbeddings,ProjectedTransformerHead,ProjectedTransformerInput};
+    TransformerProjectionShape,TransformerProjection,TransformerEmbeddings,ProjectedTransformerHead,ProjectedTransformerInput,SequenceHeadOutput};
 use super::{dense::try_residual_branch,native_attention::{attention_branch,packed_attention_branch,cached_attention_branch},
     projected_paired_model::{embed_projected,embed_packed_projected,check_block}};
 
@@ -114,7 +114,7 @@ impl<B:Backend,P:TransformerProjectionShape<B>> ExpertParallelTransformerModel<B
     }
 }
 macro_rules! expert_model_execution {
-    ($backend:ty,[$($generics:tt)*],$routed:ident,$feed:ident,$forward:ident,$packed:ident,$cached:ident,$hidden_with:ident,$packed_hidden_with:ident) => {
+    ($backend:ty,[$($generics:tt)*],$routed:ident,$feed:ident,$forward:ident,$packed:ident,$cached:ident,$hidden_with:ident,$packed_hidden_with:ident,$sequence:ident,$packed_sequence:ident) => {
         impl<$($generics)*,P:TransformerProjection<$backend>,E:ExpertParallelReceived<$backend>> ExpertParallelTransformerBlock<$backend,P,E> {
             fn $feed<C:VariableTensorCollective<B>,const D:usize>(&self,hidden:Tensor<$backend,D>,communicator:C)
                 -> Result<Tensor<$backend,D>,ExpertParallelTransformerError<C::Error,P::Error,E::Error>> {
@@ -208,6 +208,23 @@ macro_rules! expert_model_execution {
                 let hidden=self.$hidden_with(input,communicator,|index,layer,hidden,transport|layer.$forward(hidden,masks.clone(),options,transport,|query,key|positions(index,query,key)))?;
                 self.head.forward(hidden).map_err(|error|ExpertParallelTransformerError::Local(NativeMoeTransformerError::Projection(error)))
             }
+            /// Pool only actual visible tokens, retaining the original head, empty-row validity and I64 counts.
+            pub fn $sequence<C:VariableTensorCollective<B>,F>(&self,input:ProjectedTransformerInput<$backend>,visible:Tensor<$backend,2,Bool>,
+                pooling:SequencePooling,communicator:C,layer:F) -> Result<SequenceHeadOutput<$backend>,ExpertParallelTransformerError<C::Error,P::Error,E::Error>>
+                where F:FnMut(usize,&ExpertParallelTransformerLayer<$backend,P,E>,Tensor<$backend,3>,C)
+                    -> Result<Tensor<$backend,3>,ExpertParallelTransformerError<C::Error,P::Error,E::Error>> {
+                self.head.forward_sequence(self.$hidden_with(input,communicator,layer)?,visible,pooling)
+                    .map_err(|error|ExpertParallelTransformerError::Local(NativeMoeTransformerError::Projection(error)))
+            }
+            /// Pool each original packed document independently, without padding or cross-document targets.
+            pub fn $packed_sequence<C:VariableTensorCollective<B>,F>(&self,input:ProjectedTransformerInput<$backend,1>,layout:&PackedSequenceLayout,
+                visible:Option<Tensor<$backend,1,Bool>>,pooling:SequencePooling,communicator:C,layer:F)
+                -> Result<SequenceHeadOutput<$backend>,ExpertParallelTransformerError<C::Error,P::Error,E::Error>>
+                where F:FnMut(usize,&ExpertParallelTransformerLayer<$backend,P,E>,Tensor<$backend,2>,C)
+                    -> Result<Tensor<$backend,2>,ExpertParallelTransformerError<C::Error,P::Error,E::Error>> {
+                self.head.forward_packed_sequences(self.$packed_hidden_with(input,layout,communicator,layer)?,layout,visible,pooling)
+                    .map_err(|error|ExpertParallelTransformerError::Local(NativeMoeTransformerError::Projection(error)))
+            }
             /// Complete actual packed token logits with original independent-document masks and positions.
             pub fn $packed<C:VariableTensorCollective<B>,F>(&self,input:ProjectedTransformerInput<$backend,1>,layout:&PackedSequenceLayout,masks:Option<&[PackedDocumentAttentionMask<$backend>]>,
                 options:PackedAttentionOptions,communicator:C,mut positions:F) -> Result<Tensor<$backend,2>,ExpertParallelTransformerError<C::Error,P::Error,E::Error>>
@@ -218,8 +235,8 @@ macro_rules! expert_model_execution {
         }
     };
 }
-expert_model_execution!(B,[B:MoeDispatchOps+MoeReceivedOps],forward_inference,feed_forward_inference,forward_with_positions_inference,forward_packed_with_positions_inference,forward_cached_with_positions_inference,forward_hidden_with_inference,forward_packed_hidden_with_inference);
-expert_model_execution!(Autodiff<B,S>,[B:MoeDispatchOps+MoeReceivedOps,S:CheckpointStrategy],forward,feed_forward,forward_with_positions,forward_packed_with_positions,forward_cached_with_positions,forward_hidden_with,forward_packed_hidden_with);
+expert_model_execution!(B,[B:MoeDispatchOps+MoeReceivedOps],forward_inference,feed_forward_inference,forward_with_positions_inference,forward_packed_with_positions_inference,forward_cached_with_positions_inference,forward_hidden_with_inference,forward_packed_hidden_with_inference,forward_sequence_with_inference,forward_packed_sequences_with_inference);
+expert_model_execution!(Autodiff<B,S>,[B:MoeDispatchOps+MoeReceivedOps,S:CheckpointStrategy],forward,feed_forward,forward_with_positions,forward_packed_with_positions,forward_cached_with_positions,forward_hidden_with,forward_packed_hidden_with,forward_sequence_with,forward_packed_sequences_with);
 
 /// Reuse original exact global integer-count loss completion for expert-exchanged derivatives;
 /// local expert cubes are NOT data shards, and custom non-expert gradient groups remain explicit.
