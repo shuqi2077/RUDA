@@ -15,7 +15,7 @@ pub enum SampleTail {
 }
 
 /// Invalid sampler configuration, incompatible continuation, or missing data.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Record)]
 pub struct SamplerError(pub String);
 
 impl fmt::Display for SamplerError {

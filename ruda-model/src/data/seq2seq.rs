@@ -6,7 +6,7 @@ use serde::{Deserialize,Serialize};
 use std::{error::Error,fmt};
 
 /// Invalid actual paired input/label geometry or explicit layout configuration.
-#[derive(Clone,Debug,PartialEq,Eq)]
+#[derive(Clone,Debug,PartialEq,Eq,crate::record::Record)]
 pub struct Seq2SeqDataError(pub String);
 impl fmt::Display for Seq2SeqDataError {
     fn fmt(&self,formatter: &mut fmt::Formatter<'_>) -> fmt::Result { formatter.write_str(&self.0) }

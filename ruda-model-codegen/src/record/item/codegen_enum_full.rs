@@ -11,7 +11,7 @@ pub(crate) struct FullEnumRecordItemCodegen {
     vis: Visibility,
 }
 
-fn contains_self(ty: &Type, name: &Ident) -> bool {
+pub(super) fn contains_self(ty: &Type, name: &Ident) -> bool {
     match ty {
         Type::Array(ty) => contains_self(&ty.elem, name),
         Type::Slice(ty) => contains_self(&ty.elem, name),
@@ -116,14 +116,14 @@ impl RecordItemCodegen for FullEnumRecordItemCodegen {
         }
     }
 
-    fn gen_into_item(&self, _item_name: &Ident, paths: &DerivePaths) -> TokenStream {
+    fn gen_into_item(&self, item_name: &Ident, paths: &DerivePaths) -> TokenStream {
         let model = &paths.model;
         let mut arms = TokenStream::new();
         for variant in &self.variants {
             let name = &variant.ident;
             let (pattern, output) = map_enum_variant(variant,
                 |binding| quote!(#model::record::Record::<B>::into_item::<S>(#binding)));
-            arms.extend(quote!(Self::#name #pattern => Self::Item::#name #output,));
+            arms.extend(quote!(Self::#name #pattern => #item_name::#name #output,));
         }
         quote! {
             fn into_item<S: #model::record::PrecisionSettings>(self) -> Self::Item<S> {
@@ -134,12 +134,13 @@ impl RecordItemCodegen for FullEnumRecordItemCodegen {
 
     fn gen_from_item(&self, paths: &DerivePaths) -> TokenStream {
         let model = &paths.model;
+        let item_name = Ident::new(&format!("{}Item", self.name), self.name.span());
         let mut arms = TokenStream::new();
         for variant in &self.variants {
             let name = &variant.ident;
             let (pattern, output) = map_enum_variant(variant,
                 |binding| quote!(#model::record::Record::<B>::from_item::<S>(#binding, device)));
-            arms.extend(quote!(Self::Item::#name #pattern => Self::#name #output,));
+            arms.extend(quote!(#item_name::#name #pattern => Self::#name #output,));
         }
         quote! {
             fn from_item<S: #model::record::PrecisionSettings>(item: Self::Item<S>, device: &B::Device) -> Self {

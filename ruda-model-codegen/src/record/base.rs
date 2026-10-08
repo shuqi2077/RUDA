@@ -5,7 +5,9 @@ use super::{
 
 pub fn derive_impl(ast: &syn::DeriveInput, paths: &crate::DerivePaths) -> proc_macro2::TokenStream {
     match &ast.data {
-        syn::Data::Struct(_) => generate_record::<StructRecordItemCodegen>(ast, paths),
+        syn::Data::Struct(data) if matches!(&data.fields, syn::Fields::Named(fields) if !fields.named.is_empty()) =>
+            generate_record::<StructRecordItemCodegen>(ast, paths),
+        syn::Data::Struct(_) => super::item::codegen_struct_full::derive_full_struct(ast, paths),
         syn::Data::Enum(data) if !data.variants.is_empty() && data.variants.iter().all(|variant|
             matches!(&variant.fields, syn::Fields::Unnamed(fields) if fields.unnamed.len() == 1)) =>
             generate_record::<EnumRecordItemCodegen>(ast, paths),

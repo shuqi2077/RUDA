@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::{error::Error, fmt};
 
 /// Invalid actual input/label geometry or explicit batch configuration.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, crate::record::Record)]
 pub struct CausalDataError(pub String);
 
 impl fmt::Display for CausalDataError {

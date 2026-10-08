@@ -79,5 +79,6 @@ pub trait RudaModuleAdapter: Sized {
 }
 
 /// Default adapter that takes no action.
+#[derive(crate::record::Record)]
 pub struct DefaultAdapter;
 impl RudaModuleAdapter for DefaultAdapter {}
