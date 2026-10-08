@@ -57,6 +57,11 @@ impl<'de, A: RudaModuleAdapter> serde::Deserializer<'de> for Deserializer<A> {
     {
         match self.value {
             Some(NestedValue::Unit) => visitor.visit_unit(),
+            Some(NestedValue::I128(value)) => visitor.visit_i128(value),
+            Some(NestedValue::U128(value)) => visitor.visit_u128(value),
+            Some(NestedValue::MapEntries(entries)) => visitor.visit_map(EntryMapAccess::<A>::new(
+                entries, self.default_for_missing_fields,
+            )),
             Some(NestedValue::Bool(value)) => visitor.visit_bool(value),
             Some(NestedValue::String(value)) => visitor.visit_string(value),
             Some(NestedValue::F32(value)) => visitor.visit_f32(value),
@@ -158,6 +163,9 @@ impl<'de, A: RudaModuleAdapter> serde::Deserializer<'de> for Deserializer<A> {
         V: Visitor<'de>,
     {
         match self.value {
+            Some(NestedValue::MapEntries(entries)) => visitor.visit_map(EntryMapAccess::<A>::new(
+                entries, self.default_for_missing_fields,
+            )),
             Some(NestedValue::Map(map)) => visitor.visit_map(HashMapAccess::<A>::new(
                 map,
                 self.default_for_missing_fields,
@@ -207,6 +215,16 @@ impl<'de, A: RudaModuleAdapter> serde::Deserializer<'de> for Deserializer<A> {
         V: Visitor<'de>,
     {
         visitor.visit_i64(self.convert(NestedValue::as_i64, "Expected an integer in the i64 range")?)
+    }
+
+    fn deserialize_i128<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where V: Visitor<'de> {
+        visitor.visit_i128(self.convert(NestedValue::as_i128, "Expected an integer in the i128 range")?)
+    }
+
+    fn deserialize_u128<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where V: Visitor<'de> {
+        visitor.visit_u128(self.convert(NestedValue::as_u128, "Expected an integer in the u128 range")?)
     }
 
     fn deserialize_u8<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -715,6 +733,44 @@ where
     }
 }
 
+struct EntryMapAccess<A: RudaModuleAdapter> {
+    entries: std::vec::IntoIter<(NestedValue, NestedValue)>,
+    next_value: Option<NestedValue>,
+    default_for_missing_fields: bool,
+    adapter: core::marker::PhantomData<A>,
+}
+
+impl<A: RudaModuleAdapter> EntryMapAccess<A> {
+    fn new(entries: Vec<(NestedValue, NestedValue)>, default_for_missing_fields: bool) -> Self {
+        Self { entries: entries.into_iter(), next_value: None, default_for_missing_fields,
+            adapter: core::marker::PhantomData }
+    }
+}
+
+impl<'de, A: RudaModuleAdapter> MapAccess<'de> for EntryMapAccess<A> {
+    type Error = Error;
+
+    fn next_key_seed<T: DeserializeSeed<'de>>(&mut self, seed: T) -> Result<Option<T::Value>, Error> {
+        match self.entries.next() {
+            Some((key, value)) => {
+                self.next_value = Some(value);
+                seed.deserialize(Deserializer::<A>::new(key, self.default_for_missing_fields)).map(Some)
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn next_value_seed<T: DeserializeSeed<'de>>(&mut self, seed: T) -> Result<T::Value, Error> {
+        match self.next_value.take() {
+            Some(NestedValue::Default(origin)) => seed.deserialize(DefaultDeserializer::new(origin)),
+            Some(value) => seed.deserialize(Deserializer::<A>::new(value, self.default_for_missing_fields)),
+            None => Err(de::Error::custom("Map value has no key")),
+        }
+    }
+
+    fn size_hint(&self) -> Option<usize> { Some(self.entries.len()) }
+}
+
 struct ProbeEnumAccess<A: RudaModuleAdapter> {
     value: NestedValue,
     current_variant: &'static str,
@@ -852,6 +908,12 @@ impl DefaultDeserializer {
 
 impl<'de> serde::Deserializer<'de> for DefaultDeserializer {
     type Error = Error;
+
+    fn deserialize_i128<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where V: Visitor<'de> { visitor.visit_i128(0) }
+
+    fn deserialize_u128<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where V: Visitor<'de> { visitor.visit_u128(0) }
 
     fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where V: Visitor<'de> {
@@ -1026,7 +1088,7 @@ impl<'de> serde::Deserializer<'de> for DefaultDeserializer {
     }
 
     forward_to_deserialize_any! {
-        u128 bytes byte_buf newtype_struct
+        bytes byte_buf newtype_struct
         enum identifier ignored_any
     }
 }

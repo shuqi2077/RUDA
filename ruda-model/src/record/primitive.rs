@@ -236,6 +236,7 @@ macro_rules! primitive {
 // General Types
 primitive!(alloc::string::String);
 primitive!(bool);
+primitive!(char);
 
 // Float Types
 primitive!(f64);
@@ -246,6 +247,7 @@ primitive!(half::f16);
 
 // Unsigned Integer Types
 primitive!(usize);
+primitive!(u128);
 primitive!(u64);
 primitive!(u32);
 primitive!(u16);
@@ -253,6 +255,7 @@ primitive!(u8);
 
 // Signed Integer Types
 primitive!(isize);
+primitive!(i128);
 primitive!(i64);
 primitive!(i32);
 primitive!(i16);

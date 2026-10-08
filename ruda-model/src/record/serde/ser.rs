@@ -87,6 +87,14 @@ impl SerializerTrait for Serializer {
         Ok(NestedValue::I64(v))
     }
 
+    fn serialize_i128(self, v: i128) -> Result<Self::Ok, Self::Error> {
+        Ok(NestedValue::I128(v))
+    }
+
+    fn serialize_u128(self, v: u128) -> Result<Self::Ok, Self::Error> {
+        Ok(NestedValue::U128(v))
+    }
+
     fn serialize_u16(self, v: u16) -> Result<Self::Ok, Self::Error> {
         Ok(NestedValue::U16(v))
     }
@@ -262,21 +270,27 @@ impl SerializeSeq for Serializer {
                 if let NestedValue::U8(val) = serialized_value {
                     vec.push(val);
                 } else {
-                    panic!("Invalid value type encountered");
+                    let mut values: Vec<_> = core::mem::take(vec).into_iter().map(NestedValue::U8).collect();
+                    values.push(serialized_value);
+                    self.state = Some(NestedValue::Vec(values));
                 }
             }
             Some(NestedValue::U16s(ref mut vec)) => {
                 if let NestedValue::U16(val) = serialized_value {
                     vec.push(val);
                 } else {
-                    panic!("Invalid value type encountered");
+                    let mut values: Vec<_> = core::mem::take(vec).into_iter().map(NestedValue::U16).collect();
+                    values.push(serialized_value);
+                    self.state = Some(NestedValue::Vec(values));
                 }
             }
             Some(NestedValue::F32s(ref mut vec)) => {
                 if let NestedValue::F32(val) = serialized_value {
                     vec.push(val);
                 } else {
-                    panic!("Invalid value type encountered");
+                    let mut values: Vec<_> = core::mem::take(vec).into_iter().map(NestedValue::F32).collect();
+                    values.push(serialized_value);
+                    self.state = Some(NestedValue::Vec(values));
                 }
             }
             Some(_) => {

@@ -1,5 +1,7 @@
 mod format;
 mod primitive;
+mod containers;
+pub use containers::BoundItem;
 mod tensor;
 mod sparse;
 pub use sparse::CsrTensorRecord;

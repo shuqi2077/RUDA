@@ -117,15 +117,15 @@ impl SerializeStructVariant for StructVariantSerializer {
     }
 }
 
-/// Serializes maps with the string keys required by NestedValue.
+/// Retains the existing string-map encoding and preserves typed keys for other maps.
 pub struct MapSerializer {
-    values: HashMap<String, NestedValue>,
-    pending_key: Option<String>,
+    values: Vec<(NestedValue, NestedValue)>,
+    pending_key: Option<NestedValue>,
 }
 
 impl MapSerializer {
     pub(super) fn new() -> Self {
-        Self { values: HashMap::new(), pending_key: None }
+        Self { values: Vec::new(), pending_key: None }
     }
 }
 
@@ -137,19 +137,18 @@ impl SerializeMap for MapSerializer {
         if self.pending_key.is_some() {
             return Err(Error::Serialize("map key has no value".into()));
         }
-        let NestedValue::String(key) = key.serialize(Serializer::new())? else {
-            return Err(Error::Serialize("NestedValue map keys must serialize as strings".into()));
-        };
+        let key = key.serialize(Serializer::new())?;
         self.pending_key = Some(key);
         Ok(())
     }
 
     fn serialize_value<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Error> {
-        let key = self.pending_key.as_ref()
-            .ok_or_else(|| Error::Serialize("map value has no key".into()))?;
+        if self.pending_key.is_none() {
+            return Err(Error::Serialize("map value has no key".into()));
+        }
         let value = value.serialize(Serializer::new())?;
-        self.values.insert(key.clone(), value);
-        self.pending_key = None;
+        let key = self.pending_key.take().ok_or_else(|| Error::Serialize("map value has no key".into()))?;
+        self.values.push((key, value));
         Ok(())
     }
 
@@ -157,6 +156,12 @@ impl SerializeMap for MapSerializer {
         if self.pending_key.is_some() {
             return Err(Error::Serialize("map key has no value".into()));
         }
-        Ok(NestedValue::Map(self.values))
+        if self.values.iter().all(|(key, _)| matches!(key, NestedValue::String(_))) {
+            let map = self.values.into_iter().map(|(key, value)| {
+                let NestedValue::String(key) = key else { unreachable!() };
+                (key, value)
+            }).collect();
+            Ok(NestedValue::Map(map))
+        } else { Ok(NestedValue::MapEntries(self.values)) }
     }
 }

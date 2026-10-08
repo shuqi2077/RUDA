@@ -73,6 +73,14 @@ pub enum NestedValue {
 
     /// A unit value, distinct from a missing/default value and an optional `None`.
     Unit,
+
+    /// Map entries retaining non-string key types and their original payloads.
+    MapEntries(Vec<(NestedValue, NestedValue)>),
+
+    /// A signed integer retaining all 128 bits.
+    I128(i128),
+    /// An unsigned integer retaining all 128 bits.
+    U128(u128),
 }
 
 impl NestedValue {
@@ -121,6 +129,8 @@ impl NestedValue {
     /// Get the nested value as an i16.
     pub fn as_i16(self) -> Option<i16> {
         match self {
+            NestedValue::I128(value) => value.to_i16(),
+            NestedValue::U128(value) => value.to_i16(),
             NestedValue::I16(i16) => Some(i16),
             NestedValue::I32(i) => i.to_i16(),
             NestedValue::I64(i) => i.to_i16(),
@@ -133,6 +143,8 @@ impl NestedValue {
     /// Get the nested value as an i32.
     pub fn as_i32(self) -> Option<i32> {
         match self {
+            NestedValue::I128(value) => value.to_i32(),
+            NestedValue::U128(value) => value.to_i32(),
             NestedValue::I32(i32) => Some(i32),
             NestedValue::I16(i) => i.to_i32(),
             NestedValue::I64(i) => i.to_i32(),
@@ -145,6 +157,8 @@ impl NestedValue {
     /// Get the nested value as an i64.
     pub fn as_i64(self) -> Option<i64> {
         match self {
+            NestedValue::I128(value) => value.to_i64(),
+            NestedValue::U128(value) => value.to_i64(),
             NestedValue::I64(i64) => Some(i64),
             NestedValue::I16(i) => i.to_i64(),
             NestedValue::I32(i) => i.to_i64(),
@@ -157,6 +171,8 @@ impl NestedValue {
     /// Get the nested value as a u8.
     pub fn as_u8(self) -> Option<u8> {
         match self {
+            NestedValue::I128(value) => value.to_u8(),
+            NestedValue::U128(value) => value.to_u8(),
             NestedValue::U8(u8) => Some(u8),
             NestedValue::I16(i) => i.to_u8(),
             NestedValue::I32(i) => i.to_u8(),
@@ -170,6 +186,8 @@ impl NestedValue {
     /// Get the nested value as a u16.
     pub fn as_u16(self) -> Option<u16> {
         match self {
+            NestedValue::I128(value) => value.to_u16(),
+            NestedValue::U128(value) => value.to_u16(),
             NestedValue::U16(u16) => Some(u16),
             NestedValue::I16(i) => i.to_u16(),
             NestedValue::I32(i) => i.to_u16(),
@@ -182,11 +200,43 @@ impl NestedValue {
     /// Get the nested value as a u64.
     pub fn as_u64(self) -> Option<u64> {
         match self {
+            NestedValue::I128(value) => value.to_u64(),
+            NestedValue::U128(value) => value.to_u64(),
             NestedValue::U64(u64) => Some(u64),
             NestedValue::I16(i) => i.to_u64(),
             NestedValue::I32(i) => i.to_u64(),
             NestedValue::I64(i) => i.to_u64(),
             NestedValue::U16(u) => u.to_u64(),
+            _ => None,
+        }
+    }
+
+    /// Get an integer as i128, rejecting unsigned values outside the signed range.
+    pub fn as_i128(self) -> Option<i128> {
+        match self {
+            Self::I128(value) => Some(value),
+            Self::U128(value) => i128::try_from(value).ok(),
+            Self::I16(value) => Some(i128::from(value)),
+            Self::I32(value) => Some(i128::from(value)),
+            Self::I64(value) => Some(i128::from(value)),
+            Self::U8(value) => Some(i128::from(value)),
+            Self::U16(value) => Some(i128::from(value)),
+            Self::U64(value) => Some(i128::from(value)),
+            _ => None,
+        }
+    }
+
+    /// Get an integer as u128 without truncation or converting negative values.
+    pub fn as_u128(self) -> Option<u128> {
+        match self {
+            Self::U128(value) => Some(value),
+            Self::I128(value) => u128::try_from(value).ok(),
+            Self::I16(value) => u128::try_from(value).ok(),
+            Self::I32(value) => u128::try_from(value).ok(),
+            Self::I64(value) => u128::try_from(value).ok(),
+            Self::U8(value) => Some(u128::from(value)),
+            Self::U16(value) => Some(u128::from(value)),
+            Self::U64(value) => Some(u128::from(value)),
             _ => None,
         }
     }
@@ -382,6 +432,9 @@ impl fmt::Debug for NestedValue {
             // Handle other variants as usual
             NestedValue::Default(origin) => f.debug_tuple("Default").field(origin).finish(),
             NestedValue::Unit => f.write_str("Unit"),
+            NestedValue::I128(value) => f.debug_tuple("I128").field(value).finish(),
+            NestedValue::U128(value) => f.debug_tuple("U128").field(value).finish(),
+            NestedValue::MapEntries(entries) => f.debug_map().entries(entries.iter().map(|(key, value)| (key, value))).finish(),
             NestedValue::Bool(b) => f.debug_tuple("Bool").field(b).finish(),
             NestedValue::String(s) => f.debug_tuple("String").field(s).finish(),
             NestedValue::F32(val) => f.debug_tuple("F32").field(val).finish(),
