@@ -88,7 +88,8 @@ fn forward<F: Float, W: Float>(input: &Array<F>, alpha: &Array<W>, output: &mut 
     #[comptime] shared: bool, #[comptime] _source: String, #[define(F, W)] _types: [StorageType; 2]) {
     let i = ABSOLUTE_POS as usize;
     if i >= output.len() { terminate!(); }
-    let parameter = if shared { 0usize } else { (i / spatial as usize) % channels as usize };
+    let mut parameter = 0usize;
+    if !shared { parameter = (i / spatial as usize) % channels as usize; }
     let value = f32::cast_from(input[i]);
     output[i] = F::cast_from(if value < 0f32 { value * f32::cast_from(alpha[parameter]) } else { value });
 }
@@ -98,7 +99,8 @@ fn input_backward<F: Float, W: Float, G: Float>(input: &Array<F>, alpha: &Array<
     channels: u32, spatial: u32, #[comptime] shared: bool, #[define(F, W, G)] _types: [StorageType; 3]) {
     let i = ABSOLUTE_POS as usize;
     if i >= output.len() { terminate!(); }
-    let parameter = if shared { 0usize } else { (i / spatial as usize) % channels as usize };
+    let mut parameter = 0usize;
+    if !shared { parameter = (i / spatial as usize) % channels as usize; }
     let value = f32::cast_from(grad[i]);
     output[i] = F::cast_from(if f32::cast_from(input[i]) < 0f32 { value * f32::cast_from(alpha[parameter]) } else { value });
 }
