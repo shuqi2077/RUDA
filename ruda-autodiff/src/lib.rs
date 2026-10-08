@@ -22,6 +22,7 @@ pub mod collective;
 pub mod tensor_parallel;
 mod frozen_awq;
 mod frozen_nf4;
+mod moe;
 #[cfg(feature = "distributed")]
 /// Distributed utils.
 pub mod distributed;

@@ -8,7 +8,7 @@ use ruda_kernel::{
     tensor::{RudaTensor, contiguous::into_contiguous},
 };
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct ExpertTrainingCache<R: Runtime> {
     input: RudaTensor<R>, gate_raw: RudaTensor<R>, up_raw: RudaTensor<R>,
     activated: RudaTensor<R>, row_experts:RudaTensor<R>, offsets:RudaTensor<R>,

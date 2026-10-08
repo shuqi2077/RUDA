@@ -8,6 +8,7 @@ mod module;
 mod qtensor;
 mod frozen_awq;
 mod frozen_nf4;
+mod moe;
 mod tensor;
 mod transaction;
 mod unary;

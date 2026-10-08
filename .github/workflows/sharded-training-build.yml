@@ -11,6 +11,7 @@ on:
       - 'ruda-tensor-device/**'
       - 'ruda-fusion/**'
       - 'ruBLAS/**'
+      - 'ruDNN/**'
       - 'ruCCL/**'
       - 'ruda-torch/**'
       - 'ruda-model/**'

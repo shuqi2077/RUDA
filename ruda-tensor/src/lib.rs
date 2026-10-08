@@ -26,6 +26,8 @@ pub mod collective;
 pub mod frozen_awq;
 /// Original RUDA byte-packed NF4 frozen projections and input derivatives.
 pub mod frozen_nf4;
+/// Native selected router weights and complete local MoE training operations.
+pub mod moe;
 #[cfg(feature = "distributed")]
 pub mod distributed;
 
