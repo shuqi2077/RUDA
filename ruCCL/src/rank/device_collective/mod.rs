@@ -28,6 +28,11 @@ mod ring;
 pub use output::{ReceivedMessage, VariableCollectiveOutput};
 pub use bounded_broadcast::{ChunkedBroadcastPlan, BroadcastProgress};
 
+/// Native whole-element payload sizing shared by explicit chunked tensor collectives.
+pub type NativeChunkPlan = ChunkedBroadcastPlan;
+/// Actual completed native element/chunk counters for explicit tensor collectives.
+pub type NativeChunkProgress = BroadcastProgress;
+
 pub struct DeviceCollective<'a, T, D: RankDevice<T>> {
     execution: &'a D,
     session: &'a dyn RankTransport,

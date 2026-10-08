@@ -32,6 +32,12 @@ use selected::{map_selection, selected_device_matches, visit_selection};
 mod bounded_broadcast;
 pub use bounded_broadcast::{ChunkedBroadcastCommunicator, BoundedBroadcastCommunicator};
 
+mod bounded_reduction;
+pub use bounded_reduction::{ChunkedAllReduceCommunicator, BoundedAllReduceCommunicator};
+
+mod bounded_sharded;
+pub use bounded_sharded::{ChunkedShardedCommunicator, BoundedShardedCommunicator};
+
 /// An explicit policy for trainable parameters unused by a local backward pass.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MissingGradientPolicy {

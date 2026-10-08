@@ -63,7 +63,11 @@ impl<B: Backend> RankCommunicator<TensorDevice<B>> {
             Primitive::Int(value) => self.execution().import_int::<T>(B::int_reshape(value, Shape::new([elements])))?,
         };
         let plan = ChunkedBroadcastPlan::new(elements, core::mem::size_of::<T>(), max_chunk_bytes)?;
-        self.tensor_collective::<T>().broadcast_chunked_with_progress(&buffer, root, plan, 0, progress)?;
+        self.tensor_collective::<T>().broadcast_chunked_with_fallible_progress(&buffer, root, plan, 0, |state| {
+            self.execution().synchronize()?;
+            progress(state);
+            Ok(())
+        })?;
         if floating {
             Ok(Primitive::Float(B::float_reshape(buffer.float_tensor()?, shape)))
         } else {

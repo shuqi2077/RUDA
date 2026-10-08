@@ -138,6 +138,16 @@ where
         &self, buffer: &D::Buffer, root: u32, plan: ChunkedBroadcastPlan,
         restored_elements: usize, mut progress: F,
     ) -> Result<CollectiveStats, D::Error> {
+        self.broadcast_chunked_with_fallible_progress(buffer, root, plan, restored_elements,
+            |state| { progress(state); Ok(()) })
+    }
+
+    /// Same exact transfer with a fallible callback, including caller-required device fences.
+    /// A callback error is returned without retrying or entering another chunk.
+    pub fn broadcast_chunked_with_fallible_progress<F: FnMut(BroadcastProgress) -> Result<(), D::Error>>(
+        &self, buffer: &D::Buffer, root: u32, plan: ChunkedBroadcastPlan,
+        restored_elements: usize, mut progress: F,
+    ) -> Result<CollectiveStats, D::Error> {
         let fields = [root as u64, self.execution.buffer_len(buffer) as u64,
             plan.elements as u64, plan.element_bytes as u64, plan.chunk_elements as u64,
             restored_elements as u64, self.element_type as u64];
@@ -166,13 +176,13 @@ where
                 else { restored_elements / plan.chunk_elements },
             total_chunks, restored_elements,
         };
-        progress(state);
+        progress(state)?;
         while state.completed_elements < plan.elements {
             let length = plan.chunk_elements.min(plan.elements - state.completed_elements);
             let chunk = self.broadcast_at(buffer, state.completed_elements, length, root)?;
             state.completed_elements += length;
             state.completed_chunks += 1;
-            progress(state);
+            progress(state)?;
             stats.steps = stats.steps.checked_add(chunk.steps)
                 .ok_or(RankError::Overflow("native broadcast step statistics"))?;
             stats.transferred_bytes = stats.transferred_bytes.checked_add(chunk.transferred_bytes)
