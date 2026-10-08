@@ -5,13 +5,13 @@ use super::module::{
     max_pool1d, max_pool2d, max_pool1d_with_indices, max_pool2d_with_indices,
 };
 
-fn volume_planes<B: Backend, K: BasicOps<B>>(input: Tensor<B, 5, K>) -> Tensor<B, 4, K> {
+pub(super) fn volume_planes<B: Backend, K: BasicOps<B>>(input: Tensor<B, 5, K>) -> Tensor<B, 4, K> {
     let [batch, channels, depth, height, width] = input.dims();
     let planes = batch.checked_mul(depth).expect("pooling plane count overflow");
     input.permute([0, 2, 1, 3, 4]).reshape([planes, channels, height, width])
 }
 
-fn plane_depth_lines<B: Backend, K: BasicOps<B>>(
+pub(super) fn plane_depth_lines<B: Backend, K: BasicOps<B>>(
     planes: Tensor<B, 4, K>,
     batch: usize,
     depth: usize,
@@ -25,7 +25,7 @@ fn plane_depth_lines<B: Backend, K: BasicOps<B>>(
         .permute([0, 2, 3, 4, 1]).reshape([lines, 1, depth])
 }
 
-fn depth_lines_volume<B: Backend, K: BasicOps<B>>(
+pub(super) fn depth_lines_volume<B: Backend, K: BasicOps<B>>(
     lines: Tensor<B, 3, K>,
     batch: usize,
     channels: usize,

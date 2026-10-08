@@ -20,6 +20,7 @@ mod options;
 mod orderable;
 mod pad;
 mod spatial_pool;
+mod spatial_interpolate;
 pub use pad::IntoPadding;
 mod take;
 mod transaction;

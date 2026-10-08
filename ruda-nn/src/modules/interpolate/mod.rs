@@ -1,8 +1,10 @@
 mod interpolate1d;
 mod interpolate2d;
+mod interpolate3d;
 
 pub use interpolate1d::*;
 pub use interpolate2d::*;
+pub use interpolate3d::*;
 
 
 use ruda_model::config::Config;

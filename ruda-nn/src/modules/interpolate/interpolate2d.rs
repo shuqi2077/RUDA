@@ -133,7 +133,7 @@ fn calculate_output_size(
     scale_factor: Option<[f32; 2]>,
 ) -> [usize; 2] {
     match (output_size, scale_factor) {
-        (Some(output_size), None) => {
+        (Some(output_size), _) => {
             // Use provided
             output_size
         }
