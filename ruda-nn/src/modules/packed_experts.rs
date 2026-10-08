@@ -3,7 +3,7 @@ use ruda_model::{module::{Module,ModuleDisplay,Param},tensor::{Tensor,Int,DType,
     AwqExpertOptions,AwqExpertPayload,PackedExpertPayload,backend::Backend}};
 use core::fmt;
 
-/// Geometry/storage of selected experts with original frozen packed bases, independent of representation.
+/// Geometry/storage of selected native experts, independent of floating or frozen packed representation.
 pub trait FrozenExpertGeometry<B:Backend>:Module<B>+ModuleDisplay {
     /// Original `[experts,hidden,intermediate]` logical dimensions.
     fn dimensions(&self) -> [usize;3];
@@ -14,7 +14,7 @@ pub trait FrozenExpertGeometry<B:Backend>:Module<B>+ModuleDisplay {
 }
 /// Actual selected native chain; routing, residuals and shared experts remain architecture-owned.
 pub trait FrozenSelectedExperts<B:Backend>:FrozenExpertGeometry<B> {
-    /// Original actual packed representation or first-order contract failure.
+    /// Original actual expert representation or first-order contract failure.
     type Error:fmt::Debug;
     /// Evaluate only actual U32 assigned experts, returning original incoming row order.
     fn forward(&self,input:Tensor<B,2>,global_ids:Tensor<B,1,Int>,expert_start:usize) -> Result<Tensor<B,2>,Self::Error>;

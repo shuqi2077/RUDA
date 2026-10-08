@@ -95,7 +95,7 @@ pub enum Nf4MoeTransformerLayer<B:Backend,P:Module<B>,E:Module<B> =FrozenNf4SwiG
     Dense(ProjectedTransformerBlock<B,P>),
     /// Original actual floating expert source block, without forced quantization.
     Floating(NativeMoeTransformerBlock<B,P>),
-    /// Actual original packed expert source block; the default retains native NF4.
+    /// Selected native expert implementation; the default retains native NF4 and may explicitly be floating LoRA.
     Packed(Nf4MoeTransformerBlock<B,P,E>),
 }
 

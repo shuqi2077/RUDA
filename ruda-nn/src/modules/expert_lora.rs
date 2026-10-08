@@ -1,6 +1,6 @@
 use super::{FrozenPackedExpertProjection,FrozenPackedSwiGluExperts,FrozenExpertGeometry,FrozenSelectedExperts,
     LoRALinearConfig,LinearConfig,Dropout,DropoutConfig,Nf4MoeLayer};
-use ruda_model::{module::{Module,Param,Initializer},tensor::{Tensor,Int,DType,TensorPrimitive,ExpertProjectionOps,ExpertProjectionOptions,ExpertProjectionSelection,
+use ruda_model::{module::{Module,ModuleDisplay,Param,Initializer},tensor::{Tensor,Int,DType,TensorPrimitive,ExpertProjectionOps,ExpertProjectionOptions,ExpertProjectionSelection,
     MoeExpertStrategy,FrozenPackedExpertOps,NativeSwiGluOps,backend::Backend}};
 use alloc::vec::Vec;
 use core::fmt;
@@ -63,11 +63,34 @@ impl<P:fmt::Debug,G:fmt::Debug> fmt::Display for ExpertLoRAError<P,G> {
     fn fmt(&self,f:&mut fmt::Formatter<'_>) -> fmt::Result {match self {Self::Packed(error)=>write!(f,"packed expert base: {error:?}"),Self::Adapter(error)=>write!(f,"native expert adapter: {error:?}")}}
 }
 impl<P:fmt::Debug,G:fmt::Debug> core::error::Error for ExpertLoRAError<P,G> {}
-/// Actual independent low-rank residual on each original immutable AWQ/NF4 expert matrix.
+/// Original expert base geometry and explicit freezing when attaching an adapter.
+pub trait ExpertLoRABase<B:Backend>:Module<B>+ModuleDisplay {
+    /// Actual original `[experts,input,output]` widths.
+    fn dimensions(&self) -> [usize;3];
+    /// Validate source storage without copying or decoding the weights.
+    fn validate(&self);
+    /// Actual resident base device.
+    fn device(&self) -> B::Device;
+    /// Freeze only this explicitly selected base, retaining original values, dtype and IDs.
+    fn freeze_for_adapter(self) -> Self;
+}
+impl<B:Backend> ExpertLoRABase<B> for FrozenPackedExpertProjection<B> {
+    fn dimensions(&self) -> [usize;3] {self.dimensions()}
+    fn validate(&self) {self.validate();}
+    fn device(&self) -> B::Device {self.device()}
+    fn freeze_for_adapter(self) -> Self {self.validate();self}
+}
+impl<B:Backend> ExpertLoRABase<B> for ExpertLinear<B> {
+    fn dimensions(&self) -> [usize;3] {self.dimensions()}
+    fn validate(&self) {self.validate();}
+    fn device(&self) -> B::Device {self.weight.val().device()}
+    fn freeze_for_adapter(self) -> Self {self.no_grad()}
+}
+/// Actual independent low-rank residual on original expert matrices; defaults to immutable AWQ/NF4.
 #[derive(Module,Debug)]
-pub struct PackedExpertLoRA<B:Backend> {
-    /// Actual original immutable packed base, never merged or requantized.
-    pub base:FrozenPackedExpertProjection<B>,
+pub struct PackedExpertLoRA<B:Backend,Base:Module<B> =FrozenPackedExpertProjection<B>> {
+    /// Actual original selected frozen base, never replaced, merged or requantized.
+    pub base:Base,
     /// Actual bias-free `[experts,rank,input]` trainable A matrices.
     pub adapter_a:ExpertLinear<B>,
     /// Actual bias-free `[experts,output,rank]` trainable B matrices.
@@ -77,7 +100,7 @@ pub struct PackedExpertLoRA<B:Backend> {
     /// Original explicit alpha/rank or alpha/sqrt(rank) multiplier.
     pub scale:f64,
 }
-impl<B:Backend> PackedExpertLoRA<B> {
+impl<B:Backend,Base:ExpertLoRABase<B>> PackedExpertLoRA<B,Base> {
     /// Validate source geometry/storage and supplied adapter leaves without altering parameter identities.
     pub fn validate(&self) {
         self.base.validate();self.adapter_a.validate();self.adapter_b.validate();let [e,k,n]=self.base.dimensions();
@@ -88,7 +111,7 @@ impl<B:Backend> PackedExpertLoRA<B> {
     }
 }
 impl LoRALinearConfig {
-    fn validate_expert_initialization<B:Backend>(&self,base:&FrozenPackedExpertProjection<B>,adapter_dtype:DType) {
+    pub(super) fn validate_expert_initialization<B:Backend,Base:ExpertLoRABase<B>>(&self,base:&Base,adapter_dtype:DType) {
         base.validate();assert!(self.rank>0 && self.alpha.is_finite(),"invalid original expert adapter rank/alpha");
         assert!(self.dropout.is_finite() && (0.0..1.0).contains(&self.dropout),"original expert adapter dropout must be in [0,1)");
         assert!(matches!(adapter_dtype,DType::F16|DType::BF16|DType::F32),"expert adapter storage must be native floating");
@@ -97,25 +120,46 @@ impl LoRALinearConfig {
     }
     /// Connect explicitly loaded original expert A/B values/IDs, using original LoRA or rsLoRA scaling.
     pub fn from_expert_adapters<B:Backend>(&self,base:FrozenPackedExpertProjection<B>,adapter_a:ExpertLinear<B>,adapter_b:ExpertLinear<B>,use_rslora:bool) -> PackedExpertLoRA<B> {
+        self.from_grouped_expert_adapters(base,adapter_a,adapter_b,use_rslora)
+    }
+    /// Attach loaded A/B to an actual floating or packed expert cube, without creating replacement weights.
+    /// Only the selected base is frozen; supplied A/B storage, values and IDs remain intact.
+    pub fn from_grouped_expert_adapters<B:Backend,Base:ExpertLoRABase<B>>(&self,base:Base,adapter_a:ExpertLinear<B>,adapter_b:ExpertLinear<B>,use_rslora:bool)
+        -> PackedExpertLoRA<B,Base> {
         assert!(self.rank>0 && self.alpha.is_finite(),"invalid original expert LoRA rank/alpha");
         assert!(self.dropout.is_finite() && (0.0..1.0).contains(&self.dropout),"original expert adapter dropout must be in [0,1)");
         assert_eq!(adapter_a.dimensions()[2],self.rank,"loaded expert adapter rank differs from actual explicit configuration");
         let denominator=if use_rslora {(self.rank as f64).sqrt()}else {self.rank as f64};
-        let layer=PackedExpertLoRA {base,adapter_a,adapter_b,dropout:DropoutConfig::new(self.dropout).init(),scale:self.alpha/denominator};layer.validate();
+        let mut layer=PackedExpertLoRA {base,adapter_a,adapter_b,dropout:DropoutConfig::new(self.dropout).init(),scale:self.alpha/denominator};layer.validate();
         assert!(!B::ad_enabled(&layer.base.device()) || (layer.adapter_a.weight.val().is_require_grad() && layer.adapter_b.weight.val().is_require_grad()),
-            "loaded expert adapter leaves must be trainable when attaching with AD enabled");layer
+            "loaded expert adapter leaves must be trainable when attaching with AD enabled");
+        layer.base=layer.base.freeze_for_adapter();layer
     }
     /// Allocate actual new expert adapter leaves with the existing linear initializer and zero B.
     /// Dtype/rsLoRA and native forward/backward execution are explicitly caller-selected.
     pub fn init_expert_adapters<B:Backend>(&self,base:FrozenPackedExpertProjection<B>,adapter_dtype:DType,use_rslora:bool,
         forward:MoeExpertStrategy,backward:MoeExpertStrategy) -> PackedExpertLoRA<B> {
-        self.validate_expert_initialization(&base,adapter_dtype);
+        self.init_grouped_expert_adapters(base,adapter_dtype,use_rslora,forward,backward)
+    }
+    /// Initialize real per-expert A/B on the caller-supplied base using original linear initialization and zero B.
+    pub fn init_grouped_expert_adapters<B:Backend,Base:ExpertLoRABase<B>>(&self,base:Base,adapter_dtype:DType,use_rslora:bool,
+        forward:MoeExpertStrategy,backward:MoeExpertStrategy) -> PackedExpertLoRA<B,Base> {
+        self.validate_expert_initialization::<B,_>(&base,adapter_dtype);
         let [e,k,n]=base.dimensions();let device=base.device();
         let a=LinearConfig::new(k,self.rank).initializer.init_with::<B,3,_>([e,self.rank,k],Some(k),Some(self.rank),&device)
             .map(|value|value.cast(adapter_dtype).detach().require_grad());
         let b=Initializer::Zeros.init_with::<B,3,_>([e,n,self.rank],Some(self.rank),Some(n),&device)
             .map(|value|value.cast(adapter_dtype).detach().require_grad());
-        self.from_expert_adapters(base,ExpertLinear::from_parameters(a,forward,backward),ExpertLinear::from_parameters(b,forward,backward),use_rslora)
+        self.from_grouped_expert_adapters(base,ExpertLinear::from_parameters(a,forward,backward),ExpertLinear::from_parameters(b,forward,backward),use_rslora)
+    }
+}
+impl<B:ExpertProjectionOps,Base:ExpertLoRABase<B>> PackedExpertLoRA<B,Base> {
+    pub(super) fn add_adapter_residual(&self,base:Tensor<B,2>,input:Tensor<B,2>,ids:Tensor<B,1,Int>,expert_start:usize)
+        -> Result<Tensor<B,2>,B::ExpertProjectionError> {
+        let adapted=self.dropout.forward(input.cast(self.adapter_a.weight.val().dtype()));
+        let hidden=self.adapter_a.forward(adapted,ids.clone(),expert_start)?.cast(self.adapter_b.weight.val().dtype());
+        let update=self.adapter_b.forward(hidden,ids,expert_start)?.mul_scalar(self.scale);
+        let dtype=base.dtype();Ok(base+update.cast(dtype))
     }
 }
 impl<B:FrozenPackedExpertOps+ExpertProjectionOps> PackedExpertLoRA<B> {
@@ -124,10 +168,7 @@ impl<B:FrozenPackedExpertOps+ExpertProjectionOps> PackedExpertLoRA<B> {
     pub fn forward(&self,input:Tensor<B,2>,ids:Tensor<B,1,Int>,expert_start:usize)
         -> Result<Tensor<B,2>,ExpertLoRAError<B::PackedExpertError,B::ExpertProjectionError>> {
         self.validate();let base=self.base.forward(input.clone(),ids.clone(),expert_start).map_err(ExpertLoRAError::Packed)?;
-        let adapted=self.dropout.forward(input.cast(self.adapter_a.weight.val().dtype()));
-        let hidden=self.adapter_a.forward(adapted,ids.clone(),expert_start).map_err(ExpertLoRAError::Adapter)?.cast(self.adapter_b.weight.val().dtype());
-        let update=self.adapter_b.forward(hidden,ids,expert_start).map_err(ExpertLoRAError::Adapter)?.mul_scalar(self.scale);
-        let dtype=base.dtype();Ok(base+update.cast(dtype))
+        self.add_adapter_residual(base,input,ids,expert_start).map_err(ExpertLoRAError::Adapter)
     }
 }
 /// Actual original frozen or explicitly adapted expert projection; no fake-quantization path.
@@ -192,7 +233,7 @@ impl<B:Backend> AdaptedPackedSwiGluExperts<B> {
         for (index,target) in targets.iter().enumerate() {assert!(!targets[..index].contains(target),"duplicate expert adapter role");
             let role=match target {ExpertAdapterTarget::Gate=>&self.gate,ExpertAdapterTarget::Up=>&self.up,ExpertAdapterTarget::Down=>&self.down};
             let AdaptedExpertProjection::Frozen(base)=role else {panic!("selected original expert projection is already adapted")};
-            config.validate_expert_initialization(base,dtype);}
+            config.validate_expert_initialization::<B,_>(base,dtype);}
     }
     /// Original actual selected A/B parameter IDs, excluding frozen quantization metadata.
     pub fn adapter_parameter_ids(&self) -> Vec<ruda_model::module::ParamId> {
