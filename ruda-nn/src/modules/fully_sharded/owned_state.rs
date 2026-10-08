@@ -90,6 +90,23 @@ pub struct FullyShardedExpertOwnedStorageRecord<B: Backend> {
     storage: FullyShardedStorageRecord<B>,
 }
 
+fn validate_ownership(version: u32, contract_id: &str, layers: usize, ownership: &[ExpertAdapterOwnershipEntry])
+    -> Result<(), FullyShardedParameterError> {
+    if version != 1 || contract_id.is_empty() { return Err(FullyShardedParameterError::Record); }
+    let mut previous = None;
+    for entry in ownership {
+        if entry.layer >= layers || previous.is_some_and(|layer| layer >= entry.layer)
+            || entry.prefix.len() < 2 || entry.rank >= entry.prefix.len() - 1 || entry.prefix[0] != 0
+            || entry.prefix.windows(2).any(|pair| pair[0] > pair[1])
+            || entry.prefix.len() - 1 > u32::MAX as usize
+            || entry.prefix.last().is_none_or(|total| *total == 0 || *total > u32::MAX as usize) {
+            return Err(FullyShardedParameterError::Geometry("invalid original saved expert ownership"));
+        }
+        previous = Some(entry.layer);
+    }
+    Ok(())
+}
+
 impl<B: Backend> FullyShardedExpertOwnedStorageRecord<B> {
     pub fn capture<M: FullyShardedModule<B> + ExpertOwnedModelGeometry<B>>(model: &M, contract_id: &str)
         -> Result<Self, FullyShardedParameterError> {
@@ -102,18 +119,7 @@ impl<B: Backend> FullyShardedExpertOwnedStorageRecord<B> {
     pub fn storage(&self) -> &FullyShardedStorageRecord<B> { &self.storage }
 
     pub fn validate(&self) -> Result<(), FullyShardedParameterError> {
-        if self.version != 1 || self.contract_id.is_empty() { return Err(FullyShardedParameterError::Record); }
-        let mut previous = None;
-        for entry in &self.ownership {
-            if entry.layer >= self.layers || previous.is_some_and(|layer| layer >= entry.layer)
-                || entry.prefix.len() < 2 || entry.rank >= entry.prefix.len() - 1 || entry.prefix[0] != 0
-                || entry.prefix.windows(2).any(|pair| pair[0] > pair[1])
-                || entry.prefix.len() - 1 > u32::MAX as usize
-                || entry.prefix.last().is_none_or(|total| *total == 0 || *total > u32::MAX as usize) {
-                return Err(FullyShardedParameterError::Geometry("invalid original saved expert ownership"));
-            }
-            previous = Some(entry.layer);
-        }
+        validate_ownership(self.version, &self.contract_id, self.layers, &self.ownership)?;
         self.storage.validate()
     }
 
@@ -160,5 +166,77 @@ impl<B: Backend> Record<B> for FullyShardedExpertOwnedStorageRecord<B> {
     fn from_item<P: PrecisionSettings>(item: Self::Item<P>, device: &B::Device) -> Self {
         Self { version: item.0, contract_id: item.1, layers: item.2, ownership: item.3,
             storage: FullyShardedStorageRecord::from_item::<P>(item.4, device) }
+    }
+}
+
+/// Actual local A/B updates, original expert ownership and complete native
+/// packed/floating base schema. Original base values are not duplicated here.
+#[derive(Clone)]
+pub struct FullyShardedExpertOwnedAdapterRecord<B: Backend> {
+    version: u32,
+    contract_id: String,
+    layers: usize,
+    ownership: Vec<ExpertAdapterOwnershipEntry>,
+    delta: FullyShardedStorageDeltaRecord<B>,
+}
+impl<B: Backend> FullyShardedExpertOwnedAdapterRecord<B> {
+    /// Reuse the real low-rank role visitor. A trainable non-adapter parameter
+    /// still requires a full storage record, rather than an incomplete delta.
+    pub fn capture<M: FullyShardedAdapterModule<B> + ExpertOwnedModelGeometry<B>>(model: &M, contract_id: &str, base_id: &str)
+        -> Result<Self, FullyShardedParameterError> {
+        let value = Self { version: 1, contract_id: contract_id.into(), layers: model.expert_model_layers(),
+            ownership: model.expert_model_ownership(), delta: model.adapter_delta_record(base_id)? };
+        value.validate()?; Ok(value)
+    }
+    pub fn contract_id(&self) -> &str { &self.contract_id }
+    pub fn base_id(&self) -> &str { self.delta.base_id() }
+    pub fn ownership(&self) -> &[ExpertAdapterOwnershipEntry] { &self.ownership }
+    pub fn delta(&self) -> &FullyShardedStorageDeltaRecord<B> { &self.delta }
+    pub fn validate(&self) -> Result<(), FullyShardedParameterError> {
+        validate_ownership(self.version, &self.contract_id, self.layers, &self.ownership)?;
+        self.delta.validate()?;
+        if self.delta.updates().floating().is_empty() || !self.delta.updates().packed().is_empty() { return Err(FullyShardedParameterError::Record); }
+        Ok(())
+    }
+    pub fn validate_for<M: FullyShardedAdapterModule<B> + ExpertOwnedModelGeometry<B>>(&self, model: &M, contract_id: &str, base_id: &str)
+        -> Result<(), FullyShardedParameterError> {
+        self.validate()?;
+        if self.contract_id != contract_id || self.layers != model.expert_model_layers() || self.ownership != model.expert_model_ownership() {
+            return Err(FullyShardedParameterError::Record);
+        }
+        self.delta.validate_for(model, base_id)?;
+        let expected = model.adapter_delta_record(base_id)?;
+        let actual_ids = self.delta.updates().floating().iter().map(|value| value.id()).collect::<Vec<_>>();
+        let expected_ids = expected.updates().floating().iter().map(|value| value.id()).collect::<Vec<_>>();
+        if actual_ids != expected_ids { return Err(FullyShardedParameterError::Record); }
+        Ok(())
+    }
+    pub fn restore_into<M: FullyShardedAdapterModule<B> + ExpertOwnedModelGeometry<B>>(self, model: M, contract_id: &str, base_id: &str)
+        -> Result<M, FullyShardedParameterError> {
+        self.validate_for(&model, contract_id, base_id)?;
+        model.load_adapter_delta(self.delta, base_id)
+    }
+    /// Preserve the unchanged expert ownership while repartitioning all saved
+    /// real A/B local updates and their complete required base schema on DP.
+    pub fn repartition_from_data_ranks(sources: &[Self], data_rank: usize, data_world: usize)
+        -> Result<Self, FullyShardedParameterError> {
+        let first = sources.first().ok_or(FullyShardedParameterError::Geometry("complete source adapter data ranks are required"))?;
+        for source in sources {
+            source.validate()?;
+            if source.contract_id != first.contract_id || source.layers != first.layers || source.ownership != first.ownership {
+                return Err(FullyShardedParameterError::Record);
+            }
+        }
+        let deltas = sources.iter().map(|source| source.delta.clone()).collect::<Vec<_>>();
+        let value = Self { version: 1, contract_id: first.contract_id.clone(), layers: first.layers, ownership: first.ownership.clone(),
+            delta: FullyShardedStorageDeltaRecord::repartition_from_ranks(&deltas, data_rank, data_world)? };
+        value.validate()?; Ok(value)
+    }
+}
+impl<B: Backend> Record<B> for FullyShardedExpertOwnedAdapterRecord<B> {
+    type Item<P: PrecisionSettings> = (u32, String, usize, Vec<ExpertAdapterOwnershipEntry>, <FullyShardedStorageDeltaRecord<B> as Record<B>>::Item<P>);
+    fn into_item<P: PrecisionSettings>(self) -> Self::Item<P> { (self.version, self.contract_id, self.layers, self.ownership, self.delta.into_item::<P>()) }
+    fn from_item<P: PrecisionSettings>(item: Self::Item<P>, device: &B::Device) -> Self {
+        Self { version: item.0, contract_id: item.1, layers: item.2, ownership: item.3, delta: FullyShardedStorageDeltaRecord::from_item::<P>(item.4, device) }
     }
 }

@@ -43,7 +43,7 @@ impl<B:Backend> FullyShardedStorageDeltaRecord<B> {
         for value in &self.signatures {
             if previous.is_some_and(|id|id>=value.0) {return Err(FullyShardedParameterError::Record);}
             previous=Some(value.0);packed_geometry(&value.1,value.2,value.3)?;
-            match value.4 {DType::F16|DType::BF16|DType::F32=>{},DType::U8|DType::I32|DType::I64 if !value.5=>{},_=>return Err(FullyShardedParameterError::DType)}
+            match value.4 {DType::F16|DType::BF16|DType::F32|DType::F64=>{},DType::U8|DType::I32|DType::I64 if !value.5=>{},_=>return Err(FullyShardedParameterError::DType)}
             metadata.insert(value.0,value);
         }
         for actual in signatures(&self.updates) {
