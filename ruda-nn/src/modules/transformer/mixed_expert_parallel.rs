@@ -36,7 +36,7 @@ impl<B:Backend,P:TransformerProjectionShape<B>,E:FrozenExpertGeometry<B>+Into<Mi
             assert!(selected.insert(config.layer,config).is_none(),"duplicate actual mixed owned-expert layer index");
             let (source,options)=match &self.layers[config.layer] {
                 Nf4MoeTransformerLayer::Dense(_)=>panic!("expert ownership cannot select an original non-expert dense layer"),
-                Nf4MoeTransformerLayer::Floating(block)=>{block.validate();(MixedExpertParallelSource::Native(block.routed.experts.clone()),block.routed.options)},
+                Nf4MoeTransformerLayer::Floating(block)=>{block.validate();(MixedExpertParallelSource::Native(block.feed_forward.routed.experts.clone()),block.feed_forward.routed.options)},
                 Nf4MoeTransformerLayer::Packed(block)=>{block.validate();(block.routed.experts.clone().into(),packed_options(block.routed.routing))},
             };
             source.validate();assert_eq!(source.dimensions()[0],config.ownership.experts(),"actual source expert count differs from declared mixed ownership");config.ownership.range(rank);
@@ -50,10 +50,10 @@ impl<B:Backend,P:TransformerProjectionShape<B>,E:FrozenExpertGeometry<B>+Into<Mi
             Nf4MoeTransformerLayer::Dense(block)=>ExpertParallelTransformerLayer::Local(NativeMoeTransformerLayer::Dense(block)),
             Nf4MoeTransformerLayer::Floating(block)=>{
                 let Some(config)=selected.get(&index) else {return ExpertParallelTransformerLayer::Local(NativeMoeTransformerLayer::Routed(block))};
-                let routed=block.routed;let options=routed.options;let experts=owned(routed.experts.into(),options,config,rank,&mut context);
+                let routed=block.feed_forward.routed;let options=routed.options;let experts=owned(routed.experts.into(),options,config,rank,&mut context);
                 ExpertParallelTransformerLayer::Parallel(ExpertParallelTransformerBlock {attention:block.attention,
                     routed:ExpertParallelMoeLayer::from_expert_parts(routed.router,experts,routed.correction_bias,options,routed.router_input_dtype),
-                    shared:block.shared,attention_norm:block.attention_norm,feed_forward_norm:block.feed_forward_norm,residual_dropout:block.residual_dropout,norm_first:block.norm_first})
+                    shared:block.feed_forward.shared,attention_norm:block.attention_norm,feed_forward_norm:block.feed_forward_norm,residual_dropout:block.residual_dropout,norm_first:block.norm_first})
             },
             Nf4MoeTransformerLayer::Packed(block)=>{
                 let config=selected[&index];let routed=block.routed;let options=packed_options(routed.routing);let experts=owned(routed.experts.into(),options,config,rank,&mut context);
