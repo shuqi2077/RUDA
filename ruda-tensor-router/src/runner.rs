@@ -210,6 +210,11 @@ impl<B: BackendIr> Runner<B> {
 impl<B: BackendIr> RunnerClient for Runner<B> {
     type Device = B::Device;
 
+    fn avg_pool3d_native_output_size(&self, input: [usize; 3], kernel: [usize; 3],
+        stride: [usize; 3], padding: [usize; 3], ceil: bool) -> Option<[usize; 3]> {
+        B::avg_pool3d_native_output_size(input, kernel, stride, padding, ceil)
+    }
+
     /// Execute a tensor operation.
     fn register_op(&self, op: OperationIr) {
         // Remove unused tensor handles

@@ -1429,6 +1429,11 @@ impl<B: FusionBackend> ModuleOps<Fusion<B>> for Fusion<B> {
             .output()
     }
 
+    fn avg_pool3d_native_output_size(input: [usize; 3], kernel: [usize; 3],
+        stride: [usize; 3], padding: [usize; 3], ceil: bool) -> Option<[usize; 3]> {
+        B::avg_pool3d_native_output_size(input, kernel, stride, padding, ceil)
+    }
+
     fn avg_pool3d(x: FloatTensor<Self>, kernel: [usize; 3], stride: [usize; 3],
         padding: [usize; 3], include_pad: bool, ceil: bool) -> FloatTensor<Self> {
         make_ops!(AvgPool3dOps, AvgPool3dOpIr,

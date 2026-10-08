@@ -372,6 +372,11 @@ where
             x, grad, indices, kernel, stride, padding, dilation, ceil))
     }
 
+    fn avg_pool3d_native_output_size(input: [usize; 3], kernel: [usize; 3],
+        stride: [usize; 3], padding: [usize; 3], ceil: bool) -> Option<[usize; 3]> {
+        Some(rudnn::pooling::avg_pool3d_output_size(input, kernel, stride, padding, ceil))
+    }
+
     fn avg_pool3d(x: FloatTensor<Self>, kernel: [usize; 3], stride: [usize; 3],
         padding: [usize; 3], include_pad: bool, ceil: bool) -> FloatTensor<Self> {
         rudnn::pooling::avg_pool3d(x, kernel, stride, padding, include_pad, ceil)

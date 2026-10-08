@@ -1910,6 +1910,11 @@ impl<B: Backend, C: CheckpointStrategy> ModuleOps<Autodiff<B, C>> for Autodiff<B
         super::pool_backward::adaptive_average::<B, C>(x, grad)
     }
 
+    fn avg_pool3d_native_output_size(input: [usize; 3], kernel: [usize; 3],
+        stride: [usize; 3], padding: [usize; 3], ceil: bool) -> Option<[usize; 3]> {
+        B::avg_pool3d_native_output_size(input, kernel, stride, padding, ceil)
+    }
+
     fn avg_pool3d(x: AutodiffTensor<B>, kernel: [usize; 3], stride: [usize; 3],
         padding: [usize; 3], count_include_pad: bool, ceil_mode: bool) -> AutodiffTensor<B> {
         #[derive(Debug)]

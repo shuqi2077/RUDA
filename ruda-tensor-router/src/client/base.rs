@@ -22,6 +22,12 @@ pub trait RunnerClient: Clone + Send + Sync + Sized {
     /// Device type.
     type Device: DeviceOps;
 
+    /// Query actual native volume geometry without launching an operation or reading a tensor.
+    fn avg_pool3d_native_output_size(&self, _input: [usize; 3], _kernel: [usize; 3],
+        _stride: [usize; 3], _padding: [usize; 3], _ceil: bool) -> Option<[usize; 3]> {
+        None
+    }
+
     /// Register a new tensor operation to be executed by the (runner) server.
     fn register_op(&self, op: OperationIr);
     /// Register a new tensor operation to be executed by the (runner) server.

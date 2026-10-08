@@ -615,6 +615,11 @@ pub trait ModuleOps<B: Backend> {
         padding: [usize; 3], count_include_pad: bool, ceil_mode: bool) -> FloatTensor<B> {
         pool::avg_pool3d_from_2d::<B>(x, kernel_size, stride, padding, count_include_pad, ceil_mode)
     }
+    /// Native volume output geometry, or `None` to retain the backend's composed operations.
+    fn avg_pool3d_native_output_size(_input: [usize; 3], _kernel: [usize; 3],
+        _stride: [usize; 3], _padding: [usize; 3], _ceil: bool) -> Option<[usize; 3]> {
+        None
+    }
     /// Input gradients for three dimensional average pooling.
     fn avg_pool3d_backward(x: FloatTensor<B>, grad: FloatTensor<B>, kernel_size: [usize; 3],
         stride: [usize; 3], padding: [usize; 3], count_include_pad: bool, ceil_mode: bool) -> FloatTensor<B> {

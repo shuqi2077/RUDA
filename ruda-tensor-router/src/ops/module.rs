@@ -725,6 +725,36 @@ impl<R: RunnerChannel> ModuleOps<Self> for BackendRouter<R> {
             .output()
     }
 
+    fn avg_pool3d(x: FloatTensor<Self>, kernel: [usize; 3], stride: [usize; 3],
+        padding: [usize; 3], include_pad: bool, ceil: bool) -> FloatTensor<Self> {
+        let [_, _, depth, height, width] = x.shape.dims();
+        let client = x.client.clone();
+        match client.avg_pool3d_native_output_size([depth, height, width], kernel, stride, padding, ceil) {
+            Some(size) => {
+                let desc = AvgPool3dOpIr::create_with_output_size(x.into_ir(), kernel, stride,
+                    padding, include_pad, ceil, size, || client.create_empty_handle());
+                client.register(OperationIr::Module(ModuleOperationIr::AvgPool3d(desc))).output()
+            }
+            None => ruda_tensor::ops::pool::avg_pool3d_from_2d::<Self>(
+                x, kernel, stride, padding, include_pad, ceil),
+        }
+    }
+
+    fn avg_pool3d_backward(x: FloatTensor<Self>, grad: FloatTensor<Self>, kernel: [usize; 3],
+        stride: [usize; 3], padding: [usize; 3], include_pad: bool, ceil: bool) -> FloatTensor<Self> {
+        let [_, _, depth, height, width] = x.shape.dims();
+        let client = x.client.clone();
+        match client.avg_pool3d_native_output_size([depth, height, width], kernel, stride, padding, ceil) {
+            Some(_) => {
+                let desc = AvgPool3dBackwardOpIr::create(x.into_ir(), grad.into_ir(), kernel,
+                    stride, padding, include_pad, ceil, || client.create_empty_handle());
+                client.register(OperationIr::Module(ModuleOperationIr::AvgPool3dBackward(desc))).output()
+            }
+            None => ruda_tensor::ops::pool::avg_pool3d_backward_from_2d::<Self>(
+                x, grad, kernel, stride, padding, include_pad, ceil),
+        }
+    }
+
     fn adaptive_avg_pool3d(x: FloatTensor<Self>, output_size: [usize; 3]) -> FloatTensor<Self> {
         let client = x.client.clone();
         let desc = AdaptiveAvgPool3dOpIr::create(x.into_ir(), output_size, || client.create_empty_handle());

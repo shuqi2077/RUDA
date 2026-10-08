@@ -111,6 +111,14 @@ macro_rules! impl_multi_backend_types {
             {
                type Device = MultiDevice<$DefaultBackend, $($OtherBackend),+>;
 
+                fn avg_pool3d_native_output_size(&self, input: [usize; 3], kernel: [usize; 3],
+                    stride: [usize; 3], padding: [usize; 3], ceil: bool) -> Option<[usize; 3]> {
+                    match self {
+                        Self::$DefaultBackend(runner) => runner.avg_pool3d_native_output_size(input, kernel, stride, padding, ceil),
+                        $(Self::$OtherBackend(runner) => runner.avg_pool3d_native_output_size(input, kernel, stride, padding, ceil),)+
+                    }
+                }
+
                 fn register_op(&self, op: OperationIr) {
                     match self {
                         Self::$DefaultBackend(runner) => runner.register_op(op),

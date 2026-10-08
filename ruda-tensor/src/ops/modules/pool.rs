@@ -76,7 +76,8 @@ pub(crate) fn adaptive_avg_pool3d_from_2d<B: Backend>(
     depth_lines_volume::<B>(lines, batch, channels, height, width)
 }
 
-pub(crate) fn avg_pool3d_from_2d<B: Backend>(input: FloatTensor<B>, kernel: [usize; 3],
+/// Execute volume average pooling through the backend's spatial and depth primitives.
+pub fn avg_pool3d_from_2d<B: Backend>(input: FloatTensor<B>, kernel: [usize; 3],
     stride: [usize; 3], padding: [usize; 3], count_include_pad: bool, ceil_mode: bool) -> FloatTensor<B> {
     let [batch, channels, depth, _, _] = input.shape().dims();
     let planes = B::avg_pool2d(volume_planes::<B>(input), [kernel[1], kernel[2]],
@@ -87,7 +88,8 @@ pub(crate) fn avg_pool3d_from_2d<B: Backend>(input: FloatTensor<B>, kernel: [usi
     depth_lines_volume::<B>(lines, batch, channels, height, width)
 }
 
-pub(crate) fn avg_pool3d_backward_from_2d<B: Backend>(input: FloatTensor<B>, grad: FloatTensor<B>,
+/// Execute volume average gradients through the backend's original composed operations.
+pub fn avg_pool3d_backward_from_2d<B: Backend>(input: FloatTensor<B>, grad: FloatTensor<B>,
     kernel: [usize; 3], stride: [usize; 3], padding: [usize; 3],
     count_include_pad: bool, ceil_mode: bool) -> FloatTensor<B> {
     let [batch, channels, depth, height, width] = input.shape().dims();
