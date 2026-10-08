@@ -236,6 +236,8 @@ visit_projected_fields!(FullyShardedProjectedDecoderStack,layers);
 visit_projected_fields!(FullyShardedProjectedEncoderDecoderModel,source_embeddings,encoder,encoder_normalization,target_embeddings,decoder,decoder_normalization,head);
 visit_fields!(FullyShardedNf4Linear,packed,scales,codebook,bias);
 visit_fields!(FullyShardedNf4LoRALinear,base,adapter_a,adapter_b);
+visit_fields!(FullyShardedNativeSwiGluExperts,gate,up,down);
+visit_projected_fields!(FullyShardedNativeMoeLayer,router,experts,correction_bias);
 impl<B:Backend> FullyShardedModule<B> for ShardedPackedParameter<B> {
     fn visit_shards<F:FnMut(&ShardedParameter<B>)>(&self,_visitor:&mut F) {}
     fn visit_packed_shards<F:FnMut(&ShardedPackedParameter<B>)>(&self,visitor:&mut F) {visitor(self);}

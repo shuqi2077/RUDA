@@ -101,3 +101,4 @@ adapter_components!(FullyShardedProjectedCrossAttention,[attention]);
 adapter_components!(FullyShardedProjectedDecoderLayer,[backbone,cross_attention]);
 adapter_components!(FullyShardedProjectedDecoderStack,[layers]);
 adapter_components!(FullyShardedProjectedEncoderDecoderModel,[encoder,decoder,head]);
+adapter_components!(FullyShardedNativeMoeLayer,[router]);
