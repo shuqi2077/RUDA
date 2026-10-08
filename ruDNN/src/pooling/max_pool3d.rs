@@ -176,8 +176,10 @@ fn forward<R: Runtime>(input: RudaTensor<R>, kernel: [usize; 3], stride: [usize;
     padding: [usize; 3], dilation: [usize; 3], ceil: bool, indexed: bool) -> (RudaTensor<R>, Option<RudaTensor<R>>) {
     let [batch, channels, depth, height, width] = input.meta.shape().dims();
     let sizes = [depth, height, width];
-    let volume = sizes.iter().try_fold(1usize, |size, axis| size.checked_mul(*axis)).expect("pooling volume overflow");
-    assert!(volume <= i64::MAX as usize, "pooling positions exceed I64");
+    if indexed {
+        let volume = sizes.iter().try_fold(1usize, |size, axis| size.checked_mul(*axis)).expect("pooling volume overflow");
+        assert!(volume <= i64::MAX as usize, "pooling positions exceed I64");
+    }
     let outputs = max_pool3d_output_size(sizes, kernel, stride, padding, dilation, ceil);
     let input = into_contiguous_aligned(permute_nchw_to_nhwc(input));
     let shape = Shape::new([batch, outputs[0], outputs[1], outputs[2], channels]);

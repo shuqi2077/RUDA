@@ -1811,6 +1811,13 @@ impl<B: Backend, C: CheckpointStrategy> ModuleOps<Autodiff<B, C>> for Autodiff<B
         }
     }
 
+    fn max_pool3d_with_indices_backward(x: AutodiffTensor<B>, grad: AutodiffTensor<B>,
+        indices: IntTensor<B>, kernel: [usize; 3], stride: [usize; 3], padding: [usize; 3],
+        dilation: [usize; 3], ceil: bool) -> MaxPool3dBackward<Self> {
+        MaxPool3dBackward::new(super::pool_backward::maximum_volume::<B, C>(
+            x, grad, indices, kernel, stride, padding, dilation, ceil))
+    }
+
     fn max_pool2d_with_indices_backward(
         x: AutodiffTensor<B>,
         kernel_size: [usize; 2],
@@ -1945,6 +1952,15 @@ impl<B: Backend, C: CheckpointStrategy> ModuleOps<Autodiff<B, C>> for Autodiff<B
             OpsKind::UnTracked(prep) => prep.finish(B::avg_pool3d(x.primitive, kernel,
                 stride, padding, count_include_pad, ceil_mode)),
         }
+    }
+
+    fn avg_pool3d_backward(x: AutodiffTensor<B>, grad: AutodiffTensor<B>, kernel: [usize; 3],
+        stride: [usize; 3], padding: [usize; 3], include_pad: bool, ceil: bool) -> AutodiffTensor<B> {
+        super::pool_backward::average_volume::<B, C>(x, grad, kernel, stride, padding, include_pad, ceil)
+    }
+
+    fn adaptive_avg_pool3d_backward(x: AutodiffTensor<B>, grad: AutodiffTensor<B>) -> AutodiffTensor<B> {
+        super::pool_backward::adaptive_average_volume::<B, C>(x, grad)
     }
 
     fn adaptive_avg_pool3d(x: AutodiffTensor<B>, output_size: [usize; 3]) -> AutodiffTensor<B> {

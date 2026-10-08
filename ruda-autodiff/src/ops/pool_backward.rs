@@ -132,3 +132,118 @@ pub(super) fn maximum<B: Backend, C: CheckpointStrategy>(
         }
     }
 }
+
+#[derive(Debug)]
+struct AverageVolume {
+    kernel: [usize; 3],
+    stride: [usize; 3],
+    padding: [usize; 3],
+    include_pad: bool,
+    ceil: bool,
+    gradient_dtype: DType,
+}
+
+impl<B: Backend> Backward<B, 1> for AverageVolume {
+    type State = ();
+
+    fn backward(self, ops: Ops<(), 1>, grads: &mut Gradients, _checkpointer: &mut Checkpointer) {
+        unary::<B, _>(ops.parents, ops.node, grads, |grad| {
+            let compute = if grad.dtype() == DType::F64 || self.gradient_dtype == DType::F64 {
+                DType::F64
+            } else { DType::F32 };
+            let grad = B::float_cast(grad, compute.into());
+            let out = B::avg_pool3d(grad, self.kernel, self.stride, self.padding, self.include_pad, self.ceil);
+            B::float_cast(out, self.gradient_dtype.into())
+        });
+    }
+}
+
+pub(super) fn average_volume<B: Backend, C: CheckpointStrategy>(x: AutodiffTensor<B>,
+    grad: AutodiffTensor<B>, kernel: [usize; 3], stride: [usize; 3], padding: [usize; 3],
+    include_pad: bool, ceil: bool) -> AutodiffTensor<B> {
+    let prep = AverageVolume { kernel, stride, padding, include_pad, ceil,
+        gradient_dtype: grad.primitive.dtype() }
+        .prepare::<C>([grad.node.clone()]).compute_bound();
+    prep.stateless(B::avg_pool3d_backward(x.primitive, grad.primitive,
+        kernel, stride, padding, include_pad, ceil))
+}
+
+#[derive(Debug)]
+struct AdaptiveAverageVolume {
+    output_size: [usize; 3],
+    gradient_dtype: DType,
+}
+
+impl<B: Backend> Backward<B, 1> for AdaptiveAverageVolume {
+    type State = ();
+
+    fn backward(self, ops: Ops<(), 1>, grads: &mut Gradients, _checkpointer: &mut Checkpointer) {
+        unary::<B, _>(ops.parents, ops.node, grads, |grad| {
+            let compute = if grad.dtype() == DType::F64 || self.gradient_dtype == DType::F64 {
+                DType::F64
+            } else { DType::F32 };
+            let grad = B::float_cast(grad, compute.into());
+            let out = B::adaptive_avg_pool3d(grad, self.output_size);
+            B::float_cast(out, self.gradient_dtype.into())
+        });
+    }
+}
+
+pub(super) fn adaptive_average_volume<B: Backend, C: CheckpointStrategy>(x: AutodiffTensor<B>,
+    grad: AutodiffTensor<B>) -> AutodiffTensor<B> {
+    let [_, _, depth, height, width] = grad.primitive.shape().dims::<5>();
+    AdaptiveAverageVolume { output_size: [depth, height, width], gradient_dtype: grad.primitive.dtype() }
+        .prepare::<C>([grad.node.clone()]).compute_bound()
+        .stateless(B::adaptive_avg_pool3d_backward(x.primitive, grad.primitive))
+}
+
+#[derive(Debug)]
+struct MaximumVolume;
+
+impl<B: Backend> Backward<B, 1> for MaximumVolume {
+    type State = (B::IntTensorPrimitive, Shape, DType);
+
+    fn backward(self, ops: Ops<Self::State, 1>, grads: &mut Gradients, _checkpointer: &mut Checkpointer) {
+        let (indices, output_shape, dtype) = ops.state;
+        unary::<B, _>(ops.parents, ops.node, grads, |grad| {
+            use ruda_tensor::api::{Int, Tensor};
+            let [batch, channels, depth, height, width] = grad.shape().dims::<5>();
+            let volume = depth.checked_mul(height).and_then(|n| n.checked_mul(width))
+                .expect("pool gradient volume overflow");
+            if volume == 0 || output_shape.num_elements() == 0 {
+                return B::float_zeros(output_shape, &B::float_device(&grad), dtype.into());
+            }
+            assert!(volume <= i64::MAX as usize, "pool gradient positions exceed I64");
+            let [_, _, od, oh, ow] = output_shape.dims::<5>();
+            let count = od.checked_mul(oh).and_then(|n| n.checked_mul(ow))
+                .expect("pool output volume overflow");
+            let indices = Tensor::<B, 5, Int>::new(indices).cast(DType::I64)
+                .reshape([batch, channels, count]);
+            let invalid = indices.clone().lower_elem(0)
+                .bool_or(indices.clone().greater_equal_elem(volume as i64));
+            let grad = Tensor::<B, 5>::new(ruda_tensor::TensorPrimitive::Float(grad))
+                .reshape([batch, channels, volume]);
+            grad.gather(2, indices.clamp(0, volume as i64 - 1)).mask_fill(invalid, 0)
+                .cast(dtype).reshape(output_shape.dims::<5>()).into_primitive().tensor()
+        });
+    }
+}
+
+pub(super) fn maximum_volume<B: Backend, C: CheckpointStrategy>(x: AutodiffTensor<B>,
+    grad: AutodiffTensor<B>, indices: B::IntTensorPrimitive, kernel: [usize; 3], stride: [usize; 3],
+    padding: [usize; 3], dilation: [usize; 3], ceil: bool) -> AutodiffTensor<B> {
+    let shape = grad.primitive.shape();
+    let dtype = grad.primitive.dtype();
+    match MaximumVolume.prepare::<C>([grad.node.clone()]).compute_bound().stateful() {
+        OpsKind::Tracked(prep) => {
+            let out = B::max_pool3d_with_indices_backward(x.primitive, grad.primitive,
+                indices.clone(), kernel, stride, padding, dilation, ceil);
+            prep.finish((indices, shape, dtype), out.x_grad)
+        }
+        OpsKind::UnTracked(prep) => {
+            let out = B::max_pool3d_with_indices_backward(x.primitive, grad.primitive,
+                indices, kernel, stride, padding, dilation, ceil);
+            prep.finish(out.x_grad)
+        }
+    }
+}
