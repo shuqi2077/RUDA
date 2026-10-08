@@ -39,6 +39,39 @@ pub(crate) fn adaptive_avg_pool3d_from_2d<B: Backend>(
     depth_lines_volume::<B>(lines, batch, channels, height, width)
 }
 
+pub(crate) fn avg_pool3d_from_2d<B: Backend>(input: FloatTensor<B>, kernel: [usize; 3],
+    stride: [usize; 3], padding: [usize; 3], count_include_pad: bool, ceil_mode: bool) -> FloatTensor<B> {
+    let [batch, channels, depth, _, _] = input.shape().dims();
+    let planes = B::avg_pool2d(volume_planes::<B>(input), [kernel[1], kernel[2]],
+        [stride[1], stride[2]], [padding[1], padding[2]], count_include_pad, ceil_mode);
+    let [_, _, height, width] = planes.shape().dims();
+    let lines = B::avg_pool1d(plane_depth_lines::<B>(planes, batch, depth), kernel[0], stride[0],
+        padding[0], count_include_pad, ceil_mode);
+    depth_lines_volume::<B>(lines, batch, channels, height, width)
+}
+
+pub(crate) fn avg_pool3d_backward_from_2d<B: Backend>(input: FloatTensor<B>, grad: FloatTensor<B>,
+    kernel: [usize; 3], stride: [usize; 3], padding: [usize; 3],
+    count_include_pad: bool, ceil_mode: bool) -> FloatTensor<B> {
+    let [batch, channels, depth, height, width] = input.shape().dims();
+    let [grad_batch, grad_channels, grad_depth, grad_height, grad_width] = grad.shape().dims();
+    assert_eq!([grad_batch, grad_channels], [batch, channels], "pooling gradient batch/channels differ");
+    let planes = volume_planes::<B>(input);
+    let spatial = B::avg_pool2d(planes.clone(), [kernel[1], kernel[2]],
+        [stride[1], stride[2]], [padding[1], padding[2]], count_include_pad, ceil_mode);
+    assert_eq!(spatial.shape().dims::<4>()[2..], [grad_height, grad_width], "pooling spatial gradient differs");
+    let lines = plane_depth_lines::<B>(spatial, batch, depth);
+    let grad_lines = plane_depth_lines::<B>(volume_planes::<B>(grad), batch, grad_depth);
+    let grad_lines = B::avg_pool1d_backward(lines, grad_lines, kernel[0], stride[0], padding[0],
+        count_include_pad, ceil_mode);
+    let grad_planes = volume_planes::<B>(depth_lines_volume::<B>(grad_lines,
+        batch, channels, grad_height, grad_width));
+    let grad_planes = B::avg_pool2d_backward(planes, grad_planes, [kernel[1], kernel[2]],
+        [stride[1], stride[2]], [padding[1], padding[2]], count_include_pad, ceil_mode);
+    let volume = B::float_reshape(grad_planes, Shape::new([batch, depth, channels, height, width]));
+    B::float_permute(volume, &[0, 2, 1, 3, 4])
+}
+
 pub(crate) fn adaptive_avg_pool3d_backward_from_2d<B: Backend>(
     input: FloatTensor<B>, grad: FloatTensor<B>,
 ) -> FloatTensor<B> {

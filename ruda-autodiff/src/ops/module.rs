@@ -1864,6 +1864,38 @@ impl<B: Backend, C: CheckpointStrategy> ModuleOps<Autodiff<B, C>> for Autodiff<B
         super::pool_backward::adaptive_average::<B, C>(x, grad)
     }
 
+    fn avg_pool3d(x: AutodiffTensor<B>, kernel: [usize; 3], stride: [usize; 3],
+        padding: [usize; 3], count_include_pad: bool, ceil_mode: bool) -> AutodiffTensor<B> {
+        #[derive(Debug)]
+        struct AvgPool3D;
+
+        impl<B: Backend> Backward<B, 1> for AvgPool3D {
+            type State = (NodeId, [usize; 3], [usize; 3], [usize; 3], bool, bool);
+
+            fn backward(self, ops: Ops<Self::State, 1>, grads: &mut Gradients,
+                checkpointer: &mut Checkpointer) {
+                let [node_parent] = ops.parents;
+                let grad = grads.consume::<B>(&ops.node);
+                let (input, kernel, stride, padding, include_pad, ceil_mode) = ops.state;
+                let input = checkpointer.retrieve_node_output(input);
+                if let Some(node) = node_parent {
+                    let grad = B::avg_pool3d_backward(input, grad, kernel, stride, padding, include_pad, ceil_mode);
+                    grads.register::<B>(node.id, grad);
+                }
+            }
+        }
+
+        match AvgPool3D.prepare::<C>([x.node.clone()]).compute_bound().stateful() {
+            OpsKind::Tracked(mut prep) => {
+                let input = prep.checkpoint(&x);
+                prep.finish((input, kernel, stride, padding, count_include_pad, ceil_mode),
+                    B::avg_pool3d(x.primitive, kernel, stride, padding, count_include_pad, ceil_mode))
+            }
+            OpsKind::UnTracked(prep) => prep.finish(B::avg_pool3d(x.primitive, kernel,
+                stride, padding, count_include_pad, ceil_mode)),
+        }
+    }
+
     fn adaptive_avg_pool3d(x: AutodiffTensor<B>, output_size: [usize; 3]) -> AutodiffTensor<B> {
         #[derive(Debug)]
         struct AdaptiveAvgPool3D;

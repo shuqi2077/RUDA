@@ -354,6 +354,16 @@ where
         rudnn::pooling::adaptive_avg_pool3d(x, output_size)
     }
 
+    fn avg_pool3d(x: FloatTensor<Self>, kernel: [usize; 3], stride: [usize; 3],
+        padding: [usize; 3], include_pad: bool, ceil: bool) -> FloatTensor<Self> {
+        rudnn::pooling::avg_pool3d(x, kernel, stride, padding, include_pad, ceil)
+    }
+
+    fn avg_pool3d_backward(x: FloatTensor<Self>, grad: FloatTensor<Self>, kernel: [usize; 3],
+        stride: [usize; 3], padding: [usize; 3], include_pad: bool, ceil: bool) -> FloatTensor<Self> {
+        rudnn::pooling::avg_pool3d_backward(x, grad, kernel, stride, padding, include_pad, ceil)
+    }
+
     fn adaptive_avg_pool3d_backward(x: FloatTensor<Self>, grad: FloatTensor<Self>) -> FloatTensor<Self> {
         rudnn::pooling::adaptive_avg_pool3d_backward(x, grad)
     }

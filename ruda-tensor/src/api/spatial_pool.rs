@@ -117,9 +117,9 @@ pub fn max_pool3d_with_indices<B: Backend>(
 
 /// Average-pool native `[batch, channels, depth, height, width]` activations.
 ///
-/// The rectangular reduction is factored into native spatial and depth pooling.
-/// Each stage retains the input's floating storage and its backend's arithmetic.
-/// Padding divisors factor per axis, including partially covered ceil windows.
+/// Dispatches native volume pooling, retaining backend padding and ceil-window
+/// semantics. Backends without a specialized volume kernel use native spatial
+/// and depth pooling; no host reduction is used.
 pub fn avg_pool3d<B: Backend>(
     input: Tensor<B, 5>,
     kernel_size: [usize; 3],
@@ -128,21 +128,8 @@ pub fn avg_pool3d<B: Backend>(
     count_include_pad: bool,
     ceil_mode: bool,
 ) -> Tensor<B, 5> {
-    let [batch, channels, depth, _, _] = input.dims();
-    let planes = avg_pool2d(
-        volume_planes(input),
-        [kernel_size[1], kernel_size[2]],
-        [stride[1], stride[2]],
-        [padding[1], padding[2]],
-        count_include_pad,
-        ceil_mode,
-    );
-    let [_, _, height, width] = planes.dims();
-    let lines = avg_pool1d(
-        plane_depth_lines(planes, batch, depth),
-        kernel_size[0], stride[0], padding[0], count_include_pad, ceil_mode,
-    );
-    depth_lines_volume(lines, batch, channels, height, width)
+    Tensor::new(TensorPrimitive::Float(B::avg_pool3d(input.primitive.tensor(), kernel_size,
+        stride, padding, count_include_pad, ceil_mode)))
 }
 
 /// Adaptive average pooling to explicit `[depth, height, width]` extents.

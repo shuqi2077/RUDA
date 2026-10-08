@@ -594,6 +594,16 @@ pub trait ModuleOps<B: Backend> {
         count_include_pad: bool,
         ceil_mode: bool,
     ) -> FloatTensor<B>;
+    /// Three dimensional average pooling of `[batch, channels, depth, height, width]`.
+    fn avg_pool3d(x: FloatTensor<B>, kernel_size: [usize; 3], stride: [usize; 3],
+        padding: [usize; 3], count_include_pad: bool, ceil_mode: bool) -> FloatTensor<B> {
+        pool::avg_pool3d_from_2d::<B>(x, kernel_size, stride, padding, count_include_pad, ceil_mode)
+    }
+    /// Input gradients for three dimensional average pooling.
+    fn avg_pool3d_backward(x: FloatTensor<B>, grad: FloatTensor<B>, kernel_size: [usize; 3],
+        stride: [usize; 3], padding: [usize; 3], count_include_pad: bool, ceil_mode: bool) -> FloatTensor<B> {
+        pool::avg_pool3d_backward_from_2d::<B>(x, grad, kernel_size, stride, padding, count_include_pad, ceil_mode)
+    }
     /// Two dimensional adaptive avg pooling.
     ///
     /// # Shapes

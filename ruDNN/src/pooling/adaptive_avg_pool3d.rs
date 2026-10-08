@@ -8,16 +8,56 @@ use ruda_kernel::tensor::{
     layout::{address_type, decompose_linear, max_vector_size, shape_divmod},
     permutation::{permute_nchw_to_nhwc, permute_nhwc_to_nchw},
 };
-use ruda_core::tensor::{DType, Shape};
+use ruda_core::{ir::AddressType, tensor::{DType, Shape}};
 
 #[ruda]
-fn bin_start(index: usize, output_extent: usize, input_extent: usize) -> usize {
-    index * input_extent / output_extent
+fn bin_division(index: usize, input_extent: usize, output_extent: usize,
+    #[comptime] max_value: usize) -> (usize, usize) {
+    let whole = index * (input_extent / output_extent);
+    let fraction = input_extent % output_extent;
+    if index == 0 || fraction == 0 {
+        (whole, 0)
+    } else if fraction <= max_value / index {
+        let product = index * fraction;
+        (whole + product / output_extent, product % output_extent)
+    } else {
+        let mut quotient = 0usize;
+        let mut remainder = 0usize;
+        let mut shift = 64usize;
+        while shift > 0 {
+            shift -= 1;
+            if remainder >= output_extent - remainder {
+                remainder -= output_extent - remainder;
+                quotient = quotient * 2 + 1;
+            } else {
+                remainder *= 2;
+                quotient *= 2;
+            }
+            if ((index >> shift) & 1) != 0 {
+                if remainder >= output_extent - fraction {
+                    remainder -= output_extent - fraction;
+                    quotient += 1;
+                } else {
+                    remainder += fraction;
+                }
+            }
+        }
+        (whole + quotient, remainder)
+    }
 }
 
 #[ruda]
-fn bin_end(index: usize, output_extent: usize, input_extent: usize) -> usize {
-    ((index + 1) * input_extent).div_ceil(output_extent).min(input_extent)
+fn bin_start(index: usize, output_extent: usize, input_extent: usize,
+    #[comptime] max_value: usize) -> usize {
+    let (quotient, _) = bin_division(index, input_extent, output_extent, max_value);
+    quotient
+}
+
+#[ruda]
+fn bin_end(index: usize, output_extent: usize, input_extent: usize,
+    #[comptime] max_value: usize) -> usize {
+    let (quotient, remainder) = bin_division(index + 1, input_extent, output_extent, max_value);
+    if remainder == 0 { quotient } else { quotient + 1 }
 }
 
 #[ruda(launch, address_type = "dynamic")]
@@ -26,6 +66,7 @@ fn adaptive_average_volume<E: Numeric, A: Float, N: Size>(
     output: &mut Tensor<Vector<E, N>>,
     output_shape: Sequence<FastDivmod<usize>>,
     working_units: usize,
+    #[comptime] max_value: usize,
     #[define(E)] _storage: StorageType,
     #[define(A)] _compute: StorageType,
 ) {
@@ -34,12 +75,12 @@ fn adaptive_average_volume<E: Numeric, A: Float, N: Size>(
     }
     let (_, position) = decompose_linear(ABSOLUTE_POS * output.vector_size(), &output_shape);
     let [batch, od, oh, ow, channel] = *position else { unreachable!() };
-    let id_start = bin_start(od, output.shape(1), input.shape(1));
-    let id_end = bin_end(od, output.shape(1), input.shape(1));
-    let ih_start = bin_start(oh, output.shape(2), input.shape(2));
-    let ih_end = bin_end(oh, output.shape(2), input.shape(2));
-    let iw_start = bin_start(ow, output.shape(3), input.shape(3));
-    let iw_end = bin_end(ow, output.shape(3), input.shape(3));
+    let id_start = bin_start(od, output.shape(1), input.shape(1), max_value);
+    let id_end = bin_end(od, output.shape(1), input.shape(1), max_value);
+    let ih_start = bin_start(oh, output.shape(2), input.shape(2), max_value);
+    let ih_end = bin_end(oh, output.shape(2), input.shape(2), max_value);
+    let iw_start = bin_start(ow, output.shape(3), input.shape(3), max_value);
+    let iw_end = bin_end(ow, output.shape(3), input.shape(3), max_value);
     let base = batch * input.stride(0) + channel * input.stride(4);
     let mut sum = Vector::<A, N>::zero();
     for id in id_start..id_end {
@@ -60,6 +101,7 @@ fn adaptive_average_volume_backward<E: Numeric, A: Float, N: Size>(
     output: &mut Tensor<Vector<E, N>>,
     output_shape: Sequence<FastDivmod<usize>>,
     working_units: usize,
+    #[comptime] max_value: usize,
     #[define(E)] _storage: StorageType,
     #[define(A)] _compute: StorageType,
 ) {
@@ -68,25 +110,25 @@ fn adaptive_average_volume_backward<E: Numeric, A: Float, N: Size>(
     }
     let (_, position) = decompose_linear(ABSOLUTE_POS * output.vector_size(), &output_shape);
     let [batch, id, ih, iw, channel] = *position else { unreachable!() };
-    let od_start = bin_start(id, output.shape(1), grad.shape(1));
-    let od_end = bin_end(id, output.shape(1), grad.shape(1));
-    let oh_start = bin_start(ih, output.shape(2), grad.shape(2));
-    let oh_end = bin_end(ih, output.shape(2), grad.shape(2));
-    let ow_start = bin_start(iw, output.shape(3), grad.shape(3));
-    let ow_end = bin_end(iw, output.shape(3), grad.shape(3));
+    let od_start = bin_start(id, output.shape(1), grad.shape(1), max_value);
+    let od_end = bin_end(id, output.shape(1), grad.shape(1), max_value);
+    let oh_start = bin_start(ih, output.shape(2), grad.shape(2), max_value);
+    let oh_end = bin_end(ih, output.shape(2), grad.shape(2), max_value);
+    let ow_start = bin_start(iw, output.shape(3), grad.shape(3), max_value);
+    let ow_end = bin_end(iw, output.shape(3), grad.shape(3), max_value);
     let base = batch * grad.stride(0) + channel * grad.stride(4);
     let mut sum = Vector::<A, N>::zero();
     for od in od_start..od_end {
-        let id_start = bin_start(od, grad.shape(1), output.shape(1));
-        let id_end = bin_end(od, grad.shape(1), output.shape(1));
+        let id_start = bin_start(od, grad.shape(1), output.shape(1), max_value);
+        let id_end = bin_end(od, grad.shape(1), output.shape(1), max_value);
         if id >= id_start && id < id_end {
             for oh in oh_start..oh_end {
-                let ih_start = bin_start(oh, grad.shape(2), output.shape(2));
-                let ih_end = bin_end(oh, grad.shape(2), output.shape(2));
+                let ih_start = bin_start(oh, grad.shape(2), output.shape(2), max_value);
+                let ih_end = bin_end(oh, grad.shape(2), output.shape(2), max_value);
                 if ih >= ih_start && ih < ih_end {
                     for ow in ow_start..ow_end {
-                        let iw_start = bin_start(ow, grad.shape(3), output.shape(3));
-                        let iw_end = bin_end(ow, grad.shape(3), output.shape(3));
+                        let iw_start = bin_start(ow, grad.shape(3), output.shape(3), max_value);
+                        let iw_end = bin_end(ow, grad.shape(3), output.shape(3), max_value);
                         if iw >= iw_start && iw < iw_end {
                             let count = (id_end - id_start) * (ih_end - ih_start) * (iw_end - iw_start);
                             let index = base + od * grad.stride(1) + oh * grad.stride(2) + ow * grad.stride(3);
@@ -101,8 +143,14 @@ fn adaptive_average_volume_backward<E: Numeric, A: Float, N: Size>(
     output[ABSOLUTE_POS] = Vector::cast_from(sum);
 }
 
-fn accumulation_dtype(storage: DType) -> DType {
+pub(super) fn accumulation_dtype(storage: DType) -> DType {
     if storage == DType::F64 { DType::F64 } else { DType::F32 }
+}
+
+fn bin_address_type<R: Runtime>(input: &RudaTensor<R>, output: &RudaTensor<R>) -> AddressType {
+    let wide_bins = (1..4).any(|axis| input.meta.shape()[axis]
+        .checked_mul(output.meta.shape()[axis]).is_none_or(|product| product > u32::MAX as usize));
+    if wide_bins { AddressType::U64 } else { address_type!(input, output) }
 }
 
 /// Adaptive average pooling of native `[batch, channels, depth, height, width]` volumes.
@@ -122,9 +170,11 @@ pub fn adaptive_avg_pool3d<R: Runtime>(input: RudaTensor<R>, output_size: [usize
     }
     let dim = RudaDim::new(input.client.properties(), working_units);
     let count = calculate_ruda_count_elemwise(&input.client, working_units, dim);
-    adaptive_average_volume::launch(&output.client, count, dim, address_type!(input, output),
+    let address = bin_address_type(&input, &output);
+    let max_value = if address == AddressType::U64 { usize::MAX } else { u32::MAX as usize };
+    adaptive_average_volume::launch(&output.client, count, dim, address,
         vector_size, input.into_tensor_arg(), output.clone().into_tensor_arg(),
-        shape_divmod(&output), working_units, output.dtype.into(), accumulation_dtype(output.dtype).into());
+        shape_divmod(&output), working_units, max_value, output.dtype.into(), accumulation_dtype(output.dtype).into());
     permute_nhwc_to_nchw(output)
 }
 
@@ -148,8 +198,10 @@ pub fn adaptive_avg_pool3d_backward<R: Runtime>(input: RudaTensor<R>, grad: Ruda
     }
     let dim = RudaDim::new(input.client.properties(), working_units);
     let count = calculate_ruda_count_elemwise(&input.client, working_units, dim);
-    adaptive_average_volume_backward::launch(&output.client, count, dim, address_type!(grad, output),
+    let address = bin_address_type(&grad, &output);
+    let max_value = if address == AddressType::U64 { usize::MAX } else { u32::MAX as usize };
+    adaptive_average_volume_backward::launch(&output.client, count, dim, address,
         vector_size, grad.into_tensor_arg(), output.clone().into_tensor_arg(), shape_divmod(&output),
-        working_units, output.dtype.into(), accumulation_dtype(output.dtype).into());
+        working_units, max_value, output.dtype.into(), accumulation_dtype(output.dtype).into());
     permute_nhwc_to_nchw(output)
 }
