@@ -1,10 +1,10 @@
 use super::GradientsParams;
-use alloc::{format, vec::Vec};
-use hashbrown::HashSet;
+use alloc::{format, vec, vec::Vec};
+use hashbrown::{HashMap, HashSet};
 use ruda_model::{
-    module::ParamId,
+    module::{AutodiffModule, ModuleVisitor, Param, ParamId},
     record::{PrecisionSettings, Record, RecorderError},
-    tensor::{DType, TensorData, TensorMetadata, TensorPrimitive, backend::Backend, try_read_sync},
+    tensor::{DType, Tensor, TensorData, TensorMetadata, TensorPrimitive, backend::{AutodiffBackend, Backend}, try_read_sync},
 };
 use serde::{Deserialize, Serialize};
 use ruda_model::tensor::quantization::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue};
@@ -18,6 +18,34 @@ use ruda_model::tensor::quantization::{QuantLevel, QuantParam, QuantScheme, Quan
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GradientsParamsRecord {
     gradients: Vec<(u64, DType, TensorData)>,
+}
+
+struct RestoreDevices<'a, B: AutodiffBackend> {
+    expected: &'a HashMap<ParamId, Vec<usize>>,
+    devices: HashMap<ParamId, (B::Device, DType)>,
+    error: Option<RecorderError>,
+}
+
+impl<B: AutodiffBackend> ModuleVisitor<B> for RestoreDevices<'_, B> {
+    fn visit_float<const D: usize>(&mut self, param: &Param<Tensor<B, D>>) {
+        let Some(shape) = self.expected.get(&param.id) else { return; };
+        if !param.planned_is_require_grad() { return; }
+        let value = param.val();
+        if !value.is_require_grad() { return; }
+        if value.dims().as_slice() != shape.as_slice() {
+            self.error = Some(RecorderError::Unknown(format!(
+                "Recorded gradient shape differs from restored parameter {}", param.id,
+            )));
+        }
+        let metadata = (value.device(), value.dtype());
+        if self.devices.insert(param.id, metadata.clone())
+            .is_some_and(|previous| previous != metadata)
+        {
+            self.error = Some(RecorderError::Unknown(format!(
+                "Restored trainable aliases disagree on device/storage for {}", param.id,
+            )));
+        }
+    }
 }
 
 impl<B: Backend> Record<B> for GradientsParamsRecord {
@@ -80,6 +108,52 @@ impl GradientsParams {
             gradients.push((id.val(), dtype, data));
         }
         Ok(GradientsParamsRecord { gradients })
+    }
+
+    /// Restore each pending derivative on its original trainable model parameter's actual device.
+    ///
+    /// Unlike `from_record`, this supports a full rank-local model whose explicit
+    /// parameter groups reside on different devices. Restore the matching model
+    /// IDs/weights first. Recorded IDs, shapes and tied trainable device/storage
+    /// metadata are checked before uploads. Unknown or exclusively frozen IDs
+    /// are rejected; absent derivatives remain absent. Only parameters carrying
+    /// recorded gradients are inspected, so unselected lazy packed bases are not
+    /// materialized. Work-gradient dtype is retained, not cast to parameter dtype.
+    pub fn from_record_for_model<B: AutodiffBackend, M: AutodiffModule<B>>(
+        record: GradientsParamsRecord,
+        model: &M,
+    ) -> Result<Self, RecorderError> {
+        let mut expected = HashMap::with_capacity(record.gradients.len());
+        for (id, _, data) in &record.gradients {
+            if expected.insert(ParamId::from(*id), data.shape.iter().copied().collect()).is_some() {
+                return Err(RecorderError::Unknown(format!("Duplicate gradient parameter ID {id}")));
+            }
+        }
+        let mut visitor = RestoreDevices::<B> {
+            expected: &expected,
+            devices: HashMap::new(),
+            error: None,
+        };
+        model.visit(&mut visitor);
+        if let Some(error) = visitor.error { return Err(error); }
+        if visitor.devices.len() != expected.len() {
+            return Err(RecorderError::Unknown(
+                "Recorded gradients contain unknown or exclusively frozen model parameters".into(),
+            ));
+        }
+        let mut restored = Self::new();
+        for (id, dtype, data) in record.gradients {
+            let parameter = ParamId::from(id);
+            let device = &visitor.devices.get(&parameter)
+                .expect("validated model gradient device is missing").0;
+            let mut gradient = Self::from_record::<B::InnerBackend>(
+                GradientsParamsRecord { gradients: vec![(id, dtype, data)] }, device,
+            )?;
+            let primitive = gradient.container.remove::<B::InnerBackend>(&parameter)
+                .expect("restored native gradient is missing");
+            restored.container.register::<B::InnerBackend>(parameter, primitive);
+        }
+        Ok(restored)
     }
 
     /// Restore recorded gradients to a device without summing or clearing entries.
