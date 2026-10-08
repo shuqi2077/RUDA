@@ -37,7 +37,7 @@ pub(super) fn dinput<F: Float>(
                 let k = k_base + tc;
                 let mut a = F::cast_from(0.0f32);
                 let mut b = F::cast_from(0.0f32);
-                if row < end && n_left < columns as usize {
+                if tr < end - row_base && n_left < columns as usize {
                     a = grad[row * columns as usize + n_left];
                 }
                 if n_right < columns as usize && k < inner as usize {
@@ -54,7 +54,7 @@ pub(super) fn dinput<F: Float>(
                 16usize,16usize,16usize,cmma::MatrixLayout::ColMajor,&right.to_slice(),16);
             cmma::execute::<F,F,f32,f32>(&a,&b,&acc,&acc);
             sync_ruda();
-            n_base += 16;
+            if columns as usize - n_base <= 16 {n_base = columns as usize;}else {n_base += 16;}
         }
         cmma::store(&mut result.to_slice_mut(),&acc,16,cmma::MatrixLayout::RowMajor);
         sync_ruda();
@@ -63,12 +63,12 @@ pub(super) fn dinput<F: Float>(
             let t = lane + i * 32;
             let row = row_base + t / 16;
             let k = k_base + t % 16;
-            if row < end && k < inner as usize {
+            if t / 16 < end - row_base && k < inner as usize {
                 out[row * inner as usize + k] = F::cast_from(result[t]);
             }
         }
         sync_ruda();
-        row_base += 16;
+        if end - row_base <= 16 {row_base = end;}else {row_base += 16;}
     }
 }
 
@@ -102,10 +102,10 @@ pub(super) fn dweight<F: Float>(
             let k = k_base + tc;
             let mut a = F::cast_from(0.0f32);
             let mut b = F::cast_from(0.0f32);
-            if row < end && n < columns as usize {
+            if tr < end - row_base && n < columns as usize {
                 a = grad[row * columns as usize + n];
             }
-            if row < end && k < inner as usize {
+            if tr < end - row_base && k < inner as usize {
                 b = input[row * inner as usize + k];
             }
             // A[n,row] is row-major; B[row,k] is column-major.
@@ -120,7 +120,7 @@ pub(super) fn dweight<F: Float>(
             16usize,16usize,16usize,cmma::MatrixLayout::ColMajor,&right.to_slice(),16);
         cmma::execute::<F,F,f32,f32>(&a,&b,&acc,&acc);
         sync_ruda();
-        row_base += 16;
+        if end - row_base <= 16 {row_base = end;}else {row_base += 16;}
     }
     cmma::store(&mut result.to_slice_mut(),&acc,16,cmma::MatrixLayout::RowMajor);
     sync_ruda();

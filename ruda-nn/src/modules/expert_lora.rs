@@ -194,7 +194,7 @@ impl<B:Backend> AdaptedPackedSwiGluExperts<B> {
             let AdaptedExpertProjection::Frozen(base)=role else {panic!("selected original expert projection is already adapted")};
             config.validate_expert_initialization(base,dtype);}
     }
-    /// Original actual selected trainable A/B parameter IDs, excluding frozen quantization metadata.
+    /// Original actual selected A/B parameter IDs, excluding frozen quantization metadata.
     pub fn adapter_parameter_ids(&self) -> Vec<ruda_model::module::ParamId> {
         let mut ids=Vec::new();for projection in [&self.gate,&self.up,&self.down] {if let AdaptedExpertProjection::LoRA(layer)=projection {
             for id in [layer.adapter_a.weight.id.clone(),layer.adapter_b.weight.id.clone()] {if !ids.contains(&id) {ids.push(id);}}}}ids

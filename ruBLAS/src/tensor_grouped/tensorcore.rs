@@ -31,7 +31,7 @@ pub(super) fn segmented<F: Float>(
                 let kk=base_k+t%16;
                 let mut a=F::cast_from(0.0f32);
                 let mut b=F::cast_from(0.0f32);
-                if row<end && kk<inner as usize { a=input[row*inner as usize+kk]; }
+                if t/16<end-row_base && kk<inner as usize { a=input[row*inner as usize+kk]; }
                 if column<columns as usize && kk<inner as usize {
                     b=weights[(expert*columns as usize+column)*inner as usize+kk];
                 }
@@ -44,7 +44,7 @@ pub(super) fn segmented<F: Float>(
                 16usize,16usize,16usize,cmma::MatrixLayout::ColMajor,&right.to_slice(),16);
             cmma::execute::<F,F,f32,f32>(&a,&b,&acc,&acc);
             sync_ruda();
-            base_k+=16;
+            if inner as usize-base_k<=16 {base_k=inner as usize;}else {base_k+=16;}
         }
         cmma::store(&mut result.to_slice_mut(),&acc,16,cmma::MatrixLayout::RowMajor);
         sync_ruda();
@@ -53,9 +53,9 @@ pub(super) fn segmented<F: Float>(
             let t=lane+i*32;
             let row=row_base+t/16;
             let column=col_base+t%16;
-            if row<end && column<columns as usize { out[row*columns as usize+column]=F::cast_from(result[t]); }
+            if t/16<end-row_base && column<columns as usize { out[row*columns as usize+column]=F::cast_from(result[t]); }
         }
         sync_ruda();
-        row_base+=16;
+        if end-row_base<=16 {row_base=end;}else {row_base+=16;}
     }
 }
