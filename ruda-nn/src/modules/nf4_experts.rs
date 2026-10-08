@@ -1,4 +1,4 @@
-use super::FrozenNf4Linear;
+use super::{FrozenNf4Linear,FrozenExpertGeometry,FrozenSelectedExperts};
 use ruda_model::{module::{Module,Param},tensor::{Tensor,Int,TensorPrimitive,DType,FloatDType,FrozenNf4GroupedOps,FrozenNf4SwiGluOps,Nf4ExpertPayload,Nf4GroupedOptions,
     MoeDispatchOps,MoeOptions,MoeSelectionOptions,MoeRouterWeightOptions,MoeExpertStrategy,MoeCombineGradientStrategy,dispatch_moe,combine_moe,backend::Backend}};
 use super::transformer::{TransformerProjectionShape,TransformerProjection};
@@ -125,11 +125,11 @@ impl<P:fmt::Debug,M:fmt::Debug,N:fmt::Debug> fmt::Display for Nf4MoeError<P,M,N>
 impl<P:fmt::Debug,M:fmt::Debug,N:fmt::Debug> core::error::Error for Nf4MoeError<P,M,N> {}
 /// Complete local packed-expert routed branch; router storage/adapter selection remains explicit.
 #[derive(Module,Debug)]
-pub struct Nf4MoeLayer<B:Backend,P:Module<B>> {
+pub struct Nf4MoeLayer<B:Backend,P:Module<B>,E:Module<B> =FrozenNf4SwiGluExperts<B>> {
     /// Original actual dense/LoRA/AWQ/NF4 router projection.
     pub router:P,
     /// Three actual packed expert cubes with their original independent execution options.
-    pub experts:FrozenNf4SwiGluExperts<B>,
+    pub experts:E,
     /// Original optional FP32 selection-only correction bias.
     pub correction_bias:Option<Param<Tensor<B,1>>>,
     /// Explicit original source routing policy, not a floating expert strategy.
@@ -139,9 +139,9 @@ pub struct Nf4MoeLayer<B:Backend,P:Module<B>> {
     #[module(skip)]
     pub router_input_dtype:Option<FloatDType>,
 }
-impl<B:Backend,P:TransformerProjectionShape<B>> Nf4MoeLayer<B,P> {
+impl<B:Backend,P:TransformerProjectionShape<B>,E:FrozenExpertGeometry<B>> Nf4MoeLayer<B,P,E> {
     /// Connect actual loaded source modules without quantizing, merging adapters or selecting a model family.
-    pub fn from_parts(router:P,experts:FrozenNf4SwiGluExperts<B>,correction_bias:Option<Param<Tensor<B,1>>>,routing:Nf4MoeRouting,router_input_dtype:Option<FloatDType>) -> Self {
+    pub fn from_parts(router:P,experts:E,correction_bias:Option<Param<Tensor<B,1>>>,routing:Nf4MoeRouting,router_input_dtype:Option<FloatDType>) -> Self {
         let layer=Self {router,experts,correction_bias,routing,router_input_dtype};layer.validate();layer
     }
     /// Actual original residual/input width.
@@ -150,7 +150,7 @@ impl<B:Backend,P:TransformerProjectionShape<B>> Nf4MoeLayer<B,P> {
     pub fn validate(&self) {
         self.experts.validate();let [e,h,_]=self.experts.dimensions();assert_eq!(self.router.dimensions(),[h,e],"NF4 router/expert geometry differs");
         if let Some(bias)=&self.correction_bias {let bias=bias.val();assert_eq!(bias.dims(),[e],"NF4 correction bias width differs");
-            assert_eq!(bias.dtype(),DType::F32,"NF4 correction bias must retain FP32");assert_eq!(bias.device(),self.experts.gate.payload.packed.val().device(),"NF4 correction bias device differs");}
+            assert_eq!(bias.dtype(),DType::F32,"NF4 correction bias must retain FP32");assert_eq!(bias.device(),self.experts.device(),"NF4 correction bias device differs");}
         if let Some(dtype)=self.router_input_dtype {assert!(matches!(DType::from(dtype),DType::F16|DType::BF16|DType::F32),"unsupported NF4 router input storage");}
     }
 }
@@ -164,14 +164,14 @@ pub struct Nf4MoeOutput<B:Backend,const D:usize> {
     /// Actual native U32 selected expert IDs for auxiliary objectives.
     pub selected_experts:Tensor<B,2,Int>,
 }
-impl<B:MoeDispatchOps+FrozenNf4SwiGluOps,P:TransformerProjection<B>> Nf4MoeLayer<B,P> {
+impl<B:MoeDispatchOps,P:TransformerProjection<B>,E:FrozenSelectedExperts<B>> Nf4MoeLayer<B,P,E> {
     /// Complete native route -> selected packed experts -> original ordered combine.
     /// Shared experts, residuals and model-level normalization remain caller-owned.
-    pub fn forward<const D:usize>(&self,input:Tensor<B,D>) -> Result<Tensor<B,D>,Nf4MoeError<P::Error,B::MoeError,B::Nf4GroupedError>> {
+    pub fn forward<const D:usize>(&self,input:Tensor<B,D>) -> Result<Tensor<B,D>,Nf4MoeError<P::Error,B::MoeError,E::Error>> {
         self.forward_detailed(input).map(|output|output.output)
     }
     /// Real input/router first-order graph with immutable packed bases and original selection metadata.
-    pub fn forward_detailed<const D:usize>(&self,input:Tensor<B,D>) -> Result<Nf4MoeOutput<B,D>,Nf4MoeError<P::Error,B::MoeError,B::Nf4GroupedError>> {
+    pub fn forward_detailed<const D:usize>(&self,input:Tensor<B,D>) -> Result<Nf4MoeOutput<B,D>,Nf4MoeError<P::Error,B::MoeError,E::Error>> {
         self.validate();assert!(D>0,"NF4 MoE requires an actual feature axis");let shape=input.dims();assert_eq!(shape[D-1],self.width(),"NF4 MoE input width differs");
         let rows=shape[..D-1].iter().try_fold(1usize,|count,&axis|count.checked_mul(axis)).expect("NF4 MoE token count overflows");
         let input=input.reshape([rows,self.width()]);let router_input=if let Some(dtype)=self.router_input_dtype {input.clone().cast(dtype)} else {input.clone()};

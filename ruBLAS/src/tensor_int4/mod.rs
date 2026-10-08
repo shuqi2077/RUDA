@@ -1,4 +1,7 @@
 mod kernel;
+mod grouped;
+mod grouped_kernel;
+pub use grouped::AwqGroupedGemm;
 
 use ruda_core::device::Device;
 use ruda_core::tensor::{DType, Shape};

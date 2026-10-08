@@ -7,6 +7,10 @@ mod received;
 mod nf4;
 #[cfg(feature="tensor-nf4-moe")]
 pub use nf4::{Nf4ExpertProjection,Nf4ExpertError,Nf4ExpertExecution,Nf4SwiGluExperts,Nf4SwiGluCache};
+#[cfg(feature="tensor-packed-moe")]
+mod packed;
+#[cfg(feature="tensor-packed-moe")]
+pub use packed::{PackedExpertError,PackedExpertProjection,PackedSwiGluExperts,PackedSwiGluCache};
 
 pub use dispatch::{DispatchedTokens,CombineBackward,CombineGradientStrategy,CombineGradientSelection,CombineBackwardSelected};
 pub use experts::{SwiGluExperts,ExpertTrainingCache,ExpertTrainingOutput,ExpertBackward,ExpertGradientSelection,ExpertBackwardSelected,GroupedExpertRows};

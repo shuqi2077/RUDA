@@ -9,6 +9,7 @@ mod qtensor;
 mod frozen_awq;
 mod frozen_nf4;
 mod grouped_nf4;
+mod packed_experts;
 mod moe;
 mod moe_exchange;
 mod tensor;

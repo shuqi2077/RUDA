@@ -1,6 +1,6 @@
 use alloc::{collections::BTreeMap,vec::Vec};
 use ruda_model::tensor::backend::Backend;
-use crate::Nf4MoeLayer;
+use crate::{Nf4MoeLayer,FrozenExpertGeometry};
 use super::{AdaptTransformerProjection,TransformerAdapterConfig,AttentionAdapterTarget,FeedForwardAdapterTarget,
     Nf4MoeTransformerBlock,Nf4MoeTransformerLayer,Nf4MoeTransformerModel};
 
@@ -36,13 +36,13 @@ pub struct Nf4MoeLayerAdapterConfig {
     /// Actual source branch and selected native projection roles.
     pub feed_forward:Nf4MoeAdapterTargets,
 }
-impl<B:Backend,P:AdaptTransformerProjection<B>> Nf4MoeLayer<B,P> {
+impl<B:Backend,P:AdaptTransformerProjection<B>,E:FrozenExpertGeometry<B>> Nf4MoeLayer<B,P,E> {
     /// Attach actual A/B to the explicitly selected router without reblocking or changing expert bytes.
     pub fn with_router_adapter(mut self,config:&TransformerAdapterConfig) -> Self {
         self.router.validate_adapter(config);self.router=self.router.with_adapter(config);self
     }
 }
-impl<B:Backend,P:AdaptTransformerProjection<B>> Nf4MoeTransformerBlock<B,P> {
+impl<B:Backend,P:AdaptTransformerProjection<B>,E:FrozenExpertGeometry<B>> Nf4MoeTransformerBlock<B,P,E> {
     fn validate_adapters(&self,config:&TransformerAdapterConfig,attention:&[AttentionAdapterTarget],router:bool,shared:&[FeedForwardAdapterTarget]) {
         assert!(!attention.is_empty() || router || !shared.is_empty(),"selected packed expert block requires an actual projection target");
         self.attention.validate_adapters(config,attention);if router {self.routed.router.validate_adapter(config);}
@@ -55,7 +55,7 @@ impl<B:Backend,P:AdaptTransformerProjection<B>> Nf4MoeTransformerBlock<B,P> {
         if !shared.is_empty() {self.shared=self.shared.map(|branch|branch.with_adapters(config,shared));}self
     }
 }
-impl<B:Backend,P:AdaptTransformerProjection<B>> Nf4MoeTransformerLayer<B,P> {
+impl<B:Backend,P:AdaptTransformerProjection<B>,E:FrozenExpertGeometry<B>> Nf4MoeTransformerLayer<B,P,E> {
     fn validate_adapters(&self,config:&Nf4MoeLayerAdapterConfig) {
         match (self,&config.feed_forward) {
             (Self::Dense(block),Nf4MoeAdapterTargets::Dense(targets))=>block.validate_adapters(&config.adapter,&config.attention,targets),
@@ -74,7 +74,7 @@ impl<B:Backend,P:AdaptTransformerProjection<B>> Nf4MoeTransformerLayer<B,P> {
         }
     }
 }
-impl<B:Backend,P:AdaptTransformerProjection<B>> Nf4MoeTransformerModel<B,P> {
+impl<B:Backend,P:AdaptTransformerProjection<B>,E:FrozenExpertGeometry<B>> Nf4MoeTransformerModel<B,P,E> {
     /// Validate every target before allocation, then attach only selected original native projection adapters.
     /// Original packed bytes, FP32 scales/book and all unselected parameter identities remain unchanged.
     pub fn with_adapters(mut self,targets:&[Nf4MoeLayerAdapterConfig],head:Option<&TransformerAdapterConfig>) -> Self {
