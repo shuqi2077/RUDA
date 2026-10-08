@@ -10,6 +10,8 @@ use super::{ElementwiseShardOptimizer,OptimizerCheckpointBuffers,FullyShardedOpt
 mod continuation;
 mod grouped;
 pub use grouped::*;
+mod migration;
+pub use migration::*;
 
 /// Actual native transport, local-parameter/state geometry or source-optimizer argument failure.
 #[derive(Debug)]

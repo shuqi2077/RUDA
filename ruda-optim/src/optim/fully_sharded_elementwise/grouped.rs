@@ -134,6 +134,40 @@ impl<O,M,B,C> FullyShardedGroupedElementwiseOptimizer<O,M,B,C>
 }
 impl<B:AutodiffBackend,O:ElementwiseShardOptimizer<B::InnerBackend>> FullyShardedGroupedElementwiseRecord<B,O>
     where O::State<1>:OptimizerCheckpointBuffers<B::InnerBackend,1>+crate::OptimizerCheckpointScalars {
+    /// Per-parameter explicit ownership migration retaining each original native
+    /// group index. Locally owned expert/TP parameter lists may differ; original
+    /// group definitions/count and a parameter's selected source-group route must
+    /// agree. No reclassification, group-default assignment or clock advance.
+    pub fn reshard_explicit(records:&[Self],migrations:&[FullyShardedOptimizerMigration],device:&B::Device)
+        -> Result<Self,crate::OptimizerShardError> {
+        let invalid=crate::OptimizerShardError::Placement;
+        let first=records.first().ok_or(invalid("actual original grouped optimizer archives required"))?;
+        let mut routes=Vec::with_capacity(records.len());
+        for record in records {
+            let routing=record.routes.iter().copied().collect::<BTreeMap<_,_>>();
+            if record.version!=1 || record.group_count!=first.group_count || record.group_count==0 || routing.len()!=record.routes.len()
+                || routing.len()!=record.inner.placement.len() || routing.values().any(|index|*index>=record.group_count)
+                || record.inner.placement.iter().any(|entry|!routing.contains_key(&entry.0)) {
+                return Err(invalid("original native optimizer group definitions/routes differ"));
+            }
+            routes.push(routing);
+        }
+        let mut target_routes=Vec::with_capacity(migrations.len());
+        for migration in migrations {
+            let mut group=None;
+            for index in &migration.source_records {
+                let route=routes.get(*index).and_then(|routes|routes.get(&migration.target.parameter.val())).copied()
+                    .ok_or(invalid("selected original group route missing"))?;
+                if group.is_some_and(|previous|previous!=route) {return Err(invalid("original parameter group differs across selected source owners"));}
+                group=Some(route);
+            }
+            target_routes.push((migration.target.parameter.val(),group.ok_or(invalid("explicit original group owners required"))?));
+        }
+        let sources=records.iter().map(|record|&record.inner).collect::<Vec<_>>();
+        let inner=super::migration::migrate_optimizer_record::<B,O>(&sources,migrations,device)?;
+        target_routes.sort_by_key(|entry|entry.0);
+        Ok(Self {version:1,inner,routes:target_routes,group_count:first.group_count})
+    }
     /// Exact original group routing and independent native histories across a complete rank-set ownership change.
     pub fn reshard(records:&[Self],target_rank:u32,target_world:u32,device:&B::Device) -> Result<Self,crate::OptimizerShardError> {
         let first=records.first().ok_or(crate::OptimizerShardError::Placement("complete original grouped optimizer rank set required"))?;
