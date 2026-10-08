@@ -268,3 +268,43 @@ pub(crate) fn layer_norm_affine_merge<W: Float>(
     weight[column] = W::cast_from(weight_sum);
     bias[column] = bias_sum;
 }
+
+#[ruda(launch)]
+pub(crate) fn layer_norm_weight_partial<F: Float, G: Float>(
+    input: &Array<F>, grad: &Array<G>, mean: &Array<f32>, rstd: &Array<f32>,
+    output: &mut Array<f32>, width: u32, parts: u32,
+    #[define(F, G)] _types: [StorageType; 2],
+) {
+    let position = ABSOLUTE_POS as usize;
+    if position >= output.len() { terminate!(); }
+    let width = width as usize;
+    let column = position % width;
+    let mut row = position / width;
+    let mut sum = 0.0f32;
+    while row < mean.len() {
+        let normalized = (f32::cast_from(input[row * width + column]) - mean[row]) * rstd[row];
+        sum += f32::cast_from(grad[row * width + column]) * normalized;
+        if mean.len() - row <= parts as usize { break; }
+        row += parts as usize;
+    }
+    output[position] = sum;
+}
+
+#[ruda(launch)]
+pub(crate) fn layer_norm_bias_partial<G: Float>(
+    grad: &Array<G>, output: &mut Array<f32>, width: u32, rows: u32, parts: u32,
+    #[define(G)] _storage: StorageType,
+) {
+    let position = ABSOLUTE_POS as usize;
+    if position >= output.len() { terminate!(); }
+    let width = width as usize;
+    let column = position % width;
+    let mut row = position / width;
+    let mut sum = 0.0f32;
+    while row < rows as usize {
+        sum += f32::cast_from(grad[row * width + column]);
+        if rows as usize - row <= parts as usize { break; }
+        row += parts as usize;
+    }
+    output[position] = sum;
+}

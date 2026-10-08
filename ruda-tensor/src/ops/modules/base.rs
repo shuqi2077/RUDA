@@ -904,6 +904,12 @@ pub trait ModuleOps<B: Backend> {
         super::normalization::rms_norm_backward::<B>(tensor, gamma, grad, rstd)
     }
 
+    /// RMSNorm input and weight gradients selected by the two corresponding mask entries.
+    fn rms_norm_backward_select(tensor: FloatTensor<B>, gamma: FloatTensor<B>, grad: FloatTensor<B>,
+        rstd: FloatTensor<B>, mask: [bool; 2]) -> [Option<FloatTensor<B>>; 2] {
+        super::normalization::rms_norm_backward_select::<B>(tensor, gamma, grad, rstd, mask)
+    }
+
     /// Native forward with statistics retained for backward.
     fn layer_norm_with_stats(
         tensor: FloatTensor<B>, gamma: FloatTensor<B>,
@@ -918,6 +924,12 @@ pub trait ModuleOps<B: Backend> {
         mean: FloatTensor<B>, rstd: FloatTensor<B>,
     ) -> LayerNormBackward<B> {
         super::normalization::layer_norm_backward::<B>(tensor, gamma, grad, mean, rstd)
+    }
+
+    /// LayerNorm input, weight and bias gradients selected in that order.
+    fn layer_norm_backward_select(tensor: FloatTensor<B>, gamma: FloatTensor<B>, grad: FloatTensor<B>,
+        mean: FloatTensor<B>, rstd: FloatTensor<B>, mask: [bool; 3]) -> [Option<FloatTensor<B>>; 3] {
+        super::normalization::layer_norm_backward_select::<B>(tensor, gamma, grad, mean, rstd, mask)
     }
 
     /// Differentiable primitive composition for backends without native LayerNorm backward.

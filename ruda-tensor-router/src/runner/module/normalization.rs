@@ -1,6 +1,31 @@
 use super::*;
 
 impl<B: BackendIr> Runner<B> {
+    pub(super) fn apply_rms_norm_backward_select(&self, handles: &mut HandleContainer<B::Handle>, desc: &RmsNormBackwardSelectOpIr) {
+        let x = handles.get_float_tensor::<B>(&desc.x);
+        let gamma = handles.get_float_tensor::<B>(&desc.gamma);
+        let grad = handles.get_float_tensor::<B>(&desc.grad);
+        let rstd = handles.get_float_tensor::<B>(&desc.rstd);
+        let out = B::rms_norm_backward_select(x, gamma, grad, rstd,
+            [desc.input_grad.is_some(), desc.weight_grad.is_some()]);
+        for (target, value) in [desc.input_grad.as_ref(), desc.weight_grad.as_ref()].into_iter().zip(out) {
+            if let Some(target) = target { handles.register_float_tensor::<B>(&target.id, value.expect("requested RMSNorm gradient")); }
+        }
+    }
+
+    pub(super) fn apply_layer_norm_backward_select(&self, handles: &mut HandleContainer<B::Handle>, desc: &LayerNormBackwardSelectOpIr) {
+        let x = handles.get_float_tensor::<B>(&desc.x);
+        let gamma = handles.get_float_tensor::<B>(&desc.gamma);
+        let grad = handles.get_float_tensor::<B>(&desc.grad);
+        let mean = handles.get_float_tensor::<B>(&desc.mean);
+        let rstd = handles.get_float_tensor::<B>(&desc.rstd);
+        let out = B::layer_norm_backward_select(x, gamma, grad, mean, rstd,
+            [desc.input_grad.is_some(), desc.weight_grad.is_some(), desc.bias_grad.is_some()]);
+        for (target, value) in [desc.input_grad.as_ref(), desc.weight_grad.as_ref(), desc.bias_grad.as_ref()].into_iter().zip(out) {
+            if let Some(target) = target { handles.register_float_tensor::<B>(&target.id, value.expect("requested LayerNorm gradient")); }
+        }
+    }
+
     pub(super) fn apply_rms_norm(&self, handles: &mut HandleContainer<B::Handle>, desc: &RmsNormOpIr) {
         let x = handles.get_float_tensor::<B>(&desc.x);
         let gamma = handles.get_float_tensor::<B>(&desc.gamma);

@@ -32,6 +32,55 @@ macro_rules! make_ops {
 }
 
 impl<B: FusionBackend> ModuleOps<Fusion<B>> for Fusion<B> {
+    fn rms_norm_backward_select(x: FloatTensor<Self>, gamma: FloatTensor<Self>, grad: FloatTensor<Self>,
+        rstd: FloatTensor<Self>, mask: [bool; 2]) -> [Option<FloatTensor<Self>>; 2] {
+        if mask == [false; 2] { return [None, None]; }
+        make_ops!(RmsNormBackwardSelectOps, RmsNormBackwardSelectOpIr,
+            |desc: &RmsNormBackwardSelectOpIr, handles: &mut HandleContainer<B::Handle>| {
+                let x = handles.get_float_tensor::<B>(&desc.x);
+                let gamma = handles.get_float_tensor::<B>(&desc.gamma);
+                let grad = handles.get_float_tensor::<B>(&desc.grad);
+                let rstd = handles.get_float_tensor::<B>(&desc.rstd);
+                let out = B::rms_norm_backward_select(x, gamma, grad, rstd,
+                    [desc.input_grad.is_some(), desc.weight_grad.is_some()]);
+                for (target, value) in [desc.input_grad.as_ref(), desc.weight_grad.as_ref()].into_iter().zip(out) {
+                    if let Some(target) = target { handles.register_float_tensor::<B>(&target.id, value.expect("requested RMSNorm gradient")); }
+                }
+            });
+        let streams = OperationStreams::with_inputs([&x, &gamma, &grad, &rstd]);
+        let client = x.client.clone();
+        let desc = RmsNormBackwardSelectOpIr::create(x.into_ir(), gamma.into_ir(), grad.into_ir(), rstd.into_ir(), mask,
+            || client.create_empty_handle());
+        let mut outputs = client.register(streams, OperationIr::Module(ModuleOperationIr::RmsNormBackwardSelect(desc.clone())),
+            RmsNormBackwardSelectOps::<B>::new(desc)).into_iter();
+        core::array::from_fn(|index| mask[index].then(|| outputs.next().expect("registered RMSNorm gradient")))
+    }
+
+    fn layer_norm_backward_select(x: FloatTensor<Self>, gamma: FloatTensor<Self>, grad: FloatTensor<Self>,
+        mean: FloatTensor<Self>, rstd: FloatTensor<Self>, mask: [bool; 3]) -> [Option<FloatTensor<Self>>; 3] {
+        if mask == [false; 3] { return [None, None, None]; }
+        make_ops!(LayerNormBackwardSelectOps, LayerNormBackwardSelectOpIr,
+            |desc: &LayerNormBackwardSelectOpIr, handles: &mut HandleContainer<B::Handle>| {
+                let x = handles.get_float_tensor::<B>(&desc.x);
+                let gamma = handles.get_float_tensor::<B>(&desc.gamma);
+                let grad = handles.get_float_tensor::<B>(&desc.grad);
+                let mean = handles.get_float_tensor::<B>(&desc.mean);
+                let rstd = handles.get_float_tensor::<B>(&desc.rstd);
+                let out = B::layer_norm_backward_select(x, gamma, grad, mean, rstd,
+                    [desc.input_grad.is_some(), desc.weight_grad.is_some(), desc.bias_grad.is_some()]);
+                for (target, value) in [desc.input_grad.as_ref(), desc.weight_grad.as_ref(), desc.bias_grad.as_ref()].into_iter().zip(out) {
+                    if let Some(target) = target { handles.register_float_tensor::<B>(&target.id, value.expect("requested LayerNorm gradient")); }
+                }
+            });
+        let streams = OperationStreams::with_inputs([&x, &gamma, &grad, &mean, &rstd]);
+        let client = x.client.clone();
+        let desc = LayerNormBackwardSelectOpIr::create(x.into_ir(), gamma.into_ir(), grad.into_ir(), mean.into_ir(), rstd.into_ir(), mask,
+            || client.create_empty_handle());
+        let mut outputs = client.register(streams, OperationIr::Module(ModuleOperationIr::LayerNormBackwardSelect(desc.clone())),
+            LayerNormBackwardSelectOps::<B>::new(desc)).into_iter();
+        core::array::from_fn(|index| mask[index].then(|| outputs.next().expect("registered LayerNorm gradient")))
+    }
+
     fn has_rms_norm_backward() -> bool { B::has_rms_norm_backward() }
 
     fn rms_norm_with_stats(x: FloatTensor<Self>, gamma: FloatTensor<Self>, epsilon: f64)

@@ -12,6 +12,26 @@ use ruda_tensor::graph::*;
 use crate::{BackendRouter, RunnerChannel, RunnerClient};
 
 impl<R: RunnerChannel> ModuleOps<Self> for BackendRouter<R> {
+    fn rms_norm_backward_select(x: FloatTensor<Self>, gamma: FloatTensor<Self>, grad: FloatTensor<Self>,
+        rstd: FloatTensor<Self>, mask: [bool; 2]) -> [Option<FloatTensor<Self>>; 2] {
+        if mask == [false; 2] { return [None, None]; }
+        let client = x.client.clone();
+        let desc = RmsNormBackwardSelectOpIr::create(x.into_ir(), gamma.into_ir(), grad.into_ir(), rstd.into_ir(), mask,
+            || client.create_empty_handle());
+        let mut outputs = client.register(OperationIr::Module(ModuleOperationIr::RmsNormBackwardSelect(desc))).into_iter();
+        core::array::from_fn(|index| mask[index].then(|| outputs.next().expect("registered RMSNorm gradient")))
+    }
+
+    fn layer_norm_backward_select(x: FloatTensor<Self>, gamma: FloatTensor<Self>, grad: FloatTensor<Self>,
+        mean: FloatTensor<Self>, rstd: FloatTensor<Self>, mask: [bool; 3]) -> [Option<FloatTensor<Self>>; 3] {
+        if mask == [false; 3] { return [None, None, None]; }
+        let client = x.client.clone();
+        let desc = LayerNormBackwardSelectOpIr::create(x.into_ir(), gamma.into_ir(), grad.into_ir(), mean.into_ir(), rstd.into_ir(), mask,
+            || client.create_empty_handle());
+        let mut outputs = client.register(OperationIr::Module(ModuleOperationIr::LayerNormBackwardSelect(desc))).into_iter();
+        core::array::from_fn(|index| mask[index].then(|| outputs.next().expect("registered LayerNorm gradient")))
+    }
+
     fn has_rms_norm_backward() -> bool { true }
 
     fn rms_norm_with_stats(x: FloatTensor<Self>, gamma: FloatTensor<Self>, epsilon: f64)

@@ -247,6 +247,10 @@ pub enum ModuleOperationIr {
     RmsNorm(RmsNormOpIr),
     /// Complete first-order RMSNorm derivatives using saved statistics.
     RmsNormBackward(RmsNormBackwardOpIr),
+    /// RMSNorm derivatives restricted to requested leaves.
+    RmsNormBackwardSelect(RmsNormBackwardSelectOpIr),
+    /// LayerNorm derivatives restricted to requested leaves.
+    LayerNormBackwardSelect(LayerNormBackwardSelectOpIr),
 }
 
 /// Basic operations that can be done on any tensor type.

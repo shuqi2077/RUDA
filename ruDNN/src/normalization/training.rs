@@ -73,13 +73,7 @@ pub fn layer_norm_backward<R: Runtime>(
     input: RudaTensor<R>, gamma: RudaTensor<R>, grad: RudaTensor<R>,
     mean: RudaTensor<R>, rstd: RudaTensor<R>,
 ) -> Result<[RudaTensor<R>; 3], NormalizationError> {
-    let (rows, width, dim) = layout(&input)?;
-    affine(&input, &gamma, width)?;
-    for value in [&grad, &mean, &rstd] { binding(&input, value)?; }
-    if grad.meta.shape() != input.meta.shape() || !matches!(grad.dtype, DType::F32 | DType::F16 | DType::BF16)
-        || mean.meta.shape()[..] != [rows] || rstd.meta.shape() != mean.meta.shape()
-        || mean.dtype != DType::F32 || rstd.dtype != DType::F32
-    { return Err(NormalizationError("invalid LayerNorm gradient or saved statistics")); }
+    let (rows, width, dim) = backward_layout(&input, &gamma, &grad, &mean, &rstd)?;
     let allocate = |shape, dtype| empty_device_contiguous_dtype(input.client.clone(), input.device.clone(), shape, dtype);
     let input_grad = allocate(input.meta.shape().clone(), input.dtype);
     let weight_grad = allocate(Shape::new([width]), gamma.dtype);
@@ -111,5 +105,86 @@ pub fn layer_norm_backward<R: Runtime>(
     kernel::layer_norm_affine_merge::launch(&client, merge_count, merge_dim,
         weight_parts.into_array_arg(), bias_parts.into_array_arg(), weight_grad.clone().into_array_arg(),
         bias_grad.clone().into_array_arg(), parts as u32, gamma.dtype.into());
+    Ok([input_grad, weight_grad, bias_grad])
+}
+
+fn backward_layout<R: Runtime>(input: &RudaTensor<R>, gamma: &RudaTensor<R>, grad: &RudaTensor<R>,
+    mean: &RudaTensor<R>, rstd: &RudaTensor<R>) -> Result<(usize, usize, RudaDim), NormalizationError> {
+    let (rows, width, dim) = layout(input)?;
+    affine(input, gamma, width)?;
+    for value in [grad, mean, rstd] { binding(input, value)?; }
+    if grad.meta.shape() != input.meta.shape() || !matches!(grad.dtype, DType::F32 | DType::F16 | DType::BF16)
+        || mean.meta.shape()[..] != [rows] || rstd.meta.shape() != mean.meta.shape()
+        || mean.dtype != DType::F32 || rstd.dtype != DType::F32 {
+        return Err(NormalizationError("invalid LayerNorm gradient or saved statistics"));
+    }
+    Ok((rows, width, dim))
+}
+
+/// Compute only requested input, weight and bias gradients, in that order.
+/// Unrequested outputs are absent, without allocating substitute gradient buffers.
+pub fn layer_norm_backward_select<R: Runtime>(input: RudaTensor<R>, gamma: RudaTensor<R>, grad: RudaTensor<R>,
+    mean: RudaTensor<R>, rstd: RudaTensor<R>, mask: [bool; 3])
+    -> Result<[Option<RudaTensor<R>>; 3], NormalizationError> {
+    if mask == [false; 3] { return Ok([None, None, None]); }
+    if mask == [true; 3] { return Ok(layer_norm_backward(input, gamma, grad, mean, rstd)?.map(Some)); }
+    let (rows, width, dim) = backward_layout(&input, &gamma, &grad, &mean, &rstd)?;
+    let allocate = |shape, dtype| empty_device_contiguous_dtype(input.client.clone(), input.device.clone(), shape, dtype);
+    let input_grad = mask[0].then(|| allocate(input.meta.shape().clone(), input.dtype));
+    let weight_grad = mask[1].then(|| allocate(Shape::new([width]), gamma.dtype));
+    let bias_grad = mask[2].then(|| allocate(Shape::new([width]), DType::F32));
+    let input = if mask[0] || mask[1] { into_contiguous(input) } else { input };
+    let gamma = if mask[0] { into_contiguous(gamma) } else { gamma };
+    let grad = into_contiguous(grad);
+    let mean = if mask[0] || mask[1] { into_contiguous(mean) } else { mean };
+    let rstd = if mask[0] || mask[1] { into_contiguous(rstd) } else { rstd };
+    let client = input.client.clone();
+    if let Some(output) = &input_grad {
+        if rows > 0 {
+            kernel::layer_norm_input_backward::launch(&client, RudaCount::Static(rows as u32, 1, 1), dim,
+                input.clone().into_array_arg(), gamma.clone().into_array_arg(), grad.clone().into_array_arg(),
+                mean.clone().into_array_arg(), rstd.clone().into_array_arg(), output.clone().into_array_arg(),
+                width as u32, [input.dtype.into(), gamma.dtype.into(), grad.dtype.into()]);
+        }
+    }
+    if mask[1] || mask[2] {
+        let parts = rows.div_ceil(32).clamp(1, 128);
+        let work = parts * width;
+        let allocate_partial = || empty_device_contiguous_dtype(client.clone(), input.device.clone(),
+            Shape::new([parts, width]), DType::F32);
+        let dim = RudaDim::new(client.properties(), work);
+        let count = calculate_ruda_count_elemwise(&client, work, dim);
+        let merge_dim = RudaDim::new(client.properties(), width);
+        let merge_count = calculate_ruda_count_elemwise(&client, width, merge_dim);
+        match (&weight_grad, &bias_grad) {
+            (Some(weight), Some(bias)) => {
+                let wp = allocate_partial();
+                let bp = allocate_partial();
+                kernel::layer_norm_affine_partial::launch(&client, count, dim, input.clone().into_array_arg(),
+                    grad.clone().into_array_arg(), mean.into_array_arg(), rstd.into_array_arg(),
+                    wp.clone().into_array_arg(), bp.clone().into_array_arg(), width as u32, parts as u32,
+                    [input.dtype.into(), grad.dtype.into()]);
+                kernel::layer_norm_affine_merge::launch(&client, merge_count, merge_dim, wp.into_array_arg(),
+                    bp.into_array_arg(), weight.clone().into_array_arg(), bias.clone().into_array_arg(),
+                    parts as u32, gamma.dtype.into());
+            }
+            (Some(weight), None) => {
+                let partial = allocate_partial();
+                kernel::layer_norm_weight_partial::launch(&client, count, dim, input.clone().into_array_arg(),
+                    grad.clone().into_array_arg(), mean.into_array_arg(), rstd.into_array_arg(),
+                    partial.clone().into_array_arg(), width as u32, parts as u32, [input.dtype.into(), grad.dtype.into()]);
+                super::rms::weight_merge::launch(&client, merge_count, merge_dim, partial.into_array_arg(),
+                    weight.clone().into_array_arg(), parts as u32, gamma.dtype.into());
+            }
+            (None, Some(bias)) => {
+                let partial = allocate_partial();
+                kernel::layer_norm_bias_partial::launch(&client, count, dim, grad.clone().into_array_arg(),
+                    partial.clone().into_array_arg(), width as u32, rows as u32, parts as u32, grad.dtype.into());
+                super::rms::weight_merge::launch(&client, merge_count, merge_dim, partial.into_array_arg(),
+                    bias.clone().into_array_arg(), parts as u32, DType::F32.into());
+            }
+            (None, None) => unreachable!(),
+        }
+    }
     Ok([input_grad, weight_grad, bias_grad])
 }

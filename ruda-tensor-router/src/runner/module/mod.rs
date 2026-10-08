@@ -15,6 +15,8 @@ impl<B: BackendIr> Runner<B> {
         op: &ModuleOperationIr,
     ) {
         match op {
+            ModuleOperationIr::RmsNormBackwardSelect(desc) => self.apply_rms_norm_backward_select(handles, desc),
+            ModuleOperationIr::LayerNormBackwardSelect(desc) => self.apply_layer_norm_backward_select(handles, desc),
             ModuleOperationIr::RmsNorm(desc) => self.apply_rms_norm(handles, desc),
             ModuleOperationIr::RmsNormBackward(desc) => self.apply_rms_norm_backward(handles, desc),
             ModuleOperationIr::LayerNorm(desc) => self.apply_layer_norm(handles, desc),

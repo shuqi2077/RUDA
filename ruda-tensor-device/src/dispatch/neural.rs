@@ -60,7 +60,35 @@ where
 {
     fn has_layer_norm_backward() -> bool { true }
 
+    fn layer_norm_backward_select(tensor: FloatTensor<Self>, gamma: FloatTensor<Self>, grad: FloatTensor<Self>,
+        mean: FloatTensor<Self>, rstd: FloatTensor<Self>, mask: [bool; 3]) -> [Option<FloatTensor<Self>>; 3] {
+        if mask == [false; 3] { return [None, None, None]; }
+        if R::has_native_layer_norm() {
+            let out = Self::layer_norm_backward(tensor, gamma, grad, mean, rstd);
+            return core::array::from_fn(|index| if mask[index] {
+                Some(match index { 0 => out.input.clone(), 1 => out.weight.clone(), _ => out.bias.clone() })
+            } else { None });
+        }
+        if native_norm_supported(&tensor) && native_norm_supported(&gamma) && native_norm_supported(&grad)
+            && mean.dtype == ruda_core::tensor::DType::F32 && rstd.dtype == ruda_core::tensor::DType::F32 {
+            return rudnn::normalization::layer_norm_backward_select(tensor, gamma, grad, mean, rstd, mask)
+                .expect("invalid native LayerNorm backward bindings");
+        }
+        ruda_tensor::ops::normalization::layer_norm_backward_select::<Self>(tensor, gamma, grad, mean, rstd, mask)
+    }
+
     fn has_rms_norm_backward() -> bool { true }
+
+    fn rms_norm_backward_select(tensor: FloatTensor<Self>, gamma: FloatTensor<Self>, grad: FloatTensor<Self>,
+        rstd: FloatTensor<Self>, mask: [bool; 2]) -> [Option<FloatTensor<Self>>; 2] {
+        if mask == [false; 2] { return [None, None]; }
+        if native_rms_supported(&tensor) && native_rms_supported(&gamma) && native_rms_supported(&grad)
+            && rstd.dtype == ruda_core::tensor::DType::F32 {
+            return rudnn::normalization::rms_norm_backward_select(tensor, gamma, grad, rstd, mask)
+                .expect("invalid native RMSNorm backward bindings");
+        }
+        ruda_tensor::ops::normalization::rms_norm_backward_select::<Self>(tensor, gamma, grad, rstd, mask)
+    }
 
     fn rms_norm_with_stats(tensor: FloatTensor<Self>, gamma: FloatTensor<Self>, epsilon: f64)
         -> ruda_tensor::ops::RmsNormOutput<Self> {

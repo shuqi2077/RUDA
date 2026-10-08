@@ -601,6 +601,19 @@ impl RelativeOps for ModuleOperationIr {
                 grad: desc.grad.to_relative(converter), rstd: desc.rstd.to_relative(converter),
                 input_grad: desc.input_grad.to_relative(converter), weight_grad: desc.weight_grad.to_relative(converter),
             }),
+            ModuleOperationIr::RmsNormBackwardSelect(desc) => ModuleOperationIr::RmsNormBackwardSelect(RmsNormBackwardSelectOpIr {
+                x: desc.x.to_relative(converter), gamma: desc.gamma.to_relative(converter),
+                grad: desc.grad.to_relative(converter), rstd: desc.rstd.to_relative(converter),
+                input_grad: desc.input_grad.as_ref().map(|value| value.to_relative(converter)),
+                weight_grad: desc.weight_grad.as_ref().map(|value| value.to_relative(converter)),
+            }),
+            ModuleOperationIr::LayerNormBackwardSelect(desc) => ModuleOperationIr::LayerNormBackwardSelect(LayerNormBackwardSelectOpIr {
+                x: desc.x.to_relative(converter), gamma: desc.gamma.to_relative(converter),
+                grad: desc.grad.to_relative(converter), mean: desc.mean.to_relative(converter), rstd: desc.rstd.to_relative(converter),
+                input_grad: desc.input_grad.as_ref().map(|value| value.to_relative(converter)),
+                weight_grad: desc.weight_grad.as_ref().map(|value| value.to_relative(converter)),
+                bias_grad: desc.bias_grad.as_ref().map(|value| value.to_relative(converter)),
+            }),
             ModuleOperationIr::Interpolate(desc) => {
                 ModuleOperationIr::Interpolate(InterpolateOpIr {
                     x: desc.x.to_relative(converter),

@@ -1098,6 +1098,10 @@ impl ModuleOperationIr {
             }
             ModuleOperationIr::RmsNorm(repr) => Box::new([&repr.x, &repr.gamma].into_iter()),
             ModuleOperationIr::RmsNormBackward(repr) => Box::new([&repr.x, &repr.gamma, &repr.grad, &repr.rstd].into_iter()),
+            ModuleOperationIr::RmsNormBackwardSelect(repr) => Box::new([&repr.x, &repr.gamma, &repr.grad, &repr.rstd].into_iter()),
+            ModuleOperationIr::LayerNormBackwardSelect(repr) => {
+                Box::new([&repr.x, &repr.gamma, &repr.grad, &repr.mean, &repr.rstd].into_iter())
+            }
             ModuleOperationIr::InterpolateBackward(repr) => {
                 Box::new([&repr.x, &repr.grad].into_iter())
             }
@@ -1240,6 +1244,10 @@ impl ModuleOperationIr {
             }
             ModuleOperationIr::RmsNorm(repr) => Box::new([&repr.out, &repr.rstd].into_iter()),
             ModuleOperationIr::RmsNormBackward(repr) => Box::new([&repr.input_grad, &repr.weight_grad].into_iter()),
+            ModuleOperationIr::RmsNormBackwardSelect(repr) => Box::new(repr.input_grad.iter().chain(repr.weight_grad.iter())),
+            ModuleOperationIr::LayerNormBackwardSelect(repr) => {
+                Box::new(repr.input_grad.iter().chain(repr.weight_grad.iter()).chain(repr.bias_grad.iter()))
+            }
             ModuleOperationIr::InterpolateBackward(repr) => Box::new([&repr.out].into_iter()),
             ModuleOperationIr::Rfft(repr) => Box::new([&repr.out_re, &repr.out_im].into_iter()),
             ModuleOperationIr::IRfft(repr) => Box::new([&repr.out_signal].into_iter()),
@@ -1512,6 +1520,19 @@ impl ModuleOperationIr {
                 repr.x.mark_read_only(nodes, &mut output);
                 repr.gamma.mark_read_only(nodes, &mut output);
                 repr.grad.mark_read_only(nodes, &mut output);
+                repr.rstd.mark_read_only(nodes, &mut output);
+            }
+            ModuleOperationIr::RmsNormBackwardSelect(repr) => {
+                repr.x.mark_read_only(nodes, &mut output);
+                repr.gamma.mark_read_only(nodes, &mut output);
+                repr.grad.mark_read_only(nodes, &mut output);
+                repr.rstd.mark_read_only(nodes, &mut output);
+            }
+            ModuleOperationIr::LayerNormBackwardSelect(repr) => {
+                repr.x.mark_read_only(nodes, &mut output);
+                repr.gamma.mark_read_only(nodes, &mut output);
+                repr.grad.mark_read_only(nodes, &mut output);
+                repr.mean.mark_read_only(nodes, &mut output);
                 repr.rstd.mark_read_only(nodes, &mut output);
             }
             ModuleOperationIr::InterpolateBackward(repr) => {

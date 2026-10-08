@@ -2,6 +2,30 @@ use super::*;
 
 #[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
 #[allow(missing_docs)]
+pub struct RmsNormBackwardSelectOpIr {
+    pub x: TensorIr,
+    pub gamma: TensorIr,
+    pub grad: TensorIr,
+    pub rstd: TensorIr,
+    pub input_grad: Option<TensorIr>,
+    pub weight_grad: Option<TensorIr>,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
+pub struct LayerNormBackwardSelectOpIr {
+    pub x: TensorIr,
+    pub gamma: TensorIr,
+    pub grad: TensorIr,
+    pub mean: TensorIr,
+    pub rstd: TensorIr,
+    pub input_grad: Option<TensorIr>,
+    pub weight_grad: Option<TensorIr>,
+    pub bias_grad: Option<TensorIr>,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
 pub struct RmsNormOpIr {
     pub x: TensorIr,
     pub gamma: TensorIr,

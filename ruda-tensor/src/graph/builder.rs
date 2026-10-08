@@ -1198,6 +1198,39 @@ impl DequantizeOpIr {
 
 // Operations with multiple outputs
 
+impl RmsNormBackwardSelectOpIr {
+    pub fn create(x: TensorIr, gamma: TensorIr, grad: TensorIr, rstd: TensorIr, mask: [bool; 2],
+        mut new_id: impl FnMut() -> TensorId) -> Self {
+        let width = *x.shape.last().expect("RMSNorm requires an axis");
+        assert!(width > 0, "RMSNorm final axis must be nonempty");
+        assert_eq!(gamma.shape, Shape::new([width]), "RMSNorm weight shape differs");
+        assert_eq!(grad.shape, x.shape, "RMSNorm gradient shape differs");
+        assert_eq!(rstd.shape, Shape::new([x.shape.num_elements() / width]), "RMSNorm reciprocal norm shape differs");
+        let input_grad = mask[0].then(|| TensorIr::uninit(new_id(), x.shape.clone(), x.dtype));
+        let weight_grad = mask[1].then(|| TensorIr::uninit(new_id(), gamma.shape.clone(), gamma.dtype));
+        Self { x, gamma, grad, rstd, input_grad, weight_grad }
+    }
+}
+
+impl LayerNormBackwardSelectOpIr {
+    pub fn create(x: TensorIr, gamma: TensorIr, grad: TensorIr, mean: TensorIr, rstd: TensorIr, mask: [bool; 3],
+        mut new_id: impl FnMut() -> TensorId) -> Self {
+        let width = *x.shape.last().expect("LayerNorm input must have an axis");
+        assert!(width > 0, "LayerNorm final axis must be nonempty");
+        assert_eq!(gamma.shape, Shape::new([width]), "LayerNorm weight shape differs");
+        assert_eq!(grad.shape, x.shape, "LayerNorm gradient shape differs");
+        assert_eq!(mean.shape, Shape::new([x.shape.num_elements() / width]), "LayerNorm mean shape differs");
+        assert_eq!(rstd.shape, mean.shape, "LayerNorm reciprocal deviation shape differs");
+        let input_grad = mask[0].then(|| TensorIr::uninit(new_id(), x.shape.clone(), x.dtype));
+        let weight_grad = mask[1].then(|| TensorIr::uninit(new_id(), gamma.shape.clone(), gamma.dtype));
+        let bias_dtype = if [&x, &gamma, &grad, &mean, &rstd].iter().any(|value| value.dtype == DType::F64) {
+            DType::F64
+        } else { DType::F32 };
+        let bias_grad = mask[2].then(|| TensorIr::uninit(new_id(), gamma.shape.clone(), bias_dtype));
+        Self { x, gamma, grad, mean, rstd, input_grad, weight_grad, bias_grad }
+    }
+}
+
 impl RmsNormOpIr {
     pub fn create(x: TensorIr, gamma: TensorIr, epsilon: f64, mut new_id: impl FnMut() -> TensorId) -> Self {
         let width = *x.shape.last().expect("RMSNorm requires an axis");

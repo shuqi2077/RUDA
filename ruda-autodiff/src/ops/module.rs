@@ -76,9 +76,10 @@ impl<B: Backend, C: CheckpointStrategy> ModuleOps<Autodiff<B, C>> for Autodiff<B
                 let input = checkpointer.retrieve_node_output(input);
                 let gamma = checkpointer.retrieve_node_output(gamma);
                 let grad = grads.consume::<B>(&ops.node);
-                let out = B::rms_norm_backward(input, gamma, grad, rstd);
-                for (parent, value) in ops.parents.into_iter().zip([out.input, out.weight]) {
-                    if let Some(parent) = parent { grads.register::<B>(parent.id, value); }
+                let mask = [ops.parents[0].is_some(), ops.parents[1].is_some()];
+                let out = B::rms_norm_backward_select(input, gamma, grad, rstd, mask);
+                for (parent, value) in ops.parents.into_iter().zip(out) {
+                    if let Some(parent) = parent { grads.register::<B>(parent.id, value.expect("requested RMSNorm gradient")); }
                 }
             }
         }
@@ -110,10 +111,11 @@ impl<B: Backend, C: CheckpointStrategy> ModuleOps<Autodiff<B, C>> for Autodiff<B
                 let grad = grads.consume::<B>(&ops.node);
                 let input = checkpointer.retrieve_node_output(input);
                 let weight = checkpointer.retrieve_node_output(weight);
-                let out = B::layer_norm_backward(input, weight, grad, mean, rstd);
-                let bias = if let Some(dtype) = bias_dtype { B::float_cast(out.bias, dtype) } else { out.bias };
-                for (parent, grad) in ops.parents.into_iter().zip([out.input, out.weight, bias]) {
-                    if let Some(parent) = parent { grads.register::<B>(parent.id, grad); }
+                let mask = core::array::from_fn(|index| ops.parents.get(index).is_some_and(Option::is_some));
+                let mut out = B::layer_norm_backward_select(input, weight, grad, mean, rstd, mask);
+                if let Some(dtype) = bias_dtype { out[2] = out[2].take().map(|value| B::float_cast(value, dtype)); }
+                for (parent, grad) in ops.parents.into_iter().zip(out) {
+                    if let Some(parent) = parent { grads.register::<B>(parent.id, grad.expect("requested LayerNorm gradient")); }
                 }
             }
         }
