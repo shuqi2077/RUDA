@@ -241,7 +241,8 @@ pub(crate) fn layer_norm_affine_partial<F: Float, G: Float>(
     let mut bias_sum = 0.0f32;
     while row < mean.len() {
         let value = f32::cast_from(grad[row * width + column]);
-        weight_sum += value * (f32::cast_from(input[row * width + column]) - mean[row]) * rstd[row];
+        let normalized = (f32::cast_from(input[row * width + column]) - mean[row]) * rstd[row];
+        weight_sum += value * normalized;
         bias_sum += value;
         if mean.len() - row <= parts { break; }
         row += parts;

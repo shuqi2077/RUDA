@@ -25,12 +25,18 @@ fn norm_tensor<R: DeviceRuntime>(
 }
 
 fn native_norm_supported<R: DeviceRuntime>(tensor: &crate::RudaTensor<R>) -> bool {
-    let hardware = &tensor.client.properties().hardware;
+    let properties = tensor.client.properties();
+    let hardware = &properties.hardware;
     let plane = hardware.plane_size_max;
     matches!(tensor.dtype, ruda_core::tensor::DType::F32 | ruda_core::tensor::DType::F16 | ruda_core::tensor::DType::BF16)
         && tensor.meta.num_elements() <= u32::MAX as usize
         && tensor.meta.shape().last().is_some_and(|width| *width <= u32::MAX as usize)
-        && plane.is_power_of_two() && plane <= hardware.max_ruda_dim.0 && hardware.max_ruda_dim.1 >= 4
+        && plane.is_power_of_two() && plane == hardware.plane_size_min
+        && properties.features.plane.contains(ruda_core::ir::features::Plane::Ops)
+        && plane <= hardware.max_ruda_dim.0 && hardware.max_ruda_dim.1 >= 4
+        && plane <= hardware.max_units_per_ruda / 4
+        && tensor.meta.shape().last().is_some_and(|width| *width > 0
+            && tensor.meta.num_elements() / width <= hardware.max_ruda_count.0 as usize)
 }
 
 impl<R, F, I, BT> ModuleOps<Self> for DeviceBackend<R, F, I, BT>

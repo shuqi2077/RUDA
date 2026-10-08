@@ -1,5 +1,5 @@
 use super::{NormalizationError, kernel};
-use ruda_core::{device::Device, tensor::{DType, Shape}};
+use ruda_core::{device::Device, ir::features::Plane, tensor::{DType, Shape}};
 use ruda_kernel::{
     dsl::{Runtime, calculate_ruda_count_elemwise, prelude::*},
     tensor::{RudaTensor, allocation::empty_device_contiguous_dtype, contiguous::into_contiguous},
@@ -12,9 +12,14 @@ fn layout<R: Runtime>(input: &RudaTensor<R>) -> Result<(usize, usize, RudaDim), 
     if width == 0 || width > u32::MAX as usize || elements.is_none_or(|size| size > u32::MAX as usize)
         || !matches!(input.dtype, DType::F32 | DType::F16 | DType::BF16) || input.qparams.is_some()
     { return Err(NormalizationError("invalid LayerNorm training shape or storage")); }
-    let hardware = &input.client.properties().hardware;
+    let properties = input.client.properties();
+    let hardware = &properties.hardware;
     let plane = hardware.plane_size_max;
-    if !plane.is_power_of_two() || plane > hardware.max_ruda_dim.0 || hardware.max_ruda_dim.1 < 4 {
+    if !plane.is_power_of_two() || plane != hardware.plane_size_min
+        || !properties.features.plane.contains(Plane::Ops)
+        || plane > hardware.max_ruda_dim.0 || hardware.max_ruda_dim.1 < 4
+        || plane > hardware.max_units_per_ruda / 4
+        || elements.unwrap() / width > hardware.max_ruda_count.0 as usize {
         return Err(NormalizationError("LayerNorm runtime cannot launch four planes"));
     }
     Ok((elements.unwrap() / width, width, RudaDim::new_2d(plane, 4)))
