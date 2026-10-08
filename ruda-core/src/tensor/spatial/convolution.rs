@@ -175,6 +175,28 @@ pub fn calculate_conv_transpose_output_size(
     (size_in - 1) * stride + (dilation * (kernel_size - 1) + 1) + padding_out - 2 * padding
 }
 
+/// Solve the native transposed-convolution geometry for output padding.
+///
+/// Returns `None` for zero kernel, stride, dilation or input extent, arithmetic
+/// overflow, or a target smaller than the zero-output-padding convolution.
+pub fn calculate_conv_transpose_padding_out(
+    kernel_size: usize,
+    stride: usize,
+    padding: usize,
+    dilation: usize,
+    size_in: usize,
+    size_out: usize,
+) -> Option<usize> {
+    if stride == 0 || dilation == 0 {
+        return None;
+    }
+    let input_span = size_in.checked_sub(1)?.checked_mul(stride)?;
+    let kernel_span = kernel_size.checked_sub(1)?.checked_mul(dilation)?;
+    let unpadded = input_span.checked_add(kernel_span)?.checked_add(1)?;
+    let padded_target = size_out.checked_add(padding.checked_mul(2)?)?;
+    padded_target.checked_sub(unpadded)
+}
+
 /// Compute the `padding_out` for a transpose conv that exactly recovers the
 /// original `size_in` from `size_out`, accounting for any input elements the
 /// forward conv dropped. Shared by `conv{1,2,3}d_x_backward` and the Ruda

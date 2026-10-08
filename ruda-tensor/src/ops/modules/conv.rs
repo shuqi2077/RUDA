@@ -6,6 +6,7 @@ use ruda_core::tensor::{Shape, Slice};
 use alloc::vec;
 
 pub use ruda_core::tensor::spatial::{calculate_pool_output_shape, calculate_conv_output_shape, calculate_conv_transpose_output_shape, calculate_conv_padding, calculate_conv_output_size, calculate_conv_output_sizes, calculate_pool_output_size, calculate_conv_transpose_output_size};
+pub use ruda_core::tensor::spatial::calculate_conv_transpose_padding_out;
 
 /// Calculate the original input size that was used for a transposed convolution.
 /// This is used during the backward pass to recover the correct gradient shape.

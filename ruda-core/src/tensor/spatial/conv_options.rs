@@ -199,6 +199,41 @@ impl<const N: usize> ConvTransposeOptions<N> {
             groups: check_nonzero(groups, "groups must be non-zero"),
         }
     }
+
+    /// Set output padding to produce the requested spatial extents.
+    ///
+    /// Uses the native convolution geometry, without cropping or resampling.
+    /// Only `padding_out` changes; backend output-padding restrictions remain
+    /// those of the selected backend.
+    pub fn try_with_output_size(
+        mut self,
+        kernel_size: [usize; N],
+        input_size: [usize; N],
+        output_size: [usize; N],
+    ) -> Option<Self> {
+        for axis in 0..N {
+            self.padding_out[axis] = super::calculate_conv_transpose_padding_out(
+                kernel_size[axis],
+                self.stride[axis],
+                self.padding[axis],
+                self.dilation[axis],
+                input_size[axis],
+                output_size[axis],
+            )?;
+        }
+        Some(self)
+    }
+
+    /// Set the requested spatial extents, panicking for invalid geometry.
+    pub fn with_output_size(
+        self,
+        kernel_size: [usize; N],
+        input_size: [usize; N],
+        output_size: [usize; N],
+    ) -> Self {
+        self.try_with_output_size(kernel_size, input_size, output_size)
+            .expect("transposed convolution output size cannot be represented by native output padding")
+    }
 }
 
 /// Unfold operation options.

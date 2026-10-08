@@ -311,6 +311,64 @@ where
     )))
 }
 
+/// Apply a 1D transposed convolution with an explicit output length.
+///
+/// The requested length determines native output padding. The convolution and
+/// its backward pass use the existing backend operation without resizing.
+pub fn conv_transpose1d_with_output_size<B: Backend>(
+    x: Tensor<B, 3>,
+    weight: Tensor<B, 3>,
+    bias: Option<Tensor<B, 1>>,
+    options: ConvTransposeOptions<1>,
+    output_size: usize,
+) -> Tensor<B, 3> {
+    let [_, _, input_length] = x.dims();
+    let [_, _, kernel_length] = weight.dims();
+    let options = options.with_output_size([kernel_length], [input_length], [output_size]);
+    conv_transpose1d(x, weight, bias, options)
+}
+
+/// Apply a 2D transposed convolution with explicit output height and width.
+///
+/// Each spatial axis independently determines native output padding.
+pub fn conv_transpose2d_with_output_size<B: Backend>(
+    x: Tensor<B, 4>,
+    weight: Tensor<B, 4>,
+    bias: Option<Tensor<B, 1>>,
+    options: ConvTransposeOptions<2>,
+    output_size: [usize; 2],
+) -> Tensor<B, 4> {
+    let [_, _, height, width] = x.dims();
+    let [_, _, kernel_height, kernel_width] = weight.dims();
+    let options = options.with_output_size(
+        [kernel_height, kernel_width],
+        [height, width],
+        output_size,
+    );
+    conv_transpose2d(x, weight, bias, options)
+}
+
+/// Apply a 3D transposed convolution with explicit output depth, height and width.
+///
+/// This dispatches the original differentiable convolution operation; neither
+/// the input nor the weights are copied to the host or resampled.
+pub fn conv_transpose3d_with_output_size<B: Backend>(
+    x: Tensor<B, 5>,
+    weight: Tensor<B, 5>,
+    bias: Option<Tensor<B, 1>>,
+    options: ConvTransposeOptions<3>,
+    output_size: [usize; 3],
+) -> Tensor<B, 5> {
+    let [_, _, depth, height, width] = x.dims();
+    let [_, _, kernel_depth, kernel_height, kernel_width] = weight.dims();
+    let options = options.with_output_size(
+        [kernel_depth, kernel_height, kernel_width],
+        [depth, height, width],
+        output_size,
+    );
+    conv_transpose3d(x, weight, bias, options)
+}
+
 /// Applies a [4D to 3D unfold](crate::api::ops::ModuleOps::unfold4d).
 pub fn unfold4d<B>(x: Tensor<B, 4>, kernel_size: [usize; 2], options: UnfoldOptions) -> Tensor<B, 3>
 where

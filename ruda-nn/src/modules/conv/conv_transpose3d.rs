@@ -11,7 +11,7 @@ use ruda_model::module::ModuleDisplay;
 use ruda_model::module::Param;
 use ruda_model::tensor::Tensor;
 use ruda_model::tensor::backend::Backend;
-use ruda_model::tensor::module::conv_transpose3d;
+use ruda_model::tensor::module::{conv_transpose3d, conv_transpose3d_with_output_size};
 use ruda_model::tensor::ops::ConvTransposeOptions;
 
 /// Configuration to create an [3D transposed convolution](ConvTranspose3d) layer
@@ -132,6 +132,29 @@ impl ConvTranspose3dConfig {
 }
 
 impl<B: Backend> ConvTranspose3d<B> {
+    /// Apply the native convolution with requested output depth, height and width.
+    ///
+    /// Overrides output padding for this call without changing the layer.
+    pub fn forward_with_output_size(
+        &self,
+        input: Tensor<B, 5>,
+        output_size: [usize; 3],
+    ) -> Tensor<B, 5> {
+        conv_transpose3d_with_output_size(
+            input,
+            self.weight.val(),
+            self.bias.as_ref().map(|bias| bias.val()),
+            ConvTransposeOptions::new(
+                self.stride,
+                self.padding,
+                self.padding_out,
+                self.dilation,
+                self.groups,
+            ),
+            output_size,
+        )
+    }
+
     /// Applies the forward pass on the input tensor.
     ///
     /// See also [conv_transpose3d](ruda_tensor::api::module::conv_transpose3d).

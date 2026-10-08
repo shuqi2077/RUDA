@@ -11,7 +11,7 @@ use ruda_model::module::ModuleDisplay;
 use ruda_model::module::Param;
 use ruda_model::tensor::Tensor;
 use ruda_model::tensor::backend::Backend;
-use ruda_model::tensor::module::conv_transpose2d;
+use ruda_model::tensor::module::{conv_transpose2d, conv_transpose2d_with_output_size};
 use ruda_model::tensor::ops::ConvTransposeOptions;
 
 /// Configuration to create an [2D transposed convolution](ConvTranspose2d) layer
@@ -131,6 +131,29 @@ impl ConvTranspose2dConfig {
 }
 
 impl<B: Backend> ConvTranspose2d<B> {
+    /// Apply the native convolution with the requested output height and width.
+    ///
+    /// Overrides output padding for this call without changing the layer.
+    pub fn forward_with_output_size(
+        &self,
+        input: Tensor<B, 4>,
+        output_size: [usize; 2],
+    ) -> Tensor<B, 4> {
+        conv_transpose2d_with_output_size(
+            input,
+            self.weight.val(),
+            self.bias.as_ref().map(|bias| bias.val()),
+            ConvTransposeOptions::new(
+                self.stride,
+                self.padding,
+                self.padding_out,
+                self.dilation,
+                self.groups,
+            ),
+            output_size,
+        )
+    }
+
     /// Applies the forward pass on the input tensor.
     ///
     /// See also [conv_transpose2d](ruda_tensor::api::module::conv_transpose2d).

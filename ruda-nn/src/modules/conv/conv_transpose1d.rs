@@ -11,7 +11,7 @@ use ruda_model::module::ModuleDisplay;
 use ruda_model::module::Param;
 use ruda_model::tensor::Tensor;
 use ruda_model::tensor::backend::Backend;
-use ruda_model::tensor::module::conv_transpose1d;
+use ruda_model::tensor::module::{conv_transpose1d, conv_transpose1d_with_output_size};
 use ruda_model::tensor::ops::ConvTransposeOptions;
 
 /// Configuration to create an [1D transposed convolution](ConvTranspose1d) layer
@@ -130,6 +130,29 @@ impl ConvTranspose1dConfig {
 }
 
 impl<B: Backend> ConvTranspose1d<B> {
+    /// Apply the native convolution with the requested output length.
+    ///
+    /// Overrides output padding for this call without changing the layer.
+    pub fn forward_with_output_size(
+        &self,
+        input: Tensor<B, 3>,
+        output_size: usize,
+    ) -> Tensor<B, 3> {
+        conv_transpose1d_with_output_size(
+            input,
+            self.weight.val(),
+            self.bias.as_ref().map(|bias| bias.val()),
+            ConvTransposeOptions::new(
+                [self.stride],
+                [self.padding],
+                [self.padding_out],
+                [self.dilation],
+                self.groups,
+            ),
+            output_size,
+        )
+    }
+
     /// Applies the forward pass on the input tensor.
     ///
     /// See also [conv_transpose1d](ruda_tensor::api::module::conv_transpose1d).
