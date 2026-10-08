@@ -276,6 +276,12 @@ impl<T: Parameter> Param<T> {
         self.state.get().is_some()
     }
 
+    /// Read the initialized or declared lazy gradient requirement without running the initializer.
+    /// A backend/device without autodiff can still produce an untracked tensor when initialized.
+    pub fn planned_is_require_grad(&self) -> bool {
+        self.lazy_is_require_grad()
+    }
+
     /// Gets the parameter's value while consuming the parameter.
     pub fn into_value(self) -> T {
         self.consume().1

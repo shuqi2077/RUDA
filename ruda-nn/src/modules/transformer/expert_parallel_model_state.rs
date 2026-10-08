@@ -49,11 +49,47 @@ impl<B:Backend> StoredValue<B> {
     }}
 }
 struct Capture<B:Backend> {
-    path:Vec<String>,bindings:Vec<ExpertModelParameterBinding>,values:Vec<StoredValue<B>>,with_values:bool,
+    path:Vec<String>,bindings:Vec<ExpertModelParameterBinding>,values:Vec<StoredValue<B>>,
     aliases:BTreeMap<BindingKey,(Vec<usize>,DType,B::Device)>,paths:BTreeSet<Vec<String>>,error:Option<RecorderError>,
 }
+struct Validate<'a,B:Backend> {
+    path:Vec<String>,expected:BTreeMap<Vec<String>,&'a ExpertModelParameterBinding>,seen:BTreeSet<Vec<String>>,
+    source_to_target:BTreeMap<BindingKey,BindingKey>,target_to_source:BTreeMap<BindingKey,BindingKey>,devices:BTreeMap<BindingKey,B::Device>,error:Option<RecorderError>,
+}
+impl<'a,B:Backend> Validate<'a,B> {
+    fn new(bindings:&'a [ExpertModelParameterBinding]) -> Result<Self,RecorderError> {
+        let mut expected=BTreeMap::new();for binding in bindings {if expected.insert(binding.path.clone(),binding).is_some() {return Err(invalid("duplicate saved native parameter path"));}}
+        Ok(Self {path:Vec::new(),expected,seen:BTreeSet::new(),source_to_target:BTreeMap::new(),target_to_source:BTreeMap::new(),devices:BTreeMap::new(),error:None})
+    }
+    fn parameter(&mut self,id:ParamId,shape:Vec<usize>,dtype:Option<DType>,kind:ExpertModelParameterKind,trainable:bool,device:B::Device) {
+        let Some(saved)=self.expected.get(&self.path) else {self.error=Some(invalid("unexpected actual native parameter path"));return;};
+        if !self.seen.insert(self.path.clone()) || saved.shape!=shape || dtype.is_some_and(|storage|storage!=saved.dtype)
+            || saved.kind!=kind || saved.trainable!=trainable {self.error=Some(invalid("actual parameter path/shape/storage/training contract differs"));return;}
+        let source=key(saved);let destination=(id.val(),kind,trainable);
+        if self.devices.insert(destination,device.clone()).is_some_and(|previous|previous!=device) {self.error=Some(invalid("prepared tied parameter devices differ"));}
+        if self.source_to_target.insert(source,destination).is_some_and(|previous|previous!=destination)
+            || self.target_to_source.insert(destination,source).is_some_and(|previous|previous!=source) {self.error=Some(invalid("original shared/frozen parameter alias topology differs"));}
+    }
+}
+impl<B:Backend> ModuleVisitor<B> for Validate<'_,B> {
+    fn enter_module(&mut self,name:&str,_kind:&str) {self.path.push(name.into());}
+    fn exit_module(&mut self,_name:&str,_kind:&str) {self.path.pop();}
+    fn visit_float<const D:usize>(&mut self,parameter:&Param<Tensor<B,D>>) {
+        let dtype=parameter.is_initialized().then(||parameter.val().dtype());
+        self.parameter(parameter.id,parameter.lazy_shape().as_slice().to_vec(),dtype,ExpertModelParameterKind::Float,
+            B::ad_enabled(&parameter.lazy_device()) && parameter.planned_is_require_grad(),parameter.lazy_device());
+    }
+    fn visit_int<const D:usize>(&mut self,parameter:&Param<Tensor<B,D,Int>>) {
+        let dtype=parameter.is_initialized().then(||parameter.val().dtype());
+        self.parameter(parameter.id,parameter.lazy_shape().as_slice().to_vec(),dtype,ExpertModelParameterKind::Integer,false,parameter.lazy_device());
+    }
+    fn visit_bool<const D:usize>(&mut self,parameter:&Param<Tensor<B,D,Bool>>) {
+        let dtype=parameter.is_initialized().then(||parameter.val().dtype());
+        self.parameter(parameter.id,parameter.lazy_shape().as_slice().to_vec(),dtype,ExpertModelParameterKind::Boolean,false,parameter.lazy_device());
+    }
+}
 impl<B:Backend> Capture<B> {
-    fn new(with_values:bool) -> Self {Self {path:Vec::new(),bindings:Vec::new(),values:Vec::new(),with_values,
+    fn new() -> Self {Self {path:Vec::new(),bindings:Vec::new(),values:Vec::new(),
         aliases:BTreeMap::new(),paths:BTreeSet::new(),error:None}}
     fn binding(&mut self,id:ParamId,shape:Vec<usize>,dtype:DType,kind:ExpertModelParameterKind,trainable:bool,device:B::Device) {
         let binding=ExpertModelParameterBinding {path:self.path.clone(),id:id.val(),shape:shape.clone(),dtype,kind,trainable};
@@ -69,21 +105,29 @@ impl<B:Backend> ModuleVisitor<B> for Capture<B> {
     fn exit_module(&mut self,_name:&str,_kind:&str) {self.path.pop();}
     fn visit_float<const D:usize>(&mut self,parameter:&Param<Tensor<B,D>>) {
         let value=parameter.val();self.binding(parameter.id,value.dims().to_vec(),value.dtype(),ExpertModelParameterKind::Float,value.is_require_grad(),value.device());
-        if self.with_values {self.values.push(StoredValue::Float(parameter.transform_for_save().val().detach().into_primitive().tensor()));}
+        self.values.push(StoredValue::Float(parameter.transform_for_save().val().detach().into_primitive().tensor()));
     }
     fn visit_int<const D:usize>(&mut self,parameter:&Param<Tensor<B,D,Int>>) {
         let value=parameter.val();self.binding(parameter.id,value.dims().to_vec(),value.dtype(),ExpertModelParameterKind::Integer,false,value.device());
-        if self.with_values {self.values.push(StoredValue::Integer(parameter.transform_for_save().val().into_primitive()));}
+        self.values.push(StoredValue::Integer(parameter.transform_for_save().val().into_primitive()));
     }
     fn visit_bool<const D:usize>(&mut self,parameter:&Param<Tensor<B,D,Bool>>) {
         let value=parameter.val();self.binding(parameter.id,value.dims().to_vec(),value.dtype(),ExpertModelParameterKind::Boolean,false,value.device());
-        if self.with_values {self.values.push(StoredValue::Boolean(parameter.transform_for_save().val().into_primitive()));}
+        self.values.push(StoredValue::Boolean(parameter.transform_for_save().val().into_primitive()));
     }
 }
 fn ownership<B:Backend,P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>>(model:&ExpertParallelTransformerModel<B,P,E>) -> Vec<ExpertAdapterOwnershipEntry> {
     let mut result=Vec::new();for (index,layer) in model.layers.iter().enumerate() {if let ExpertParallelTransformerLayer::Parallel(block)=layer {
         result.push(ExpertAdapterOwnershipEntry {layer:index,prefix:block.routed.experts.ownership().prefix().to_vec(),rank:block.routed.experts.rank()});
     }}result
+}
+fn validate_metadata<B:Backend,P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>>(version:u32,saved_contract:&str,layers:usize,
+    owners:&[ExpertAdapterOwnershipEntry],bindings:&[ExpertModelParameterBinding],values:usize,
+    model:&ExpertParallelTransformerModel<B,P,E>,contract_id:&str) -> Result<(),RecorderError> {
+    if version!=1 || contract_id.is_empty() || saved_contract!=contract_id || layers!=model.layers.len() || owners!=ownership(model) || bindings.len()!=values {
+        return Err(invalid("version, architecture contract, model layers or original expert ownership differs"));}
+    let mut validation=Validate::<B>::new(bindings)?;model.visit(&mut validation);if let Some(error)=validation.error {return Err(error);}
+    if validation.seen.len()!=validation.expected.len() {return Err(invalid("actual parameter path set differs"));}Ok(())
 }
 /// Complete actual rank-local model parameter state, with original IDs/dtypes/flags and explicit expert ownership.
 /// Prepared architecture/options are bound by the caller's exact contract ID; they are not inferred or overwritten.
@@ -113,6 +157,16 @@ impl ExpertParallelModelSnapshot {
     pub fn bindings(&self) -> &[ExpertModelParameterBinding] {&self.bindings}
     /// Actual per-alias payload count; original parameter save/load mappers remain independent.
     pub fn parameter_occurrences(&self) -> usize {self.bindings.len()}
+    /// Validate original topology and prepared lazy parameter/alias metadata without uploading archived payloads.
+    /// Lazy initializer storage is unknown here; restored native dtype is checked after its original load mapper.
+    pub fn validate_for<B:Backend,P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>>(&self,model:&ExpertParallelTransformerModel<B,P,E>,contract_id:&str) -> Result<(),RecorderError> {
+        validate_metadata(self.version,&self.contract_id,self.layers,&self.ownership,&self.bindings,self.values.len(),model,contract_id)
+    }
+    /// Validate before native uploads, then restore actual saved IDs/storage into the prepared original architecture.
+    pub fn restore_into<B:Backend,P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>>(self,model:ExpertParallelTransformerModel<B,P,E>,contract_id:&str,device:&B::Device)
+        -> Result<ExpertParallelTransformerModel<B,P,E>,RecorderError> {
+        self.validate_for(&model,contract_id)?;self.into_record(device).restore_into(model,contract_id)
+    }
     /// Upload original native payload storage on an explicitly selected backend/device for checked restoration.
     pub fn into_record<B:Backend>(self,device:&B::Device) -> ExpertParallelModelStateRecord<B> {
         ExpertParallelModelStateRecord {version:self.version,contract_id:self.contract_id,layers:self.layers,ownership:self.ownership,bindings:self.bindings,
@@ -136,7 +190,7 @@ impl<B:Backend> ExpertParallelModelStateRecord<B> {
     /// Does not gather global expert cubes, decode quantized bases or capture activation/collective history.
     pub fn capture<P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>>(model:&ExpertParallelTransformerModel<B,P,E>,contract_id:&str) -> Result<Self,RecorderError> {
         if contract_id.is_empty() {return Err(invalid("exact prepared architecture/operator contract ID is required"));}
-        let mut capture=Capture::new(true);model.visit(&mut capture);if let Some(error)=capture.error {return Err(error);}
+        let mut capture=Capture::new();model.visit(&mut capture);if let Some(error)=capture.error {return Err(error);}
         Ok(Self {version:1,contract_id:contract_id.into(),layers:model.layers.len(),ownership:ownership(model),bindings:capture.bindings,values:capture.values})
     }
     /// Actual original complete expert-world prefix/rank for every owned layer.
@@ -156,19 +210,7 @@ impl<B:Backend> ExpertParallelModelStateRecord<B> {
     /// Validate original complete topology and actual prepared parameter/alias contracts before replacing any values.
     /// Fresh prepared IDs may differ; saved IDs become authoritative only when restoration succeeds.
     pub fn validate_for<P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>>(&self,model:&ExpertParallelTransformerModel<B,P,E>,contract_id:&str) -> Result<(),RecorderError> {
-        if self.version!=1 || contract_id.is_empty() || self.contract_id!=contract_id || self.layers!=model.layers.len()
-            || self.ownership!=ownership(model) || self.bindings.len()!=self.values.len() {return Err(invalid("version, architecture contract, model layers or original expert ownership differs"));}
-        let mut capture=Capture::new(false);model.visit(&mut capture);if let Some(error)=capture.error {return Err(error);}
-        if capture.bindings.len()!=self.bindings.len() {return Err(invalid("actual parameter path set differs"));}
-        let mut source_to_target=BTreeMap::new();let mut target_to_source=BTreeMap::new();
-        for (saved,target) in self.bindings.iter().zip(capture.bindings) {
-            if saved.path!=target.path || saved.shape!=target.shape || saved.dtype!=target.dtype || saved.kind!=target.kind || saved.trainable!=target.trainable {
-                return Err(invalid("actual parameter path/shape/storage/training contract differs"));}
-            let source=key(saved);let destination=key(&target);
-            if source_to_target.insert(source,destination).is_some_and(|previous|previous!=destination)
-                || target_to_source.insert(destination,source).is_some_and(|previous|previous!=source) {return Err(invalid("original shared/frozen parameter alias topology differs"));}
-        }
-        Ok(())
+        validate_metadata(self.version,&self.contract_id,self.layers,&self.ownership,&self.bindings,self.values.len(),model,contract_id)
     }
     /// Save original native payload storage with an existing recorder, without widening packed bytes or narrowing floating values.
     pub fn save<R:Recorder<B>>(self,recorder:&R,args:R::RecordArgs) -> Result<R::RecordOutput,RecorderError> {recorder.record(self,args)}
