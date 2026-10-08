@@ -4,7 +4,7 @@ use crate::{Linear,attention::GroupedQueryAttention};
 use super::{TransformerAdapterConfig,LayerAdapterConfig,AttentionAdapterTarget,FeedForwardAdapterTarget,
     TransformerProjectionShape,AwqTransformerProjection,Nf4TransformerProjection,MixedTransformerProjection,
     AwqGroupedQueryAttention,AwqFeedForward,AwqTransformerBlock,AwqTransformerStack,AwqTransformerModel,
-    DenseFeedForward,DenseTransformerBlock,DenseTransformerStack,TransformerEmbeddings,TransformerHead,DenseTransformerNorm,
+    DenseFeedForward,DenseTransformerBlock,DenseTransformerStack,TransformerEmbeddings,TransformerHead,DenseTransformerNorm,AdaptedProjection,
     ProjectedCrossAttentionBlock,ProjectedEncoderDecoderLayer,ProjectedEncoderDecoderStack,ProjectedEncoderDecoderModel,
     DenseCrossAttentionBlock,DenseEncoderDecoderLayer,DenseEncoderDecoderStack,DecoderLayerAdapterConfig};
 
@@ -58,6 +58,7 @@ macro_rules! adapt_original_projection {
 adapt_original_projection!(AwqTransformerProjection,[Awq=>AwqLoRA,init_awq]);
 adapt_original_projection!(Nf4TransformerProjection,[Nf4=>Nf4LoRA,init_nf4]);
 adapt_original_projection!(MixedTransformerProjection,[Awq=>AwqLoRA,init_awq,Nf4=>Nf4LoRA,init_nf4]);
+adapt_original_projection!(AdaptedProjection,[]);
 
 impl<B:Backend,P:TransformerProjectionShape<B>+From<Linear<B>>> AwqGroupedQueryAttention<B,P> {
     /// Consume actual original dense projections, preserving IDs/trainability and attention geometry.

@@ -80,7 +80,7 @@ impl<B: Backend> HybridTiedEmbeddingAdapter<B> {
     }
 }
 
-fn check_options(config: &TransformerAdapterConfig) {
+pub(super) fn check_options(config: &TransformerAdapterConfig) {
     assert!(config.lora.rank > 0 && config.lora.alpha.is_finite(), "invalid hybrid adapter rank/alpha");
     assert!(config.lora.dropout.is_finite() && (0.0..1.0).contains(&config.lora.dropout), "invalid hybrid adapter dropout");
     assert!(config.adapter_dtype.is_none_or(|dtype| dtype.is_float()), "hybrid adapter storage must be floating");
@@ -97,7 +97,7 @@ fn wrap<B: Backend>(projection: Linear<B>, selected: bool, config: &TransformerA
     } else { AdaptedProjection::Dense(projection) }
 }
 
-fn planned_projection<B: Backend, T: PartialEq>(projection: Linear<B>, target: &T,
+pub(super) fn planned_projection<B: Backend, T: PartialEq>(projection: Linear<B>, target: &T,
     plan: &[(T, TransformerAdapterConfig)]) -> AdaptedProjection<B> {
     if let Some((_, config)) = plan.iter().find(|(selected, _)| selected == target) { wrap(projection, true, config) }
     else { AdaptedProjection::Dense(projection) }

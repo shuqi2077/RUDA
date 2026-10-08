@@ -109,6 +109,12 @@ impl<B: Backend, P: CompressedAttentionProjection<B>, F: MhcResidualBranch<B>, H
         -> Result<Tensor<B, 2>, F::Error> {
         self.stack.forward_packed(self.embed_packed(tokens, layout), layout, valid)
     }
+    pub fn forward_packed_sequences(&self, tokens: Tensor<B, 1, Int>, layout: &PackedSequenceLayout,
+        valid: Option<Tensor<B, 1, Bool>>, pooling: SequencePooling)
+        -> Result<SequenceHeadOutput<B>, MhcResidualModelError<F::Error, H::Error>> {
+        let hidden = self.forward_packed_hidden(tokens, layout, valid.clone()).map_err(MhcResidualModelError::Branch)?;
+        self.head.forward_packed_sequences(hidden, layout, valid, pooling).map_err(MhcResidualModelError::Head)
+    }
     pub fn forward_packed_with_aux(&self, tokens: Tensor<B, 1, Int>, layout: &PackedSequenceLayout,
         valid: Option<Tensor<B, 1, Bool>>, indexer_warmup: bool)
         -> Result<PackedCompressedAttentionOutput<B>, MhcResidualModelError<F::Error, H::Error>> {

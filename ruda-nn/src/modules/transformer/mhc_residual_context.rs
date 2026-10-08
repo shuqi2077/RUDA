@@ -65,6 +65,14 @@ impl<B: Backend, P: CompressedAttentionProjection<B>, F: MhcResidualBranchShape<
         self.head.forward(hidden).map_err(MhcResidualModelError::Head)
     }
 
+    pub fn try_forward_packed_sequences_with<R: Debug, G>(&self, tokens: Tensor<B, 1, Int>, layout: &PackedSequenceLayout,
+        valid: Option<Tensor<B, 1, Bool>>, pooling: SequencePooling, branch: G)
+        -> Result<SequenceHeadOutput<B>, MhcResidualModelError<R, H::Error>>
+    where G: FnMut(usize, &F, Tensor<B, 3>) -> Result<Tensor<B, 3>, R> {
+        let hidden = self.try_forward_packed_hidden_with(tokens, layout, valid.clone(), branch).map_err(MhcResidualModelError::Branch)?;
+        self.head.forward_packed_sequences(hidden, layout, valid, pooling).map_err(MhcResidualModelError::Head)
+    }
+
     pub fn try_forward_packed_hidden_with_aux<R, G>(&self, tokens: Tensor<B, 1, Int>, layout: &PackedSequenceLayout,
         valid: Option<Tensor<B, 1, Bool>>, indexer_warmup: bool, branch: G) -> Result<PackedCompressedAttentionOutput<B>, R>
     where G: FnMut(usize, &F, Tensor<B, 3>) -> Result<Tensor<B, 3>, R> {
