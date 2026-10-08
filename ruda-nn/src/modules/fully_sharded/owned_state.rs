@@ -1,5 +1,6 @@
 use super::*;
 use alloc::string::String;
+use alloc::collections::BTreeSet;
 use ruda_model::{module::ModuleDisplay, record::{Record, PrecisionSettings}};
 use crate::expert_parallel::ExpertOwnership;
 use crate::transformer::{ExpertOwnedModelGeometry, ExpertAdapterOwnershipEntry};
@@ -9,6 +10,32 @@ use crate::transformer::{ExpertOwnedModelGeometry, ExpertAdapterOwnershipEntry};
 pub trait ShardedOwnedExpertMetadata<B: Backend>: FullyShardedModule<B> {
     fn expert_ownership(&self) -> &ExpertOwnership;
     fn expert_rank(&self) -> usize;
+}
+
+/// Select actual owner-local parameter/state IDs for existing sharded
+/// optimizers and caller-selected gradient groups, without gathering weights.
+pub trait FullyShardedExpertOwnedModule<B: Backend>: FullyShardedModule<B> + ExpertOwnedModelGeometry<B> {
+    fn visit_owned_expert_shards<F: FnMut(&ShardedParameter<B>)>(&self, visitor: &mut F);
+    fn visit_owned_expert_packed_shards<F: FnMut(&ShardedPackedParameter<B>)>(&self, visitor: &mut F);
+
+    fn owned_expert_parameter_ids(&self) -> Vec<ParamId> {
+        let mut ids = BTreeSet::new(); self.visit_owned_expert_shards(&mut |parameter| { ids.insert(parameter.local.id); });
+        ids.into_iter().collect()
+    }
+    fn owned_expert_state_ids(&self) -> Vec<ParamId> {
+        let mut ids = self.owned_expert_parameter_ids().into_iter().collect::<BTreeSet<_>>();
+        self.visit_owned_expert_packed_shards(&mut |parameter| { ids.insert(parameter.local.id); }); ids.into_iter().collect()
+    }
+    fn non_expert_parameter_ids(&self) -> Vec<ParamId> {
+        let owned = self.owned_expert_parameter_ids().into_iter().collect::<BTreeSet<_>>();
+        let mut ids = BTreeSet::new(); self.visit_shards(&mut |parameter| { ids.insert(parameter.local.id); });
+        ids.difference(&owned).copied().collect()
+    }
+    fn non_expert_state_ids(&self) -> Vec<ParamId> {
+        let owned = self.owned_expert_state_ids().into_iter().collect::<BTreeSet<_>>();
+        let mut ids = BTreeSet::new(); self.visit_shards(&mut |parameter| { ids.insert(parameter.local.id); });
+        self.visit_packed_shards(&mut |parameter| { ids.insert(parameter.local.id); }); ids.difference(&owned).copied().collect()
+    }
 }
 macro_rules! owner_metadata {
     ($target:ident) => {
@@ -51,6 +78,15 @@ impl<B: Backend, P: FullyShardedModule<B> + ModuleDisplay, E: ShardedOwnedExpert
         }).collect()
     }
 }
+impl<B: Backend, P: FullyShardedModule<B> + ModuleDisplay, E: ShardedOwnedExpertMetadata<B> + ModuleDisplay> FullyShardedExpertOwnedModule<B>
+    for FullyShardedExpertParallelTransformerModel<B, P, E> {
+    fn visit_owned_expert_shards<F: FnMut(&ShardedParameter<B>)>(&self, visitor: &mut F) {
+        for layer in &self.layers { if let FullyShardedExpertParallelTransformerLayer::Parallel(value) = layer { value.routed.experts.visit_shards(visitor); } }
+    }
+    fn visit_owned_expert_packed_shards<F: FnMut(&ShardedPackedParameter<B>)>(&self, visitor: &mut F) {
+        for layer in &self.layers { if let FullyShardedExpertParallelTransformerLayer::Parallel(value) = layer { value.routed.experts.visit_packed_shards(visitor); } }
+    }
+}
 
 impl<B: Backend, P: FullyShardedModule<B> + ModuleDisplay, L: FullyShardedModule<B> + ModuleDisplay,
     Q: FullyShardedModule<B> + ModuleDisplay, E: ShardedOwnedExpertMetadata<B> + ModuleDisplay> ExpertOwnedModelGeometry<B>
@@ -63,6 +99,16 @@ impl<B: Backend, P: FullyShardedModule<B> + ModuleDisplay, L: FullyShardedModule
         }).collect()
     }
 }
+impl<B: Backend, P: FullyShardedModule<B> + ModuleDisplay, L: FullyShardedModule<B> + ModuleDisplay,
+    Q: FullyShardedModule<B> + ModuleDisplay, E: ShardedOwnedExpertMetadata<B> + ModuleDisplay> FullyShardedExpertOwnedModule<B>
+    for FullyShardedMhcResidualStack<B, P, FullyShardedMixedMhcFeedForward<B, L, Q, E>> {
+    fn visit_owned_expert_shards<F: FnMut(&ShardedParameter<B>)>(&self, visitor: &mut F) {
+        for layer in &self.layers { if let FullyShardedMixedMhcFeedForward::Parallel(value) = &layer.feed_forward { value.routed.experts.visit_shards(visitor); } }
+    }
+    fn visit_owned_expert_packed_shards<F: FnMut(&ShardedPackedParameter<B>)>(&self, visitor: &mut F) {
+        for layer in &self.layers { if let FullyShardedMixedMhcFeedForward::Parallel(value) = &layer.feed_forward { value.routed.experts.visit_packed_shards(visitor); } }
+    }
+}
 impl<B: Backend, P: FullyShardedModule<B> + ModuleDisplay, Q: FullyShardedModule<B> + ModuleDisplay,
     E: ShardedOwnedExpertMetadata<B> + ModuleDisplay> ExpertOwnedModelGeometry<B>
     for FullyShardedMhcResidualStack<B, P, FullyShardedExpertParallelMhcFeedForward<B, Q, E>> {
@@ -71,11 +117,27 @@ impl<B: Backend, P: FullyShardedModule<B> + ModuleDisplay, Q: FullyShardedModule
         self.layers.iter().enumerate().map(|(index, layer)| owner(index, &layer.feed_forward.routed.experts)).collect()
     }
 }
+impl<B: Backend, P: FullyShardedModule<B> + ModuleDisplay, Q: FullyShardedModule<B> + ModuleDisplay,
+    E: ShardedOwnedExpertMetadata<B> + ModuleDisplay> FullyShardedExpertOwnedModule<B>
+    for FullyShardedMhcResidualStack<B, P, FullyShardedExpertParallelMhcFeedForward<B, Q, E>> {
+    fn visit_owned_expert_shards<F: FnMut(&ShardedParameter<B>)>(&self, visitor: &mut F) {
+        for layer in &self.layers { layer.feed_forward.routed.experts.visit_shards(visitor); }
+    }
+    fn visit_owned_expert_packed_shards<F: FnMut(&ShardedPackedParameter<B>)>(&self, visitor: &mut F) {
+        for layer in &self.layers { layer.feed_forward.routed.experts.visit_packed_shards(visitor); }
+    }
+}
 impl<B: Backend, P: FullyShardedModule<B> + ModuleDisplay, F: FullyShardedModule<B> + ModuleDisplay, H: FullyShardedModule<B> + ModuleDisplay>
     ExpertOwnedModelGeometry<B> for FullyShardedMhcResidualModel<B, P, F, H>
 where FullyShardedMhcResidualStack<B, P, F>: ExpertOwnedModelGeometry<B> {
     fn expert_model_layers(&self) -> usize { self.stack.expert_model_layers() }
     fn expert_model_ownership(&self) -> Vec<ExpertAdapterOwnershipEntry> { self.stack.expert_model_ownership() }
+}
+impl<B: Backend, P: FullyShardedModule<B> + ModuleDisplay, F: FullyShardedModule<B> + ModuleDisplay, H: FullyShardedModule<B> + ModuleDisplay>
+    FullyShardedExpertOwnedModule<B> for FullyShardedMhcResidualModel<B, P, F, H>
+where FullyShardedMhcResidualStack<B, P, F>: FullyShardedExpertOwnedModule<B> {
+    fn visit_owned_expert_shards<G: FnMut(&ShardedParameter<B>)>(&self, visitor: &mut G) { self.stack.visit_owned_expert_shards(visitor); }
+    fn visit_owned_expert_packed_shards<G: FnMut(&ShardedPackedParameter<B>)>(&self, visitor: &mut G) { self.stack.visit_owned_expert_packed_shards(visitor); }
 }
 
 /// Exact local floating/packed FSDP storage, bound to the caller's prepared
