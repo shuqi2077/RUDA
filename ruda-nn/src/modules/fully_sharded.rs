@@ -52,6 +52,10 @@ mod mhc_branch;
 pub use mhc_branch::*;
 mod mhc_stack;
 pub use mhc_stack::*;
+mod mhc_model;
+pub use mhc_model::*;
+mod mhc_training;
+pub use mhc_training::*;
 
 /// Explicit construction context preserving one local autograd leaf per source ID.
 /// Reuse a context for all tied layers, then drop it after model construction. It

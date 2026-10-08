@@ -107,7 +107,8 @@ macro_rules! mhc_stack_execution {
                 assert_eq!(width, self.width(), "sharded mHC hidden width differs");
                 let valid = mhc_visible(&input, valid);
                 let compute = if input.dtype() == DType::F64 { DType::F64 } else { DType::F32 };
-                let mut loss = Tensor::zeros([1], (&input.device(), compute));
+                let device = input.device();
+                let mut losses = Vec::with_capacity(self.layers.len());
                 let storage = input.dtype();
                 let input = input * valid.clone().cast::<FloatDType>(storage.into()).reshape([batch, tokens, 1]);
                 let mut state = self.layers[0].attention_connection.expand(input);
@@ -116,14 +117,15 @@ macro_rules! mhc_stack_execution {
                     if auxiliary {
                         let result = layer.try_forward_with_aux(state, Some(valid.clone()), warmup,
                             |feed, input| branch(index, feed, input, communicator.clone())).map_err(FullyShardedMhcError::Branch)?;
-                        state = result.state; loss = loss + result.indexer_loss;
+                        state = result.state; losses.push(result.indexer_loss);
                     } else {
                         state = layer.try_forward_with(state, Some(valid.clone()),
                             |feed, input| branch(index, feed, input, communicator.clone())).map_err(FullyShardedMhcError::Branch)?;
                     }
                 }
                 let norm = Param::initialized(self.final_norm.local.id, self.final_norm.$gather::<C, 1>(communicator).map_err(FullyShardedMhcError::Collective)?);
-                Ok(CompressedAttentionOutput { output: normalize_mhc(self.layers.last().unwrap().ffn_connection.reduce(state), &norm, self.epsilon), indexer_loss: loss })
+                let indexer_loss = if auxiliary { Tensor::cat(losses, 0).sum() } else { Tensor::zeros([1], (&device, compute)) };
+                Ok(CompressedAttentionOutput { output: normalize_mhc(self.layers.last().unwrap().ffn_connection.reduce(state), &norm, self.epsilon), indexer_loss })
             }
 
             pub fn $packed_with<C, R, G>(&self, input: Tensor<$backend, 2>, layout: &PackedSequenceLayout,
