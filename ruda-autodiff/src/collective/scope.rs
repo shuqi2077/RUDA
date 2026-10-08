@@ -44,6 +44,21 @@ impl<E:fmt::Debug> core::error::Error for ScopedCollectiveError<E> {}
 
 /// The actual original transport with one explicitly bound native AD loss-window context.
 pub struct ScopedTensorCollective<C,B:Backend,S:CheckpointStrategy> {inner:C,scope:CollectiveScope<B,S>}
+
+/// One consumed forward window whose original graph anchors remain available
+/// while independently selected transport groups propagate loss reachability.
+pub struct CollectiveScopeCompletion<B:Backend,S:CheckpointStrategy,C> {
+    entries:Vec<Entry<B,S>>,
+    communicator:C,
+    device:B::Device,
+    world:u32,
+}
+
+/// One native graph propagation pass, not a claim that other groups have closed.
+pub struct CollectiveCompletionStep<B:Backend,S:CheckpointStrategy> {
+    pub loss:Tensor<Autodiff<B,S>,1>,
+    pub added_anchors:usize,
+}
 impl<C:Clone,B:Backend,S:CheckpointStrategy> Clone for ScopedTensorCollective<C,B,S> {
     fn clone(&self) -> Self {Self {inner:self.inner.clone(),scope:self.scope.clone()}}
 }
@@ -100,13 +115,20 @@ impl<B:Backend,S:CheckpointStrategy> CollectiveScope<B,S> {
     /// Locally unused but globally used collectives receive only a safe zero dependency; globally unused
     /// operations remain absent from backward/optimizer gradients. Existing nonzero loss values are unchanged.
     /// Boolean path flags/counts are host coordination metadata, not host numerical gradient/model fallbacks.
-    pub fn complete<C:BroadcastTensorCollective<B>>(&self,mut loss:Tensor<Autodiff<B,S>,1>,communicator:C)
+    pub fn complete<C:BroadcastTensorCollective<B>>(&self,loss:Tensor<Autodiff<B,S>,1>,communicator:C)
         -> Result<Tensor<Autodiff<B,S>,1>,ScopedCollectiveError<C::Error>> {
+        self.prepare_completion(&loss,communicator)?.propagate(loss).map(|step|step.loss)
+    }
+
+    /// Consume exactly this forward window, validating actual captured counts
+    /// on its own group. No loss normalization or backward is performed here.
+    pub fn prepare_completion<C:BroadcastTensorCollective<B>>(&self,loss:&Tensor<Autodiff<B,S>,1>,communicator:C)
+        -> Result<CollectiveScopeCompletion<B,S,C>,ScopedCollectiveError<C::Error>> {
         if loss.dims()!=[1] {return Err(ScopedCollectiveError::Protocol("one actual scalar loss is required"));}
         let world=communicator.world_size();
         if world==0 || communicator.rank()>=world {return Err(ScopedCollectiveError::Protocol("invalid original data topology"));}
         let entries=core::mem::take(&mut *self.entries.lock());
-        if world==1 {return Ok(loss);}
+        if world==1 {return Ok(CollectiveScopeCompletion {entries,communicator,device:loss.device(),world});}
         let count=u64::try_from(entries.len()).map_err(|_|ScopedCollectiveError::Protocol("scope count overflows"))?;
         let words=(0..4).map(|word|((count>>(word*16))&65535) as f32).collect::<Vec<_>>();
         let counts=Tensor::<B,1>::from_data(TensorData::new(words,[4]),(&loss.device(),DType::F32));
@@ -125,7 +147,23 @@ impl<B:Backend,S:CheckpointStrategy> CollectiveScope<B,S> {
             }
             if other!=count {return Err(ScopedCollectiveError::Protocol("rank forward collective count/tracking differs"));}
         }
-        if entries.is_empty() {return Ok(loss);}
+        Ok(CollectiveScopeCompletion {entries,communicator,device:loss.device(),world})
+    }
+
+    /// Whether two handles refer to the same original forward window.
+    pub fn same_window(&self,other:&Self) -> bool {Arc::ptr_eq(&self.entries,&other.entries)}
+}
+
+impl<B:Backend,S:CheckpointStrategy,C:BroadcastTensorCollective<B>> CollectiveScopeCompletion<B,S,C> {
+    /// Recompute real gradient-path flags from the current loss. Added zero
+    /// dependencies may expose a path on another group, so mixed-group callers
+    /// propagate repeatedly until their explicit common coordinator converges.
+    pub fn propagate(&self,mut loss:Tensor<Autodiff<B,S>,1>)
+        -> Result<CollectiveCompletionStep<B,S>,ScopedCollectiveError<C::Error>> {
+        if loss.dims()!=[1] || loss.device()!=self.device {return Err(ScopedCollectiveError::Protocol("scope completion loss shape/device differs"));}
+        let entries=&self.entries;let communicator=&self.communicator;let world=self.world;
+        if communicator.world_size()!=world || communicator.rank()>=world {return Err(ScopedCollectiveError::Protocol("scope completion transport topology changed"));}
+        if world==1 || entries.is_empty() {return Ok(CollectiveCompletionStep {loss,added_anchors:0});}
         let root=loss.clone().into_primitive().tensor();
         let ids=entries.iter().map(|entry|entry.node).collect::<Vec<_>>();
         let local=root.node.client.gradient_paths(root.node.id,&ids);
@@ -135,11 +173,14 @@ impl<B:Backend,S:CheckpointStrategy> CollectiveScope<B,S> {
             .map_err(ScopedCollectiveError::Collective)?))};
         let total=entries.len().checked_mul(world as usize).ok_or(ScopedCollectiveError::Protocol("scope vote size overflows"))?;
         if flags.dims()!=[total] || flags.dtype()!=DType::F32 || flags.device()!=loss.device() {return Err(ScopedCollectiveError::Protocol("scope vote transport changed original shape/storage/device"));}
-        let global=flags.reshape([world as usize,entries.len()]).greater_elem(0).any_dim(0).reshape([entries.len()]);
-        let global=global.into_data().to_vec::<bool>().map_err(|_|ScopedCollectiveError::Protocol("scope path metadata cannot be decoded"))?;
-        for (index,entry) in entries.into_iter().enumerate() {
-            if !local[index] && global[index] {let dtype=loss.dtype();loss=loss+entry.anchor.cast(dtype);}
+        let flags=flags.into_data().to_vec::<f32>().map_err(|_|ScopedCollectiveError::Protocol("scope path metadata cannot be decoded"))?;
+        if flags.iter().any(|&flag|flag!=0.0 && flag!=1.0) {return Err(ScopedCollectiveError::Protocol("invalid exact scope path flag"));}
+        let mut added_anchors=0;
+        for (index,entry) in entries.iter().enumerate() {
+            if !local[index] && (0..world as usize).any(|rank|flags[rank*entries.len()+index]==1.0) {
+                let dtype=loss.dtype();loss=loss+entry.anchor.clone().cast(dtype);added_anchors+=1;
+            }
         }
-        Ok(loss)
+        Ok(CollectiveCompletionStep {loss,added_anchors})
     }
 }

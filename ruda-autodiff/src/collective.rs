@@ -14,7 +14,9 @@ use ruda_tensor::{
 };
 
 mod scope;
-pub use scope::{CollectiveScope,ScopedTensorCollective,ScopedCollectiveError};
+pub use scope::{CollectiveScope,ScopedTensorCollective,ScopedCollectiveError,CollectiveScopeCompletion,CollectiveCompletionStep};
+mod grouped;
+pub use grouped::*;
 mod exchange;
 pub use exchange::{all_to_all_v,all_to_all_v_ordered,all_to_all_v_coordinated};
 

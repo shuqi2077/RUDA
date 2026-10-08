@@ -76,6 +76,12 @@ mod owned_transformer;
 pub use owned_transformer::*;
 mod owned_state;
 pub use owned_state::*;
+mod grouped_training;
+pub use grouped_training::*;
+mod owned_training;
+pub use owned_training::*;
+mod grouped_mhc;
+pub use grouped_mhc::*;
 
 /// Explicit construction context preserving one local autograd leaf per source ID.
 /// Reuse a context for all tied layers, then drop it after model construction. It

@@ -37,16 +37,28 @@ impl<B:Backend,S:CheckpointStrategy> FullyShardedWeightedLoss<B,S> {
 pub fn complete_fully_sharded_terms<B,S,C,const D:usize>(scope:&CollectiveScope<B,S>,terms:LossTerms<Autodiff<B,S>,D>,communicator:C)
     -> Result<FullyShardedWeightedLoss<B,S>,ScopedCollectiveError<C::Error>>
     where B:Backend,S:CheckpointStrategy,C:BroadcastTensorCollective<B> {
+    let work=loss_terms_work(&terms).map_err(ScopedCollectiveError::Protocol)?;
+    let loss_sum=scope.complete(terms.values.clone().cast(work).sum(),communicator.clone())?;
+    weighted_statistics(terms,loss_sum,communicator)
+}
+
+pub(in super::super) fn loss_terms_work<B:Backend,const D:usize>(terms:&LossTerms<B,D>) -> Result<DType,&'static str> {
     if terms.values.dims()!=terms.normalizers.dims() || terms.values.dims()!=terms.valid.dims()
         || terms.values.device()!=terms.normalizers.device() || terms.values.device()!=terms.valid.device() {
-        return Err(ScopedCollectiveError::Protocol("actual loss term/weight/visibility geometry differs"));
+        return Err("actual loss term/weight/visibility geometry differs");
     }
     if !matches!(terms.values.dtype(),DType::F32|DType::F64) || !matches!(terms.normalizers.dtype(),DType::F32|DType::F64) {
-        return Err(ScopedCollectiveError::Protocol("original unreduced losses require F32/F64 work precision"));
+        return Err("original unreduced losses require F32/F64 work precision");
     }
-    let work=if terms.values.dtype()==DType::F64 || terms.normalizers.dtype()==DType::F64 {DType::F64} else {DType::F32};
+    Ok(if terms.values.dtype()==DType::F64 || terms.normalizers.dtype()==DType::F64 {DType::F64} else {DType::F32})
+}
+
+pub(in super::super) fn weighted_statistics<B,S,C,const D:usize>(terms:LossTerms<Autodiff<B,S>,D>,loss_sum:Tensor<Autodiff<B,S>,1>,communicator:C)
+    -> Result<FullyShardedWeightedLoss<B,S>,ScopedCollectiveError<C::Error>>
+where B:Backend,S:CheckpointStrategy,C:BroadcastTensorCollective<B> {
+    let work=loss_terms_work(&terms).map_err(ScopedCollectiveError::Protocol)?;
     let local_weight=terms.normalizers.clone().cast(work).sum().inner();
-    let statistics=complete_fully_sharded_loss(scope,terms.values.clone().cast(work).sum(),terms.valid_count(),communicator.clone())?;
+    let statistics=loss_statistics(loss_sum,terms.valid_count(),communicator.clone())?;
     let global_weight=if communicator.world_size()==1 {local_weight.clone()} else {Tensor::<B,1>::from_primitive(TensorPrimitive::Float(
         communicator.all_reduce_sum(local_weight.clone().into_primitive().tensor()).map_err(ScopedCollectiveError::Collective)?))};
     if global_weight.dims()!=[1] || global_weight.dtype()!=work || global_weight.device()!=local_weight.device() {

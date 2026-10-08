@@ -7,6 +7,7 @@ use ruda_model::tensor::{IntDType,TensorData,ElementConversion};
 mod paired;
 mod weighted;
 pub use weighted::*;
+pub(super) use weighted::{loss_terms_work,weighted_statistics};
 
 /// Actual original local loss graph, globally effective integer count and detached native global loss metrics.
 /// Normalize the local SUM before backward: gathered parameters already SUM/reduce-scatter their derivatives.
@@ -40,6 +41,16 @@ pub fn complete_fully_sharded_loss<B,S,C>(scope:&CollectiveScope<B,S>,loss_sum:T
     local_count:Tensor<Autodiff<B,S>,1,Int>,communicator:C) -> Result<FullyShardedLoss<B,S>,ScopedCollectiveError<C::Error>>
     where B:Backend,S:CheckpointStrategy,C:BroadcastTensorCollective<B> {
     let loss_sum=scope.complete(loss_sum,communicator.clone())?;
+    loss_statistics(loss_sum,local_count,communicator)
+}
+
+/// Native statistics after the selected communication graph has been closed.
+pub(super) fn loss_statistics<B,S,C>(loss_sum:Tensor<Autodiff<B,S>,1>,local_count:Tensor<Autodiff<B,S>,1,Int>,communicator:C)
+    -> Result<FullyShardedLoss<B,S>,ScopedCollectiveError<C::Error>>
+where B:Backend,S:CheckpointStrategy,C:BroadcastTensorCollective<B> {
+    if loss_sum.dims()!=[1] || communicator.world_size()==0 || communicator.rank()>=communicator.world_size() {
+        return Err(ScopedCollectiveError::Protocol("valid scalar loss and explicit statistics group are required"));
+    }
     if local_count.dims()!=[1] || local_count.device()!=loss_sum.device() {return Err(ScopedCollectiveError::Protocol("actual loss count shape/device differs"));}
     let local_count=local_count.inner().cast(IntDType::I64);let device=loss_sum.device();
     let mask=Tensor::<B,1,Int>::from_data(TensorData::new(alloc::vec![65535_i64],[1]),(&device,DType::I64));
