@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use core::{fmt,ops::Range};
 use ruda_model::{module::{Module,Param},tensor::{Tensor,Int,DType,FloatDType,MoeOptions,MoeDispatchOps,MoeReceivedOps,
     MoeReceivedOptions,dispatch_moe,combine_moe,received_moe_experts,VariableTensorCollective,VariableTensorExchange,backend::Backend}};
-use ruda_autodiff::{Autodiff,checkpoint::strategy::CheckpointStrategy,collective::all_to_all_v_ordered};
+use ruda_autodiff::{Autodiff,checkpoint::strategy::CheckpointStrategy,collective::{all_to_all_v_coordinated,ScopedCollectiveError}};
 use crate::{NativeSwiGluExperts,transformer::{TransformerProjectionShape,TransformerProjection}};
 
 /// Explicit global contiguous expert ownership, including actual zero-expert ranks.
@@ -142,7 +142,10 @@ pub struct ExpertParallelMoeOutput<B:Backend,const D:usize> {
     pub received_rows:Vec<usize>,
 }
 fn native_exchange<B:Backend,C:VariableTensorCollective<B>,const D:usize>(input:Tensor<B,D>,communicator:C,counts:&[usize])
-    -> Result<VariableTensorExchange<Tensor<B,D>>,C::Error> {input.all_to_all_v(communicator,counts)}
+    -> Result<VariableTensorExchange<Tensor<B,D>>,ScopedCollectiveError<C::Error>> {input.all_to_all_v(communicator,counts).map_err(ScopedCollectiveError::Collective)}
+fn exchange_error<C:fmt::Debug,P:fmt::Debug,M:fmt::Debug>(error:ScopedCollectiveError<C>) -> ExpertParallelMoeError<C,P,M> {
+    match error {ScopedCollectiveError::Collective(error)=>ExpertParallelMoeError::Collective(error),ScopedCollectiveError::Protocol(message)=>ExpertParallelMoeError::Protocol(message)}
+}
 macro_rules! execute_expert_parallel {
     ($backend:ty,[$($generics:tt)*],$exchange:path,$forward:ident,$detailed:ident) => {
         impl<$($generics)*,P:TransformerProjection<$backend>> ExpertParallelMoeLayer<$backend,P> {
@@ -164,13 +167,13 @@ macro_rules! execute_expert_parallel {
                 let logits=self.router.forward(router_input).map_err(ExpertParallelMoeError::Router)?;
                 let dispatch=dispatch_moe(input,logits.clone(),self.correction_bias.as_ref().map(Param::val),self.options).map_err(ExpertParallelMoeError::Native)?;
                 let sent_rows=<$backend as MoeDispatchOps>::moe_dispatch_counts(&dispatch.state,self.experts.ownership.prefix()).map_err(ExpertParallelMoeError::Native)?;
-                let incoming=$exchange(dispatch.values,communicator.clone(),&sent_rows).map_err(ExpertParallelMoeError::Collective)?;
+                let incoming=$exchange(dispatch.values,communicator.clone(),&sent_rows).map_err(exchange_error)?;
                 let original_ids=Tensor::<B,1,Int>::from_primitive(dispatch.row_experts.into_primitive());
                 let ids=original_ids.all_to_all_v_int(communicator.clone(),&sent_rows).map_err(ExpertParallelMoeError::Collective)?;
                 if incoming.receive_counts!=ids.receive_counts {return Err(ExpertParallelMoeError::Protocol("transported assignment rows and original U32 IDs differ"));}
                 let received_rows=incoming.receive_counts;let original_ids=Tensor::<$backend,1,Int>::from_primitive(ids.value.into_primitive());
                 let output=self.experts.forward_received(incoming.value,original_ids,self.options).map_err(ExpertParallelMoeError::Native)?;
-                let returned=$exchange(output,communicator,&received_rows).map_err(ExpertParallelMoeError::Collective)?;
+                let returned=$exchange(output,communicator,&received_rows).map_err(exchange_error)?;
                 if returned.receive_counts!=sent_rows {return Err(ExpertParallelMoeError::Protocol("returned expert rows differ from the original source assignments"));}
                 let output=combine_moe(dispatch.state,returned.value,dispatch.weights,self.options.combine_backward).map_err(ExpertParallelMoeError::Native)?.reshape(shape);
                 Ok(ExpertParallelMoeOutput {output,router_logits:logits,selected_experts:dispatch.selected_experts,sent_rows,received_rows})
@@ -179,4 +182,4 @@ macro_rules! execute_expert_parallel {
     };
 }
 execute_expert_parallel!(B,[B:MoeDispatchOps+MoeReceivedOps],native_exchange,forward_inference,forward_detailed_inference);
-execute_expert_parallel!(Autodiff<B,S>,[B:MoeDispatchOps+MoeReceivedOps,S:CheckpointStrategy],all_to_all_v_ordered,forward,forward_detailed);
+execute_expert_parallel!(Autodiff<B,S>,[B:MoeDispatchOps+MoeReceivedOps,S:CheckpointStrategy],all_to_all_v_coordinated,forward,forward_detailed);
