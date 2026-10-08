@@ -208,6 +208,16 @@ pub use ruda_core::tensor::spatial::AttentionModuleOptions;
 
 /// Module operations trait.
 pub trait ModuleOps<B: Backend> {
+    /// Working-storage LeakyReLU using the actual scalar negative slope.
+    fn leaky_relu_native(tensor: FloatTensor<B>, negative_slope: f64) -> FloatTensor<B> {
+        super::activation_training::leaky_relu_native::<B>(tensor, negative_slope)
+    }
+
+    /// Independent first-order VJP, using the original primal to select the branch.
+    fn leaky_relu_native_backward(tensor: FloatTensor<B>, grad: FloatTensor<B>, negative_slope: f64) -> FloatTensor<B> {
+        super::activation_training::leaky_relu_native_backward::<B>(tensor, grad, negative_slope)
+    }
+
     /// Working-storage PReLU with the original shared or per-channel slope vector.
     fn prelu_native(tensor: FloatTensor<B>, alpha: FloatTensor<B>) -> FloatTensor<B> {
         super::prelu_training::prelu_native::<B>(tensor, alpha)

@@ -1198,6 +1198,21 @@ impl DequantizeOpIr {
 
 // Operations with multiple outputs
 
+impl LeakyReluOpIr {
+    pub fn create(x: TensorIr, negative_slope: f64, new_id: impl FnOnce() -> TensorId) -> Self {
+        let out = TensorIr::uninit(new_id(), x.shape.clone(), x.dtype);
+        Self { x, negative_slope: ScalarIr::Float(negative_slope), out }
+    }
+}
+
+impl LeakyReluBackwardOpIr {
+    pub fn create(x: TensorIr, grad: TensorIr, negative_slope: f64, new_id: impl FnOnce() -> TensorId) -> Self {
+        assert_eq!(x.shape, grad.shape, "LeakyReLU gradient shape differs");
+        let out = TensorIr::uninit(new_id(), x.shape.clone(), x.dtype);
+        Self { x, grad, negative_slope: ScalarIr::Float(negative_slope), out }
+    }
+}
+
 impl PreluOpIr {
     pub fn create(x: TensorIr, alpha: TensorIr, new_id: impl FnOnce() -> TensorId) -> Self {
         crate::ops::prelu_training::geometry(&x.shape, &alpha.shape);

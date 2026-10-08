@@ -66,6 +66,26 @@ fn causal_attention_probabilities<B: Backend>(
 }
 
 impl<B: Backend, C: CheckpointStrategy> ModuleOps<Autodiff<B, C>> for Autodiff<B, C> {
+    fn leaky_relu_native(tensor: AutodiffTensor<B>, negative_slope: f64) -> AutodiffTensor<B> {
+        #[derive(Debug)]
+        struct LeakyRelu;
+        impl<B: Backend> Backward<B, 1> for LeakyRelu {
+            type State = (NodeId, f64);
+            fn backward(self, ops: Ops<Self::State, 1>, grads: &mut Gradients, checkpointer: &mut Checkpointer) {
+                let (input, negative_slope) = ops.state;
+                let input = checkpointer.retrieve_node_output(input);
+                unary::<B, _>(ops.parents, ops.node, grads, |grad| B::leaky_relu_native_backward(input, grad, negative_slope));
+            }
+        }
+        match LeakyRelu.prepare::<C>([tensor.node.clone()]).compute_bound().stateful() {
+            OpsKind::Tracked(mut prep) => {
+                let input = prep.checkpoint(&tensor);
+                prep.finish((input, negative_slope), B::leaky_relu_native(tensor.primitive, negative_slope))
+            }
+            OpsKind::UnTracked(prep) => prep.finish(B::leaky_relu_native(tensor.primitive, negative_slope)),
+        }
+    }
+
     fn prelu_native(tensor: AutodiffTensor<B>, alpha: AutodiffTensor<B>) -> AutodiffTensor<B> {
         #[derive(Debug)]
         struct Prelu;

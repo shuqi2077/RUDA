@@ -2,6 +2,11 @@ use crate::api::backend::Backend;
 use crate::api::check::TensorCheck;
 use crate::api::{Tensor, TensorPrimitive, check, s};
 
+/// Native working-storage LeakyReLU, using the supplied scalar slope and an original-primal training VJP.
+pub fn leaky_relu_native<const D: usize, B: Backend>(tensor: Tensor<B, D>, negative_slope: f64) -> Tensor<B, D> {
+    Tensor::from_primitive(TensorPrimitive::Float(B::leaky_relu_native(tensor.into_primitive().tensor(), negative_slope)))
+}
+
 /// Working-storage PReLU with shared or channel-wise slope, using independently selected native training derivatives.
 pub fn prelu_native<const D: usize, B: Backend>(tensor: Tensor<B, D>, alpha: Tensor<B, 1>) -> Tensor<B, D> {
     check!(TensorCheck::check_prelu_shape::<D>(&tensor.shape(), &alpha.shape()));

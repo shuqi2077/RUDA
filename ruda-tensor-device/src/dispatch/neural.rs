@@ -81,6 +81,18 @@ where
     I: IntElement,
     BT: BoolElement,
 {
+    fn leaky_relu_native(tensor: FloatTensor<Self>, negative_slope: f64) -> FloatTensor<Self> {
+        if group_storage_supported(&tensor) && tensor.meta.num_elements() <= u32::MAX as usize {
+            ruprim::elementwise::unary::leaky_relu::launch(tensor, negative_slope as f32)
+        } else { ruda_tensor::ops::activation_training::leaky_relu_native::<Self>(tensor, negative_slope) }
+    }
+
+    fn leaky_relu_native_backward(tensor: FloatTensor<Self>, grad: FloatTensor<Self>, negative_slope: f64) -> FloatTensor<Self> {
+        if [&tensor, &grad].into_iter().all(|value| group_storage_supported(value) && value.meta.num_elements() <= u32::MAX as usize) {
+            ruprim::elementwise::unary::leaky_relu::launch_backward(tensor, grad, negative_slope as f32)
+        } else { ruda_tensor::ops::activation_training::leaky_relu_native_backward::<Self>(tensor, grad, negative_slope) }
+    }
+
     fn prelu_native(tensor: FloatTensor<Self>, alpha: FloatTensor<Self>) -> FloatTensor<Self> {
         let info = ruda_tensor::ops::prelu_training::geometry(tensor.meta.shape(), alpha.meta.shape());
         if group_storage_supported(&tensor) && group_storage_supported(&alpha) && info.elements <= u32::MAX as usize

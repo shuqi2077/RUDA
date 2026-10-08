@@ -1,5 +1,26 @@
 use crate::{Backend, DType, FloatDType, TensorMetadata, tensor::FloatTensor};
 
+/// Same-device working-storage LeakyReLU with the original supplied scalar slope.
+pub fn leaky_relu_native<B: Backend>(input: FloatTensor<B>, negative_slope: f64) -> FloatTensor<B> {
+    let storage: FloatDType = input.dtype().into();
+    let compute = if input.dtype() == DType::F64 { FloatDType::F64 } else { FloatDType::F32 };
+    B::float_cast(B::leaky_relu(B::float_cast(input, compute), negative_slope.into()), storage)
+}
+
+/// Original input's LeakyReLU VJP; half storage uses FP32 and an F64 operand retains FP64 working arithmetic.
+pub fn leaky_relu_native_backward<B: Backend>(input: FloatTensor<B>, grad: FloatTensor<B>, negative_slope: f64) -> FloatTensor<B> {
+    assert_eq!(input.shape(), grad.shape(), "LeakyReLU gradient shape differs");
+    if input.shape().num_elements() == 0 { return input; }
+    let storage: FloatDType = input.dtype().into();
+    let compute = if input.dtype() == DType::F64 || grad.dtype() == DType::F64 { FloatDType::F64 } else { FloatDType::F32 };
+    let input = B::float_cast(input, compute);
+    let grad = B::float_cast(grad, compute);
+    let bool_dtype = crate::get_device_settings::<B>(&B::float_device(&input)).bool_dtype;
+    let negative = B::float_lower_elem(input, 0f32.into(), bool_dtype);
+    let scaled = B::float_mul_scalar(grad.clone(), negative_slope.into());
+    B::float_cast(B::float_mask_where(grad, negative, scaled), storage)
+}
+
 /// Explicit working-storage SiLU; existing activation defaults are not changed.
 pub fn silu_native<B: Backend>(input: FloatTensor<B>) -> FloatTensor<B> {
     let storage: FloatDType = input.dtype().into();

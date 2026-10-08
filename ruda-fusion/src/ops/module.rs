@@ -32,6 +32,30 @@ macro_rules! make_ops {
 }
 
 impl<B: FusionBackend> ModuleOps<Fusion<B>> for Fusion<B> {
+    fn leaky_relu_native(x: FloatTensor<Self>, negative_slope: f64) -> FloatTensor<Self> {
+        make_ops!(LeakyReluNativeOps, LeakyReluOpIr, |desc: &LeakyReluOpIr, handles: &mut HandleContainer<B::Handle>| {
+            let x = handles.get_float_tensor::<B>(&desc.x);
+            handles.register_float_tensor::<B>(&desc.out.id, B::leaky_relu_native(x, desc.negative_slope.elem()));
+        });
+        let streams = OperationStreams::with_inputs([&x]);
+        let client = x.client.clone();
+        let desc = LeakyReluOpIr::create(x.into_ir(), negative_slope, || client.create_empty_handle());
+        client.register(streams, OperationIr::Module(ModuleOperationIr::LeakyReluNative(desc.clone())), LeakyReluNativeOps::<B>::new(desc)).output()
+    }
+
+    fn leaky_relu_native_backward(x: FloatTensor<Self>, grad: FloatTensor<Self>, negative_slope: f64) -> FloatTensor<Self> {
+        make_ops!(LeakyReluNativeBackwardOps, LeakyReluBackwardOpIr,
+            |desc: &LeakyReluBackwardOpIr, handles: &mut HandleContainer<B::Handle>| {
+                let x = handles.get_float_tensor::<B>(&desc.x);
+                let grad = handles.get_float_tensor::<B>(&desc.grad);
+                handles.register_float_tensor::<B>(&desc.out.id, B::leaky_relu_native_backward(x, grad, desc.negative_slope.elem()));
+            });
+        let streams = OperationStreams::with_inputs([&x, &grad]);
+        let client = x.client.clone();
+        let desc = LeakyReluBackwardOpIr::create(x.into_ir(), grad.into_ir(), negative_slope, || client.create_empty_handle());
+        client.register(streams, OperationIr::Module(ModuleOperationIr::LeakyReluNativeBackward(desc.clone())), LeakyReluNativeBackwardOps::<B>::new(desc)).output()
+    }
+
     fn prelu_native(x: FloatTensor<Self>, alpha: FloatTensor<Self>) -> FloatTensor<Self> {
         make_ops!(PreluNativeOps, PreluOpIr, |desc: &PreluOpIr, handles: &mut HandleContainer<B::Handle>| {
             let x = handles.get_float_tensor::<B>(&desc.x);

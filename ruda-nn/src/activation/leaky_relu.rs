@@ -46,6 +46,11 @@ impl ModuleDisplay for LeakyRelu {
 }
 
 impl LeakyRelu {
+    /// Native working-storage forward and original-primal first-order derivative; default forward is unchanged.
+    pub fn forward_native<B: Backend, const D: usize>(&self, input: Tensor<B, D>) -> Tensor<B, D> {
+        ruda_model::tensor::activation::leaky_relu_native(input, self.negative_slope)
+    }
+
     /// Forward pass for the Leaky ReLu layer.
     ///
     /// See [leaky_relu](ruda_tensor::api::activation::leaky_relu) for more information.

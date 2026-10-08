@@ -271,6 +271,10 @@ pub enum ModuleOperationIr {
     PreluNative(PreluOpIr),
     /// PReLU derivatives restricted to requested input/slope leaves.
     PreluNativeBackwardSelect(PreluBackwardSelectOpIr),
+    /// Working-storage LeakyReLU using the original scalar slope.
+    LeakyReluNative(LeakyReluOpIr),
+    /// Original-primal first-order LeakyReLU VJP.
+    LeakyReluNativeBackward(LeakyReluBackwardOpIr),
 }
 
 /// Basic operations that can be done on any tensor type.
