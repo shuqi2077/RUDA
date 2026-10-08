@@ -29,7 +29,8 @@ impl<B:Backend> ExpertLinear<B> {
     pub fn dimensions(&self) -> [usize;3] {let [e,n,k]=self.weight.val().dims();[e,k,n]}
     /// Validate actual original native storage/geometry without numeric readback.
     pub fn validate(&self) {
-        let weight=self.weight.val();let [e,k,n]=self.dimensions();assert!(e>0 && e<u32::MAX as usize && k>0 && n>0,"native expert linear axes must be positive");
+        let weight=self.weight.val();let [e,k,n]=self.dimensions();assert!(e<u32::MAX as usize && k>0 && n>0 && k<=u32::MAX as usize && n<=u32::MAX as usize,
+            "native expert linear feature axes must be positive and all axes must fit U32");
         assert!(e.checked_mul(k).and_then(|size|size.checked_mul(n)).is_some_and(|size|size<=u32::MAX as usize),"native expert linear exceeds U32 indexing");
         assert!(matches!(weight.dtype(),DType::F16|DType::BF16|DType::F32),"native expert linear storage must be FP16/BF16/FP32");
     }
@@ -112,7 +113,7 @@ impl<B:Backend,Base:ExpertLoRABase<B>> PackedExpertLoRA<B,Base> {
 }
 impl LoRALinearConfig {
     pub(super) fn validate_expert_initialization<B:Backend,Base:ExpertLoRABase<B>>(&self,base:&Base,adapter_dtype:DType) {
-        base.validate();assert!(self.rank>0 && self.alpha.is_finite(),"invalid original expert adapter rank/alpha");
+        base.validate();assert!(self.rank>0 && self.rank<=u32::MAX as usize && self.alpha.is_finite(),"invalid original expert adapter rank/alpha");
         assert!(self.dropout.is_finite() && (0.0..1.0).contains(&self.dropout),"original expert adapter dropout must be in [0,1)");
         assert!(matches!(adapter_dtype,DType::F16|DType::BF16|DType::F32),"expert adapter storage must be native floating");
         let [e,k,n]=base.dimensions();for width in [k,n] {assert!(e.checked_mul(self.rank).and_then(|size|size.checked_mul(width))
@@ -146,6 +147,11 @@ impl LoRALinearConfig {
         forward:MoeExpertStrategy,backward:MoeExpertStrategy) -> PackedExpertLoRA<B,Base> {
         self.validate_expert_initialization::<B,_>(&base,adapter_dtype);
         let [e,k,n]=base.dimensions();let device=base.device();
+        if e==0 {
+            let a=Param::from_tensor(Tensor::<B,3>::empty([0,self.rank,k],(&device,adapter_dtype)));
+            let b=Param::from_tensor(Tensor::<B,3>::empty([0,n,self.rank],(&device,adapter_dtype)));
+            return self.from_grouped_expert_adapters(base,ExpertLinear::from_parameters(a,forward,backward),ExpertLinear::from_parameters(b,forward,backward),use_rslora);
+        }
         let a=LinearConfig::new(k,self.rank).initializer.init_with::<B,3,_>([e,self.rank,k],Some(k),Some(self.rank),&device)
             .map(|value|value.cast(adapter_dtype).detach().require_grad());
         let b=Initializer::Zeros.init_with::<B,3,_>([e,n,self.rank],Some(self.rank),Some(n),&device)

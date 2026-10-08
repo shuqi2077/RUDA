@@ -37,6 +37,8 @@ pub mod tensor_parallel;
 /// Native cross-rank routed experts with explicit global ownership and transport.
 #[cfg(feature = "tensor-parallel")]
 pub mod expert_parallel;
+#[cfg(feature = "tensor-parallel")]
+mod expert_parallel_adapters;
 /// Element-sharded parameters with differentiable gather/reduce-scatter.
 #[cfg(feature = "tensor-parallel")]
 pub mod fully_sharded;
@@ -70,6 +72,8 @@ pub use floating_expert_lora::*;
 pub use mixed_expert_lora::*;
 pub use expert_lora_record::*;
 pub use expert_adapter_access::*;
+#[cfg(feature = "tensor-parallel")]
+pub use expert_parallel_adapters::*;
 pub use moe::*;
 pub use mhc::*;
 #[cfg(feature = "sparse")]

@@ -15,12 +15,14 @@ impl<R:Runtime> ReceivedExpertRows<R> {
     pub fn new(input:RudaTensor<R>,global_ids:RudaTensor<R>,begin:usize,experts:usize) -> Result<Self,MoeError> {
         float_tensor(&input)?;same_device(&input,&global_ids)?;
         let end=begin.checked_add(experts).filter(|&end|end<=u32::MAX as usize).ok_or(MoeError("received expert range overflows U32"))?;
-        if experts==0 || input.meta.num_dims()!=2 || input.meta.shape()[1]==0 || global_ids.meta.shape()[..]!=[input.meta.shape()[0]]
+        if input.meta.num_dims()!=2 || input.meta.shape()[1]==0 || global_ids.meta.shape()[..]!=[input.meta.shape()[0]]
             || global_ids.dtype!=DType::U32 || global_ids.qparams.is_some() || !input.client.same_execution_queue(&global_ids.client) {
             return Err(MoeError("received expert rows require floating [rows,width] and native U32 IDs on one queue"));
         }
         elements(input.meta.shape())?;elements(&[experts.checked_add(1).ok_or(MoeError("received expert prefix overflows"))?])?;
-        let rows=input.meta.shape()[0];let local=empty(&input,[rows],DType::U32);
+        let rows=input.meta.shape()[0];
+        if experts==0 && rows!=0 {return Err(MoeError("a zero-expert owner cannot receive assignment rows"));}
+        let local=empty(&input,[rows],DType::U32);
         if rows!=0 {
             let invalid=empty(&input,[1],DType::U32);let dim=RudaDim::new(input.client.properties(),1);
             kernels::dispatch::clear_counts::launch::<R>(&input.client,calculate_ruda_count_elemwise(&input.client,1,dim),dim,invalid.clone().into_array_arg());

@@ -71,13 +71,13 @@ pub(super) fn sort_token_rows<R:Runtime>(input:RudaTensor<R>,indices:RudaTensor<
         let slot_rows = empty(&input, [rows], DType::U32);
         let row_experts = empty(&input, [rows], DType::U32);
         let values = empty(&input, [rows, hidden], input.dtype);
-        let dim = RudaDim::new(input.client.properties(), experts);
+        if experts!=0 {let dim = RudaDim::new(input.client.properties(), experts);
         kernels::dispatch::clear_counts::launch::<R>(
             &input.client,
             calculate_ruda_count_elemwise(&input.client, experts, dim),
             dim,
             counts.clone().into_array_arg(),
-        );
+        );}
         if rows != 0 {
             let dim = RudaDim::new(input.client.properties(), rows);
             kernels::dispatch::count_routes::launch::<R>(

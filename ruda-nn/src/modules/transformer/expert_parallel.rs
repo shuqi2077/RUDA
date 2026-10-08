@@ -1,7 +1,7 @@
 use alloc::{vec::Vec,collections::BTreeSet};
 use ruda_model::{module::{Module,ModuleVisitor,Param,ParamId},tensor::{Tensor,Int,Bool,MoeDispatchOps,MoeReceivedOps,VariableTensorCollective,backend::Backend}};
 use ruda_autodiff::{Autodiff,checkpoint::strategy::CheckpointStrategy,collective::{CollectiveScope,ScopedTensorCollective,ScopedCollectiveError}};
-use crate::{Dropout,expert_parallel::{ExpertParallelMoeLayer,ExpertParallelMoeError},attention::{DenseAttentionMask,DenseAttentionOptions,
+use crate::{Dropout,expert_parallel::{ExpertParallelMoeLayer,ExpertParallelMoeError,ExpertParallelSwiGluExperts,ExpertParallelGeometry,ExpertParallelReceived},attention::{DenseAttentionMask,DenseAttentionOptions,
     PackedSequenceLayout,PackedAttentionOptions,PackedDocumentAttentionMask},cache::{ProjectedKvCache,TransformerKvCache},
     loss::CausalCrossEntropyConfig,fully_sharded::{FullyShardedLoss,complete_fully_sharded_loss}};
 use super::{ProjectedGroupedQueryAttention,ProjectedFeedForward,DenseTransformerNorm,NativeMoeTransformerLayer,NativeMoeTransformerError,
@@ -11,11 +11,11 @@ use super::{dense::try_residual_branch,native_attention::{attention_branch,packe
 
 /// Original self-attention and actual expert-owned routed/shared FFN, retaining residual/norm order.
 #[derive(Module,Debug)]
-pub struct ExpertParallelTransformerBlock<B:Backend,P:Module<B>> {
+pub struct ExpertParallelTransformerBlock<B:Backend,P:Module<B>,E:Module<B> =ExpertParallelSwiGluExperts<B>> {
     /// Original actual self-attention projections and head geometry.
     pub attention:ProjectedGroupedQueryAttention<B,P>,
     /// Actual expert-world routed branch with only local persistent expert cubes.
-    pub routed:ExpertParallelMoeLayer<B,P>,
+    pub routed:ExpertParallelMoeLayer<B,P,E>,
     /// Original optional actual shared ordinary/gated FFN; absence remains absence.
     pub shared:Option<ProjectedFeedForward<B,P>>,
     /// Original attention affine norm/epsilon.
@@ -27,7 +27,7 @@ pub struct ExpertParallelTransformerBlock<B:Backend,P:Module<B>> {
     /// Original pre/post-normalization choice.
     pub norm_first:bool,
 }
-impl<B:Backend,P:TransformerProjectionShape<B>> ExpertParallelTransformerBlock<B,P> {
+impl<B:Backend,P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>> ExpertParallelTransformerBlock<B,P,E> {
     /// Validate the actual loaded residual and original attention/shared/router widths.
     pub fn validate(&self) {
         self.routed.validate();let width=self.routed.width();
@@ -51,19 +51,19 @@ impl<C:core::fmt::Debug,P:core::fmt::Debug,M:core::fmt::Debug> core::fmt::Displa
 impl<C:core::fmt::Debug,P:core::fmt::Debug,M:core::fmt::Debug> core::error::Error for ExpertParallelTransformerError<C,P,M> {}
 /// Every actual original local or expert-world layer, preserving its original loaded order.
 #[derive(Module,Debug)]
-pub enum ExpertParallelTransformerLayer<B:Backend,P:Module<B>> {
+pub enum ExpertParallelTransformerLayer<B:Backend,P:Module<B>,E:Module<B> =ExpertParallelSwiGluExperts<B>> {
     /// Original native dense or local routed/shared block.
     Local(NativeMoeTransformerLayer<B,P>),
     /// Actual expert-owned routed/shared block.
-    Parallel(ExpertParallelTransformerBlock<B,P>),
+    Parallel(ExpertParallelTransformerBlock<B,P,E>),
 }
 /// Complete original embeddings, mixed local/expert backbone, final norm and native head.
 #[derive(Module,Debug)]
-pub struct ExpertParallelTransformerModel<B:Backend,P:Module<B>> {
+pub struct ExpertParallelTransformerModel<B:Backend,P:Module<B>,E:Module<B> =ExpertParallelSwiGluExperts<B>> {
     /// Actual original token and optional learned-position/type tables.
     pub embeddings:TransformerEmbeddings<B>,
     /// Every actual original local/owned-expert layer in order.
-    pub layers:Vec<ExpertParallelTransformerLayer<B,P>>,
+    pub layers:Vec<ExpertParallelTransformerLayer<B,P,E>>,
     /// Original optional independent final affine norm.
     pub normalization:Option<DenseTransformerNorm<B>>,
     /// Actual original dense/packed/adapter output head.
@@ -73,9 +73,9 @@ struct FloatIds(BTreeSet<ParamId>);
 impl<B:Backend> ModuleVisitor<B> for FloatIds {
     fn visit_float<const D:usize>(&mut self,parameter:&Param<Tensor<B,D>>) {self.0.insert(parameter.id);}
 }
-impl<B:Backend,P:TransformerProjectionShape<B>> ExpertParallelTransformerModel<B,P> {
+impl<B:Backend,P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>> ExpertParallelTransformerModel<B,P,E> {
     /// Connect actual original loaded parts without creating unused dense stand-in FFNs or guessed model topology.
-    pub fn from_parts(embeddings:TransformerEmbeddings<B>,layers:Vec<ExpertParallelTransformerLayer<B,P>>,normalization:Option<DenseTransformerNorm<B>>,head:ProjectedTransformerHead<B,P>) -> Self {
+    pub fn from_expert_parts(embeddings:TransformerEmbeddings<B>,layers:Vec<ExpertParallelTransformerLayer<B,P,E>>,normalization:Option<DenseTransformerNorm<B>>,head:ProjectedTransformerHead<B,P>) -> Self {
         let width=embeddings.token.weight.val().dims()[1];assert_eq!(head.projection.dimensions()[0],width,"expert model original head/input width differs");
         if let Some(norm)=&normalization {assert_eq!(norm.width(),width,"expert model final norm width differs");}
         for layer in &layers {match layer {
@@ -89,7 +89,7 @@ impl<B:Backend,P:TransformerProjectionShape<B>> ExpertParallelTransformerModel<B
     /// Actual local expert IDs, for caller-owned optimizer/checkpoint/gradient-distribution policy.
     pub fn owned_expert_parameter_ids(&self) -> Vec<ParamId> {
         let mut ids=BTreeSet::new();for layer in &self.layers {if let ExpertParallelTransformerLayer::Parallel(block)=layer {
-            ids.extend([block.routed.experts.gate.id,block.routed.experts.up.id,block.routed.experts.down.id]);}}ids.into_iter().collect()
+            ids.extend(block.routed.experts.parameter_ids());}}ids.into_iter().collect()
     }
     /// Actual non-owned-expert floating IDs. This does not assume that a custom projection is replicated;
     /// callers choose their original replication/data/tensor groups and reductions explicitly.
@@ -99,9 +99,15 @@ impl<B:Backend,P:TransformerProjectionShape<B>> ExpertParallelTransformerModel<B
     }
     fn normalize<const D:usize>(&self,hidden:Tensor<B,D>) -> Tensor<B,D> {if let Some(norm)=&self.normalization {norm.forward(hidden)} else {hidden}}
 }
+impl<B:Backend,P:TransformerProjectionShape<B>> ExpertParallelTransformerModel<B,P> {
+    /// Original constructor remains cube-only, including inference when the actual stack contains only local layers.
+    pub fn from_parts(embeddings:TransformerEmbeddings<B>,layers:Vec<ExpertParallelTransformerLayer<B,P>>,normalization:Option<DenseTransformerNorm<B>>,head:ProjectedTransformerHead<B,P>) -> Self {
+        Self::from_expert_parts(embeddings,layers,normalization,head)
+    }
+}
 macro_rules! expert_model_execution {
     ($backend:ty,[$($generics:tt)*],$routed:ident,$feed:ident,$forward:ident,$packed:ident,$cached:ident,$hidden_with:ident,$packed_hidden_with:ident) => {
-        impl<$($generics)*,P:TransformerProjection<$backend>> ExpertParallelTransformerBlock<$backend,P> {
+        impl<$($generics)*,P:TransformerProjection<$backend>,E:ExpertParallelReceived<$backend>> ExpertParallelTransformerBlock<$backend,P,E> {
             fn $feed<C:VariableTensorCollective<B>,const D:usize>(&self,hidden:Tensor<$backend,D>,communicator:C)
                 -> Result<Tensor<$backend,D>,ExpertParallelTransformerError<C::Error,P::Error,<$backend as ruda_model::tensor::MoeOps>::MoeError>> {
                 try_residual_branch(hidden,&self.feed_forward_norm,&self.residual_dropout,self.norm_first,|source| {
@@ -132,7 +138,7 @@ macro_rules! expert_model_execution {
                     .map_err(|error|ExpertParallelTransformerError::Local(NativeMoeTransformerError::Projection(error)))?;self.$feed(hidden,communicator)
             }
         }
-        impl<$($generics)*,P:TransformerProjection<$backend>> ExpertParallelTransformerLayer<$backend,P> {
+        impl<$($generics)*,P:TransformerProjection<$backend>,E:ExpertParallelReceived<$backend>> ExpertParallelTransformerLayer<$backend,P,E> {
             /// Execute only actual cached new-token rows, retaining the original local/owned-expert choice.
             pub fn $cached<C:VariableTensorCollective<B>,F>(&self,input:Tensor<$backend,3>,visible:Option<Tensor<$backend,2,Bool>>,cache:&mut ProjectedKvCache<$backend>,
                 masks:DenseAttentionMask<$backend>,options:DenseAttentionOptions,communicator:C,positions:F)
@@ -156,7 +162,7 @@ macro_rules! expert_model_execution {
                     Self::Parallel(block)=>block.$packed(input,layout,masks,options,communicator,positions)}
             }
         }
-        impl<$($generics)*,P:TransformerProjection<$backend>> ExpertParallelTransformerModel<$backend,P> {
+        impl<$($generics)*,P:TransformerProjection<$backend>,E:ExpertParallelReceived<$backend>> ExpertParallelTransformerModel<$backend,P,E> {
             /// Complete actual new-token model logits; source caches commit only a whole-stack chunk boundary.
             /// Partial errors retain the original explicit cache restore contract.
             pub fn $cached<C:VariableTensorCollective<B>,F>(&self,input:ProjectedTransformerInput<$backend>,visible:Option<Tensor<$backend,2,Bool>>,cache:&mut TransformerKvCache<$backend>,
@@ -172,7 +178,7 @@ macro_rules! expert_model_execution {
             /// Complete original native hidden graph with caller-owned per-layer attention/position/transport policies.
             pub fn $hidden_with<C:VariableTensorCollective<B>,F>(&self,input:ProjectedTransformerInput<$backend>,communicator:C,mut layer:F)
                 -> Result<Tensor<$backend,3>,ExpertParallelTransformerError<C::Error,P::Error,<$backend as ruda_model::tensor::MoeOps>::MoeError>>
-                where F:FnMut(usize,&ExpertParallelTransformerLayer<$backend,P>,Tensor<$backend,3>,C)
+                where F:FnMut(usize,&ExpertParallelTransformerLayer<$backend,P,E>,Tensor<$backend,3>,C)
                     -> Result<Tensor<$backend,3>,ExpertParallelTransformerError<C::Error,P::Error,<$backend as ruda_model::tensor::MoeOps>::MoeError>> {
                 let rows=input.tokens.dims();let width=self.embeddings.token.weight.val().dims()[1];let mut hidden=embed_projected(&self.embeddings,input);
                 for (index,block) in self.layers.iter().enumerate() {hidden=layer(index,block,hidden,communicator.clone())?;
@@ -181,7 +187,7 @@ macro_rules! expert_model_execution {
             /// Complete original native packed hidden graph with no inferred document positions or attention windows.
             pub fn $packed_hidden_with<C:VariableTensorCollective<B>,F>(&self,input:ProjectedTransformerInput<$backend,1>,layout:&PackedSequenceLayout,communicator:C,mut layer:F)
                 -> Result<Tensor<$backend,2>,ExpertParallelTransformerError<C::Error,P::Error,<$backend as ruda_model::tensor::MoeOps>::MoeError>>
-                where F:FnMut(usize,&ExpertParallelTransformerLayer<$backend,P>,Tensor<$backend,2>,C)
+                where F:FnMut(usize,&ExpertParallelTransformerLayer<$backend,P,E>,Tensor<$backend,2>,C)
                     -> Result<Tensor<$backend,2>,ExpertParallelTransformerError<C::Error,P::Error,<$backend as ruda_model::tensor::MoeOps>::MoeError>> {
                 let shape=[layout.tokens(),self.embeddings.token.weight.val().dims()[1]];let mut hidden=embed_packed_projected(&self.embeddings,input,layout);
                 for (index,block) in self.layers.iter().enumerate() {hidden=layer(index,block,hidden,communicator.clone())?;
@@ -222,12 +228,13 @@ impl<C:core::fmt::Debug,P:core::fmt::Debug,M:core::fmt::Debug> core::fmt::Displa
     fn fmt(&self,f:&mut core::fmt::Formatter<'_>) -> core::fmt::Result {match self {Self::Model(error)=>write!(f,"expert model: {error}"),Self::Loss(error)=>write!(f,"expert loss: {error}")}}
 }
 impl<C:core::fmt::Debug,P:core::fmt::Debug,M:core::fmt::Debug> core::error::Error for ExpertParallelTrainingError<C,P,M> {}
-impl<B:MoeDispatchOps+MoeReceivedOps,S:CheckpointStrategy,P:TransformerProjection<Autodiff<B,S>>> ExpertParallelTransformerModel<Autodiff<B,S>,P> {
+impl<B:MoeDispatchOps+MoeReceivedOps,S:CheckpointStrategy,P:TransformerProjection<Autodiff<B,S>>,E:ExpertParallelReceived<Autodiff<B,S>>>
+    ExpertParallelTransformerModel<Autodiff<B,S>,P,E> {
     /// Complete original chunked causal objective and exact global effective-token mean basis on the expert world.
     pub fn forward_causal_with<C:VariableTensorCollective<B>,F>(&self,input:ProjectedTransformerInput<Autodiff<B,S>>,labels:Tensor<Autodiff<B,S>,2,Int>,
         criterion:&CausalCrossEntropyConfig,label_smoothing:f64,communicator:C,layer:F)
         -> Result<ExpertParallelLoss<B,S>,ExpertParallelTrainingError<C::Error,P::Error,<Autodiff<B,S> as ruda_model::tensor::MoeOps>::MoeError>>
-        where F:FnMut(usize,&ExpertParallelTransformerLayer<Autodiff<B,S>,P>,Tensor<Autodiff<B,S>,3>,ScopedTensorCollective<C,B,S>)
+        where F:FnMut(usize,&ExpertParallelTransformerLayer<Autodiff<B,S>,P,E>,Tensor<Autodiff<B,S>,3>,ScopedTensorCollective<C,B,S>)
             -> Result<Tensor<Autodiff<B,S>,3>,ExpertParallelTransformerError<C::Error,P::Error,<Autodiff<B,S> as ruda_model::tensor::MoeOps>::MoeError>> {
         let scope=CollectiveScope::<B,S>::new();let transport=scope.bind(communicator.clone());
         let hidden=self.forward_hidden_with(input,transport,layer).map_err(ExpertParallelTrainingError::Model)?;
@@ -239,7 +246,7 @@ impl<B:MoeDispatchOps+MoeReceivedOps,S:CheckpointStrategy,P:TransformerProjectio
     pub fn forward_packed_causal_with<C:VariableTensorCollective<B>,F>(&self,input:ProjectedTransformerInput<Autodiff<B,S>,1>,labels:Tensor<Autodiff<B,S>,1,Int>,
         layout:&PackedSequenceLayout,criterion:&CausalCrossEntropyConfig,label_smoothing:f64,communicator:C,layer:F)
         -> Result<ExpertParallelLoss<B,S>,ExpertParallelTrainingError<C::Error,P::Error,<Autodiff<B,S> as ruda_model::tensor::MoeOps>::MoeError>>
-        where F:FnMut(usize,&ExpertParallelTransformerLayer<Autodiff<B,S>,P>,Tensor<Autodiff<B,S>,2>,ScopedTensorCollective<C,B,S>)
+        where F:FnMut(usize,&ExpertParallelTransformerLayer<Autodiff<B,S>,P,E>,Tensor<Autodiff<B,S>,2>,ScopedTensorCollective<C,B,S>)
             -> Result<Tensor<Autodiff<B,S>,2>,ExpertParallelTransformerError<C::Error,P::Error,<Autodiff<B,S> as ruda_model::tensor::MoeOps>::MoeError>> {
         let scope=CollectiveScope::<B,S>::new();let transport=scope.bind(communicator.clone());
         let hidden=self.forward_packed_hidden_with(input,layout,transport,layer).map_err(ExpertParallelTrainingError::Model)?;

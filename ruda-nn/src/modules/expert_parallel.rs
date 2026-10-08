@@ -1,7 +1,7 @@
 //! Actual expert-owned native cubes and differentiable assignment exchanges; transport is explicit.
 use alloc::{vec::Vec,collections::BTreeMap};
 use core::{fmt,ops::Range};
-use ruda_model::{module::{Module,Param,ParamId},tensor::{Tensor,Int,DType,FloatDType,MoeOptions,MoeDispatchOps,MoeReceivedOps,
+use ruda_model::{module::{Module,ModuleDisplay,Param,ParamId},tensor::{Tensor,Int,DType,FloatDType,MoeOptions,MoeDispatchOps,MoeReceivedOps,
     MoeReceivedOptions,dispatch_moe,combine_moe,received_moe_experts,VariableTensorCollective,VariableTensorExchange,backend::Backend}};
 use ruda_autodiff::{Autodiff,checkpoint::strategy::CheckpointStrategy,collective::{all_to_all_v_coordinated,ScopedCollectiveError}};
 use crate::{NativeSwiGluExperts,transformer::{TransformerProjectionShape,TransformerProjection}};
@@ -41,10 +41,30 @@ pub struct ExpertParallelSwiGluExperts<B:Backend> {
     /// Actual original expert-world rank, independent of any data-axis rank.
     pub rank:usize,
 }
+/// Actual rank-owned expert geometry, independent of original or adapted floating execution.
+pub trait ExpertParallelGeometry<B:Backend>:Module<B>+ModuleDisplay {
+    /// Actual local `[owned_experts,hidden,intermediate]` geometry, including empty owners.
+    fn dimensions(&self) -> [usize;3];
+    /// Original complete expert-world ownership.
+    fn ownership(&self) -> &ExpertOwnership;
+    /// Explicit original expert-world rank.
+    fn rank(&self) -> usize;
+    /// Actual original resident expert device.
+    fn device(&self) -> B::Device;
+    /// Validate actual local geometry, storage and declared ownership.
+    fn validate(&self);
+    /// Actual rank-owned floating parameter identities, including present expert A/B.
+    fn parameter_ids(&self) -> Vec<ParamId>;
+}
+/// Native execution on actual received rows; routing weights are applied once by the original source combine.
+pub trait ExpertParallelReceived<B:MoeReceivedOps>:ExpertParallelGeometry<B> {
+    /// Execute the actual local experts in original receive order, without a full-expert replica.
+    fn forward_received(&self,input:Tensor<B,2>,ids:Tensor<B,1,Int>,options:MoeOptions) -> Result<Tensor<B,2>,B::MoeError>;
+}
 struct ExpertEntry<B:Backend> {source_shape:[usize;3],range:Range<usize>,local:Param<Tensor<B,3>>}
 /// Canonical original shared expert IDs across the complete loaded model.
 /// Keeps only rank-owned native copies, never full source cubes or their graphs.
-pub struct ExpertPartitionContext<B:Backend> {shared:BTreeMap<ParamId,ExpertEntry<B>>}
+pub struct ExpertPartitionContext<B:Backend> {shared:BTreeMap<(ParamId,bool),ExpertEntry<B>>}
 impl<B:Backend> Default for ExpertPartitionContext<B> {fn default() -> Self {Self::new()}}
 impl<B:Backend> ExpertPartitionContext<B> {
     /// Start an explicit shared-ID expert partition context, without choosing rank or ownership.
@@ -55,18 +75,26 @@ impl<B:Backend> ExpertPartitionContext<B> {
         let range=ownership.range(rank);ExpertParallelSwiGluExperts::from_parameters(local_cube(experts.gate,range.clone(),&mut self.shared),
             local_cube(experts.up,range.clone(),&mut self.shared),local_cube(experts.down,range,&mut self.shared),ownership,rank)
     }
+    /// Copy an actual floating base or adapter cube using the same canonical owned-leaf context.
+    /// Original values/IDs/dtypes/flags and parameter mappers remain intact; only the selected interval is retained.
+    pub fn parameter(&mut self,parameter:Param<Tensor<B,3>>,ownership:&ExpertOwnership,rank:usize) -> Param<Tensor<B,3>> {
+        assert_eq!(parameter.val().dims()[0],ownership.experts(),"original floating expert/adapter cube differs from declared ownership");
+        local_cube(parameter,ownership.range(rank),&mut self.shared)
+    }
 }
-fn local_cube<B:Backend>(parameter:Param<Tensor<B,3>>,range:Range<usize>,shared:&mut BTreeMap<ParamId,ExpertEntry<B>>) -> Param<Tensor<B,3>> {
+fn local_cube<B:Backend>(parameter:Param<Tensor<B,3>>,range:Range<usize>,shared:&mut BTreeMap<(ParamId,bool),ExpertEntry<B>>) -> Param<Tensor<B,3>> {
     let source=parameter.val();let [_,rows,columns]=source.dims();let count=range.len();
-    if let Some(entry)=shared.get(&parameter.id) {let value=entry.local.val();assert_eq!(entry.source_shape,source.dims(),"tied expert source cube shapes differ");
+    let key=(parameter.id,source.is_require_grad());
+    if let Some(entry)=shared.get(&key) {let value=entry.local.val();assert_eq!(entry.source_shape,source.dims(),"tied expert source cube shapes differ");
         assert_eq!(entry.range,range,"one tied expert source ID cannot have different rank-owned intervals");
         assert_eq!(value.dtype(),source.dtype(),"tied expert source storage differs");assert_eq!(value.device(),source.device(),"tied expert source devices differ");
-        assert_eq!(value.is_require_grad(),source.is_require_grad(),"tied expert source trainability differs");return entry.local.clone();}
+        assert_eq!(value.is_require_grad(),source.is_require_grad(),"tied expert source trainability differs");
+        let (id,_,mapper)=parameter.consume();return Param::from_mapped_value(id,value,mapper);}
     let mut local=Tensor::<B,3>::empty([count,rows,columns],(&source.device(),source.dtype()));
     if count!=0 {local=local.slice_assign([0..count,0..rows,0..columns],source.clone().slice([range.clone(),0..rows,0..columns]));}
     // Preserve source identity/flags while making only the owned GPU copy a new optimizer leaf.
-    let local=Param::initialized(parameter.id,local.detach().set_require_grad(source.is_require_grad()));
-    shared.insert(parameter.id,ExpertEntry {source_shape:source.dims(),range,local:local.clone()});local
+    let local=parameter.map(|_|local.detach().set_require_grad(source.is_require_grad()));
+    shared.insert(key,ExpertEntry {source_shape:source.dims(),range,local:local.clone()});local
 }
 impl<B:Backend> ExpertParallelSwiGluExperts<B> {
     /// Connect caller-loaded actual local values, retaining all original source IDs and flags.
@@ -97,13 +125,26 @@ impl<B:MoeReceivedOps> ExpertParallelSwiGluExperts<B> {
             expert_start:self.ownership.range(self.rank).start,forward:options.forward,backward:options.backward})
     }
 }
+impl<B:Backend> ExpertParallelGeometry<B> for ExpertParallelSwiGluExperts<B> {
+    fn dimensions(&self) -> [usize;3] {self.dimensions()}
+    fn ownership(&self) -> &ExpertOwnership {&self.ownership}
+    fn rank(&self) -> usize {self.rank}
+    fn device(&self) -> B::Device {self.gate.val().device()}
+    fn validate(&self) {self.validate();}
+    fn parameter_ids(&self) -> Vec<ParamId> {let mut ids=Vec::new();for id in [self.gate.id,self.up.id,self.down.id] {if !ids.contains(&id) {ids.push(id);}}ids}
+}
+impl<B:MoeReceivedOps> ExpertParallelReceived<B> for ExpertParallelSwiGluExperts<B> {
+    fn forward_received(&self,input:Tensor<B,2>,ids:Tensor<B,1,Int>,options:MoeOptions) -> Result<Tensor<B,2>,B::MoeError> {
+        self.forward_received(input,ids,options)
+    }
+}
 /// Actual router projection plus only rank-owned original floating expert cubes.
 #[derive(Module,Debug)]
-pub struct ExpertParallelMoeLayer<B:Backend,P:Module<B>> {
+pub struct ExpertParallelMoeLayer<B:Backend,P:Module<B>,E:Module<B> =ExpertParallelSwiGluExperts<B>> {
     /// Original actual full-logit router projection; its replication/sharding is caller-owned.
     pub router:P,
     /// Actual original local expert cubes and their explicit expert-world ownership.
-    pub experts:ExpertParallelSwiGluExperts<B>,
+    pub experts:E,
     /// Original optional FP32 selection-only correction bias.
     pub correction_bias:Option<Param<Tensor<B,1>>>,
     /// Original explicit native routing/GEMM/VJP options.
@@ -113,19 +154,25 @@ pub struct ExpertParallelMoeLayer<B:Backend,P:Module<B>> {
     #[module(skip)]
     pub router_input_dtype:Option<FloatDType>,
 }
-impl<B:Backend,P:TransformerProjectionShape<B>> ExpertParallelMoeLayer<B,P> {
+impl<B:Backend,P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>> ExpertParallelMoeLayer<B,P,E> {
     /// Connect actual loaded components without replicating expert weights or selecting a gradient-reduction group.
-    pub fn from_parts(router:P,experts:ExpertParallelSwiGluExperts<B>,correction_bias:Option<Param<Tensor<B,1>>>,options:MoeOptions,router_input_dtype:Option<FloatDType>) -> Self {
+    pub fn from_expert_parts(router:P,experts:E,correction_bias:Option<Param<Tensor<B,1>>>,options:MoeOptions,router_input_dtype:Option<FloatDType>) -> Self {
         let layer=Self {router,experts,correction_bias,options,router_input_dtype};layer.validate();layer
     }
     /// Actual original residual/input width.
     pub fn width(&self) -> usize {self.experts.dimensions()[1]}
     /// Validate the actual original global router and local expert geometry.
     pub fn validate(&self) {
-        self.experts.validate();assert_eq!(self.router.dimensions(),[self.width(),self.experts.ownership.experts()],"actual router/global expert geometry differs");
-        if let Some(bias)=&self.correction_bias {let bias=bias.val();assert_eq!(bias.dims(),[self.experts.ownership.experts()],"global correction bias shape differs");
-            assert_eq!(bias.dtype(),DType::F32,"selection-only correction bias must retain FP32");assert_eq!(bias.device(),self.experts.gate.val().device(),"correction bias/expert device differs");}
+        self.experts.validate();assert_eq!(self.router.dimensions(),[self.width(),self.experts.ownership().experts()],"actual router/global expert geometry differs");
+        if let Some(bias)=&self.correction_bias {let bias=bias.val();assert_eq!(bias.dims(),[self.experts.ownership().experts()],"global correction bias shape differs");
+            assert_eq!(bias.dtype(),DType::F32,"selection-only correction bias must retain FP32");assert_eq!(bias.device(),self.experts.device(),"correction bias/expert device differs");}
         if let Some(dtype)=self.router_input_dtype {assert!(matches!(DType::from(dtype),DType::F16|DType::BF16|DType::F32),"unsupported original router work dtype");}
+    }
+}
+impl<B:Backend,P:TransformerProjectionShape<B>> ExpertParallelMoeLayer<B,P> {
+    /// Preserve original cube-only constructor inference and loaded-source behavior.
+    pub fn from_parts(router:P,experts:ExpertParallelSwiGluExperts<B>,correction_bias:Option<Param<Tensor<B,1>>>,options:MoeOptions,router_input_dtype:Option<FloatDType>) -> Self {
+        Self::from_expert_parts(router,experts,correction_bias,options,router_input_dtype)
     }
 }
 /// Original projection, actual expert-world transport or actual native row/expert execution failure.
@@ -167,7 +214,7 @@ fn exchange_error<C:fmt::Debug,P:fmt::Debug,M:fmt::Debug>(error:ScopedCollective
 }
 macro_rules! execute_expert_parallel {
     ($backend:ty,[$($generics:tt)*],$exchange:path,$forward:ident,$detailed:ident) => {
-        impl<$($generics)*,P:TransformerProjection<$backend>> ExpertParallelMoeLayer<$backend,P> {
+        impl<$($generics)*,P:TransformerProjection<$backend>,E:ExpertParallelReceived<$backend>> ExpertParallelMoeLayer<$backend,P,E> {
             /// Complete native source dispatch -> actual variable exchanges -> owned experts -> original ordered combine.
             /// Every expert-world rank enters even when it owns no experts or has no source token rows.
             pub fn $forward<C:VariableTensorCollective<B>,const D:usize>(&self,input:Tensor<$backend,D>,communicator:C)
@@ -178,14 +225,14 @@ macro_rules! execute_expert_parallel {
             pub fn $detailed<C:VariableTensorCollective<B>,const D:usize>(&self,input:Tensor<$backend,D>,communicator:C)
                 -> Result<ExpertParallelMoeOutput<$backend,D>,ExpertParallelMoeError<C::Error,P::Error,<$backend as ruda_model::tensor::MoeOps>::MoeError>> {
                 self.validate();assert!(D>0,"expert-parallel input requires an actual feature axis");
-                if communicator.rank() as usize!=self.experts.rank || communicator.world_size() as usize!=self.experts.ownership.world_size() {
+                if communicator.rank() as usize!=self.experts.rank() || communicator.world_size() as usize!=self.experts.ownership().world_size() {
                     return Err(ExpertParallelMoeError::Protocol("actual expert transport differs from the declared original ownership"));}
                 let shape=input.dims();assert_eq!(shape[D-1],self.width(),"actual source token feature width differs");
                 let rows=shape[..D-1].iter().try_fold(1usize,|count,&axis|count.checked_mul(axis)).expect("actual expert source token count overflows");
                 let input=input.reshape([rows,self.width()]);let router_input=if let Some(dtype)=self.router_input_dtype {input.clone().cast(dtype)} else {input.clone()};
                 let logits=self.router.forward(router_input).map_err(ExpertParallelMoeError::Router)?;
                 let dispatch=dispatch_moe(input,logits.clone(),self.correction_bias.as_ref().map(Param::val),self.options).map_err(ExpertParallelMoeError::Native)?;
-                let sent_rows=<$backend as MoeDispatchOps>::moe_dispatch_counts(&dispatch.state,self.experts.ownership.prefix()).map_err(ExpertParallelMoeError::Native)?;
+                let sent_rows=<$backend as MoeDispatchOps>::moe_dispatch_counts(&dispatch.state,self.experts.ownership().prefix()).map_err(ExpertParallelMoeError::Native)?;
                 let incoming=$exchange(dispatch.values,communicator.clone(),&sent_rows).map_err(exchange_error)?;
                 let original_ids=Tensor::<B,1,Int>::from_primitive(dispatch.row_experts.into_primitive());
                 let ids=original_ids.all_to_all_v_int(communicator.clone(),&sent_rows).map_err(ExpertParallelMoeError::Collective)?;

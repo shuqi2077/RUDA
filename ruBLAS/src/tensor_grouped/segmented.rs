@@ -25,7 +25,7 @@ pub unsafe fn grouped_matmul_nt_segmented<R: Runtime>(input: RudaTensor<R>, weig
     }
     let (m,k)=(input.meta.shape()[0],input.meta.shape()[1]);
     let (e,n)=(weights.meta.shape()[0],weights.meta.shape()[1]);
-    if e==0 || n==0 || k==0 || weights.meta.shape()[2]!=k || weights.dtype!=input.dtype
+    if (e==0 && m!=0) || n==0 || k==0 || weights.meta.shape()[2]!=k || weights.dtype!=input.dtype
         || offsets.meta.shape()[..]!=[e+1] || offsets.dtype!=DType::U32
         || row_experts.meta.shape()[..]!=[m] || row_experts.dtype!=DType::U32
         || !matches!(input.dtype,DType::F16|DType::BF16|DType::F32)
@@ -39,6 +39,7 @@ pub unsafe fn grouped_matmul_nt_segmented<R: Runtime>(input: RudaTensor<R>, weig
     if m.checked_mul(n).is_none_or(|s|s>u32::MAX as usize) {
         return Err(GroupedMatmulError("segmented GEMM output exceeds U32 indexing"));
     }
+    if e==0 {return Ok(empty_device_contiguous_dtype(input.client.clone(),input.device.clone(),Shape::from([0,n]),input.dtype));}
     let cfg=MmaConfig { a_type:input.dtype.into(),b_type:input.dtype.into(),
         cd_type:ElemType::Float(FloatKind::F32).into(),m:16,n:16,k:16 };
     let props=&input.client.properties().hardware;

@@ -47,7 +47,7 @@ pub fn grouped_matmul_nt<R: Runtime>(
     let n = weights.meta.shape()[1];
     if k == 0
         || n == 0
-        || e == 0
+        || (e == 0 && m != 0)
         || weights.meta.shape()[2] != k
         || row_experts.meta.shape() != &Shape::from([m])
         || row_experts.dtype != DType::U32
@@ -184,7 +184,7 @@ pub unsafe fn grouped_matmul_nt_backward_segmented_selected<R:Runtime>(
     }
     let (m,k)=(input.meta.shape()[0],input.meta.shape()[1]);
     let (e,n)=(weights.meta.shape()[0],weights.meta.shape()[1]);
-    if e==0 || n==0 || k==0 || weights.meta.shape()[2]!=k
+    if (e==0 && m!=0) || n==0 || k==0 || weights.meta.shape()[2]!=k
         || grad_output.meta.shape()[..]!=[m,n]
         || grad_output.dtype!=input.dtype || weights.dtype!=input.dtype
         || row_experts.meta.shape()[..]!=[m] || row_experts.dtype!=DType::U32
@@ -196,6 +196,11 @@ pub unsafe fn grouped_matmul_nt_backward_segmented_selected<R:Runtime>(
             || !t.client.same_execution_queue(&input.client)
             || t.meta.shape().iter().try_fold(1usize,|a,&b|a.checked_mul(b)).is_none_or(|x|x>u32::MAX as usize)
         { return Err(GroupedMatmulError("grouped backward device/queue/size mismatch")); }
+    }
+    if e==0 {
+        let dinput=selection.input.then(||empty_device_contiguous_dtype(input.client.clone(),input.device.clone(),Shape::from([0,k]),input.dtype));
+        let dweights=selection.weights.then(||empty_device_contiguous_dtype(input.client.clone(),input.device.clone(),Shape::from([0,n,k]),DType::F32));
+        return Ok(GroupedBackwardSelected {dinput,dweights});
     }
     use ruda_core::ir::{ElemType, FloatKind, features::MmaConfig};
     use ruda_kernel::dsl::prelude::RudaCount;

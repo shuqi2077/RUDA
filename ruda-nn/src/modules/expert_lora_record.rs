@@ -89,7 +89,7 @@ impl ExpertLoRAAdapterSchema {
         if base_id.is_empty() {return Err(invalid("exact original base identity must be supplied"));}
         let base=layer.base.adapter_base_schema()?;let [e,k,n]=layer.base.dimensions();
         let a=layer.adapter_a.weight.val();let b=layer.adapter_b.weight.val();let [ae,rank,ak]=a.dims();
-        if e==0 || k==0 || n==0 || rank==0 || [ae,ak]!=[e,k] || b.dims()!=[e,n,rank] {
+        if k==0 || n==0 || rank==0 || [ae,ak]!=[e,k] || b.dims()!=[e,n,rank] {
             return Err(invalid("original base and actual expert A/B geometry differs"));}
         if !matches!(a.dtype(),DType::F16|DType::BF16|DType::F32) || !matches!(b.dtype(),DType::F16|DType::BF16|DType::F32)
             || a.device()!=layer.base.device() || b.device()!=layer.base.device() {

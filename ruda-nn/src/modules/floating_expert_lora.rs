@@ -37,6 +37,7 @@ impl<B:Backend> FloatingExpertLoRA<B> {
     /// Preserves base IDs/dtype and execution policies; cannot resume A/B optimizer state from the merged cube.
     pub fn merge(self) -> ExpertLinear<B> {
         self.validate();let mut base=self.base;
+        if base.dimensions()[0]==0 {return base.no_grad();}
         let a=self.adapter_a.weight.val();let b=self.adapter_b.weight.val();
         let update=b.cast(DType::F32).matmul(a.cast(DType::F32)).mul_scalar(self.scale).detach();
         base.weight=base.weight.map(|weight| {

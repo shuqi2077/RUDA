@@ -30,6 +30,8 @@ mod expert_lora;
 mod expert_adapter_record;
 #[cfg(feature="tensor-parallel")]
 mod expert_parallel;
+#[cfg(feature="tensor-parallel")]
+mod expert_parallel_adapters;
 
 pub use decoder::*;
 pub use encoder::*;
@@ -58,3 +60,5 @@ pub use expert_lora::*;
 pub use expert_adapter_record::*;
 #[cfg(feature="tensor-parallel")]
 pub use expert_parallel::*;
+#[cfg(feature="tensor-parallel")]
+pub use expert_parallel_adapters::*;
