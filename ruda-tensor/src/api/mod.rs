@@ -14,6 +14,8 @@ mod int;
 mod numeric;
 mod moe;
 mod exchange;
+mod moe_exchange;
+pub use moe_exchange::{NativeMoeDispatched,dispatch_moe,combine_moe,received_moe_experts};
 mod options;
 mod orderable;
 mod pad;

@@ -27,6 +27,9 @@ mod moe;
 /// Explicit tensor-parallel linear projections for replicated-loss model partitions.
 #[cfg(feature = "tensor-parallel")]
 pub mod tensor_parallel;
+/// Native cross-rank routed experts with explicit global ownership and transport.
+#[cfg(feature = "tensor-parallel")]
+pub mod expert_parallel;
 /// Element-sharded parameters with differentiable gather/reduce-scatter.
 #[cfg(feature = "tensor-parallel")]
 pub mod fully_sharded;
