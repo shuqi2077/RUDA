@@ -4,7 +4,7 @@ use crate::transformer::{NativeMoeFeedForward,NativeMoeTransformerBlock,NativeMo
     NativeMoeTransformerError,TransformerProjection};
 use crate::{attention::{DenseAttentionMask,DenseAttentionOptions,PackedSequenceLayout,PackedAttentionOptions,PackedDocumentAttentionMask},
     cache::TransformerKvCache,loss::CausalCrossEntropyConfig};
-use ruda_autodiff::collective::{CollectiveScope,ScopedCollectiveError};
+use ruda_autodiff::collective::{CollectiveScope,ScopedTensorCollective,ScopedCollectiveError};
 
 /// Actual routed expert cubes/router and optional shared FFN with local-only persistent leaves.
 #[derive(Module,Debug)]
@@ -138,7 +138,7 @@ moe_transformer_gathers!(B,[B:Backend],gather_inference);
 moe_transformer_gathers!(Autodiff<B,S>,[B:Backend,S:CheckpointStrategy],gather);
 
 macro_rules! moe_transformer_execution {
-    ($backend:ty,[$($generics:tt)*],$gather:ident,$embed:ident,$forward:ident,$packed:ident,$hidden:ident,$packed_hidden:ident) => {
+    ($backend:ty,[$($generics:tt)*],$gather:ident,$embed:ident,$forward:ident,$packed:ident,$hidden:ident,$packed_hidden:ident,$hidden_with:ident,$packed_hidden_with:ident) => {
         impl<$($generics)*,P:GatherTransformerProjection<$backend,B>> FullyShardedNativeMoeTransformerStack<$backend,P> where P::Gathered:TransformerProjection<$backend> {
             /// Original dense-axis graph, gathering the current actual layer before native execution.
             pub fn $forward<C,F>(&self,mut input:Tensor<$backend,3>,masks:DenseAttentionMask<$backend>,options:DenseAttentionOptions,communicator:C,mut positions:F)
@@ -157,6 +157,29 @@ macro_rules! moe_transformer_execution {
             }
         }
         impl<$($generics)*,P:GatherTransformerProjection<$backend,B>> FullyShardedNativeMoeTransformerModel<$backend,P> where P::Gathered:TransformerProjection<$backend> {
+            /// Complete original hidden graph with caller-owned per-layer masks/options/positions and native data transport.
+            pub fn $hidden_with<C,F>(&self,input:FullyShardedTransformerInput<$backend>,communicator:C,mut layer:F)
+                -> Result<Tensor<$backend,3>,FullyShardedNativeMoeTransformerError<C::Error,<P::Gathered as TransformerProjection<$backend>>::Error,<$backend as MoeOps>::MoeError>>
+                where C:IntegerTensorCollective<B>,F:FnMut(usize,&FullyShardedNativeMoeTransformerLayer<$backend,P>,Tensor<$backend,3>,C)
+                    -> Result<Tensor<$backend,3>,FullyShardedNativeMoeTransformerError<C::Error,<P::Gathered as TransformerProjection<$backend>>::Error,<$backend as MoeOps>::MoeError>> {
+                let rows=input.tokens.dims();let width=self.embeddings.hidden_width();
+                let mut hidden=self.embeddings.$embed(input,communicator.clone()).map_err(FullyShardedNativeMoeTransformerError::Collective)?;
+                for (index,block) in self.backbone.layers.iter().enumerate() {hidden=layer(index,block,hidden,communicator.clone())?;
+                    assert_eq!(hidden.dims(),[rows[0],rows[1],width],"native sharded MoE layer changed actual token axes");}
+                Ok(if let Some(norm)=&self.normalization {norm.$gather(communicator).map_err(FullyShardedNativeMoeTransformerError::Collective)?.forward(hidden)} else {hidden})
+            }
+            /// Complete original flat-document hidden graph with architecture-owned native per-layer execution.
+            pub fn $packed_hidden_with<C,F>(&self,input:FullyShardedTransformerInput<$backend,1>,layout:&PackedSequenceLayout,communicator:C,mut layer:F)
+                -> Result<Tensor<$backend,2>,FullyShardedNativeMoeTransformerError<C::Error,<P::Gathered as TransformerProjection<$backend>>::Error,<$backend as MoeOps>::MoeError>>
+                where C:IntegerTensorCollective<B>,F:FnMut(usize,&FullyShardedNativeMoeTransformerLayer<$backend,P>,Tensor<$backend,2>,C)
+                    -> Result<Tensor<$backend,2>,FullyShardedNativeMoeTransformerError<C::Error,<P::Gathered as TransformerProjection<$backend>>::Error,<$backend as MoeOps>::MoeError>> {
+                let shape=[layout.tokens(),self.embeddings.hidden_width()];
+                let mut hidden=self.embeddings.$embed(super::model::packed_input(input,layout),communicator.clone())
+                    .map_err(FullyShardedNativeMoeTransformerError::Collective)?.reshape(shape);
+                for (index,block) in self.backbone.layers.iter().enumerate() {hidden=layer(index,block,hidden,communicator.clone())?;
+                    assert_eq!(hidden.dims(),shape,"native sharded packed MoE layer changed actual document rows");}
+                Ok(if let Some(norm)=&self.normalization {norm.$gather(communicator).map_err(FullyShardedNativeMoeTransformerError::Collective)?.forward(hidden)} else {hidden})
+            }
             /// Actual complete native token logits with only local persistent table/router/expert/head storage.
             pub fn $forward<C,F>(&self,input:FullyShardedTransformerInput<$backend>,masks:DenseAttentionMask<$backend>,options:DenseAttentionOptions,communicator:C,positions:F)
                 -> Result<Tensor<$backend,3>,FullyShardedNativeMoeTransformerError<C::Error,<P::Gathered as TransformerProjection<$backend>>::Error,<$backend as MoeOps>::MoeError>>
@@ -164,12 +187,11 @@ macro_rules! moe_transformer_execution {
                 let hidden=self.$hidden(input,masks,options,communicator.clone(),positions)?;self.head.$embed(hidden,communicator).map_err(Into::into)
             }
             /// Actual final hidden rows for original full-vocabulary token chunks or sequence heads.
-            pub fn $hidden<C,F>(&self,input:FullyShardedTransformerInput<$backend>,masks:DenseAttentionMask<$backend>,options:DenseAttentionOptions,communicator:C,positions:F)
+            pub fn $hidden<C,F>(&self,input:FullyShardedTransformerInput<$backend>,masks:DenseAttentionMask<$backend>,options:DenseAttentionOptions,communicator:C,mut positions:F)
                 -> Result<Tensor<$backend,3>,FullyShardedNativeMoeTransformerError<C::Error,<P::Gathered as TransformerProjection<$backend>>::Error,<$backend as MoeOps>::MoeError>>
                 where C:IntegerTensorCollective<B>,F:FnMut(usize,Tensor<$backend,4>,Tensor<$backend,4>)->(Tensor<$backend,4>,Tensor<$backend,4>) {
-                let hidden=self.embeddings.$embed(input,communicator.clone()).map_err(FullyShardedNativeMoeTransformerError::Collective)?;
-                let hidden=self.backbone.$forward(hidden,masks,options,communicator.clone(),positions)?;
-                Ok(if let Some(norm)=&self.normalization {norm.$gather(communicator).map_err(FullyShardedNativeMoeTransformerError::Collective)?.forward(hidden)} else {hidden})
+                self.$hidden_with(input,communicator,|index,layer,hidden,transport|layer.$gather(transport).map_err(FullyShardedNativeMoeTransformerError::Collective)?
+                    .forward_with_positions(hidden,masks.clone(),options,|query,key|positions(index,query,key)).map_err(FullyShardedNativeMoeTransformerError::Native))
             }
             /// Actual complete flat-document token logits without adding padding or changing loss boundaries.
             pub fn $packed<C,F>(&self,input:FullyShardedTransformerInput<$backend,1>,layout:&PackedSequenceLayout,masks:Option<&[PackedDocumentAttentionMask<$backend>]>,
@@ -180,18 +202,17 @@ macro_rules! moe_transformer_execution {
             }
             /// Actual packed final hidden states with original mixed-precision embedding row policy.
             pub fn $packed_hidden<C,F>(&self,input:FullyShardedTransformerInput<$backend,1>,layout:&PackedSequenceLayout,masks:Option<&[PackedDocumentAttentionMask<$backend>]>,
-                options:PackedAttentionOptions,communicator:C,positions:F)
+                options:PackedAttentionOptions,communicator:C,mut positions:F)
                 -> Result<Tensor<$backend,2>,FullyShardedNativeMoeTransformerError<C::Error,<P::Gathered as TransformerProjection<$backend>>::Error,<$backend as MoeOps>::MoeError>>
                 where C:IntegerTensorCollective<B>,F:FnMut(usize,Tensor<$backend,3>,Tensor<$backend,3>)->(Tensor<$backend,3>,Tensor<$backend,3>) {
-                let hidden=self.embeddings.$embed(super::model::packed_input(input,layout),communicator.clone()).map_err(FullyShardedNativeMoeTransformerError::Collective)?
-                    .reshape([layout.tokens(),self.embeddings.hidden_width()]);let hidden=self.backbone.$packed(hidden,layout,masks,options,communicator.clone(),positions)?;
-                Ok(if let Some(norm)=&self.normalization {norm.$gather(communicator).map_err(FullyShardedNativeMoeTransformerError::Collective)?.forward(hidden)} else {hidden})
+                self.$packed_hidden_with(input,layout,communicator,|index,layer,hidden,transport|layer.$gather(transport).map_err(FullyShardedNativeMoeTransformerError::Collective)?
+                    .forward_packed_with_positions(hidden,layout,masks,options,|query,key|positions(index,query,key)).map_err(FullyShardedNativeMoeTransformerError::Native))
             }
         }
     };
 }
-moe_transformer_execution!(B,[B:MoeOps],gather_inference,forward_inference,forward_inference,forward_packed_inference,forward_hidden_inference,forward_packed_hidden_inference);
-moe_transformer_execution!(Autodiff<B,S>,[B:MoeOps,S:CheckpointStrategy],gather,forward,forward,forward_packed,forward_hidden,forward_packed_hidden);
+moe_transformer_execution!(B,[B:MoeOps],gather_inference,forward_inference,forward_inference,forward_packed_inference,forward_hidden_inference,forward_packed_hidden_inference,forward_hidden_with_inference,forward_packed_hidden_with_inference);
+moe_transformer_execution!(Autodiff<B,S>,[B:MoeOps,S:CheckpointStrategy],gather,forward,forward,forward_packed,forward_hidden,forward_packed_hidden,forward_hidden_with,forward_packed_hidden_with);
 
 /// Original actual native model error or original rank-consistent loss completion failure.
 #[derive(Debug)]
@@ -208,28 +229,51 @@ impl<C:core::fmt::Debug,P:core::fmt::Debug,M:core::fmt::Debug> core::fmt::Displa
 impl<C:core::fmt::Debug,P:core::fmt::Debug,M:core::fmt::Debug> core::error::Error for FullyShardedNativeMoeTrainingError<C,P,M> {}
 impl<B:MoeOps,S:CheckpointStrategy,P:GatherTransformerProjection<Autodiff<B,S>,B>> FullyShardedNativeMoeTransformerModel<Autodiff<B,S>,P>
     where P::Gathered:TransformerProjection<Autodiff<B,S>> {
-    /// Complete original causal training with scope-bound native gathers and exact global token normalization.
-    pub fn forward_causal_with_positions<C,F>(&self,input:FullyShardedTransformerInput<Autodiff<B,S>>,labels:Tensor<Autodiff<B,S>,2,Int>,
-        masks:DenseAttentionMask<Autodiff<B,S>>,options:DenseAttentionOptions,criterion:&CausalCrossEntropyConfig,label_smoothing:f64,communicator:C,positions:F)
+    /// Actual architecture-owned native training policies with the same scoped transport passed to every layer.
+    /// Gather reachability and global token normalization retain the original sharded training semantics.
+    pub fn forward_causal_with<C,F>(&self,input:FullyShardedTransformerInput<Autodiff<B,S>>,labels:Tensor<Autodiff<B,S>,2,Int>,
+        criterion:&CausalCrossEntropyConfig,label_smoothing:f64,communicator:C,layer:F)
         -> Result<FullyShardedLoss<B,S>,FullyShardedNativeMoeTrainingError<C::Error,<P::Gathered as TransformerProjection<Autodiff<B,S>>>::Error,<Autodiff<B,S> as MoeOps>::MoeError>>
-        where C:IntegerTensorCollective<B>,F:FnMut(usize,Tensor<Autodiff<B,S>,4>,Tensor<Autodiff<B,S>,4>)->(Tensor<Autodiff<B,S>,4>,Tensor<Autodiff<B,S>,4>) {
+        where C:IntegerTensorCollective<B>,F:FnMut(usize,&FullyShardedNativeMoeTransformerLayer<Autodiff<B,S>,P>,Tensor<Autodiff<B,S>,3>,ScopedTensorCollective<C,B,S>)
+            -> Result<Tensor<Autodiff<B,S>,3>,FullyShardedNativeMoeTransformerError<C::Error,<P::Gathered as TransformerProjection<Autodiff<B,S>>>::Error,<Autodiff<B,S> as MoeOps>::MoeError>> {
         let scope=CollectiveScope::<B,S>::new();let transport=scope.bind(communicator.clone());
-        let hidden=self.forward_hidden(input,masks,options,transport.clone(),positions).map_err(FullyShardedNativeMoeTrainingError::Model)?;
+        let hidden=self.forward_hidden_with(input,transport.clone(),layer).map_err(FullyShardedNativeMoeTrainingError::Model)?;
         let loss=self.head.forward_causal_loss(hidden,labels,criterion,label_smoothing,transport)
             .map_err(|error|FullyShardedNativeMoeTrainingError::<C::Error,<P::Gathered as TransformerProjection<Autodiff<B,S>>>::Error,<Autodiff<B,S> as MoeOps>::MoeError>::Model(error.into()))?;
         complete_fully_sharded_loss(&scope,loss.loss_sum,loss.valid_tokens,communicator).map_err(FullyShardedNativeMoeTrainingError::Loss)
     }
-    /// Original packed-document causal targets, empty-rank graph participation and full-vocabulary smoothing.
-    pub fn forward_packed_causal_with_positions<C,F>(&self,input:FullyShardedTransformerInput<Autodiff<B,S>,1>,labels:Tensor<Autodiff<B,S>,1,Int>,
-        layout:&PackedSequenceLayout,masks:Option<&[PackedDocumentAttentionMask<Autodiff<B,S>>]>,options:PackedAttentionOptions,
-        criterion:&CausalCrossEntropyConfig,label_smoothing:f64,communicator:C,positions:F)
+    /// Actual architecture-owned independent-document training with no per-layer mask/window policy inferred.
+    pub fn forward_packed_causal_with<C,F>(&self,input:FullyShardedTransformerInput<Autodiff<B,S>,1>,labels:Tensor<Autodiff<B,S>,1,Int>,
+        layout:&PackedSequenceLayout,criterion:&CausalCrossEntropyConfig,label_smoothing:f64,communicator:C,layer:F)
         -> Result<FullyShardedLoss<B,S>,FullyShardedNativeMoeTrainingError<C::Error,<P::Gathered as TransformerProjection<Autodiff<B,S>>>::Error,<Autodiff<B,S> as MoeOps>::MoeError>>
-        where C:IntegerTensorCollective<B>,F:FnMut(usize,Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>)->(Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>) {
+        where C:IntegerTensorCollective<B>,F:FnMut(usize,&FullyShardedNativeMoeTransformerLayer<Autodiff<B,S>,P>,Tensor<Autodiff<B,S>,2>,ScopedTensorCollective<C,B,S>)
+            -> Result<Tensor<Autodiff<B,S>,2>,FullyShardedNativeMoeTransformerError<C::Error,<P::Gathered as TransformerProjection<Autodiff<B,S>>>::Error,<Autodiff<B,S> as MoeOps>::MoeError>> {
         let scope=CollectiveScope::<B,S>::new();let transport=scope.bind(communicator.clone());
-        let hidden=self.forward_packed_hidden(input,layout,masks,options,transport.clone(),positions).map_err(FullyShardedNativeMoeTrainingError::Model)?;
+        let hidden=self.forward_packed_hidden_with(input,layout,transport.clone(),layer).map_err(FullyShardedNativeMoeTrainingError::Model)?;
         let loss=self.head.forward_packed_causal_loss(hidden,labels,layout,criterion,label_smoothing,transport)
             .map_err(|error|FullyShardedNativeMoeTrainingError::<C::Error,<P::Gathered as TransformerProjection<Autodiff<B,S>>>::Error,<Autodiff<B,S> as MoeOps>::MoeError>::Model(error.into()))?;
         complete_fully_sharded_loss(&scope,loss.loss_sum,loss.valid_tokens,communicator).map_err(FullyShardedNativeMoeTrainingError::Loss)
+    }
+    /// Complete original causal training with scope-bound native gathers and exact global token normalization.
+    pub fn forward_causal_with_positions<C,F>(&self,input:FullyShardedTransformerInput<Autodiff<B,S>>,labels:Tensor<Autodiff<B,S>,2,Int>,
+        masks:DenseAttentionMask<Autodiff<B,S>>,options:DenseAttentionOptions,criterion:&CausalCrossEntropyConfig,label_smoothing:f64,communicator:C,mut positions:F)
+        -> Result<FullyShardedLoss<B,S>,FullyShardedNativeMoeTrainingError<C::Error,<P::Gathered as TransformerProjection<Autodiff<B,S>>>::Error,<Autodiff<B,S> as MoeOps>::MoeError>>
+        where C:IntegerTensorCollective<B>,F:FnMut(usize,Tensor<Autodiff<B,S>,4>,Tensor<Autodiff<B,S>,4>)->(Tensor<Autodiff<B,S>,4>,Tensor<Autodiff<B,S>,4>) {
+        self.forward_causal_with(input,labels,criterion,label_smoothing,communicator,|index,layer,hidden,transport| {
+            layer.gather(transport).map_err(FullyShardedNativeMoeTransformerError::Collective)?
+                .forward_with_positions(hidden,masks.clone(),options,|query,key|positions(index,query,key)).map_err(FullyShardedNativeMoeTransformerError::Native)
+        })
+    }
+    /// Original packed-document causal targets, empty-rank graph participation and full-vocabulary smoothing.
+    pub fn forward_packed_causal_with_positions<C,F>(&self,input:FullyShardedTransformerInput<Autodiff<B,S>,1>,labels:Tensor<Autodiff<B,S>,1,Int>,
+        layout:&PackedSequenceLayout,masks:Option<&[PackedDocumentAttentionMask<Autodiff<B,S>>]>,options:PackedAttentionOptions,
+        criterion:&CausalCrossEntropyConfig,label_smoothing:f64,communicator:C,mut positions:F)
+        -> Result<FullyShardedLoss<B,S>,FullyShardedNativeMoeTrainingError<C::Error,<P::Gathered as TransformerProjection<Autodiff<B,S>>>::Error,<Autodiff<B,S> as MoeOps>::MoeError>>
+        where C:IntegerTensorCollective<B>,F:FnMut(usize,Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>)->(Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>) {
+        self.forward_packed_causal_with(input,labels,layout,criterion,label_smoothing,communicator,|index,layer,hidden,transport| {
+            layer.gather(transport).map_err(FullyShardedNativeMoeTransformerError::Collective)?
+                .forward_packed_with_positions(hidden,layout,masks,options,|query,key|positions(index,query,key)).map_err(FullyShardedNativeMoeTransformerError::Native)
+        })
     }
 }
 impl<B:MoeOps,P:GatherTransformerProjection<B,B>> FullyShardedNativeMoeTransformerModel<B,P> where P::Gathered:TransformerProjection<B> {
