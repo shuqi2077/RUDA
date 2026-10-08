@@ -14,6 +14,10 @@ mod tensor;
 mod bounded_broadcast;
 mod bounded_reduction;
 mod bounded_sharded;
+mod bounded_exchange;
+pub use bounded_exchange::RowExchangeProgress;
+mod bounded_tensor;
+pub use bounded_tensor::BoundedTensorCommunicator;
 mod exchange;
 
 pub use element::TensorElement;

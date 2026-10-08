@@ -159,7 +159,7 @@ impl<B: Backend> RankCommunicator<TensorDevice<B>> {
         Ok(native_reshape::<B>(output, layout.output))
     }
 
-    fn native_sharded_metadata(&self, value: &Primitive<B>) -> Result<(Shape, DType), TensorDeviceError> {
+    pub(super) fn native_sharded_metadata(&self, value: &Primitive<B>) -> Result<(Shape, DType), TensorDeviceError> {
         let (shape, dtype, device) = match value {
             Primitive::Float(value) => (value.shape(), value.dtype(), B::float_device(value)),
             Primitive::Int(value) => (value.shape(), value.dtype(), B::int_device(value)),
@@ -168,7 +168,7 @@ impl<B: Backend> RankCommunicator<TensorDevice<B>> {
         Ok((shape, dtype))
     }
 
-    fn native_empty_like(&self, source: &Primitive<B>, elements: usize, dtype: DType) -> Primitive<B> {
+    pub(super) fn native_empty_like(&self, source: &Primitive<B>, elements: usize, dtype: DType) -> Primitive<B> {
         let shape = Shape::new([elements]);
         match source {
             Primitive::Float(_) => Primitive::Float(B::float_empty(shape, self.execution().device(), dtype.into())),
@@ -177,12 +177,12 @@ impl<B: Backend> RankCommunicator<TensorDevice<B>> {
     }
 }
 
-fn native_reshape<B: Backend>(value: Primitive<B>, shape: Shape) -> Primitive<B> {
+pub(super) fn native_reshape<B: Backend>(value: Primitive<B>, shape: Shape) -> Primitive<B> {
     match value { Primitive::Float(value) => Primitive::Float(B::float_reshape(value, shape)),
         Primitive::Int(value) => Primitive::Int(B::int_reshape(value, shape)) }
 }
 
-fn native_element_type(dtype: DType) -> Result<ElementType, TensorDeviceError> {
+pub(super) fn native_element_type(dtype: DType) -> Result<ElementType, TensorDeviceError> {
     Ok(match dtype {
         DType::F32 => ElementType::F32, DType::F16 => ElementType::F16, DType::BF16 => ElementType::BF16,
         DType::U8 => ElementType::U8, DType::U32 => ElementType::U32, DType::I32 => ElementType::I32, DType::I64 => ElementType::I64,
