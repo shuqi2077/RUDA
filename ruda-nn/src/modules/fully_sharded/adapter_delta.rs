@@ -1,12 +1,40 @@
 use super::*;
-use alloc::collections::BTreeSet;
-use ruda_model::module::ModuleDisplay;
+use alloc::collections::{BTreeSet,BTreeMap};
+use ruda_model::module::{ModuleDisplay,ModuleMapper};
+
+struct AdapterStorageCast<B:Backend> {
+    selected:BTreeSet<ParamId>,
+    dtype:FloatDType,
+    converted:BTreeMap<(ParamId,bool),Tensor<B,1>>,
+}
+impl<B:Backend> ModuleMapper<B> for AdapterStorageCast<B> {
+    fn map_float<const D:usize>(&mut self,parameter:Param<Tensor<B,D>>) -> Param<Tensor<B,D>> {
+        if !self.selected.contains(&parameter.id) {return parameter;}
+        let (id,value,mapper)=parameter.consume();let trainable=value.is_require_grad();let key=(id,trainable);
+        if let Some(converted)=self.converted.get(&key) {
+            return Param::from_mapped_value(id,Tensor::<B,D>::from_primitive(converted.clone().into_primitive()),mapper);
+        }
+        let value=if value.dtype()==DType::from(self.dtype) {value} else {value.cast(self.dtype).detach().set_require_grad(trainable)};
+        self.converted.insert(key,Tensor::<B,1>::from_primitive(value.clone().into_primitive()));
+        Param::from_mapped_value(id,value,mapper)
+    }
+}
 
 /// Explicit actual low-rank leaf visitation, separate from whole-model storage visitation.
 /// Base, normalization, activation and table leaves remain in the complete storage schema.
 pub trait FullyShardedAdapterModule<B:Backend>:FullyShardedModule<B> {
     /// Visit only actual A/B leaves, retaining every repeated original shared role.
     fn visit_adapter_shards<F:FnMut(&ShardedParameter<B>)>(&self,visitor:&mut F);
+    /// Convert only actual A/B local storage, preserving canonical tied IDs/nodes,
+    /// trainability and Param mappers. Original NF4 FP32 scales/codebook, AWQ scale
+    /// storage, packed bytes/words, biases, norms and tables remain unchanged.
+    /// Converted trainable values are new leaves; optimizer/pending state must match this storage.
+    fn to_adapter_dtype(self,dtype:FloatDType) -> Result<Self,FullyShardedParameterError> {
+        if !matches!(DType::from(dtype),DType::F16|DType::BF16|DType::F32) {return Err(FullyShardedParameterError::DType);}
+        let _=FullyShardedStorageRecord::capture(&self)?;
+        let mut selected=BTreeSet::new();self.visit_adapter_shards(&mut |parameter| {selected.insert(parameter.local.id);});
+        Ok(self.map(&mut AdapterStorageCast {selected,dtype,converted:BTreeMap::new()}))
+    }
     /// Capture exact rank-local A/B updates and the complete original packed/floating schema.
     /// Caller base identity is explicit; no frozen-base hash or numerical content check is invented.
     fn adapter_delta_record(&self,base_id:&str) -> Result<FullyShardedStorageDeltaRecord<B>,FullyShardedParameterError> {
