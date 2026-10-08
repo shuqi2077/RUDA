@@ -73,11 +73,13 @@ impl<B: Backend, C: CheckpointStrategy> ModuleOps<Autodiff<B, C>> for Autodiff<B
         #[derive(Debug)]
         struct LayerNorm;
         impl<B: Backend, const N: usize> Backward<B, N> for LayerNorm {
-            type State = (B::FloatTensorPrimitive, B::FloatTensorPrimitive,
+            type State = (NodeId, NodeId,
                 B::FloatTensorPrimitive, B::FloatTensorPrimitive, Option<FloatDType>);
-            fn backward(self, ops: Ops<Self::State, N>, grads: &mut Gradients, _: &mut Checkpointer) {
+            fn backward(self, ops: Ops<Self::State, N>, grads: &mut Gradients, checkpointer: &mut Checkpointer) {
                 let (input, weight, mean, rstd, bias_dtype) = ops.state;
                 let grad = grads.consume::<B>(&ops.node);
+                let input = checkpointer.retrieve_node_output(input);
+                let weight = checkpointer.retrieve_node_output(weight);
                 let out = B::layer_norm_backward(input, weight, grad, mean, rstd);
                 let bias = if let Some(dtype) = bias_dtype { B::float_cast(out.bias, dtype) } else { out.bias };
                 for (parent, grad) in ops.parents.into_iter().zip([out.input, out.weight, bias]) {
@@ -91,15 +93,23 @@ impl<B: Backend, C: CheckpointStrategy> ModuleOps<Autodiff<B, C>> for Autodiff<B
             Some(beta) => {
                 let bias_dtype = beta.primitive.dtype().into();
                 let out = B::layer_norm_with_stats(input.clone(), weight.clone(), Some(beta.primitive), epsilon);
-                match LayerNorm.prepare::<C>([tensor.node, gamma.node, beta.node]).compute_bound().stateful() {
-                    OpsKind::Tracked(prep) => prep.finish((input, weight, out.mean, out.rstd, Some(bias_dtype)), out.output),
+                match LayerNorm.prepare::<C>([tensor.node.clone(), gamma.node.clone(), beta.node]).compute_bound().stateful() {
+                    OpsKind::Tracked(mut prep) => {
+                        let input = prep.checkpoint(&tensor);
+                        let weight = prep.checkpoint(&gamma);
+                        prep.finish((input, weight, out.mean, out.rstd, Some(bias_dtype)), out.output)
+                    }
                     OpsKind::UnTracked(prep) => prep.finish(out.output),
                 }
             },
             None => {
                 let out = B::layer_norm_with_stats(input.clone(), weight.clone(), None, epsilon);
-                match LayerNorm.prepare::<C>([tensor.node, gamma.node]).compute_bound().stateful() {
-                    OpsKind::Tracked(prep) => prep.finish((input, weight, out.mean, out.rstd, None), out.output),
+                match LayerNorm.prepare::<C>([tensor.node.clone(), gamma.node.clone()]).compute_bound().stateful() {
+                    OpsKind::Tracked(mut prep) => {
+                        let input = prep.checkpoint(&tensor);
+                        let weight = prep.checkpoint(&gamma);
+                        prep.finish((input, weight, out.mean, out.rstd, None), out.output)
+                    }
                     OpsKind::UnTracked(prep) => prep.finish(out.output),
                 }
             },
