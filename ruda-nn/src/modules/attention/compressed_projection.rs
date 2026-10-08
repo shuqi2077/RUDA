@@ -105,8 +105,15 @@ impl<B: Backend, P: CompressedAttentionProjection<B>> LearnedKVCompressor<B, P> 
     /// Transform only actual projections; position/norm leaves and original overlap semantics stay intact.
     pub fn map_projections<Q: CompressedAttentionProjection<B>>(self,
         mut mapper: impl FnMut(KVCompressionProjectionRole, P) -> Q) -> LearnedKVCompressor<B, Q> {
-        LearnedKVCompressor::from_parts(mapper(KVCompressionProjectionRole::Value, self.value),
-            mapper(KVCompressionProjectionRole::Gate, self.gate), self.position_bias, self.norm_weight, self.overlap, self.epsilon)
+        match self.try_map_projections(|role, projection| Ok::<Q, core::convert::Infallible>(mapper(role, projection))) {
+            Ok(module) => module, Err(error) => match error {},
+        }
+    }
+
+    pub fn try_map_projections<Q: CompressedAttentionProjection<B>, E>(self,
+        mut mapper: impl FnMut(KVCompressionProjectionRole, P) -> Result<Q, E>) -> Result<LearnedKVCompressor<B, Q>, E> {
+        Ok(LearnedKVCompressor::from_parts(mapper(KVCompressionProjectionRole::Value, self.value)?,
+            mapper(KVCompressionProjectionRole::Gate, self.gate)?, self.position_bias, self.norm_weight, self.overlap, self.epsilon))
     }
 }
 
@@ -120,11 +127,18 @@ impl<B: Backend, P: CompressedAttentionProjection<B>> LightningIndexer<B, P> {
     /// Preserve actual loaded key normalization, geometry, RoPE and chunk/gradient policies.
     pub fn map_projections<Q: CompressedAttentionProjection<B>>(self,
         mut mapper: impl FnMut(IndexerProjectionRole, P) -> Q) -> LightningIndexer<B, Q> {
-        let query = mapper(IndexerProjectionRole::Query, self.query);
-        let head_weight = mapper(IndexerProjectionRole::HeadWeight, self.head_weight);
-        let key = self.key.map(|key| mapper(IndexerProjectionRole::Key, key));
-        LightningIndexer::from_parts(query, head_weight, key, self.key_norm, self.rotary, self.topk,
-            self.query_chunk_size, self.key_chunk_size, self.detach_inputs)
+        match self.try_map_projections(|role, projection| Ok::<Q, core::convert::Infallible>(mapper(role, projection))) {
+            Ok(module) => module, Err(error) => match error {},
+        }
+    }
+
+    pub fn try_map_projections<Q: CompressedAttentionProjection<B>, E>(self,
+        mut mapper: impl FnMut(IndexerProjectionRole, P) -> Result<Q, E>) -> Result<LightningIndexer<B, Q>, E> {
+        let query = mapper(IndexerProjectionRole::Query, self.query)?;
+        let head_weight = mapper(IndexerProjectionRole::HeadWeight, self.head_weight)?;
+        let key = self.key.map(|key| mapper(IndexerProjectionRole::Key, key)).transpose()?;
+        Ok(LightningIndexer::from_parts(query, head_weight, key, self.key_norm, self.rotary, self.topk,
+            self.query_chunk_size, self.key_chunk_size, self.detach_inputs))
     }
 }
 
@@ -158,26 +172,35 @@ impl<B: Backend, P: CompressedAttentionProjection<B>> CompressedAttention<B, P> 
     /// new compressor, reinitialized sink, or alteration of complete-block visibility occurs.
     pub fn map_projections<Q: CompressedAttentionProjection<B>>(self,
         mut mapper: impl FnMut(CompressedAttentionProjectionRole, P) -> Q) -> CompressedAttention<B, Q> {
+        match self.try_map_projections(|role, projection| Ok::<Q, core::convert::Infallible>(mapper(role, projection))) {
+            Ok(module) => module, Err(error) => match error {},
+        }
+    }
+
+    /// Fallible loaded-leaf conversion propagates the original restoration failure.
+    pub fn try_map_projections<Q: CompressedAttentionProjection<B>, E>(self,
+        mut mapper: impl FnMut(CompressedAttentionProjectionRole, P) -> Result<Q, E>) -> Result<CompressedAttention<B, Q>, E> {
         use CompressedAttentionProjectionRole as Role;
         let parts = self.parts;
-        let query_down = mapper(Role::QueryDown, parts.query_down);
-        let query_up = mapper(Role::QueryUp, parts.query_up);
-        let local_kv = mapper(Role::LocalKv, parts.local_kv);
-        let compressor = parts.compressor.map_projections(|role, projection| mapper(match role {
+        let query_down = mapper(Role::QueryDown, parts.query_down)?;
+        let query_up = mapper(Role::QueryUp, parts.query_up)?;
+        let local_kv = mapper(Role::LocalKv, parts.local_kv)?;
+        let compressor = parts.compressor.try_map_projections(|role, projection| mapper(match role {
             KVCompressionProjectionRole::Value => Role::KvValue, KVCompressionProjectionRole::Gate => Role::KvGate,
-        }, projection));
-        let output_down = parts.output_down.into_iter().enumerate().map(|(group, projection)| mapper(Role::OutputDown(group), projection)).collect();
-        let output_up = mapper(Role::OutputUp, parts.output_up);
-        let indexer = parts.indexer.map(|indexer| indexer.map_projections(|role, projection| mapper(match role {
+        }, projection))?;
+        let output_down = parts.output_down.into_iter().enumerate().map(|(group, projection)| mapper(Role::OutputDown(group), projection))
+            .collect::<Result<_, E>>()?;
+        let output_up = mapper(Role::OutputUp, parts.output_up)?;
+        let indexer = parts.indexer.map(|indexer| indexer.try_map_projections(|role, projection| mapper(match role {
             IndexerProjectionRole::Query => Role::IndexerQuery, IndexerProjectionRole::HeadWeight => Role::IndexerHeadWeight,
             IndexerProjectionRole::Key => Role::IndexerKey,
-        }, projection)));
-        let index_compressor = parts.index_compressor.map(|compressor| compressor.map_projections(|role, projection| mapper(match role {
+        }, projection))).transpose()?;
+        let index_compressor = parts.index_compressor.map(|compressor| compressor.try_map_projections(|role, projection| mapper(match role {
             KVCompressionProjectionRole::Value => Role::IndexValue, KVCompressionProjectionRole::Gate => Role::IndexGate,
-        }, projection)));
-        CompressedAttention::from_parts(CompressedAttentionParts {
+        }, projection))).transpose()?;
+        Ok(CompressedAttention::from_parts(CompressedAttentionParts {
             query_down, query_up, query_norm: parts.query_norm, local_kv, local_norm: parts.local_norm, compressor,
             output_down, output_up, sink: parts.sink, indexer, index_compressor,
-        }, self.rotary, self.window_size, self.query_chunk_size, self.epsilon)
+        }, self.rotary, self.window_size, self.query_chunk_size, self.epsilon))
     }
 }

@@ -107,12 +107,19 @@ impl<B: Backend, P: CompressedAttentionProjection<B>> MhcTransformerBlock<B, P> 
 
     pub fn map_projections<Q: CompressedAttentionProjection<B>>(self,
         mut mapper: impl FnMut(MhcTransformerProjectionRole, P) -> Q) -> MhcTransformerBlock<B, Q> {
-        let attention = self.attention.map_projections(|role, projection| mapper(MhcTransformerProjectionRole::Attention(role), projection));
-        let gate = mapper(MhcTransformerProjectionRole::Gate, self.gate);
-        let up = mapper(MhcTransformerProjectionRole::Up, self.up);
-        let down = mapper(MhcTransformerProjectionRole::Down, self.down);
-        MhcTransformerBlock::from_parts(self.attention_connection, self.ffn_connection, attention,
-            self.attention_norm, self.ffn_norm, gate, up, down, self.epsilon)
+        match self.try_map_projections(|role, projection| Ok::<Q, core::convert::Infallible>(mapper(role, projection))) {
+            Ok(module) => module, Err(error) => match error {},
+        }
+    }
+
+    pub fn try_map_projections<Q: CompressedAttentionProjection<B>, E>(self,
+        mut mapper: impl FnMut(MhcTransformerProjectionRole, P) -> Result<Q, E>) -> Result<MhcTransformerBlock<B, Q>, E> {
+        let attention = self.attention.try_map_projections(|role, projection| mapper(MhcTransformerProjectionRole::Attention(role), projection))?;
+        let gate = mapper(MhcTransformerProjectionRole::Gate, self.gate)?;
+        let up = mapper(MhcTransformerProjectionRole::Up, self.up)?;
+        let down = mapper(MhcTransformerProjectionRole::Down, self.down)?;
+        Ok(MhcTransformerBlock::from_parts(self.attention_connection, self.ffn_connection, attention,
+            self.attention_norm, self.ffn_norm, gate, up, down, self.epsilon))
     }
 }
 
@@ -139,9 +146,16 @@ impl<B: Backend, P: CompressedAttentionProjection<B>> HybridAttentionBackbone<B,
 
     pub fn map_projections<Q: CompressedAttentionProjection<B>>(self,
         mut mapper: impl FnMut(HybridAttentionAdapterTarget, P) -> Q) -> HybridAttentionBackbone<B, Q> {
-        let layers = self.layers.into_iter().enumerate().map(|(layer, block)| block.map_projections(|role, projection|
-            mapper(HybridAttentionAdapterTarget::Layer(layer, role), projection))).collect();
-        HybridAttentionBackbone::from_parts(self.embedding, layers, self.final_norm, self.epsilon)
+        match self.try_map_projections(|role, projection| Ok::<Q, core::convert::Infallible>(mapper(role, projection))) {
+            Ok(module) => module, Err(error) => match error {},
+        }
+    }
+
+    pub fn try_map_projections<Q: CompressedAttentionProjection<B>, E>(self,
+        mut mapper: impl FnMut(HybridAttentionAdapterTarget, P) -> Result<Q, E>) -> Result<HybridAttentionBackbone<B, Q>, E> {
+        let layers = self.layers.into_iter().enumerate().map(|(layer, block)| block.try_map_projections(|role, projection|
+            mapper(HybridAttentionAdapterTarget::Layer(layer, role), projection))).collect::<Result<_, E>>()?;
+        Ok(HybridAttentionBackbone::from_parts(self.embedding, layers, self.final_norm, self.epsilon))
     }
 }
 
@@ -168,13 +182,20 @@ impl<B: Backend, P: CompressedAttentionProjection<B>> HybridAttentionLanguageMod
 
     pub fn map_projections<Q: CompressedAttentionProjection<B>>(self,
         mut mapper: impl FnMut(HybridAttentionAdapterTarget, P) -> Q) -> HybridAttentionLanguageModel<B, Q> {
-        let backbone = self.backbone.map_projections(&mut mapper);
+        match self.try_map_projections(|role, projection| Ok::<Q, core::convert::Infallible>(mapper(role, projection))) {
+            Ok(module) => module, Err(error) => match error {},
+        }
+    }
+
+    pub fn try_map_projections<Q: CompressedAttentionProjection<B>, E>(self,
+        mut mapper: impl FnMut(HybridAttentionAdapterTarget, P) -> Result<Q, E>) -> Result<HybridAttentionLanguageModel<B, Q>, E> {
+        let backbone = self.backbone.try_map_projections(&mut mapper)?;
         let head = match self.head {
-            HybridAttentionHead::Linear(head) => HybridAttentionHead::Linear(mapper(HybridAttentionAdapterTarget::Head, head)),
+            HybridAttentionHead::Linear(head) => HybridAttentionHead::Linear(mapper(HybridAttentionAdapterTarget::Head, head)?),
             HybridAttentionHead::TiedEmbedding(_) => HybridAttentionHead::TiedEmbedding(core::marker::PhantomData),
             HybridAttentionHead::TiedEmbeddingLoRA(adapter) => HybridAttentionHead::TiedEmbeddingLoRA(adapter),
         };
-        HybridAttentionLanguageModel::from_parts(backbone, head)
+        Ok(HybridAttentionLanguageModel::from_parts(backbone, head))
     }
 }
 
