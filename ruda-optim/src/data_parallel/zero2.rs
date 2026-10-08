@@ -5,6 +5,9 @@ use ruda_model::record::{PrecisionSettings, Record};
 
 pub use crate::ElementwiseShardOptimizer;
 
+mod selected;
+pub use selected::{SelectedZero2, SelectedZero2Record, SelectedZero2Step};
+
 /// Collective transport with equal-size axis-zero shards, preserving dtype.
 /// The selected transport's own staging/synchronization semantics still apply.
 pub trait ShardedCommunicator<B: Backend>: DataParallelCommunicator<B> {
@@ -64,9 +67,15 @@ where B:AutodiffBackend,M:AutodiffModule<B>,O:ElementwiseShardOptimizer<B::Inner
     /// Attach a bare elementwise optimizer before the first update.
     /// Every rank must supply identical optimizer options; no scheduler is implicit.
     pub fn new(session:DataParallel<B,C>,model:&M,optimizer:O)->Result<Self,DataParallelError> {
+        Self::from_session(session,model,optimizer,None)
+    }
+
+    fn from_session(session:DataParallel<B,C>,model:&M,optimizer:O,selection:Option<&[ParamId]>)
+        ->Result<Self,DataParallelError> {
         let mut schema=Schema::new(session.synchronize_buffers);
-        model.visit(&mut schema);
+        let known=visit_selection::<B,_,_>(model,&mut schema,selection);
         let mut error=schema.device_error;
+        if !known {error=Some("selected ZeRO-2 parameter IDs are duplicated or absent".into());}
         if let Err(failure)=optimizer.validate_element_sharding() {error=Some(failure.into());}
         if schema.contract!=session.contract || schema.ids!=session.ids {
             error=Some("model differs from initialized ZeRO-2 replica".into());
@@ -95,15 +104,26 @@ where B:AutodiffBackend,M:AutodiffModule<B>,O:ElementwiseShardOptimizer<B::Inner
     /// rank participates in the same collectives with zero gradient contributions.
     pub fn step(&mut self,lr:LearningRate,model:M,gradients:GradientsParams,
                 local_weight:u64,policy:MissingGradientPolicy)->Result<Zero2Step<M>,DataParallelError> {
+        self.step_inner(lr,model,gradients,local_weight,policy,None,true).map(|(step,_)|step)
+    }
+
+    fn step_inner(&mut self,lr:LearningRate,model:M,gradients:GradientsParams,
+                  local_weight:u64,policy:MissingGradientPolicy,selection:Option<&[ParamId]>,normalize:bool)
+        ->Result<(Zero2Step<M>,GradientsParams),DataParallelError> {
         let rates=gather::<B::InnerBackend,C,_>(&self.session.communicator,&lr.to_bits())?;
         if !lr.is_finite() || lr<0. || rates.iter().any(|&value|value!=lr.to_bits()) {
             return Err(contract("learning rates must be finite, nonnegative and identical"));
         }
+        if selection.is_some() {super::selected::agree_mode(&self.session,true,normalize)?;}
+        let (gradients,remaining)=if let Some(parameters)=selection {
+            gradients.partition::<B::InnerBackend>(parameters)
+        } else {(gradients,GradientsParams::new())};
         let mut schema=Schema::new(self.session.synchronize_buffers);
-        model.visit(&mut schema);
+        let known=visit_selection::<B,_,_>(&model,&mut schema,selection);
         let mut check=Check::<B>{gradients:&gradients,ids:Vec::new(),present:Vec::new(),
             error:schema.device_error,device:self.session.communicator.device(),fp32_gradients:true};
-        model.visit(&mut check);
+        visit_selection::<B,_,_>(&model,&mut check,selection);
+        if !known {check.error=Some("selected ZeRO-2 parameter IDs are duplicated or absent".into());}
         if schema.contract!=self.session.contract || schema.ids!=self.session.ids {
             check.error=Some("model structure or IDs changed after ZeRO-2 initialization".into());
         }
@@ -113,7 +133,7 @@ where B:AutodiffBackend,M:AutodiffModule<B>,O:ElementwiseShardOptimizer<B::Inner
         if policy==MissingGradientPolicy::Error && local_weight>0 && check.present.contains(&false) {
             check.error=Some("positive-weight rank is missing a trainable gradient".into());
         }
-        if model.devices().iter().any(|device|device!=self.session.communicator.device()) {
+        if !selected_device_matches::<B,_>(&model,self.session.communicator.device(),selection) {
             check.error=Some("replica moved off its communicator device".into());
         }
         let windows=gather::<B::InnerBackend,C,_>(&self.session.communicator,&Window{
@@ -128,18 +148,18 @@ where B:AutodiffBackend,M:AutodiffModule<B>,O:ElementwiseShardOptimizer<B::Inner
             global_weight=global_weight.checked_add(window.weight).ok_or_else(||contract("global weight overflow"))?;
             if window.weight>0 {for (any,present) in active.iter_mut().zip(&window.present) {*any|=present;}}
         }
-        if global_weight==0 {return Err(contract("cannot normalize a zero-weight global window"));}
+        if normalize && global_weight==0 {return Err(contract("cannot normalize a zero-weight global window"));}
         // Proposed states are separate until every collective completed. No
         // caller-visible model or optimizer state is committed on transport error.
         let mut mapper=Update::<B,O,C>{communicator:&self.session.communicator,optimizer:&self.optimizer,
             states:&self.states,proposed:HashMap::new(),gradients,updated:TensorContainer::new(),
-            visited:Vec::new(),active:&active,index:0,local_weight,global_weight,learning_rate:lr,error:None};
-        let model=model.map(&mut mapper);
+            visited:Vec::new(),active:&active,index:0,local_weight,global_weight,normalize,learning_rate:lr,error:None};
+        let model=map_selection::<B,_,_>(model,&mut mapper,selection);
         if let Some(failure)=mapper.error {return Err(failure.into());}
         for (id,state) in mapper.proposed {
             if let Some(state)=state {self.states.insert(id,state);} else {self.states.remove(&id);}
         }
-        Ok(Zero2Step{model,global_weight})
+        Ok((Zero2Step{model,global_weight},remaining))
     }
 
     /// Snapshot states at a completed accumulation/update boundary.
@@ -177,6 +197,7 @@ where B:AutodiffBackend,O:ElementwiseShardOptimizer<B::InnerBackend>,C:ShardedCo
     index:usize,
     local_weight:u64,
     global_weight:u64,
+    normalize:bool,
     learning_rate:LearningRate,
     error:Option<TensorDeviceError>,
 }
@@ -211,8 +232,9 @@ where B:AutodiffBackend,O:ElementwiseShardOptimizer<B::InnerBackend>,C:ShardedCo
         let gradients=if let Some(gradient)=gradient {gradients.slice_assign([0..elements],gradient)} else {gradients};
         let result=(||->Result<_,TensorDeviceError>{
             let gradient=self.communicator.reduce_scatter_float(gradients.into_primitive().tensor())?;
-            let gradient=Tensor::<B::InnerBackend,1>::from_primitive(TensorPrimitive::Float(gradient))
-                .div_scalar(self.global_weight as f64).cast(self.optimizer.shard_gradient_dtype(storage));
+            let gradient=Tensor::<B::InnerBackend,1>::from_primitive(TensorPrimitive::Float(gradient));
+            let gradient=if self.normalize {gradient.div_scalar(self.global_weight as f64)} else {gradient};
+            let gradient=gradient.cast(self.optimizer.shard_gradient_dtype(storage));
             let local=padded.slice([start..start+size]);
             let (updated,state)=self.optimizer.step(self.learning_rate,local,gradient,self.states.get(&id).cloned());
             let full=self.communicator.all_gather_float(updated.into_primitive().tensor())?;

@@ -309,11 +309,7 @@ pub(super) fn reduce_selected<
     fp32: bool,
     normalize: bool,
 ) -> Result<DataParallelGradients, DataParallelError> {
-    let mode = ReductionMode { normalize, fp32 };
-    let modes = gather::<B::InnerBackend, C, _>(&session.communicator, &mode)?;
-    if modes.iter().any(|other| other != &mode) {
-        return Err(contract("selected replicas disagree on SUM/mean or FP32 reduction"));
-    }
+    agree_mode(session, fp32, normalize)?;
     let (selected, untouched) = gradients.partition::<B::InnerBackend>(parameters);
     let reduced = session.reduce_inner(
         model, selected, local_weight, policy, fp32, Some(parameters), normalize,
@@ -325,4 +321,17 @@ pub(super) fn reduce_selected<
         gradients,
         global_weight: reduced.global_weight,
     })
+}
+
+pub(super) fn agree_mode<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>>(
+    session: &DataParallel<B, C>,
+    fp32: bool,
+    normalize: bool,
+) -> Result<(), DataParallelError> {
+    let mode = ReductionMode { normalize, fp32 };
+    let modes = gather::<B::InnerBackend, C, _>(&session.communicator, &mode)?;
+    if modes.iter().any(|other| other != &mode) {
+        return Err(contract("selected replicas disagree on SUM/mean or FP32 reduction"));
+    }
+    Ok(())
 }
