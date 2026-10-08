@@ -15,6 +15,8 @@ use ruda_tensor::{
 
 mod scope;
 pub use scope::{CollectiveScope,ScopedTensorCollective,ScopedCollectiveError};
+mod exchange;
+pub use exchange::{all_to_all_v,all_to_all_v_ordered};
 
 #[derive(Debug)]
 struct Collective<C>(PhantomData<C>);

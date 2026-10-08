@@ -13,6 +13,7 @@ mod fmod;
 mod int;
 mod numeric;
 mod moe;
+mod exchange;
 mod options;
 mod orderable;
 mod pad;
@@ -35,7 +36,7 @@ pub use options::*;
 pub use transaction::*;
 
 pub use crate::tensor::IndexingUpdateOp;
-pub use crate::collective::{TensorCollective,ReplicatedTensorCollective,BroadcastTensorCollective,IntegerTensorCollective};
+pub use crate::collective::{TensorCollective,ReplicatedTensorCollective,BroadcastTensorCollective,IntegerTensorCollective,VariableTensorCollective,VariableTensorExchange};
 pub use crate::frozen_awq::{FrozenAwqOps, FrozenAwqError};
 pub use crate::frozen_nf4::{FrozenNf4Ops,FrozenNf4Error,Nf4ProjectionOptions};
 pub use crate::moe::{MoeOps,MoeOptions,MoeSelectionOptions,MoeRouterScoring,MoeRouterWeightOptions,

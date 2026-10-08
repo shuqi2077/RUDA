@@ -11,6 +11,7 @@ mod reduction;
 mod storage;
 mod communicator;
 mod tensor;
+mod exchange;
 
 pub use element::TensorElement;
 pub use error::TensorDeviceError;

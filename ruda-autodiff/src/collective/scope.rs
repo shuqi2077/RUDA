@@ -1,7 +1,7 @@
 use super::*;
 use alloc::{sync::Arc,vec::Vec};
 use core::fmt;
-use ruda_tensor::{DType,TensorData,collective::IntegerTensorCollective,tensor::{Bool,FloatTensor,IntTensor}};
+use ruda_tensor::{DType,TensorData,collective::{IntegerTensorCollective,VariableTensorCollective,VariableTensorExchange},tensor::{Bool,FloatTensor,IntTensor}};
 use crate::NodeId;
 #[cfg(feature="std")]
 use parking_lot::Mutex;
@@ -66,6 +66,14 @@ impl<C:BroadcastTensorCollective<B>,B:Backend,S:CheckpointStrategy> BroadcastTen
 }
 impl<C:IntegerTensorCollective<B>,B:Backend,S:CheckpointStrategy> IntegerTensorCollective<B> for ScopedTensorCollective<C,B,S> {
     fn all_gather_int(&self,value:IntTensor<B>) -> Result<IntTensor<B>,Self::Error> {self.inner.all_gather_int(value)}
+}
+impl<C:VariableTensorCollective<B>,B:Backend,S:CheckpointStrategy> VariableTensorCollective<B> for ScopedTensorCollective<C,B,S> {
+    fn all_to_all_v_float(&self,value:FloatTensor<B>,counts:&[usize]) -> Result<VariableTensorExchange<FloatTensor<B>>,Self::Error> {
+        self.inner.all_to_all_v_float(value,counts)
+    }
+    fn all_to_all_v_int(&self,value:IntTensor<B>,counts:&[usize]) -> Result<VariableTensorExchange<IntTensor<B>>,Self::Error> {
+        self.inner.all_to_all_v_int(value,counts)
+    }
 }
 
 impl<B:Backend,S:CheckpointStrategy> CollectiveScope<B,S> {
