@@ -59,7 +59,7 @@ class PipelineTrainer:
         self.started=time.monotonic()
         if optimizer is not None:optimizer.zero_grad(set_to_none=True)
 
-    def train_step(self,inputs=None,targets=None,*,local_weight,loss_sum,microbatch_specs=None):
+    def train_step(self,inputs=None,targets=None,*,local_weight,loss_sum,microbatch_specs=None,schedule='1f1b'):
         inputs=list(inputs or [])
         targets=list(targets or [])
         if not callable(loss_sum):raise TypeError('supply a loss_sum(output,target) callable')
@@ -103,13 +103,13 @@ class PipelineTrainer:
         for failure in self.mesh.world.gather_metadata(error):
             if failure:raise ValueError(failure)
         self.coordinator.validate_model(self.stage.module)
-        self.mesh.world.validate_training_options((self.step,self.base_id,self.run_config,
+        self.mesh.world.validate_training_options((self.step,self.base_id,self.run_config,schedule,
                                                   None if self.scaler is None else self.scaler.state_dict()))
         if self.optimizer is not None:self.optimizer.zero_grad(set_to_none=True)
         scale=1. if self.scaler is None else self.scaler.begin_backward()
         started=time.monotonic()
         self.stage.module.train()
-        result=self.stage.run(inputs,targets,loss_sum=loss_sum,global_weight=total,loss_scale=scale,microbatch_specs=interfaces)
+        result=self.stage.run(inputs,targets,loss_sum=loss_sum,global_weight=total,loss_scale=scale,microbatch_specs=interfaces,schedule=schedule)
         if self.tied_parameters is not None:self.tied_parameters.synchronize_gradients()
         if self.optimizer is not None:
             if hasattr(self.optimizer,'synchronize_gradients'):
@@ -157,6 +157,19 @@ class PipelineTrainer:
         return {'step':self.step,'loss':float(loss.item())/total,'supervised_tokens':total,
                 'total_supervised_tokens':self.tokens,'microbatch_cursor':self.cursor,
                 'step_seconds':elapsed,'tokens_per_second':total/elapsed,'optimizer_update_skipped':skipped}
+
+    def train_step_autotuned(self, inputs=None, targets=None, *, local_weight, loss_sum,
+                            microbatch_specs=None, autotuner=None):
+        """Select a reversible measured schedule while preserving the actual stage mesh."""
+        from .training_autotune import PipelineAutotuner
+        if autotuner is None:
+            autotuner = getattr(self, '_pipeline_autotuner', None)
+            if autotuner is None:
+                autotuner = self._pipeline_autotuner = PipelineAutotuner()
+        if not isinstance(autotuner, PipelineAutotuner):
+            raise TypeError('autotuner must be a PipelineAutotuner')
+        return autotuner.train_step(self, inputs, targets, local_weight=local_weight,
+                                   loss_sum=loss_sum, microbatch_specs=microbatch_specs)
 
     def _prepare_global_norm(self,scale):
         from .sharded_training import Zero2Optimizer

@@ -461,6 +461,17 @@ class SFTTrainer:
                 'total_seconds': self.elapsed_before_resume + time.monotonic() - self.started,
                 'updated_at': datetime.now(timezone.utc).isoformat()}
 
+    def train_step_autotuned(self, microbatches, *, autotuner=None):
+        """Use automatic reversible whole-update tuning, retaining effective batch semantics."""
+        from .training_autotune import TrainingAutotuner
+        if autotuner is None:
+            autotuner = getattr(self, '_training_autotuner', None)
+            if autotuner is None:
+                autotuner = self._training_autotuner = TrainingAutotuner()
+        if not isinstance(autotuner, TrainingAutotuner):
+            raise TypeError('autotuner must be a TrainingAutotuner')
+        return autotuner.train_step(self, microbatches)
+
     def evaluate(self, microbatches):
         """Unsmoothed token-weighted NLL/perplexity on caller-supplied CPU batches.
 

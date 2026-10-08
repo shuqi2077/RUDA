@@ -146,13 +146,15 @@ class PipelineStage:
             self.group._complete([] if output is None else [output])
         return output
 
-    def run(self, inputs=None, targets=None, *, loss_sum, global_weight, loss_scale=1.0,microbatch_specs=None):
+    def run(self, inputs=None, targets=None, *, loss_sum, global_weight, loss_scale=1.0,microbatch_specs=None,schedule='1f1b'):
         inputs, targets = list(inputs or []), list(targets or [])
         counts=self.group.gather_metadata((len(inputs),len(targets)))
         count=counts[0][0]
         if counts[-1][1]!=count:
             raise ValueError('first-stage input and last-stage target microbatch counts differ')
-        self.group.validate_training_options((count, global_weight, loss_scale))
+        self.group.validate_training_options((count, global_weight, loss_scale, schedule))
+        if schedule not in ('1f1b', 'gpipe'):
+            raise ValueError('pipeline schedule must be 1f1b or gpipe')
         if count < 1 or type(global_weight) is not int or global_weight <= 0 or not math.isfinite(loss_scale) or loss_scale <= 0:
             raise ValueError('pipeline needs microbatches and positive weighting/scaling')
         interfaces=self.validate_interfaces(count,microbatch_specs)
@@ -193,6 +195,23 @@ class PipelineStage:
             return self._input_gradient(value)
 
         try:
+            if schedule == 'gpipe':
+                # Fill/drain, preserving the existing FIFO gradient accumulation order.
+                for index in range(count):
+                    output = forward(recv_input(index), index)
+                    if not last:
+                        self._exchange(send=output, send_rank=self.rank+1)
+                for _ in range(count):
+                    backward_index = pending[0][0]
+                    gradient = None if last else self._exchange(
+                        receive_spec=self._gradient_spec(interfaces[backward_index][1]), receive_rank=self.rank+1)
+                    input_gradient = backward(gradient)
+                    if not first:
+                        self._exchange(send=input_gradient, send_rank=self.rank-1)
+                loss = torch.stack(losses).sum().float().reshape(1) if last else torch.zeros(1, dtype=torch.float32, device=self.device)
+                self.group.broadcast_(loss, self.world_size-1)
+                return {'loss_sum': float(loss.item()), 'loss': float(loss.item())/global_weight,
+                        'microbatches': count, 'global_weight': global_weight}
             for index in range(warmup):
                 output = forward(recv_input(index), index)
                 if not last:
