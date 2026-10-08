@@ -117,7 +117,8 @@ fn average_volume_backward<E: Numeric, G: Numeric, A: Float, N: Size>(
     output[ABSOLUTE_POS] = Vector::cast_from(sum);
 }
 
-fn output_size(input: [usize; 3], kernel: [usize; 3], stride: [usize; 3],
+/// Compute native volume-pooling extents without allocating or launching a kernel.
+pub fn avg_pool3d_output_size(input: [usize; 3], kernel: [usize; 3], stride: [usize; 3],
     padding: [usize; 3], ceil: bool) -> [usize; 3] {
     core::array::from_fn(|axis| {
         assert!(kernel[axis] > 0 && stride[axis] > 0, "pooling kernel and stride must be non-zero");
@@ -154,7 +155,7 @@ pub fn avg_pool3d<R: Runtime>(input: RudaTensor<R>, kernel: [usize; 3], stride: 
     padding: [usize; 3], include_pad: bool, ceil: bool) -> RudaTensor<R> {
     let [batch, channels, depth, height, width] = input.meta.shape().dims();
     let sizes = [depth, height, width];
-    let outputs = output_size(sizes, kernel, stride, padding, ceil);
+    let outputs = avg_pool3d_output_size(sizes, kernel, stride, padding, ceil);
     let input = into_contiguous_aligned(permute_nchw_to_nhwc(input));
     let output = empty_device_dtype(input.client.clone(), input.device.clone(),
         Shape::new([batch, outputs[0], outputs[1], outputs[2], channels]), input.dtype);
@@ -180,7 +181,7 @@ pub fn avg_pool3d_backward<R: Runtime>(input: RudaTensor<R>, grad: RudaTensor<R>
     stride: [usize; 3], padding: [usize; 3], include_pad: bool, ceil: bool) -> RudaTensor<R> {
     let [batch, channels, depth, height, width] = input.meta.shape().dims();
     let sizes = [depth, height, width];
-    let outputs = output_size(sizes, kernel, stride, padding, ceil);
+    let outputs = avg_pool3d_output_size(sizes, kernel, stride, padding, ceil);
     assert_eq!(grad.meta.shape().dims::<5>(), [batch, channels, outputs[0], outputs[1], outputs[2]],
         "average pooling gradient shape differs from the forward output");
     let grad = into_contiguous_aligned(permute_nchw_to_nhwc(grad));

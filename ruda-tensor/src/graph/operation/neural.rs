@@ -53,6 +53,31 @@ pub struct AvgPool2dBackwardOpIr {
 
 #[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
 #[allow(missing_docs)]
+pub struct AvgPool3dOpIr {
+    pub x: TensorIr,
+    pub kernel_size: [usize; 3],
+    pub stride: [usize; 3],
+    pub padding: [usize; 3],
+    pub count_include_pad: bool,
+    pub ceil_mode: bool,
+    pub out: TensorIr,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
+pub struct AvgPool3dBackwardOpIr {
+    pub x: TensorIr,
+    pub grad: TensorIr,
+    pub kernel_size: [usize; 3],
+    pub stride: [usize; 3],
+    pub padding: [usize; 3],
+    pub count_include_pad: bool,
+    pub ceil_mode: bool,
+    pub out: TensorIr,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
 pub struct AdaptiveAvgPool1dOpIr {
     pub x: TensorIr,
     pub output_size: usize,

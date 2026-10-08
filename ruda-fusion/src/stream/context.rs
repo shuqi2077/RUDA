@@ -436,6 +436,21 @@ impl RelativeOps for ModuleOperationIr {
                     out: desc.out.to_relative(converter),
                 })
             }
+            ModuleOperationIr::AvgPool3d(desc) => {
+                ModuleOperationIr::AvgPool3d(AvgPool3dOpIr {
+                    x: desc.x.to_relative(converter), kernel_size: desc.kernel_size,
+                    stride: desc.stride, padding: desc.padding, count_include_pad: desc.count_include_pad,
+                    ceil_mode: desc.ceil_mode, out: desc.out.to_relative(converter),
+                })
+            }
+            ModuleOperationIr::AvgPool3dBackward(desc) => {
+                ModuleOperationIr::AvgPool3dBackward(AvgPool3dBackwardOpIr {
+                    x: desc.x.to_relative(converter), grad: desc.grad.to_relative(converter),
+                    kernel_size: desc.kernel_size, stride: desc.stride, padding: desc.padding,
+                    count_include_pad: desc.count_include_pad, ceil_mode: desc.ceil_mode,
+                    out: desc.out.to_relative(converter),
+                })
+            }
             ModuleOperationIr::AdaptiveAvgPool3dBackward(desc) => {
                 ModuleOperationIr::AdaptiveAvgPool3dBackward(AdaptiveAvgPool3dBackwardOpIr {
                     x: desc.x.to_relative(converter), grad: desc.grad.to_relative(converter),

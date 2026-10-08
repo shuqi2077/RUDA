@@ -167,6 +167,11 @@ impl<R: DeviceRuntime, F: FloatElement, I: IntElement, BT: BoolElement> FusionBa
 
     type FullPrecisionBackend = DeviceBackend<R, f32, i32, BT>;
 
+    fn avg_pool3d_output_size(input: [usize; 3], kernel: [usize; 3], stride: [usize; 3],
+        padding: [usize; 3], ceil: bool) -> [usize; 3] {
+        rudnn::pooling::avg_pool3d_output_size(input, kernel, stride, padding, ceil)
+    }
+
     fn cast_float(tensor: FloatTensor<Self>, dtype: DType) -> Self::Handle {
         ruprim::elementwise::cast::cast(tensor, dtype).into()
     }

@@ -3,12 +3,28 @@ use ruda_tensor::graph::{
     AdaptiveAvgPool1dBackwardOpIr, AdaptiveAvgPool1dOpIr, AdaptiveAvgPool2dBackwardOpIr,
     AdaptiveAvgPool2dOpIr, AvgPool1dBackwardOpIr, AvgPool1dOpIr, AvgPool2dBackwardOpIr,
     AdaptiveAvgPool3dOpIr, AdaptiveAvgPool3dBackwardOpIr,
+    AvgPool3dOpIr, AvgPool3dBackwardOpIr,
     AvgPool2dOpIr, InterpolateBackwardOpIr, InterpolateOpIr, MaxPool1dOpIr,
     MaxPool1dWithIndicesBackwardOpIr, MaxPool1dWithIndicesOpIr, MaxPool2dOpIr,
     MaxPool2dWithIndicesBackwardOpIr, MaxPool2dWithIndicesOpIr,
 };
 
 impl<B: BackendIr> Runner<B> {
+    pub(super) fn apply_avg_pool3d(&self, handles: &mut HandleContainer<B::Handle>, desc: &AvgPool3dOpIr) {
+        let x = handles.get_float_tensor::<B>(&desc.x);
+        let output = B::avg_pool3d(x, desc.kernel_size, desc.stride, desc.padding,
+            desc.count_include_pad, desc.ceil_mode);
+        handles.register_float_tensor::<B>(&desc.out.id, output);
+    }
+
+    pub(super) fn apply_avg_pool3d_backward(&self, handles: &mut HandleContainer<B::Handle>, desc: &AvgPool3dBackwardOpIr) {
+        let x = handles.get_float_tensor::<B>(&desc.x);
+        let grad = handles.get_float_tensor::<B>(&desc.grad);
+        let output = B::avg_pool3d_backward(x, grad, desc.kernel_size, desc.stride, desc.padding,
+            desc.count_include_pad, desc.ceil_mode);
+        handles.register_float_tensor::<B>(&desc.out.id, output);
+    }
+
     pub(super) fn apply_adaptive_avg_pool3d(&self, handles: &mut HandleContainer<B::Handle>,
         desc: &AdaptiveAvgPool3dOpIr) {
         let x = handles.get_float_tensor::<B>(&desc.x);

@@ -76,6 +76,12 @@ impl<B: BackendIr> Runner<B> {
             ModuleOperationIr::AdaptiveAvgPool3d(desc) => {
                 self.apply_adaptive_avg_pool3d(handles, desc)
             }
+            ModuleOperationIr::AvgPool3d(desc) => {
+                self.apply_avg_pool3d(handles, desc)
+            }
+            ModuleOperationIr::AvgPool3dBackward(desc) => {
+                self.apply_avg_pool3d_backward(handles, desc)
+            }
             ModuleOperationIr::AdaptiveAvgPool3dBackward(desc) => {
                 self.apply_adaptive_avg_pool3d_backward(handles, desc)
             }

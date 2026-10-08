@@ -205,6 +205,14 @@ pub trait FusionBackend:
     /// Cast a float tensor and returns the resulting handle.
     fn cast_float(tensor: FloatTensor<Self>, dtype: DType) -> Self::Handle;
 
+    /// Output extents of volume average pooling without executing the operation.
+    /// Backends with different padding/ceil rules override the canonical geometry.
+    fn avg_pool3d_output_size(input: [usize; 3], kernel: [usize; 3], stride: [usize; 3],
+        padding: [usize; 3], ceil: bool) -> [usize; 3] {
+        core::array::from_fn(|axis| ruda_tensor::ops::conv::calculate_pool_output_size(
+            kernel[axis], stride[axis], padding[axis], 1, input[axis], ceil))
+    }
+
     /// Scheme produced by `q_swap_dims`, without executing the operation.
     /// Override when the backend changes quantization layout rather than requantizing.
     fn q_swap_dims_scheme(

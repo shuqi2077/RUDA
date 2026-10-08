@@ -221,6 +221,10 @@ pub enum ModuleOperationIr {
     AdaptiveAvgPool3d(AdaptiveAvgPool3dOpIr),
     /// Operation corresponding to [adaptive volume gradients](crate::ops::ModuleOps::adaptive_avg_pool3d_backward).
     AdaptiveAvgPool3dBackward(AdaptiveAvgPool3dBackwardOpIr),
+    /// Operation corresponding to [volume average pooling](crate::ops::ModuleOps::avg_pool3d).
+    AvgPool3d(AvgPool3dOpIr),
+    /// Operation corresponding to [volume average gradients](crate::ops::ModuleOps::avg_pool3d_backward).
+    AvgPool3dBackward(AvgPool3dBackwardOpIr),
 }
 
 /// Basic operations that can be done on any tensor type.

@@ -26,6 +26,17 @@ impl CreationOpIr {
     }
 }
 
+impl AvgPool3dOpIr {
+    pub fn create_with_output_size(x: TensorIr, kernel_size: [usize; 3], stride: [usize; 3],
+        padding: [usize; 3], count_include_pad: bool, ceil_mode: bool,
+        output_size: [usize; 3], new_id: impl FnOnce() -> TensorId) -> Self {
+        assert_eq!(x.shape.rank(), 5, "volume pooling input rank differs");
+        let shape = Shape::new([x.shape[0], x.shape[1], output_size[0], output_size[1], output_size[2]]);
+        let out = TensorIr::uninit(new_id(), shape, x.dtype);
+        Self { x, kernel_size, stride, padding, count_include_pad, ceil_mode, out }
+    }
+}
+
 impl InitOperationIr {
     pub fn create(shape: Shape, dtype: DType, new_id: impl FnOnce() -> TensorId) -> Self {
         let out = TensorIr::uninit(new_id(), shape, dtype);
@@ -627,6 +638,20 @@ impl_ir_create!(
         output_size: [usize; 3]
     },
     shape = Shape::new([x.shape[0], x.shape[1], output_size[0], output_size[1], output_size[2]]),
+    dtype = x.dtype
+);
+
+impl_ir_create!(
+    AvgPool3dBackwardOpIr {
+        x: TensorIr,
+        grad: TensorIr,
+        kernel_size: [usize; 3],
+        stride: [usize; 3],
+        padding: [usize; 3],
+        count_include_pad: bool,
+        ceil_mode: bool,
+    },
+    shape = x.shape.clone(),
     dtype = x.dtype
 );
 
