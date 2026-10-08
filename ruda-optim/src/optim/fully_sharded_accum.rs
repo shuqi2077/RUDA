@@ -17,6 +17,8 @@ mod hybrid_norm;
 pub use hybrid_norm::*;
 mod placement;
 pub use placement::*;
+mod migration;
+pub use migration::*;
 
 /// Exact continuation counters for globally summed, already reduce-scattered local gradients.
 #[derive(Clone,Debug,PartialEq,Serialize,Deserialize)]

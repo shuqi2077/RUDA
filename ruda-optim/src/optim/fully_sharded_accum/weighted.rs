@@ -57,6 +57,16 @@ impl<B:Backend> FullyShardedWeightedGradientsRecord<B> {
     /// Migrate one complete original rank set without another gradient or normalizer SUM.
     /// Each saved denominator is already global and must match exactly; it is copied once.
     pub fn reshard(records:&[Self],target_rank:u32,target_world:u32,device:&B::Device) -> Result<Self,RecorderError> {
+        let first=Self::validate_migration_weights(records)?;
+        let windows=records.iter().map(|record|record.window.clone()).collect::<Vec<_>>();
+        let window=FullyShardedGradientsRecord::reshard::<B>(&windows,target_rank,target_world,device)?;
+        Ok(Self::with_migrated_window(first,window,device))
+    }
+    pub(super) fn window_record(&self) -> &FullyShardedGradientsRecord {&self.window}
+    pub(super) fn with_migrated_window(source:&Self,window:FullyShardedGradientsRecord,device:&B::Device) -> Self {
+        Self {window,global_weight:source.global_weight.clone().to_device(device)}
+    }
+    pub(super) fn validate_migration_weights(records:&[Self]) -> Result<&Self,RecorderError> {
         let invalid=|message:&str|RecorderError::Unknown(message.to_string());
         let first=records.first().ok_or_else(||invalid("complete original weighted pending-gradient rank set required"))?;
         let expected=first.global_weight.clone().into_data().iter::<f64>().next().ok_or_else(||invalid("actual global weight scalar required"))?;
@@ -68,9 +78,7 @@ impl<B:Backend> FullyShardedWeightedGradientsRecord<B> {
             let weight=record.global_weight.clone().into_data().iter::<f64>().next().ok_or_else(||invalid("actual global weight scalar required"))?;
             if weight!=expected || (record.window.state.microbatches==0 && weight!=0.0) {return Err(invalid("actual global weights differ across saved rank windows"));}
         }
-        let windows=records.iter().map(|record|record.window.clone()).collect::<Vec<_>>();
-        let window=FullyShardedGradientsRecord::reshard::<B>(&windows,target_rank,target_world,device)?;
-        Ok(Self {window,global_weight:first.global_weight.clone().to_device(device)})
+        Ok(first)
     }
 }
 

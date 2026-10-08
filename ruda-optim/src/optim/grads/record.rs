@@ -20,6 +20,41 @@ pub struct GradientsParamsRecord {
     gradients: Vec<(u64, DType, TensorData)>,
 }
 
+impl GradientsParamsRecord {
+    /// Original archived identities without numerical conversion or device upload.
+    /// Reject ambiguous duplicate entries before selecting a rank-local subset.
+    pub fn parameter_ids(&self) -> Result<Vec<ParamId>,RecorderError> {
+        let mut seen=HashSet::new();let mut ids=Vec::with_capacity(self.gradients.len());
+        for (id,_,_) in &self.gradients {
+            if !seen.insert(*id) {return Err(RecorderError::Unknown(format!("Duplicate gradient parameter ID {id}")));}
+            ids.push(ParamId::from(*id));
+        }
+        Ok(ids)
+    }
+
+    /// Original derivative dtype and archived dimensions, without converting
+    /// numerical data. The archive's precision settings may have changed its
+    /// payload dtype; this reports the native dtype restored by `from_record`.
+    pub fn parameter_metadata(&self,parameter:ParamId) -> Result<Option<(DType,Vec<usize>)>,RecorderError> {
+        self.parameter_ids()?;
+        Ok(self.gradients.iter().find(|entry|entry.0==parameter.val())
+            .map(|(_,dtype,data)|(*dtype,data.shape.iter().copied().collect())))
+    }
+
+    /// Copy only explicitly selected original archive entries, retaining actual
+    /// shape/dtype/data bits and order. No missing derivative is synthesized and
+    /// no work/master precision setting is applied. Unselected values are not
+    /// uploaded, which permits per-parameter migration of heterogeneous records.
+    pub fn select_parameters(&self,parameters:&[ParamId]) -> Result<Self,RecorderError> {
+        self.parameter_ids()?;
+        let selected=parameters.iter().map(ParamId::val).collect::<HashSet<_>>();
+        if selected.len()!=parameters.len() {
+            return Err(RecorderError::Unknown("Duplicate selected gradient parameter ID".into()));
+        }
+        Ok(Self {gradients:self.gradients.iter().filter(|entry|selected.contains(&entry.0)).cloned().collect()})
+    }
+}
+
 struct RestoreDevices<'a, B: AutodiffBackend> {
     expected: &'a HashMap<ParamId, Vec<usize>>,
     devices: HashMap<ParamId, (B::Device, DType)>,
