@@ -4,7 +4,7 @@ members = ["ruda-ascend-kernels", "ruda/tests/consumer", "ruda-torch", "ruda-hip
 resolver = "3"
 
 [workspace.package]
-version = "0.1.59"
+version = "0.1.60"
 edition = "2024"
 
 [workspace.lints.rust]
