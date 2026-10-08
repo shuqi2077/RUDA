@@ -235,6 +235,34 @@ projected_paired_hidden!(Autodiff<B,S>,[B:Backend,S:CheckpointStrategy],gather,f
 
 impl<B:Backend,S:CheckpointStrategy,P:GatherTransformerProjection<Autodiff<B,S>,B>> FullyShardedProjectedEncoderDecoderModel<Autodiff<B,S>,P>
     where P::Gathered:TransformerProjection<Autodiff<B,S>> {
+    /// Complete actual native scoped paired fine tuning with independent source/self/cross policies.
+    pub fn forward_causal_with_positions<C,E,F,G>(&self,source:FullyShardedTransformerInput<Autodiff<B,S>>,target:FullyShardedTransformerInput<Autodiff<B,S>>,labels:Tensor<Autodiff<B,S>,2,Int>,
+        source_masks:DenseAttentionMask<Autodiff<B,S>>,source_options:DenseAttentionOptions,self_masks:DenseAttentionMask<Autodiff<B,S>>,self_options:DenseAttentionOptions,
+        cross_masks:DenseAttentionMask<Autodiff<B,S>>,cross_options:DenseAttentionOptions,criterion:&CausalCrossEntropyConfig,label_smoothing:f64,communicator:C,
+        mut source_positions:E,mut self_positions:F,mut cross_positions:G)
+        -> Result<FullyShardedLoss<B,S>,FullyShardedProjectedTrainingError<C::Error,<P::Gathered as TransformerProjection<Autodiff<B,S>>>::Error>>
+        where C:IntegerTensorCollective<B>,E:FnMut(usize,Tensor<Autodiff<B,S>,4>,Tensor<Autodiff<B,S>,4>)->(Tensor<Autodiff<B,S>,4>,Tensor<Autodiff<B,S>,4>),
+            F:FnMut(usize,Tensor<Autodiff<B,S>,4>,Tensor<Autodiff<B,S>,4>)->(Tensor<Autodiff<B,S>,4>,Tensor<Autodiff<B,S>,4>),
+            G:FnMut(usize,Tensor<Autodiff<B,S>,4>,Tensor<Autodiff<B,S>,4>)->(Tensor<Autodiff<B,S>,4>,Tensor<Autodiff<B,S>,4>) {
+        self.forward_causal_with(source,target,labels,criterion,label_smoothing,communicator,
+            |index,block,hidden,transport|block.forward(hidden,source_masks.clone(),source_options,transport,|query,key|source_positions(index,query,key)),
+            |index,layer,hidden,memory,transport|layer.forward(hidden,memory,self_masks.clone(),self_options,cross_masks.clone(),cross_options,transport,
+                |query,key|self_positions(index,query,key),|query,key|cross_positions(index,query,key)))
+    }
+    /// Complete native independent-document packed paired objective through the same original loss scope.
+    pub fn forward_packed_causal_with_positions<C,E,F,G>(&self,source:FullyShardedTransformerInput<Autodiff<B,S>,1>,target:FullyShardedTransformerInput<Autodiff<B,S>,1>,labels:Tensor<Autodiff<B,S>,1,Int>,
+        source_layout:&PackedSequenceLayout,target_layout:&PackedSequenceLayout,source_masks:Option<&[PackedDocumentAttentionMask<Autodiff<B,S>>]>,source_options:PackedAttentionOptions,
+        self_masks:Option<&[PackedDocumentAttentionMask<Autodiff<B,S>>]>,self_options:PackedAttentionOptions,cross_masks:Option<&[PackedDocumentAttentionMask<Autodiff<B,S>>]>,cross_options:PackedAttentionOptions,
+        criterion:&CausalCrossEntropyConfig,label_smoothing:f64,communicator:C,mut source_positions:E,mut self_positions:F,mut cross_positions:G)
+        -> Result<FullyShardedLoss<B,S>,FullyShardedProjectedTrainingError<C::Error,<P::Gathered as TransformerProjection<Autodiff<B,S>>>::Error>>
+        where C:IntegerTensorCollective<B>,E:FnMut(usize,Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>)->(Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>),
+            F:FnMut(usize,Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>)->(Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>),
+            G:FnMut(usize,Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>)->(Tensor<Autodiff<B,S>,3>,Tensor<Autodiff<B,S>,3>) {
+        self.forward_packed_causal_with(source,target,labels,source_layout,target_layout,criterion,label_smoothing,communicator,
+            |index,block,hidden,transport|block.forward_packed(hidden,source_layout,source_masks,source_options,transport,|query,key|source_positions(index,query,key)),
+            |index,layer,hidden,memory,transport|layer.forward_packed(hidden,memory,target_layout,source_layout,self_masks,self_options,cross_masks,cross_options,transport,
+                |query,key|self_positions(index,query,key),|query,key|cross_positions(index,query,key)))
+    }
     /// Complete actual packed/floating paired model training through one native loss scope.
     /// Encoder-memory gradients remain intact; already aligned labels use criterion.shift=false.
     pub fn forward_causal_with<C,E,F>(&self,source:FullyShardedTransformerInput<Autodiff<B,S>>,target:FullyShardedTransformerInput<Autodiff<B,S>>,labels:Tensor<Autodiff<B,S>,2,Int>,

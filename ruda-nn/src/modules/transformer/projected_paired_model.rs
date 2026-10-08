@@ -1,5 +1,6 @@
 use ruda_model::{module::Module,tensor::{FloatDType,Int,Tensor,backend::Backend}};
-use crate::{attention::PackedSequenceLayout,cache::{EncoderDecoderKvCache,ProjectedKvCache},loss::{CausalCrossEntropyConfig,CausalLoss}};
+use crate::{attention::{PackedSequenceLayout,DenseAttentionMask,DenseAttentionOptions,PackedDocumentAttentionMask,PackedAttentionOptions},
+    cache::{EncoderDecoderKvCache,ProjectedKvCache},loss::{CausalCrossEntropyConfig,CausalLoss}};
 use super::{TransformerProjectionShape,TransformerProjection,TransformerEmbeddings,DenseTransformerNorm,
     ProjectedTransformerBlock,ProjectedTransformerStack,ProjectedTransformerHead,ProjectedEncoderDecoderLayer,ProjectedEncoderDecoderStack};
 
@@ -83,6 +84,52 @@ impl<B:Backend,P:TransformerProjectionShape<B>> ProjectedEncoderDecoderModel<B,P
     }
 }
 impl<B:Backend,P:TransformerProjection<B>> ProjectedEncoderDecoderModel<B,P> {
+    /// Complete actual native paired target logits with independent source/self/cross masks and positions.
+    pub fn forward_with_positions<E,F,G>(&self,source:ProjectedTransformerInput<B>,target:ProjectedTransformerInput<B>,source_masks:DenseAttentionMask<B>,
+        source_options:DenseAttentionOptions,self_masks:DenseAttentionMask<B>,self_options:DenseAttentionOptions,cross_masks:DenseAttentionMask<B>,
+        cross_options:DenseAttentionOptions,mut source_positions:E,mut self_positions:F,mut cross_positions:G) -> Result<Tensor<B,3>,P::Error>
+        where E:FnMut(usize,Tensor<B,4>,Tensor<B,4>)->(Tensor<B,4>,Tensor<B,4>),F:FnMut(usize,Tensor<B,4>,Tensor<B,4>)->(Tensor<B,4>,Tensor<B,4>),
+            G:FnMut(usize,Tensor<B,4>,Tensor<B,4>)->(Tensor<B,4>,Tensor<B,4>) {
+        self.forward_with(source,target,|index,block,hidden|block.forward_with_positions(hidden,source_masks.clone(),source_options,|query,key|source_positions(index,query,key)),
+            |index,layer,hidden,memory|layer.forward_with_positions(hidden,memory,self_masks.clone(),self_options,cross_masks.clone(),cross_options,
+                |query,key|self_positions(index,query,key),|query,key|cross_positions(index,query,key)))
+    }
+    /// Complete actual native paired chunked training with independent source/self/cross policies.
+    pub fn forward_causal_with_positions<E,F,G>(&self,source:ProjectedTransformerInput<B>,target:ProjectedTransformerInput<B>,labels:Tensor<B,2,Int>,
+        source_masks:DenseAttentionMask<B>,source_options:DenseAttentionOptions,self_masks:DenseAttentionMask<B>,self_options:DenseAttentionOptions,
+        cross_masks:DenseAttentionMask<B>,cross_options:DenseAttentionOptions,criterion:&CausalCrossEntropyConfig,label_smoothing:f64,
+        mut source_positions:E,mut self_positions:F,mut cross_positions:G) -> Result<CausalLoss<B>,P::Error>
+        where E:FnMut(usize,Tensor<B,4>,Tensor<B,4>)->(Tensor<B,4>,Tensor<B,4>),F:FnMut(usize,Tensor<B,4>,Tensor<B,4>)->(Tensor<B,4>,Tensor<B,4>),
+            G:FnMut(usize,Tensor<B,4>,Tensor<B,4>)->(Tensor<B,4>,Tensor<B,4>) {
+        self.forward_causal_with(source,target,labels,criterion,label_smoothing,
+            |index,block,hidden|block.forward_with_positions(hidden,source_masks.clone(),source_options,|query,key|source_positions(index,query,key)),
+            |index,layer,hidden,memory|layer.forward_with_positions(hidden,memory,self_masks.clone(),self_options,cross_masks.clone(),cross_options,
+                |query,key|self_positions(index,query,key),|query,key|cross_positions(index,query,key)))
+    }
+    /// Complete packed native paired target logits with independent source/self/cross document masks.
+    pub fn forward_packed_with_positions<E,F,G>(&self,source:ProjectedTransformerInput<B,1>,target:ProjectedTransformerInput<B,1>,source_layout:&PackedSequenceLayout,
+        target_layout:&PackedSequenceLayout,source_masks:Option<&[PackedDocumentAttentionMask<B>]>,source_options:PackedAttentionOptions,
+        self_masks:Option<&[PackedDocumentAttentionMask<B>]>,self_options:PackedAttentionOptions,cross_masks:Option<&[PackedDocumentAttentionMask<B>]>,
+        cross_options:PackedAttentionOptions,mut source_positions:E,mut self_positions:F,mut cross_positions:G) -> Result<Tensor<B,2>,P::Error>
+        where E:FnMut(usize,Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>),F:FnMut(usize,Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>),
+            G:FnMut(usize,Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
+        self.forward_packed_with(source,target,source_layout,target_layout,
+            |index,block,hidden|block.forward_packed_with_positions(hidden,source_layout,source_masks,source_options,|query,key|source_positions(index,query,key)),
+            |index,layer,hidden,memory|layer.forward_packed_with_positions(hidden,memory,target_layout,source_layout,self_masks,self_options,cross_masks,cross_options,
+                |query,key|self_positions(index,query,key),|query,key|cross_positions(index,query,key)))
+    }
+    /// Complete native packed paired chunked objective, retaining explicit actual target label boundaries.
+    pub fn forward_packed_causal_with_positions<E,F,G>(&self,source:ProjectedTransformerInput<B,1>,target:ProjectedTransformerInput<B,1>,labels:Tensor<B,1,Int>,
+        source_layout:&PackedSequenceLayout,target_layout:&PackedSequenceLayout,source_masks:Option<&[PackedDocumentAttentionMask<B>]>,source_options:PackedAttentionOptions,
+        self_masks:Option<&[PackedDocumentAttentionMask<B>]>,self_options:PackedAttentionOptions,cross_masks:Option<&[PackedDocumentAttentionMask<B>]>,cross_options:PackedAttentionOptions,
+        criterion:&CausalCrossEntropyConfig,label_smoothing:f64,mut source_positions:E,mut self_positions:F,mut cross_positions:G) -> Result<CausalLoss<B>,P::Error>
+        where E:FnMut(usize,Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>),F:FnMut(usize,Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>),
+            G:FnMut(usize,Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
+        self.forward_packed_causal_with(source,target,labels,source_layout,target_layout,criterion,label_smoothing,
+            |index,block,hidden|block.forward_packed_with_positions(hidden,source_layout,source_masks,source_options,|query,key|source_positions(index,query,key)),
+            |index,layer,hidden,memory|layer.forward_packed_with_positions(hidden,memory,target_layout,source_layout,self_masks,self_options,cross_masks,cross_options,
+                |query,key|self_positions(index,query,key),|query,key|cross_positions(index,query,key)))
+    }
     /// Encode actual source rows once, preserving the original memory graph for target backward.
     pub fn encode_with<E>(&self,input:ProjectedTransformerInput<B>,encoder:E) -> Result<Tensor<B,3>,P::Error>
         where E:FnMut(usize,&ProjectedTransformerBlock<B,P>,Tensor<B,3>)->Result<Tensor<B,3>,P::Error> {
