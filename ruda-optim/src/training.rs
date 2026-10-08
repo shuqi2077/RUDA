@@ -16,6 +16,7 @@ mod model_state;
 pub use model_state::{ModelStateTrainingRecord,TrainableParameterContract,InnerBackendRecord,ModelGroupTrainingRecord};
 mod fully_sharded;
 pub use fully_sharded::{RestoredFullyShardedTraining,RestoredFullyShardedWeightedTraining};
+mod factory;
 
 /// One record containing the trainable state and a caller-defined continuation record.
 ///
