@@ -30,6 +30,7 @@ fn key(binding:&ExpertModelParameterBinding) -> BindingKey {(binding.id,binding.
 fn invalid(reason:&str) -> RecorderError {RecorderError::Unknown(format!("Invalid expert-owned model state: {reason}"))}
 enum StoredValue<B:Backend> {
     Float(B::FloatTensorPrimitive),Integer(B::IntTensorPrimitive),Boolean(B::BoolTensorPrimitive),
+    Archived(ExpertModelParameterKind,TensorData),
 }
 impl<B:Backend> StoredValue<B> {
     fn into_data(self) -> TensorData {
@@ -40,6 +41,7 @@ impl<B:Backend> StoredValue<B> {
             Self::Float(value)=>B::float_into_data(value).await,
             Self::Integer(value)=>B::int_into_data(value).await,
             Self::Boolean(value)=>B::bool_into_data(value).await,
+            Self::Archived(_,data)=>return Ok(data),
         }).map_err(|error|invalid(&format!("native parameter readback failed: {error:?}")))
     }
     fn from_data(kind:ExpertModelParameterKind,data:TensorData,device:&B::Device) -> Self {match kind {
@@ -162,10 +164,13 @@ impl ExpertParallelModelSnapshot {
     pub fn validate_for<B:Backend,P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>>(&self,model:&ExpertParallelTransformerModel<B,P,E>,contract_id:&str) -> Result<(),RecorderError> {
         validate_metadata(self.version,&self.contract_id,self.layers,&self.ownership,&self.bindings,self.values.len(),model,contract_id)
     }
-    /// Validate before native uploads, then restore actual saved IDs/storage into the prepared original architecture.
+    /// Validate first, then upload each actual parameter payload only when its original load mapper is reached.
+    /// Does not pre-upload a second complete rank-local model; per-alias load mappers remain independent.
     pub fn restore_into<B:Backend,P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>>(self,model:ExpertParallelTransformerModel<B,P,E>,contract_id:&str,device:&B::Device)
         -> Result<ExpertParallelTransformerModel<B,P,E>,RecorderError> {
-        self.validate_for(&model,contract_id)?;self.into_record(device).restore_into(model,contract_id)
+        self.validate_for(&model,contract_id)?;
+        let values=self.values.into_iter().map(|(kind,data)|StoredValue::Archived(kind,data)).collect();
+        restore_values(model,self.bindings,values,Some(device.clone()))
     }
     /// Upload original native payload storage on an explicitly selected backend/device for checked restoration.
     pub fn into_record<B:Backend>(self,device:&B::Device) -> ExpertParallelModelStateRecord<B> {
@@ -221,15 +226,19 @@ impl<B:Backend> ExpertParallelModelStateRecord<B> {
     pub fn restore_into<P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>>(self,model:ExpertParallelTransformerModel<B,P,E>,contract_id:&str)
         -> Result<ExpertParallelTransformerModel<B,P,E>,RecorderError> {
         self.validate_for(&model,contract_id)?;
-        let entries=self.bindings.into_iter().zip(self.values).map(|(binding,value)|(binding.path.clone(),(binding,value))).collect();
-        let mut restore=Restore {path:Vec::new(),entries,canonical:BTreeMap::new(),error:None,seen:BTreeSet::new()};let model=model.map(&mut restore);
-        if let Some(error)=restore.error {return Err(error);}
-        if restore.seen.len()!=restore.entries.len() {return Err(invalid("model mapper omitted an actual parameter path"));}Ok(model)
+        restore_values(model,self.bindings,self.values,None)
     }
+}
+fn restore_values<B:Backend,P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>>(model:ExpertParallelTransformerModel<B,P,E>,
+    bindings:Vec<ExpertModelParameterBinding>,values:Vec<StoredValue<B>>,upload_device:Option<B::Device>) -> Result<ExpertParallelTransformerModel<B,P,E>,RecorderError> {
+    let entries=bindings.into_iter().zip(values).map(|(binding,value)|(binding.path.clone(),(binding,value))).collect();
+    let mut restore=Restore {path:Vec::new(),entries,canonical:BTreeMap::new(),error:None,seen:BTreeSet::new(),upload_device};let model=model.map(&mut restore);
+    if let Some(error)=restore.error {return Err(error);}
+    if !restore.entries.is_empty() {return Err(invalid("model mapper omitted an actual parameter path"));}Ok(model)
 }
 struct Restore<B:Backend> {
     path:Vec<String>,entries:BTreeMap<Vec<String>,(ExpertModelParameterBinding,StoredValue<B>)>,
-    canonical:BTreeMap<BindingKey,StoredValue<B>>,error:Option<RecorderError>,seen:BTreeSet<Vec<String>>,
+    canonical:BTreeMap<BindingKey,StoredValue<B>>,error:Option<RecorderError>,seen:BTreeSet<Vec<String>>,upload_device:Option<B::Device>,
 }
 impl<B:Backend> Restore<B> {
     fn binding(&mut self,kind:ExpertModelParameterKind) -> Option<ExpertModelParameterBinding> {
@@ -237,14 +246,22 @@ impl<B:Backend> Restore<B> {
         if binding.kind!=kind {self.error=Some(invalid("parameter mapper changed the validated kind"));return None;}
         self.seen.insert(self.path.clone());Some(binding.clone())
     }
+    fn take_payload(&mut self,kind:ExpertModelParameterKind) -> Option<StoredValue<B>> {
+        let (_,value)=self.entries.remove(&self.path).expect("validated native parameter path");
+        if let StoredValue::Archived(saved,data)=value {
+            if saved!=kind {self.error=Some(invalid("archived parameter payload kind differs"));return None;}
+            let device=self.upload_device.as_ref().expect("actual archive upload device");
+            Some(StoredValue::from_data(saved,data,device))
+        } else {Some(value)}
+    }
 }
 impl<B:Backend> ModuleMapper<B> for Restore<B> {
     fn enter_module(&mut self,name:&str,_kind:&str) {self.path.push(name.into());}
     fn exit_module(&mut self,_name:&str,_kind:&str) {self.path.pop();}
     fn map_float<const D:usize>(&mut self,parameter:Param<Tensor<B,D>>) -> Param<Tensor<B,D>> {
         let Some(binding)=self.binding(ExpertModelParameterKind::Float) else {return parameter;};
-        let StoredValue::Float(value)=&self.entries[&self.path].1 else {self.error=Some(invalid("saved floating payload kind differs"));return parameter;};
-        let loaded=parameter.transform_for_load(Tensor::from_primitive(TensorPrimitive::Float(value.clone())),ParamId::from(binding.id));
+        let Some(StoredValue::Float(value))=self.take_payload(binding.kind) else {self.error=Some(invalid("saved floating payload kind differs"));return parameter;};
+        let loaded=parameter.transform_for_load(Tensor::from_primitive(TensorPrimitive::Float(value)),ParamId::from(binding.id));
         let (id,value,mapper)=loaded.consume();let value=value.detach().set_require_grad(binding.trainable);
         if value.dims().to_vec()!=binding.shape || value.dtype()!=binding.dtype || value.is_require_grad()!=binding.trainable {
             self.error=Some(invalid("floating load mapper changed source shape/storage/flags"));return Param::from_mapped_value(id,value,mapper);}
@@ -255,8 +272,8 @@ impl<B:Backend> ModuleMapper<B> for Restore<B> {
     }
     fn map_int<const D:usize>(&mut self,parameter:Param<Tensor<B,D,Int>>) -> Param<Tensor<B,D,Int>> {
         let Some(binding)=self.binding(ExpertModelParameterKind::Integer) else {return parameter;};
-        let StoredValue::Integer(value)=&self.entries[&self.path].1 else {self.error=Some(invalid("saved integer payload kind differs"));return parameter;};
-        let loaded=parameter.transform_for_load(Tensor::from_primitive(value.clone()),ParamId::from(binding.id));let (id,value,mapper)=loaded.consume();
+        let Some(StoredValue::Integer(value))=self.take_payload(binding.kind) else {self.error=Some(invalid("saved integer payload kind differs"));return parameter;};
+        let loaded=parameter.transform_for_load(Tensor::from_primitive(value),ParamId::from(binding.id));let (id,value,mapper)=loaded.consume();
         if value.dims().to_vec()!=binding.shape || value.dtype()!=binding.dtype {self.error=Some(invalid("integer load mapper changed source shape/storage"));return Param::from_mapped_value(id,value,mapper);}
         let primitive=match self.canonical.get(&key(&binding)) {
             Some(StoredValue::Integer(previous))=>previous.clone(),Some(_)=>unreachable!("validated integer canonical kind"),
@@ -265,8 +282,8 @@ impl<B:Backend> ModuleMapper<B> for Restore<B> {
     }
     fn map_bool<const D:usize>(&mut self,parameter:Param<Tensor<B,D,Bool>>) -> Param<Tensor<B,D,Bool>> {
         let Some(binding)=self.binding(ExpertModelParameterKind::Boolean) else {return parameter;};
-        let StoredValue::Boolean(value)=&self.entries[&self.path].1 else {self.error=Some(invalid("saved boolean payload kind differs"));return parameter;};
-        let loaded=parameter.transform_for_load(Tensor::from_primitive(value.clone()),ParamId::from(binding.id));let (id,value,mapper)=loaded.consume();
+        let Some(StoredValue::Boolean(value))=self.take_payload(binding.kind) else {self.error=Some(invalid("saved boolean payload kind differs"));return parameter;};
+        let loaded=parameter.transform_for_load(Tensor::from_primitive(value),ParamId::from(binding.id));let (id,value,mapper)=loaded.consume();
         if value.dims().to_vec()!=binding.shape || value.dtype()!=binding.dtype {self.error=Some(invalid("boolean load mapper changed source shape/storage"));return Param::from_mapped_value(id,value,mapper);}
         let primitive=match self.canonical.get(&key(&binding)) {
             Some(StoredValue::Boolean(previous))=>previous.clone(),Some(_)=>unreachable!("validated boolean canonical kind"),
