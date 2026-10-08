@@ -79,6 +79,16 @@ impl Interpolate2dConfig {
     }
 }
 impl Interpolate2d {
+    /// Resize to explicit height and width for this call without changing the layer.
+    pub fn forward_with_output_size<B: Backend>(
+        &self,
+        input: Tensor<B, 4>,
+        output_size: [usize; 2],
+    ) -> Tensor<B, 4> {
+        interpolate(input, output_size,
+            InterpolateOptions::new(self.mode.clone().into()).with_align_corners(self.align_corners))
+    }
+
     /// Performs the forward pass of the interpolation module
     ///
     /// # Arguments

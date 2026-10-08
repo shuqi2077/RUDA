@@ -1,6 +1,6 @@
 use alloc::format;
 
-use ruda_model::tensor::module::interpolate;
+use ruda_model::tensor::module::{interpolate, interpolate1d};
 
 
 use ruda_model::config::Config;
@@ -79,6 +79,16 @@ impl Interpolate1dConfig {
 }
 
 impl Interpolate1d {
+    /// Resize to an explicit length for this call without changing the layer.
+    pub fn forward_with_output_size<B: Backend>(
+        &self,
+        input: Tensor<B, 3>,
+        output_size: usize,
+    ) -> Tensor<B, 3> {
+        interpolate1d(input, output_size,
+            InterpolateOptions::new(self.mode.clone().into()).with_align_corners(self.align_corners))
+    }
+
     /// Performs the forward pass of the 1D interpolation module
     ///
     /// # Arguments

@@ -49,6 +49,16 @@ impl Interpolate3dConfig {
 }
 
 impl Interpolate3d {
+    /// Resize to explicit spatial extents for this call without changing the layer.
+    pub fn forward_with_output_size<B: Backend>(
+        &self,
+        input: Tensor<B, 5>,
+        output_size: [usize; 3],
+    ) -> Tensor<B, 5> {
+        interpolate3d(input, output_size,
+            InterpolateOptions::new(self.mode.clone().into()).with_align_corners(self.align_corners))
+    }
+
     /// Resize a volume on its native backend, preserving its gradient graph.
     pub fn forward<B: Backend>(&self, input: Tensor<B, 5>) -> Tensor<B, 5> {
         let output = if let Some(size) = self.output_size {
