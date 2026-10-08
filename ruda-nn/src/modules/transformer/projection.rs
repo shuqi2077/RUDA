@@ -4,6 +4,16 @@ use crate::{Linear,LoRALinear,FrozenNf4Linear,Nf4LoRALinear,FrozenAwqLinear,AwqL
 use super::{AwqTransformerProjection,AwqGroupedQueryAttention,AwqFeedForward,AwqTransformerBlock,
     AwqTransformerStack,AwqTransformerHead,AwqTransformerModel};
 
+/// Backend-bound identity for the actual stored projection type.
+/// The blanket implementation retains the original module value and public field layout.
+pub trait TransformerProjectionStorage<B:Backend>:Module<B> {
+    /// The original stored module, without a wrapper or extra persistent field.
+    type Stored:Module<B>;
+}
+impl<B:Backend,P:Module<B>> TransformerProjectionStorage<B> for P {type Stored=P;}
+/// Actual projection value while retaining the backend type in generic field metadata.
+pub type BackendProjection<B,P> = <P as TransformerProjectionStorage<B>>::Stored;
+
 /// Logical projection geometry independent of its execution extension or storage format.
 pub trait TransformerProjectionShape<B:Backend>:Module<B>+ModuleDisplay {
     /// Actual logical `[input,output]` widths, without decoding packed parameters.

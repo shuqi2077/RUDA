@@ -5,7 +5,7 @@ use crate::{Linear,LoRALinear,FrozenAwqLinear,AwqLoRALinear,Dropout,activation::
         dense_scaled_dot_product_attention,packed_scaled_dot_product_attention,packed_scaled_dot_product_attention_masked},
     cache::{ProjectedKvCache,TransformerKvCache}};
 use super::DenseTransformerNorm;
-use super::{TransformerProjectionShape,TransformerProjection};
+use super::{TransformerProjectionShape,TransformerProjection,BackendProjection};
 use super::dense::try_residual_branch;
 
 /// Explicit per-projection dense, dense-LoRA, original packed AWQ or AWQ-LoRA
@@ -39,17 +39,14 @@ impl<B:FrozenAwqOps> AwqTransformerProjection<B> {
 /// Model-independent GQA/MQA/self/cross attention with explicitly mixed projection storage.
 #[derive(Module,Debug)]
 pub struct AwqGroupedQueryAttention<B:Backend,P:Module<B>=AwqTransformerProjection<B>> {
-    /// Backend type identity; contains no tensor or persistent parameter.
-    #[module(skip)]
-    pub backend:core::marker::PhantomData<B>,
     /// Actual caller-selected query projection.
-    pub query:P,
+    pub query:BackendProjection<B,P>,
     /// Actual caller-selected memory key projection.
-    pub key:P,
+    pub key:BackendProjection<B,P>,
     /// Actual caller-selected memory value projection.
-    pub value:P,
+    pub value:BackendProjection<B,P>,
     /// Actual caller-selected context/output projection.
-    pub output:P,
+    pub output:BackendProjection<B,P>,
     /// Original attention-probability dropout.
     pub dropout:Dropout,
     /// Original query head count.
@@ -71,7 +68,7 @@ impl<B:Backend,P:TransformerProjectionShape<B>> AwqGroupedQueryAttention<B,P> {
         assert_eq!(value.dimensions(),key.dimensions(),"key/value projection geometry differs");
         assert_eq!(output.dimensions(),[query_width,input],"attention output/residual width differs");
         assert!(dropout.prob.is_finite() && (0.0..=1.0).contains(&dropout.prob),"invalid attention dropout");
-        Self {backend:core::marker::PhantomData,query,key,value,output,dropout,query_heads,kv_heads,head_dimension}
+        Self {query,key,value,output,dropout,query_heads,kv_heads,head_dimension}
     }
 }
 impl<B:Backend,P:TransformerProjection<B>> AwqGroupedQueryAttention<B,P> {

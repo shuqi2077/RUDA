@@ -1,6 +1,6 @@
 use super::*;
 use ruda_model::tensor::{Bool,IntegerTensorCollective};
-use crate::transformer::TransformerProjection;
+use crate::transformer::{TransformerProjection,BackendProjection};
 use crate::{attention::{DenseAttentionMask,DenseAttentionOptions,PackedSequenceLayout,PackedAttentionOptions,PackedDocumentAttentionMask},
     cache::{ProjectedKvCache,TransformerKvCache},
     transformer::{AwqTransformerProjection,AwqGroupedQueryAttention,AwqFeedForward,AwqTransformerBlock,AwqTransformerStack}};
@@ -21,17 +21,14 @@ pub enum FullyShardedAwqProjection<B:Backend> {
 /// Actual native mixed-projection GQA with only rank-local persistent parameters.
 #[derive(Module,Debug)]
 pub struct FullyShardedAwqAttention<B:Backend,P:Module<B>=FullyShardedAwqProjection<B>> {
-    /// Backend identity, without tensor storage or persistent parameters.
-    #[module(skip)]
-    pub backend:core::marker::PhantomData<B>,
     /// Original selected query projection.
-    pub query:P,
+    pub query:BackendProjection<B,P>,
     /// Original selected key projection.
-    pub key:P,
+    pub key:BackendProjection<B,P>,
     /// Original selected value projection.
-    pub value:P,
+    pub value:BackendProjection<B,P>,
     /// Original selected output projection.
-    pub output:P,
+    pub output:BackendProjection<B,P>,
     /// Original attention probability dropout.
     pub dropout:crate::Dropout,
     /// Actual original query head count.
@@ -86,7 +83,7 @@ impl<B:Backend> ShardingContext<B> {
     pub fn awq_projection<P:ShardTransformerProjection<B>>(&mut self,projection:P) -> P::Sharded {projection.shard(self)}
     /// Preserve every actual original Q/K/V/output leaf, dropout and head geometry.
     pub fn awq_attention<P:ShardTransformerProjection<B>>(&mut self,attention:AwqGroupedQueryAttention<B,P>) -> FullyShardedAwqAttention<B,P::Sharded> {
-        FullyShardedAwqAttention {backend:core::marker::PhantomData,query:self.awq_projection(attention.query),key:self.awq_projection(attention.key),
+        FullyShardedAwqAttention {query:self.awq_projection(attention.query),key:self.awq_projection(attention.key),
             value:self.awq_projection(attention.value),output:self.awq_projection(attention.output),dropout:attention.dropout,
             query_heads:attention.query_heads,kv_heads:attention.kv_heads,head_dimension:attention.head_dimension}
     }
