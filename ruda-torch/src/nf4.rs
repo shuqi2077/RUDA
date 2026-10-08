@@ -41,7 +41,7 @@ pub unsafe extern "C" fn ruda_torch_nf4_matmul(
         macro_rules! launch {
             ($f:ty, $o:ty) => { unsafe { gemm::launch::<$f, $o, CudaRuntime>(
                 &c, grid, RudaDim::new_1d(32), input.arg(), packed.arg(), scales.arg(), table.arg(),
-                out.arg(), input.shape[0] as u32, columns, width, block, backward) } };
+                out.arg(), input.shape[0] as u32, columns, width, block, 0, backward) } };
         }
         match (input.dtype, backward) {
             (1, false) => launch!(f16, f16), (1, true) => launch!(f16, f32),
