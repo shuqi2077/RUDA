@@ -80,6 +80,34 @@ where
         self
     }
 
+    /// Update only explicitly selected original parameter IDs and return all other derivatives.
+    ///
+    /// Suitable for independently owned expert/non-expert optimizer groups over
+    /// one full model. Unselected parameters are returned without materializing
+    /// lazy values or changing flags, record mappers, devices or optimizer state.
+    /// Selected tied occurrences share one update and state, just as in `step`.
+    /// No reduction, scheduler or accumulation reset is implicit. Unknown IDs
+    /// are not mapped; repeated IDs select the same parameter only once.
+    pub fn step_selected(
+        &mut self,
+        lr: LearningRate,
+        module: M,
+        grads: GradientsParams,
+        parameter_ids: &[ParamId],
+    ) -> (M, GradientsParams) {
+        let (selected, remaining) = grads.partition::<B::InnerBackend>(parameter_ids);
+        let mut selected: GradAdaptor = selected.into();
+        let mut mapper = SimpleOptimizerMapper::<B, O>::new(
+            &self.optim,
+            &mut self.records,
+            &mut selected,
+            lr,
+            self.grad_clipping.as_ref(),
+        );
+        mapper.selection = Some(parameter_ids);
+        (module.map(&mut mapper), remaining)
+    }
+
     fn step_common(&mut self, lr: LearningRate, module: M, mut grads: GradAdaptor) -> M {
         module.map(&mut SimpleOptimizerMapper::<B, O>::new(
             &self.optim,
@@ -170,6 +198,8 @@ where
     grad_clipping: Option<&'a GradientClipping>,
     #[new(default)]
     updated: TensorContainer<ParamId>,
+    #[new(default)]
+    selection: Option<&'a [ParamId]>,
 }
 
 impl<B, O> ModuleMapper<B> for SimpleOptimizerMapper<'_, B, O>
@@ -178,6 +208,9 @@ where
     O: SimpleOptimizer<B::InnerBackend>,
 {
     fn map_float<const D: usize>(&mut self, param: Param<Tensor<B, D>>) -> Param<Tensor<B, D>> {
+        if self.selection.is_some_and(|ids| !ids.contains(&param.id)) {
+            return param;
+        }
         if !param.is_require_grad() {
             return param;
         }

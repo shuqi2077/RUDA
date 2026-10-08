@@ -217,6 +217,10 @@ impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> SelectedD
         &self.parameters
     }
 
+    pub(super) fn into_parts(self) -> (DataParallel<B, C>, Vec<ParamId>) {
+        (self.inner, self.parameters)
+    }
+
     /// Reduce selected local loss-sum derivatives into a global weighted mean.
     ///
     /// `local_weight` is the effective sample/token count of the accumulation
@@ -286,28 +290,39 @@ impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> SelectedD
         fp32: bool,
         normalize: bool,
     ) -> Result<DataParallelGradients, DataParallelError> {
-        let mode = ReductionMode { normalize, fp32 };
-        let modes = gather::<B::InnerBackend, C, _>(&self.inner.communicator, &mode)?;
-        if modes.iter().any(|other| other != &mode) {
-            return Err(contract("selected replicas disagree on SUM/mean or FP32 reduction"));
-        }
-        let (selected, untouched) = gradients.partition::<B::InnerBackend>(&self.parameters);
-        let reduced = self.inner.reduce_inner(
-            model,
-            selected,
-            local_weight,
-            policy,
-            fp32,
-            Some(&self.parameters),
-            normalize,
-        )?;
-        let gradients = reduced
-            .gradients
-            .merge_disjoint::<B::InnerBackend>(untouched)
-            .map_err(|error| contract(error.to_string()))?;
-        Ok(DataParallelGradients {
-            gradients,
-            global_weight: reduced.global_weight,
-        })
+        reduce_selected(&self.inner, &self.parameters, model, gradients,
+            local_weight, policy, fp32, normalize)
     }
+}
+
+pub(super) fn reduce_selected<
+    B: AutodiffBackend,
+    C: DataParallelCommunicator<B::InnerBackend>,
+    M: AutodiffModule<B>,
+>(
+    session: &DataParallel<B, C>,
+    parameters: &[ParamId],
+    model: &M,
+    gradients: GradientsParams,
+    local_weight: u64,
+    policy: MissingGradientPolicy,
+    fp32: bool,
+    normalize: bool,
+) -> Result<DataParallelGradients, DataParallelError> {
+    let mode = ReductionMode { normalize, fp32 };
+    let modes = gather::<B::InnerBackend, C, _>(&session.communicator, &mode)?;
+    if modes.iter().any(|other| other != &mode) {
+        return Err(contract("selected replicas disagree on SUM/mean or FP32 reduction"));
+    }
+    let (selected, untouched) = gradients.partition::<B::InnerBackend>(parameters);
+    let reduced = session.reduce_inner(
+        model, selected, local_weight, policy, fp32, Some(parameters), normalize,
+    )?;
+    let gradients = reduced.gradients
+        .merge_disjoint::<B::InnerBackend>(untouched)
+        .map_err(|error| contract(error.to_string()))?;
+    Ok(DataParallelGradients {
+        gradients,
+        global_weight: reduced.global_weight,
+    })
 }

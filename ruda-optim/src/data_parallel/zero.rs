@@ -4,6 +4,9 @@ use super::*;
 use crate::{LearningRate, Optimizer, SimpleOptimizer, adaptor::OptimizerAdaptor};
 use ruda_model::record::{PrecisionSettings, Record};
 
+mod selected;
+pub use selected::{SelectedZero1, SelectedZero1Record, SelectedZero1Step};
+
 /// Rank-local optimizer-state sharding over an initialized replicated model.
 ///
 /// Ownership is explicit, in first-occurrence order of distinct trainable parameter IDs.
@@ -60,8 +63,18 @@ where
         optimizer: O,
         owners: Vec<u32>,
     ) -> Result<Self, DataParallelError> {
+        Self::from_session(session, model, optimizer, owners, None)
+    }
+
+    fn from_session(
+        session: DataParallel<B, C>,
+        model: &M,
+        optimizer: O,
+        owners: Vec<u32>,
+        selection: Option<&[ParamId]>,
+    ) -> Result<Self, DataParallelError> {
         let mut schema = Schema::new(session.synchronize_buffers);
-        model.visit(&mut schema);
+        let known = visit_selection::<B, _, _>(model, &mut schema, selection);
         let mut ids = Vec::new();
         for (parameter, id) in schema.contract.iter().zip(&schema.ids) {
             if parameter.trainable && !ids.contains(id) {
@@ -69,6 +82,9 @@ where
             }
         }
         let mut error = schema.device_error;
+        if !known {
+            error = Some("selected ZeRO-1 parameter IDs are duplicated or absent".into());
+        }
         if schema.contract != session.contract || schema.ids != session.ids {
             error = Some("model differs from the initialized replica".into());
         }
@@ -128,21 +144,36 @@ where
         } else {
             self.session.reduce(&model, gradients, local_weight, policy)?
         };
+        let model = self.update_owned(lr, model, reduced.gradients, None)?;
+        Ok(Zero1Step { model, global_weight: reduced.global_weight })
+    }
+
+    fn update_owned(
+        &mut self,
+        lr: LearningRate,
+        model: M,
+        gradients: GradientsParams,
+        selection: Option<&[ParamId]>,
+    ) -> Result<M, DataParallelError> {
         let ownership: HashMap<_, _> = self.ids.iter().copied().zip(self.owners.iter().copied()).collect();
         let mut filter = OwnedGradients::<B> {
-            input: reduced.gradients, output: GradientsParams::new(),
+            input: gradients, output: GradientsParams::new(),
             ownership: &ownership, rank: self.session.rank(), visited: Vec::new(),
             backend: PhantomData,
         };
-        model.visit(&mut filter);
-        let model = self.optimizer.step(lr, model, filter.output);
+        visit_selection::<B, _, _>(&model, &mut filter, selection);
+        let model = if let Some(parameters) = selection {
+            self.optimizer.step_selected(lr, model, filter.output, parameters).0
+        } else {
+            self.optimizer.step(lr, model, filter.output)
+        };
         let mut broadcast = OwnedBroadcast::<B, C> {
             communicator: &self.session.communicator, ownership: &ownership,
             updated: TensorContainer::new(), error: None, backend: PhantomData,
         };
-        let model = model.map(&mut broadcast);
+        let model = map_selection::<B, _, _>(model, &mut broadcast, selection);
         if let Some(error) = broadcast.error { return Err(error.into()); }
-        Ok(Zero1Step { model, global_weight: reduced.global_weight })
+        Ok(model)
     }
 
     /// Snapshot this rank's state at a completed update boundary.
