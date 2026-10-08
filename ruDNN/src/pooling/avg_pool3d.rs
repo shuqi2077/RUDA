@@ -27,13 +27,13 @@ fn window_count(start: usize, kernel: usize, padding: usize, input: usize,
     let lower = if include_pad { start } else { start.max(padding) };
     let bound = if include_pad { input + padding * 2 } else { input + padding };
     let upper = clipped_end(start, kernel, bound);
-    if upper > lower { upper - lower } else { 0 }
+    if upper > lower { upper - lower } else { 0usize.into() }
 }
 
 #[ruda]
 fn first_covering_window(position: usize, kernel: usize, stride: usize) -> usize {
     let extent = position + 1;
-    let numerator = if extent > kernel { extent - kernel } else { 0 };
+    let numerator = if extent > kernel { extent - kernel } else { 0usize.into() };
     let quotient = numerator / stride;
     if numerator % stride == 0 { quotient } else { quotient + 1 }
 }
