@@ -83,6 +83,8 @@ impl<B:Backend> ExpertParallelGeometry<B> for OwnedFloatingExpertAdapters<B> {
 }
 impl<B> ExpertParallelReceived<B> for OwnedFloatingExpertAdapters<B>
 where B:MoeReceivedOps+ExpertProjectionOps<ExpertProjectionError=<B as MoeOps>::MoeError>+NativeSwiGluOps<SwiGluError=<B as MoeOps>::MoeError> {
+    type Error=B::MoeError;
+    fn routing_error(error:B::MoeError) -> Self::Error {error}
     fn forward_received(&self,input:Tensor<B,2>,ids:Tensor<B,1,Int>,_options:MoeOptions) -> Result<Tensor<B,2>,B::MoeError> {
         self.validate();self.experts.forward(input,ids,self.ownership.range(self.rank).start).map_err(|error|match error {
             FloatingExpertError::Projection(FloatingExpertLoRAError::Base(error)|FloatingExpertLoRAError::Adapter(error))=>error,
@@ -112,6 +114,8 @@ impl<B:Backend> ExpertParallelGeometry<B> for SelectableOwnedExperts<B> {
 }
 impl<B> ExpertParallelReceived<B> for SelectableOwnedExperts<B>
 where B:MoeReceivedOps+ExpertProjectionOps<ExpertProjectionError=<B as MoeOps>::MoeError>+NativeSwiGluOps<SwiGluError=<B as MoeOps>::MoeError> {
+    type Error=B::MoeError;
+    fn routing_error(error:B::MoeError) -> Self::Error {error}
     fn forward_received(&self,input:Tensor<B,2>,ids:Tensor<B,1,Int>,options:MoeOptions) -> Result<Tensor<B,2>,B::MoeError> {
         match self {Self::Original(value)=>value.forward_received(input,ids,options),Self::Adapted(value)=>value.forward_received(input,ids,options)}
     }

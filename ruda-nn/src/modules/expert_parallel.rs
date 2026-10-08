@@ -58,8 +58,12 @@ pub trait ExpertParallelGeometry<B:Backend>:Module<B>+ModuleDisplay {
 }
 /// Native execution on actual received rows; routing weights are applied once by the original source combine.
 pub trait ExpertParallelReceived<B:MoeReceivedOps>:ExpertParallelGeometry<B> {
+    /// Actual native expert representation failure; original floating experts retain the original MoE error type.
+    type Error:fmt::Debug;
+    /// Preserve original native routing/dispatch/combine failures inside the selected expert error type.
+    fn routing_error(error:B::MoeError) -> Self::Error;
     /// Execute the actual local experts in original receive order, without a full-expert replica.
-    fn forward_received(&self,input:Tensor<B,2>,ids:Tensor<B,1,Int>,options:MoeOptions) -> Result<Tensor<B,2>,B::MoeError>;
+    fn forward_received(&self,input:Tensor<B,2>,ids:Tensor<B,1,Int>,options:MoeOptions) -> Result<Tensor<B,2>,Self::Error>;
 }
 struct ExpertEntry<B:Backend> {source_shape:[usize;3],range:Range<usize>,local:Param<Tensor<B,3>>}
 /// Canonical original shared expert IDs across the complete loaded model.
@@ -134,6 +138,8 @@ impl<B:Backend> ExpertParallelGeometry<B> for ExpertParallelSwiGluExperts<B> {
     fn parameter_ids(&self) -> Vec<ParamId> {let mut ids=Vec::new();for id in [self.gate.id,self.up.id,self.down.id] {if !ids.contains(&id) {ids.push(id);}}ids}
 }
 impl<B:MoeReceivedOps> ExpertParallelReceived<B> for ExpertParallelSwiGluExperts<B> {
+    type Error=B::MoeError;
+    fn routing_error(error:B::MoeError) -> Self::Error {error}
     fn forward_received(&self,input:Tensor<B,2>,ids:Tensor<B,1,Int>,options:MoeOptions) -> Result<Tensor<B,2>,B::MoeError> {
         self.forward_received(input,ids,options)
     }
@@ -218,12 +224,12 @@ macro_rules! execute_expert_parallel {
             /// Complete native source dispatch -> actual variable exchanges -> owned experts -> original ordered combine.
             /// Every expert-world rank enters even when it owns no experts or has no source token rows.
             pub fn $forward<C:VariableTensorCollective<B>,const D:usize>(&self,input:Tensor<$backend,D>,communicator:C)
-                -> Result<Tensor<$backend,D>,ExpertParallelMoeError<C::Error,P::Error,<$backend as ruda_model::tensor::MoeOps>::MoeError>> {
+                -> Result<Tensor<$backend,D>,ExpertParallelMoeError<C::Error,P::Error,E::Error>> {
                 self.$detailed(input,communicator).map(|output|output.output)
             }
             /// Retain original router objectives and actual assignment metadata without re-running dropout-bearing projections.
             pub fn $detailed<C:VariableTensorCollective<B>,const D:usize>(&self,input:Tensor<$backend,D>,communicator:C)
-                -> Result<ExpertParallelMoeOutput<$backend,D>,ExpertParallelMoeError<C::Error,P::Error,<$backend as ruda_model::tensor::MoeOps>::MoeError>> {
+                -> Result<ExpertParallelMoeOutput<$backend,D>,ExpertParallelMoeError<C::Error,P::Error,E::Error>> {
                 self.validate();assert!(D>0,"expert-parallel input requires an actual feature axis");
                 if communicator.rank() as usize!=self.experts.rank() || communicator.world_size() as usize!=self.experts.ownership().world_size() {
                     return Err(ExpertParallelMoeError::Protocol("actual expert transport differs from the declared original ownership"));}
@@ -231,8 +237,10 @@ macro_rules! execute_expert_parallel {
                 let rows=shape[..D-1].iter().try_fold(1usize,|count,&axis|count.checked_mul(axis)).expect("actual expert source token count overflows");
                 let input=input.reshape([rows,self.width()]);let router_input=if let Some(dtype)=self.router_input_dtype {input.clone().cast(dtype)} else {input.clone()};
                 let logits=self.router.forward(router_input).map_err(ExpertParallelMoeError::Router)?;
-                let dispatch=dispatch_moe(input,logits.clone(),self.correction_bias.as_ref().map(Param::val),self.options).map_err(ExpertParallelMoeError::Native)?;
-                let sent_rows=<$backend as MoeDispatchOps>::moe_dispatch_counts(&dispatch.state,self.experts.ownership().prefix()).map_err(ExpertParallelMoeError::Native)?;
+                let dispatch=dispatch_moe(input,logits.clone(),self.correction_bias.as_ref().map(Param::val),self.options)
+                    .map_err(|error|ExpertParallelMoeError::Native(E::routing_error(error)))?;
+                let sent_rows=<$backend as MoeDispatchOps>::moe_dispatch_counts(&dispatch.state,self.experts.ownership().prefix())
+                    .map_err(|error|ExpertParallelMoeError::Native(E::routing_error(error)))?;
                 let incoming=$exchange(dispatch.values,communicator.clone(),&sent_rows).map_err(exchange_error)?;
                 let original_ids=Tensor::<B,1,Int>::from_primitive(dispatch.row_experts.into_primitive());
                 let ids=original_ids.all_to_all_v_int(communicator.clone(),&sent_rows).map_err(ExpertParallelMoeError::Collective)?;
@@ -241,7 +249,8 @@ macro_rules! execute_expert_parallel {
                 let output=self.experts.forward_received(incoming.value,original_ids,self.options).map_err(ExpertParallelMoeError::Native)?;
                 let returned=$exchange(output,communicator,&received_rows).map_err(exchange_error)?;
                 if returned.receive_counts!=sent_rows {return Err(ExpertParallelMoeError::Protocol("returned expert rows differ from the original source assignments"));}
-                let output=combine_moe(dispatch.state,returned.value,dispatch.weights,self.options.combine_backward).map_err(ExpertParallelMoeError::Native)?.reshape(shape);
+                let output=combine_moe(dispatch.state,returned.value,dispatch.weights,self.options.combine_backward)
+                    .map_err(|error|ExpertParallelMoeError::Native(E::routing_error(error)))?.reshape(shape);
                 Ok(ExpertParallelMoeOutput {output,router_logits:logits,selected_experts:dispatch.selected_experts,sent_rows,received_rows})
             }
         }

@@ -53,7 +53,8 @@ impl<B:Backend> FrozenAwqExpertProjection<B> {
     /// Validate native original packed shape/dtype/device and frozen metadata without numeric readback.
     pub fn validate(&self) {
         let weight=self.qweight.val();let zeros=self.qzeros.val();let scales=self.scales.val();let [e,k,n]=self.dimensions();
-        assert!(e>0 && e<u32::MAX as usize && k>0 && n>0 && n%8==0 && self.group_size>0 && k%self.group_size==0,"invalid original AWQ expert geometry/groups");
+        assert!(e<u32::MAX as usize && k>0 && n>0 && n%8==0 && self.group_size>0 && k%self.group_size==0,"invalid original AWQ expert geometry/groups");
+        assert!(k.checked_mul(n).is_some_and(|size|size<=u32::MAX as usize),"AWQ per-expert matrix exceeds U32 indexing");
         assert!(e.checked_mul(k).and_then(|size|size.checked_mul(n)).is_some_and(|size|size<=u32::MAX as usize),"AWQ expert indexing exceeds U32");
         assert_eq!(weight.dims(),[e,k,n/8],"AWQ expert word shape differs");assert_eq!(zeros.dims(),[e,k/self.group_size,n/8],"AWQ expert zero shape differs");
         assert_eq!(scales.dims(),[e,k/self.group_size,n],"AWQ expert scale shape differs");assert_eq!(weight.dtype(),DType::I32,"AWQ expert words must retain I32");

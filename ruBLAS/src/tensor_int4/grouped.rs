@@ -15,7 +15,7 @@ impl<R:Runtime> AwqGroupedGemm<R> {
         if qweight.meta.num_dims()!=3 || scales.meta.num_dims()!=3 {return Err(Int4Error("AWQ expert weights/scales must retain rank-three source storage"));}
         let experts=qweight.meta.shape()[0];let layout=AwqGemmLayout::new(qweight.meta.shape()[1],scales.meta.shape()[2],group_size)?;
         let (k,n,g)=(layout.input_features,layout.output_features,layout.groups());
-        if experts==0 || experts>=u32::MAX as usize || experts.checked_mul(k).and_then(|size|size.checked_mul(n)).is_none_or(|size|size>u32::MAX as usize)
+        if experts>=u32::MAX as usize || experts.checked_mul(k).and_then(|size|size.checked_mul(n)).is_none_or(|size|size>u32::MAX as usize)
             || qweight.dtype!=DType::I32 || qzeros.dtype!=DType::I32 || qweight.meta.shape()[..]!=[experts,k,n/8]
             || qzeros.meta.shape()[..]!=[experts,g,n/8] || scales.meta.shape()[..]!=[experts,g,n]
             || !matches!(scales.dtype,DType::F32|DType::F16|DType::BF16) {
@@ -51,6 +51,7 @@ impl<R:Runtime> AwqGroupedGemm<R> {
         for value in [&input,&row_experts] {if value.qparams.is_some() || value.device.to_id()!=self.qweight.device.to_id()
             || !value.client.same_execution_queue(&self.qweight.client) {return Err(Int4Error("AWQ grouped rows and payload must share original native device/queue"));}}
         let rows=input.meta.shape()[0];
+        if self.experts==0 && rows!=0 {return Err(Int4Error("zero-expert AWQ owner cannot receive projection rows"));}
         if rows.checked_mul(source).is_none_or(|size|size>u32::MAX as usize) || rows.checked_mul(target).is_none_or(|size|size>u32::MAX as usize) {
             return Err(Int4Error("AWQ grouped activations exceed U32 indexing"));
         }
