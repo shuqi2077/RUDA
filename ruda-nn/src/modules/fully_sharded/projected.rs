@@ -1,7 +1,7 @@
 use super::*;
 use ruda_model::{module::ModuleDisplay,tensor::IntegerTensorCollective};
 use crate::transformer::{TransformerProjectionShape,Nf4TransformerProjection,MixedTransformerProjection,
-    AwqTransformerProjection,ProjectedTransformerStack,ProjectedTransformerModel};
+    AwqTransformerProjection,ProjectedTransformerStack,ProjectedTransformerModel,AdaptedProjection};
 
 /// Partition actual projection leaves through the caller's canonical shared-ID context.
 pub trait ShardTransformerProjection<B:Backend>:TransformerProjectionShape<B> {
@@ -42,6 +42,19 @@ shard_original_projection!(FrozenAwqLinear,FullyShardedAwqLinear,awq);
 shard_original_projection!(AwqLoRALinear,FullyShardedAwqLoRALinear,awq_lora);
 shard_original_projection!(FrozenNf4Linear,FullyShardedNf4Linear,nf4);
 shard_original_projection!(Nf4LoRALinear,FullyShardedNf4LoRALinear,nf4_lora);
+
+impl<B:Backend> ShardTransformerProjection<B> for AdaptedProjection<B> {
+    type Sharded=FullyShardedAdaptedProjection<B>;
+    fn shard(self,context:&mut ShardingContext<B>) -> Self::Sharded {context.adapted_projection(self)}
+}
+impl<B:Backend> GatherTransformerProjection<B,B> for FullyShardedAdaptedProjection<B> {
+    type Gathered=AdaptedProjection<B>;
+    fn gather_projection<C:IntegerTensorCollective<B>>(&self,communicator:C) -> Result<Self::Gathered,C::Error> {self.gather_inference(communicator)}
+}
+impl<B:Backend,S:CheckpointStrategy> GatherTransformerProjection<Autodiff<B,S>,B> for FullyShardedAdaptedProjection<Autodiff<B,S>> {
+    type Gathered=AdaptedProjection<Autodiff<B,S>>;
+    fn gather_projection<C:IntegerTensorCollective<B>>(&self,communicator:C) -> Result<Self::Gathered,C::Error> {self.gather(communicator)}
+}
 
 impl<B:Backend> ShardTransformerProjection<B> for AwqTransformerProjection<B> {
     type Sharded=FullyShardedAwqProjection<B>;

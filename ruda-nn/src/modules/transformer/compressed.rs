@@ -5,7 +5,7 @@ use crate::{Embedding, EmbeddingConfig, Linear, LinearConfig, Mhc, MhcConfig,
     attention::{CompressedAttention, CompressedAttentionConfig, CompressedAttentionOutput, CompressedAttentionSession, CompressedAttentionProjection}};
 use super::HybridTiedEmbeddingAdapter;
 
-pub(super) fn normalized<B: Backend>(input: Tensor<B, 3>, weight: &Param<Tensor<B, 1>>, epsilon: f64) -> Tensor<B, 3> {
+pub(crate) fn normalized<B: Backend>(input: Tensor<B, 3>, weight: &Param<Tensor<B, 1>>, epsilon: f64) -> Tensor<B, 3> {
     let storage = input.dtype();
     let compute = if storage == DType::F64 { DType::F64 } else { DType::F32 };
     let input = input.cast(compute);
@@ -13,7 +13,7 @@ pub(super) fn normalized<B: Backend>(input: Tensor<B, 3>, weight: &Param<Tensor<
     ((input / denominator) * weight.val().cast(compute).unsqueeze::<3>()).cast(storage)
 }
 
-pub(super) fn visible<B: Backend>(input: &Tensor<B, 3>, valid: Option<Tensor<B, 2, Bool>>) -> Tensor<B, 2, Bool> {
+pub(crate) fn visible<B: Backend>(input: &Tensor<B, 3>, valid: Option<Tensor<B, 2, Bool>>) -> Tensor<B, 2, Bool> {
     let [batch, tokens, _] = input.dims();
     if let Some(valid) = valid {
         assert_eq!(valid.dims(), [batch, tokens], "hybrid visibility must describe the actual token slots");

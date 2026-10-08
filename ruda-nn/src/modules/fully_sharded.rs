@@ -46,6 +46,12 @@ mod moe;
 pub use moe::*;
 mod moe_transformer;
 pub use moe_transformer::*;
+mod compressed;
+pub use compressed::*;
+mod mhc_branch;
+pub use mhc_branch::*;
+mod mhc_stack;
+pub use mhc_stack::*;
 
 /// Explicit construction context preserving one local autograd leaf per source ID.
 /// Reuse a context for all tied layers, then drop it after model construction. It
@@ -193,7 +199,7 @@ impl<B:Backend> ShardedParameter<B> {
         assert!(logical_shape.iter().all(|&n|n>0),"logical parameter dimensions must be positive");
         let elements=logical_shape.iter().try_fold(1usize,|n,&d|n.checked_mul(d)).expect("logical parameter size overflow");
         assert_eq!(local.val().dims(),[elements.div_ceil(world_size)],"local parameter slice length differs");
-        assert!(matches!(local.val().dtype(),DType::F32|DType::F16|DType::BF16),"floating parameter storage required");
+        assert!(matches!(local.val().dtype(),DType::F32|DType::F16|DType::BF16|DType::F64),"floating parameter storage required");
         Self{local,logical_shape,rank,world_size}
     }
 

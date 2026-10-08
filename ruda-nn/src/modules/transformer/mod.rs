@@ -70,6 +70,7 @@ pub use encoder::*;
 pub use pwff::*;
 pub use dense::*;
 pub use compressed::*;
+pub(crate) use compressed::{normalized as normalize_mhc, visible as mhc_visible};
 pub use compressed_training::*;
 pub use compressed_adapters::*;
 pub use compressed_adapter_record::*;

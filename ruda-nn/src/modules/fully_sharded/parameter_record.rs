@@ -81,7 +81,7 @@ impl<B:Backend> FullyShardedParameterRecord<B> {
         let (_,size) = geometry(&self.shape,self.rank,self.world)?;
         let value = self.local.val();
         if value.dims()!=[size] {return Err(FullyShardedParameterError::Geometry("saved local slice length differs"));}
-        if !matches!(self.storage,DType::F32|DType::F16|DType::BF16) || value.dtype()!=self.storage {return Err(FullyShardedParameterError::DType);}
+        if !matches!(self.storage,DType::F32|DType::F16|DType::BF16|DType::F64) || value.dtype()!=self.storage {return Err(FullyShardedParameterError::DType);}
         if B::ad_enabled(&value.device()) && value.is_require_grad()!=self.trainable {return Err(FullyShardedParameterError::Trainability);}
         Ok(())
     }
