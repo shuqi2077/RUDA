@@ -42,6 +42,8 @@ pub mod expert_parallel;
 mod expert_parallel_adapters;
 #[cfg(feature = "tensor-parallel")]
 mod packed_expert_parallel;
+#[cfg(feature="tensor-parallel")]
+mod mixed_expert_parallel;
 /// Element-sharded parameters with differentiable gather/reduce-scatter.
 #[cfg(feature = "tensor-parallel")]
 pub mod fully_sharded;
@@ -80,6 +82,8 @@ pub use expert_adapter_access::*;
 pub use expert_parallel_adapters::*;
 #[cfg(feature = "tensor-parallel")]
 pub use packed_expert_parallel::*;
+#[cfg(feature="tensor-parallel")]
+pub use mixed_expert_parallel::*;
 pub use moe::*;
 pub use mhc::*;
 #[cfg(feature = "sparse")]

@@ -38,6 +38,8 @@ mod awq_expert_parallel;
 mod packed_expert_parallel;
 #[cfg(feature="tensor-parallel")]
 mod expert_parallel_adapter_record;
+#[cfg(feature="tensor-parallel")]
+mod mixed_expert_parallel;
 
 pub use decoder::*;
 pub use encoder::*;
@@ -74,3 +76,5 @@ pub use awq_expert_parallel::*;
 pub use packed_expert_parallel::*;
 #[cfg(feature="tensor-parallel")]
 pub use expert_parallel_adapter_record::*;
+#[cfg(feature="tensor-parallel")]
+pub use mixed_expert_parallel::*;

@@ -101,6 +101,12 @@ pub enum SelectableOwnedExperts<B:Backend> {
     Adapted(OwnedFloatingExpertAdapters<B>),
 }
 impl<B:Backend> SelectableOwnedExperts<B> {
+    /// Actual resident logical widths of the original or explicitly adapted expert chain.
+    pub fn dimensions(&self) -> [usize;3] {ExpertParallelGeometry::dimensions(self)}
+    /// Actual resident source device, independent of expert representation.
+    pub fn device(&self) -> B::Device {ExpertParallelGeometry::device(self)}
+    /// Validate the actual source chain and its original explicit owner interval.
+    pub fn validate(&self) {ExpertParallelGeometry::validate(self);}
     /// Actual local expert A/B IDs only; the unmodified native chain contains none.
     pub fn adapter_parameter_ids(&self) -> Vec<ParamId> {match self {Self::Original(_)=>Vec::new(),Self::Adapted(value)=>value.adapter_parameter_ids()}}
 }
@@ -130,6 +136,17 @@ impl<B:Backend> FrozenExpertGeometry<B> for OwnedFloatingExpertAdapters<B> {
     fn dimensions(&self) -> [usize;3] {self.experts.dimensions()}
     fn validate(&self) {<Self as ExpertParallelGeometry<B>>::validate(self);}
     fn device(&self) -> B::Device {self.experts.device()}
+}
+impl<B:Backend> FrozenExpertGeometry<B> for SelectableOwnedExperts<B> {
+    fn dimensions(&self) -> [usize;3] {self.dimensions()}
+    fn device(&self) -> B::Device {self.device()}
+    fn validate(&self) {self.validate();}
+}
+impl<B:Backend> ExpertAdapterProjections<B> for SelectableOwnedExperts<B> {
+    fn expert_adapter_projections(&self) -> Vec<(ExpertAdapterTarget,ExpertAdapterProjectionRef<'_,B>)> {match self {
+        Self::Original(_)=>Vec::new(),Self::Adapted(value)=>value.expert_adapter_projections()}}
+    fn map_expert_adapters<M:ExpertAdapterMapper<B>>(self,mapper:&mut M) -> Result<Self,RecorderError> {match self {
+        Self::Original(value)=>Ok(Self::Original(value)),Self::Adapted(value)=>Ok(Self::Adapted(value.map_expert_adapters(mapper)?))}}
 }
 impl<B:Backend,P:TransformerProjectionShape<B>> ExpertParallelMoeLayer<B,P> {
     /// Attach actual A/B only to explicit local expert roles, preserving the original router/bias/transport configuration.

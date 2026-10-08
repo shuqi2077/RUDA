@@ -253,6 +253,16 @@ impl<B:Backend> PackedExpertPartitionContext<B> {
                 self.adapted(value.gate,&ownership,rank),self.adapted(value.up,&ownership,rank),self.adapted(value.down,&ownership,rank))),
         };OwnedPackedExperts::from_parts(experts,ownership,rank)
     }
+    /// Copy actual mixed source expert intervals with one shared canonical floating A/B context across formats.
+    pub fn mixed_experts(&mut self,source:super::MixedExpertParallelSource<B>,ownership:ExpertOwnership,rank:usize) -> super::MixedOwnedExperts<B> {
+        source.validate();assert_eq!(source.dimensions()[0],ownership.experts(),"actual mixed source count differs from declared expert ownership");ownership.range(rank);
+        match source {
+            super::MixedExpertParallelSource::Native(value)=>super::MixedOwnedExperts::Floating(super::SelectableOwnedExperts::Original(self.awq.floating.experts(value,ownership,rank))),
+            super::MixedExpertParallelSource::Floating(value)=>super::MixedOwnedExperts::Floating(super::SelectableOwnedExperts::Adapted(
+                super::OwnedFloatingExpertAdapters::from_full(value,ownership,rank,&mut self.awq.floating))),
+            super::MixedExpertParallelSource::Packed(value)=>super::MixedOwnedExperts::Packed(self.experts(value,ownership,rank)),
+        }
+    }
 }
 /// Actual rank-owned independent original NF4/AWQ gate/up/down and optional native expert adapters.
 #[derive(Module,Debug)]
