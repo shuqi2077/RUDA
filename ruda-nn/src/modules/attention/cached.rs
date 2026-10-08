@@ -2,7 +2,7 @@ use ruda_model::tensor::{Bool,Tensor,backend::Backend};
 use crate::{cache::ProjectedKvCache,transformer::AdaptedGroupedQueryAttention};
 use super::{GroupedQueryAttention,DenseAttentionMask,DenseAttentionOptions};
 
-fn cached_masks<B: Backend>(mut masks: DenseAttentionMask<B>,visible: Tensor<B,2,Bool>) -> DenseAttentionMask<B> {
+pub(crate) fn cached_masks<B: Backend>(mut masks: DenseAttentionMask<B>,visible: Tensor<B,2,Bool>) -> DenseAttentionMask<B> {
     masks.key_valid = Some(if let Some(additional) = masks.key_valid {
         assert_eq!(additional.dims(),visible.dims(),"cached additional key validity must describe the complete retained prefix");
         assert_eq!(additional.device(),visible.device(),"cached additional visibility device differs");

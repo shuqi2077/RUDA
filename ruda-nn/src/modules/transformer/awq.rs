@@ -196,12 +196,20 @@ impl<B:Backend,P:TransformerProjection<B>> AwqTransformerBlock<B,P> {
     /// Original dense-axis complete block with caller-owned projected positions.
     pub fn forward_with_positions<F>(&self,input:Tensor<B,3>,masks:DenseAttentionMask<B>,options:DenseAttentionOptions,positions:F)
         -> Result<Tensor<B,3>,P::Error> where F:FnOnce(Tensor<B,4>,Tensor<B,4>)->(Tensor<B,4>,Tensor<B,4>) {
-        let hidden=try_residual_branch(input,&self.attention_norm,&self.residual_dropout,self.norm_first,|source| {
+        self.forward_feed_forward(self.forward_attention_with_positions(input,masks,options,positions)?)
+    }
+    /// Actual original attention/residual/norm stage, before inserting encoder-memory attention.
+    pub fn forward_attention_with_positions<F>(&self,input:Tensor<B,3>,masks:DenseAttentionMask<B>,options:DenseAttentionOptions,positions:F)
+        -> Result<Tensor<B,3>,P::Error> where F:FnOnce(Tensor<B,4>,Tensor<B,4>)->(Tensor<B,4>,Tensor<B,4>) {
+        try_residual_branch(input,&self.attention_norm,&self.residual_dropout,self.norm_first,|source| {
             let (query,key,value)=self.attention.project(source.clone(),source.clone(),source)?;
             let shape=(query.dims(),key.dims());let (query,key)=positions(query,key);
             assert_eq!((query.dims(),key.dims()),shape,"positions changed head geometry");
             self.attention.forward_projected(query,key,value,masks,options)
-        })?;
+        })
+    }
+    /// Actual original FFN/residual/norm stage, retaining dense or flat-document axes.
+    pub fn forward_feed_forward<const D:usize>(&self,hidden:Tensor<B,D>) -> Result<Tensor<B,D>,P::Error> {
         try_residual_branch(hidden,&self.feed_forward_norm,&self.residual_dropout,self.norm_first,|source|self.feed_forward.forward(source))
     }
     /// Complete block without an implicit model-specific positional transformation.
@@ -212,23 +220,33 @@ impl<B:Backend,P:TransformerProjection<B>> AwqTransformerBlock<B,P> {
     pub fn forward_packed_with_positions<F>(&self,input:Tensor<B,2>,layout:&PackedSequenceLayout,
         masks:Option<&[PackedDocumentAttentionMask<B>]>,options:PackedAttentionOptions,positions:F)
         -> Result<Tensor<B,2>,P::Error> where F:FnOnce(Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
+        self.forward_feed_forward(self.forward_packed_attention_with_positions(input,layout,masks,options,positions)?)
+    }
+    /// Original independent-document attention stage, before encoder-memory attention.
+    pub fn forward_packed_attention_with_positions<F>(&self,input:Tensor<B,2>,layout:&PackedSequenceLayout,
+        masks:Option<&[PackedDocumentAttentionMask<B>]>,options:PackedAttentionOptions,positions:F)
+        -> Result<Tensor<B,2>,P::Error> where F:FnOnce(Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
         assert_eq!(input.dims()[0],layout.tokens(),"packed document boundaries differ from actual rows");
-        let hidden=try_residual_branch(input,&self.attention_norm,&self.residual_dropout,self.norm_first,|source| {
+        try_residual_branch(input,&self.attention_norm,&self.residual_dropout,self.norm_first,|source| {
             let (query,key,value)=self.attention.project_packed(source.clone(),source.clone(),source)?;
             let geometry=(query.dims(),key.dims());let (query,key)=positions(query,key);
             assert_eq!((query.dims(),key.dims()),geometry,"packed positions changed geometry");
             if let Some(masks)=masks {self.attention.forward_packed_masked_projected(query,key,value,layout,layout,masks,options)}
             else {self.attention.forward_packed_projected(query,key,value,layout,layout,options)}
-        })?;
-        try_residual_branch(hidden,&self.feed_forward_norm,&self.residual_dropout,self.norm_first,|source|self.feed_forward.forward(source))
+        })
     }
     /// Actual new-token cached attention and FFN, reusing the existing cache semantics.
     pub fn forward_cached_with_positions<F>(&self,input:Tensor<B,3>,new_visible:Option<Tensor<B,2,Bool>>,cache:&mut ProjectedKvCache<B>,
         masks:DenseAttentionMask<B>,options:DenseAttentionOptions,positions:F) -> Result<Tensor<B,3>,P::Error>
         where F:FnOnce(Tensor<B,4>,Tensor<B,4>,usize)->(Tensor<B,4>,Tensor<B,4>) {
-        let hidden=try_residual_branch(input,&self.attention_norm,&self.residual_dropout,self.norm_first,|source|
-            self.attention.forward_cached_with_positions(source,new_visible,cache,masks,options,positions))?;
-        try_residual_branch(hidden,&self.feed_forward_norm,&self.residual_dropout,self.norm_first,|source|self.feed_forward.forward(source))
+        self.forward_feed_forward(self.forward_cached_attention_with_positions(input,new_visible,cache,masks,options,positions)?)
+    }
+    /// Original actual new-token attention stage without prematurely running the decoder FFN.
+    pub fn forward_cached_attention_with_positions<F>(&self,input:Tensor<B,3>,new_visible:Option<Tensor<B,2,Bool>>,cache:&mut ProjectedKvCache<B>,
+        masks:DenseAttentionMask<B>,options:DenseAttentionOptions,positions:F) -> Result<Tensor<B,3>,P::Error>
+        where F:FnOnce(Tensor<B,4>,Tensor<B,4>,usize)->(Tensor<B,4>,Tensor<B,4>) {
+        try_residual_branch(input,&self.attention_norm,&self.residual_dropout,self.norm_first,|source|
+            self.attention.forward_cached_with_positions(source,new_visible,cache,masks,options,positions))
     }
 }
 

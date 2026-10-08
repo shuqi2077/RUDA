@@ -18,6 +18,7 @@ mod awq;
 mod awq_model;
 mod projection;
 mod projected_adapters;
+mod projected_decoder;
 
 pub use decoder::*;
 pub use encoder::*;
@@ -35,3 +36,4 @@ pub use awq::*;
 pub use awq_model::*;
 pub use projection::*;
 pub use projected_adapters::*;
+pub use projected_decoder::*;
