@@ -24,7 +24,7 @@ pub(super) fn segmented<F:Float+RudaElement,O:Float+RudaElement>(
             for i in 0usize..8usize {
                 let t=lane+i*32;let tr=t/16;let tc=t%16;let row=row_base+tr;let source_col=base+tc;
                 let mut a=F::cast_from(0.0f32);
-                if row<end && source_col<inner {a=input[row*inner+source_col];}left[t]=a;
+                if tr<end-row_base && source_col<inner {a=input[row*inner+source_col];}left[t]=a;
                 let mut wr=column_base+tr;let mut wc=base+tc;
                 if comptime!(backward) {wr=base+tr;wc=column_base+tc;}
                 let mut value=F::cast_from(0.0f32);
@@ -41,15 +41,16 @@ pub(super) fn segmented<F:Float+RudaElement,O:Float+RudaElement>(
                 16usize,16usize,16usize,cmma::MatrixLayout::RowMajor,&left.to_slice(),16);
             let b=cmma::Matrix::<F>::from_slice(cmma::MatrixIdent::B,
                 16usize,16usize,16usize,cmma::MatrixLayout::ColMajor,&right.to_slice(),16);
-            cmma::execute::<F,F,f32,f32>(&a,&b,&acc,&acc);sync_ruda();base+=16;
+            cmma::execute::<F,F,f32,f32>(&a,&b,&acc,&acc);sync_ruda();
+            if inner-base<=16 {base=inner;}else {base+=16;}
         }
         cmma::store(&mut result.to_slice_mut(),&acc,16,cmma::MatrixLayout::RowMajor);sync_ruda();
         #[unroll]
         for i in 0usize..8usize {
             let t=lane+i*32;let row=row_base+t/16;let column=column_base+t%16;
-            if row<end && column<cols {output[row*cols+column]=O::cast_from(result[t]);}
+            if t/16<end-row_base && column<cols {output[row*cols+column]=O::cast_from(result[t]);}
         }
-        sync_ruda();row_base+=16;
+        sync_ruda();if end-row_base<=16 {row_base=end;}else {row_base+=16;}
     }
 }
 
