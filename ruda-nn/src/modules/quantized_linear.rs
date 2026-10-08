@@ -1,6 +1,6 @@
 use crate::{Dropout, DropoutConfig, Linear, LinearConfig, LoRALinearConfig};
 use ruda_model::{module::{Initializer, Module, Param, ParamId},
-    tensor::{DType, FloatDType, QuantScheme, Tensor, backend::Backend}};
+    tensor::{DType, FloatDType, Tensor, backend::Backend, quantization::QuantScheme}};
 #[cfg(not(feature = "std"))]
 #[allow(unused_imports)]
 use num_traits::Float as _;
@@ -116,7 +116,7 @@ impl LoRALinearConfig {
         for value in [adapter_a.weight.val(), adapter_b.weight.val()] {
             assert_eq!(value.device(), weight.device(), "quantized LoRA adapter device differs");
             assert!(matches!(value.dtype(), DType::F16 | DType::BF16 | DType::F32), "quantized LoRA adapter precision unsupported");
-            assert!(!B::ad_enabled() || value.is_require_grad(), "quantized LoRA adapters must be trainable");
+            assert!(!B::ad_enabled(&value.device()) || value.is_require_grad(), "quantized LoRA adapters must be trainable");
         }
         let divisor = if use_rslora { (self.rank as f64).sqrt() } else { self.rank as f64 };
         QuantizedLoRALinear { base, adapter_a, adapter_b, dropout: DropoutConfig::new(self.dropout).init(), scale: self.alpha / divisor }
