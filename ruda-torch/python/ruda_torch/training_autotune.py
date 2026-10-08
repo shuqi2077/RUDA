@@ -283,7 +283,9 @@ class TrainingAutotuner:
     RNG and sampler cursors afterward. Only existing packed-document boundaries
     or padded rows may be split. No contexts, precision, effective batch or mesh
     are changed. Numeric tolerance is explicit; the default requires exact state.
-    Session-local plans never cross a process/device/driver boundary.
+    Whole-update selection is calibrated against each actual window/state, not
+    inferred from a previous batch with matching shapes. Native kernel caches
+    remain available independently of this update-level semantic comparison.
     """
     def __init__(self, *, repeats=3, max_candidates=12, max_seconds=300.,
                  rtol=0., atol=0., max_snapshot_bytes=None, progress=None):
@@ -301,7 +303,6 @@ class TrainingAutotuner:
         self.rtol, self.atol, self.max_snapshot_bytes = rtol, atol, max_snapshot_bytes
         self.progress_callback = progress
         self.progress, self.results = {}, []
-        self._cache = {}
 
     def _publish(self, **values):
         self.progress.update(values)
@@ -317,6 +318,9 @@ class TrainingAutotuner:
         return getattr(trainer.model, '_template', trainer.model)
 
     def _candidates(self, trainer, batches):
+        from .distributed_training import ReplicaGroup
+        from .hybrid_parallel import DataTensorParallelGroup
+        from .parallel_mesh import TensorParallelGroup
         geometry = _geometry(batches, trainer.packed_input)
         template = self._template(trainer)
         # A compiled graph may have captured chunk_size; do not pretend an attribute
@@ -325,8 +329,14 @@ class TrainingAutotuner:
         chunk_search = trainer.executable is trainer.model and template is trainer.model
         maximum = max((batch['cu_seqlens'].numel() - 1 if trainer.packed_input else
                        batch['input_ids'].shape[0] for batch in batches), default=0)
-        requests = self._gather(trainer, (maximum, chunk, chunk_search))
-        maximum = min(item[0] for item in requests)
+        # Ordinary DP may have uneven local windows. TP's own validator retains
+        # identical data within each tensor group. FSDP and unknown coordinators
+        # retain the stricter aligned collective-bearing microbatch count.
+        aligned = trainer.replica_group is not None and type(trainer.replica_group) not in (
+            ReplicaGroup, DataTensorParallelGroup, TensorParallelGroup)
+        requests = self._gather(trainer, (maximum, chunk, chunk_search, aligned))
+        maximum = max(item[0] for item in requests)
+        aligned = any(item[3] for item in requests)
         chunk_search = all(item[2] for item in requests) and all(item[1] == chunk for item in requests)
         current = TrainingPlan(0, chunk, trainer.packed_input, geometry)
         splits, chunks = [], []
@@ -347,9 +357,9 @@ class TrainingAutotuner:
             plan = TrainingPlan(size, block, trainer.packed_input, geometry)
             selected = plan.apply(trainer, batches)
             counts = self._gather(trainer, len(selected))
-            # This keeps TP/FSDP collective-bearing forward/backward counts aligned.
+            # FSDP counts stay aligned; ordinary TP retains its own actual data validator.
             signature = (tuple(self._gather(trainer, _geometry(selected, trainer.packed_input))), block)
-            if len(set(counts)) != 1 or signature in seen:
+            if (aligned and len(set(counts)) != 1) or signature in seen:
                 continue
             seen.add(signature)
             result.append(plan)
@@ -481,21 +491,10 @@ class TrainingAutotuner:
         return winner
 
     def train_step(self, trainer, microbatches):
-        """Calibrate once per session geometry, then commit exactly one selected update."""
+        """Calibrate the actual current window, then commit exactly one selected update."""
         batches = list(microbatches)
         template = self._template(trainer)
-        key = (trainer, _geometry(batches, trainer.packed_input), trainer.packed_input,
-               getattr(template, 'token_chunk_size', None), repr(trainer.run_config),
-               repr(trainer._loss_options()), trainer.gradient_overlap, trainer.bucket_bytes,
-               tuple((name, tuple(value.shape), str(value.dtype), str(value.device), value.requires_grad)
-                     for name, value in trainer.model.named_parameters()),
-               tuple((type(module), tuple((name, repr(getattr(module, name))) for name in
-                     ('dropout', 'p', 'activation_checkpointing', 'preserve_rng_state', 'recompute', 'ensure_backward')
-                     if hasattr(module, name))) for module in _modules(trainer)))
-        hit = key in self._cache
-        if not all(self._gather(trainer, hit)):
-            self._cache[key] = self.tune(trainer, batches)
-        plan = self._cache[key]
+        plan = self.tune(trainer, batches)
         selected = plan.apply(trainer, batches)
         cursor = trainer.cursor
         chunk = getattr(template, 'token_chunk_size', None)
@@ -606,22 +605,10 @@ class PipelineAutotuner(TrainingAutotuner):
         return winner
 
     def train_step(self, trainer, inputs=None, targets=None, *, local_weight, loss_sum, microbatch_specs=None):
-        from torch.utils._pytree import tree_flatten
         inputs, targets = list(inputs or []), list(targets or [])
         specs = None if microbatch_specs is None else tuple(microbatch_specs)
-        def geometry(values):
-            leaves, tree = tree_flatten(values)
-            return repr(tree), tuple((tuple(value.shape), str(value.dtype)) if isinstance(value, torch.Tensor)
-                                    else repr(value) for value in leaves)
-        key = (trainer, geometry(inputs), geometry(targets), repr(specs), id(loss_sum),
-               trainer.mesh.shape, repr(trainer.run_config),
-               tuple((type(module), tuple((name, repr(getattr(module, name))) for name in
-                    ('dropout', 'p', 'recompute', 'ensure_backward') if hasattr(module, name)))
-                     for module in _modules(trainer)))
-        if not all(self._gather(trainer, key in self._cache)):
-            self._cache[key] = self.tune(trainer, inputs, targets, local_weight=local_weight,
-                                       loss_sum=loss_sum, microbatch_specs=specs)
-        schedule = self._cache[key]
+        schedule = self.tune(trainer, inputs, targets, local_weight=local_weight,
+                             loss_sum=loss_sum, microbatch_specs=specs)
         result = trainer.train_step(inputs, targets, local_weight=local_weight, loss_sum=loss_sum,
                                     microbatch_specs=specs, schedule=schedule)
         result['autotune_schedule'] = schedule
