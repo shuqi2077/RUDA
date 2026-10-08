@@ -5918,7 +5918,7 @@ dependencies = [
 
 [[package]]
 name = "ruda-nn"
-version = "0.21.49"
+version = "0.21.50"
 dependencies = [
  "num-traits",
  "rstest",
