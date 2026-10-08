@@ -1,7 +1,7 @@
 [package]
 edition = "2024"
 name = "ruda-tensor-host"
-version = "0.21.36"
+version = "0.21.37"
 authors = [ "Dilshod Tadjibaev (@antimora)",]
 build = false
 autolib = false
@@ -126,7 +126,7 @@ optional = true
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
-version = "0.21.39"
+version = "0.21.40"
 default-features = false
 features = [ "graph",]
 

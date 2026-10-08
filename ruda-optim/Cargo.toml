@@ -1,7 +1,7 @@
 [package]
 edition = "2024"
 name = "ruda-optim"
-version = "0.21.55"
+version = "0.21.56"
 authors = [ "nathanielsimard <nathaniel.simard.42@gmail.com>",]
 build = false
 autolib = false
@@ -54,38 +54,38 @@ required-features = ["std", "collective"]
 [dependencies.ruccl]
 package = "ruCCL"
 path = "../ruCCL"
-version = "0.21.43"
+version = "0.21.44"
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-remote]
 path = "../ruda-tensor-remote"
-version = "0.21.39"
+version = "0.21.40"
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-rocm]
 path = "../ruda-tensor-rocm"
-version = "0.21.37"
+version = "0.21.38"
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-router]
 path = "../ruda-tensor-router"
-version = "0.21.40"
+version = "0.21.41"
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-tch]
 path = "../ruda-tensor-tch"
-version = "0.21.52"
+version = "0.21.53"
 features = [ "default",]
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-wgpu]
 path = "../ruda-tensor-wgpu"
-version = "0.21.37"
+version = "0.21.38"
 optional = true
 default-features = false
 
@@ -115,13 +115,13 @@ default-features = false
 [dependencies.ruda-model]
 default-features = false
 path = "../ruda-model"
-version = "0.21.48"
+version = "0.21.49"
 
 [dependencies.ruda-tensor-device]
 optional = true
 default-features = false
 path = "../ruda-tensor-device"
-version = "0.21.38"
+version = "0.21.39"
 features = [ "cuda",]
 
 [dependencies.ruda-fusion]
@@ -129,7 +129,7 @@ features = [ "std", "tracing",]
 optional = true
 default-features = false
 path = "../ruda-fusion"
-version = "0.21.37"
+version = "0.21.38"
 
 [dependencies.ruda-kernel]
 path = "../ruda-kernel"

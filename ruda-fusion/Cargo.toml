@@ -12,7 +12,7 @@
 [package]
 edition = "2024"
 name = "ruda-fusion"
-version = "0.21.37"
+version = "0.21.38"
 authors = ["nathanielsimard <nathaniel.simard.42@gmail.com>"]
 build = false
 autolib = false
@@ -76,7 +76,7 @@ path = "src/lib.rs"
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
-version = "0.21.39"
+version = "0.21.40"
 features = ["std", "graph"]
 default-features = false
 

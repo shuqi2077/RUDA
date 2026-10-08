@@ -1,7 +1,7 @@
 [package]
 edition = "2024"
 name = "ruda-communication"
-version = "0.21.36"
+version = "0.21.37"
 authors = [ "Guilhem Ané (@Cielbird)", "Nathaniel Simard (@nathanielsimard)",]
 build = false
 autolib = false
@@ -101,7 +101,7 @@ features = [ "std",]
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
-version = "0.21.39"
+version = "0.21.40"
 default-features = false
 features = [ "api-std",]
 optional = true
