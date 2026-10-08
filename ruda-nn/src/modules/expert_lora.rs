@@ -84,8 +84,7 @@ impl<B:Backend> PackedExpertLoRA<B> {
         let [ae,ak,rank]=self.adapter_a.dimensions();assert_eq!([ae,ak],[e,k],"expert adapter A geometry differs");
         assert_eq!(self.adapter_b.dimensions(),[e,rank,n],"expert adapter B geometry differs");assert!(self.scale.is_finite(),"expert adapter multiplier must be finite");
         let device=self.base.device();for value in [&self.adapter_a,&self.adapter_b] {
-            let weight=value.weight.val();assert_eq!(weight.device(),device,"expert adapter/base device differs");
-            assert!(!B::ad_enabled(&device) || weight.is_require_grad(),"expert adapter leaves must be trainable on AD");}
+            let weight=value.weight.val();assert_eq!(weight.device(),device,"expert adapter/base device differs");}
     }
 }
 impl LoRALinearConfig {
@@ -102,7 +101,9 @@ impl LoRALinearConfig {
         assert!(self.dropout.is_finite() && (0.0..1.0).contains(&self.dropout),"original expert adapter dropout must be in [0,1)");
         assert_eq!(adapter_a.dimensions()[2],self.rank,"loaded expert adapter rank differs from actual explicit configuration");
         let denominator=if use_rslora {(self.rank as f64).sqrt()}else {self.rank as f64};
-        let layer=PackedExpertLoRA {base,adapter_a,adapter_b,dropout:DropoutConfig::new(self.dropout).init(),scale:self.alpha/denominator};layer.validate();layer
+        let layer=PackedExpertLoRA {base,adapter_a,adapter_b,dropout:DropoutConfig::new(self.dropout).init(),scale:self.alpha/denominator};layer.validate();
+        assert!(!B::ad_enabled(&layer.base.device()) || (layer.adapter_a.weight.val().is_require_grad() && layer.adapter_b.weight.val().is_require_grad()),
+            "loaded expert adapter leaves must be trainable when attaching with AD enabled");layer
     }
     /// Allocate actual new expert adapter leaves with the existing linear initializer and zero B.
     /// Dtype/rsLoRA and native forward/backward execution are explicitly caller-selected.
@@ -179,16 +180,19 @@ impl<B:Backend> AdaptedPackedSwiGluExperts<B> {
     /// Attach new actual A/B leaves only to explicit roles, rejecting duplicate or already adapted roles before allocation.
     pub fn with_adapters(mut self,config:&LoRALinearConfig,targets:&[ExpertAdapterTarget],dtype:DType,use_rslora:bool,
         forward:MoeExpertStrategy,backward:MoeExpertStrategy) -> Self {
-        assert!(!targets.is_empty(),"expert adapter selection must contain an actual source projection role");
-        for (index,target) in targets.iter().enumerate() {assert!(!targets[..index].contains(target),"duplicate expert adapter role");
-            let role=match target {ExpertAdapterTarget::Gate=>&self.gate,ExpertAdapterTarget::Up=>&self.up,ExpertAdapterTarget::Down=>&self.down};
-            let AdaptedExpertProjection::Frozen(base)=role else {panic!("selected original expert projection is already adapted")};
-            config.validate_expert_initialization(base,dtype);}
+        self.validate_adapter_targets(config,targets,dtype);
         let adapt=|value|match value {AdaptedExpertProjection::Frozen(base)=>AdaptedExpertProjection::LoRA(config.init_expert_adapters(base,dtype,use_rslora,forward,backward)),
             AdaptedExpertProjection::LoRA(_)=>unreachable!("validated original expert role is not adapted")};
         if targets.contains(&ExpertAdapterTarget::Gate) {self.gate=adapt(self.gate);}
         if targets.contains(&ExpertAdapterTarget::Up) {self.up=adapt(self.up);}
         if targets.contains(&ExpertAdapterTarget::Down) {self.down=adapt(self.down);}self.validate();self
+    }
+    pub(super) fn validate_adapter_targets(&self,config:&LoRALinearConfig,targets:&[ExpertAdapterTarget],dtype:DType) {
+        assert!(!targets.is_empty(),"expert adapter selection must contain an actual source projection role");
+        for (index,target) in targets.iter().enumerate() {assert!(!targets[..index].contains(target),"duplicate expert adapter role");
+            let role=match target {ExpertAdapterTarget::Gate=>&self.gate,ExpertAdapterTarget::Up=>&self.up,ExpertAdapterTarget::Down=>&self.down};
+            let AdaptedExpertProjection::Frozen(base)=role else {panic!("selected original expert projection is already adapted")};
+            config.validate_expert_initialization(base,dtype);}
     }
     /// Original actual selected trainable A/B parameter IDs, excluding frozen quantization metadata.
     pub fn adapter_parameter_ids(&self) -> Vec<ruda_model::module::ParamId> {
@@ -222,3 +226,32 @@ pub type AdaptedPackedMoeTransformerModel<B,P> = super::transformer::Nf4MoeTrans
 pub type AdaptedPackedMoeTransformerBlock<B,P> = super::transformer::Nf4MoeTransformerBlock<B,P,AdaptedPackedSwiGluExperts<B>>;
 /// Original loaded ordinary/floating/packed layer choice with actual per-expert adapters.
 pub type AdaptedPackedMoeTransformerLayer<B,P> = super::transformer::Nf4MoeTransformerLayer<B,P,AdaptedPackedSwiGluExperts<B>>;
+
+/// Preserve original whole packed-expert execution on unselected layers; only explicitly adapted layers use A/B.
+#[derive(Module,Debug)]
+pub enum SelectablePackedExperts<B:Backend> {
+    /// Actual unmodified original whole native AWQ/NF4 expert chain and its original VJP.
+    Original(FrozenPackedSwiGluExperts<B>),
+    /// Actual explicitly selected expert adapters and their source-native first-order graph.
+    Adapted(AdaptedPackedSwiGluExperts<B>),
+}
+impl<B:Backend> SelectablePackedExperts<B> {
+    /// Actual explicitly present expert adapter IDs; original frozen chains contain none.
+    pub fn adapter_parameter_ids(&self) -> Vec<ruda_model::module::ParamId> {match self {Self::Original(_)=>Vec::new(),Self::Adapted(value)=>value.adapter_parameter_ids()}}
+}
+impl<B:Backend> FrozenExpertGeometry<B> for SelectablePackedExperts<B> {
+    fn dimensions(&self) -> [usize;3] {match self {Self::Original(value)=>value.dimensions(),Self::Adapted(value)=>value.dimensions()}}
+    fn validate(&self) {match self {Self::Original(value)=>value.validate(),Self::Adapted(value)=>value.validate()}}
+    fn device(&self) -> B::Device {match self {Self::Original(value)=>value.device(),Self::Adapted(value)=>value.device()}}
+}
+impl<B:FrozenPackedExpertOps+ExpertProjectionOps+NativeSwiGluOps> FrozenSelectedExperts<B> for SelectablePackedExperts<B> {
+    type Error=AdaptedExpertError<B::PackedExpertError,B::ExpertProjectionError,B::SwiGluError>;
+    fn forward(&self,input:Tensor<B,2>,ids:Tensor<B,1,Int>,expert_start:usize) -> Result<Tensor<B,2>,Self::Error> {
+        match self {Self::Original(value)=>value.forward(input,ids,expert_start).map_err(|error|AdaptedExpertError::Projection(ExpertLoRAError::Packed(error))),
+            Self::Adapted(value)=>value.forward(input,ids,expert_start)}
+    }
+}
+/// Complete native routed layer preserving original execution for unselected packed expert layers.
+pub type SelectablePackedMoeLayer<B,P> = Nf4MoeLayer<B,P,SelectablePackedExperts<B>>;
+/// Complete original native Transformer with only explicitly selected packed expert layers adapted.
+pub type SelectablePackedMoeTransformerModel<B,P> = super::transformer::Nf4MoeTransformerModel<B,P,SelectablePackedExperts<B>>;
