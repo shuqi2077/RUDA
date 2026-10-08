@@ -28,6 +28,8 @@ pub mod frozen_awq;
 pub mod frozen_nf4;
 /// Native selected router weights and complete local MoE training operations.
 pub mod moe;
+/// Original native expert-parallel dispatch/receive/combine contracts.
+pub mod moe_exchange;
 #[cfg(feature = "distributed")]
 pub mod distributed;
 

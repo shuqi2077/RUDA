@@ -13,14 +13,14 @@ pub struct NativeMoeState<R:DeviceRuntime> {
     expert_output:RudaTensor<R>,
     options:MoeOptions,
 }
-fn weight_options(options:MoeRouterWeightOptions) -> moe::RouterWeightOptions {
+pub(super) fn weight_options(options:MoeRouterWeightOptions) -> moe::RouterWeightOptions {
     moe::RouterWeightOptions {scoring:match options.scoring {MoeRouterScoring::Softmax=>moe::RouterScoring::Softmax,MoeRouterScoring::Sigmoid=>moe::RouterScoring::Sigmoid},
         renormalize:options.renormalize,scale:options.scale}
 }
-fn expert_strategy(strategy:MoeExpertStrategy) -> moe::GroupedStrategy {
+pub(super) fn expert_strategy(strategy:MoeExpertStrategy) -> moe::GroupedStrategy {
     match strategy {MoeExpertStrategy::Scalar=>moe::GroupedStrategy::Scalar,MoeExpertStrategy::Auto=>moe::GroupedStrategy::Auto,MoeExpertStrategy::TensorCore=>moe::GroupedStrategy::TensorCore}
 }
-fn select<R:DeviceRuntime>(logits:RudaTensor<R>,bias:Option<RudaTensor<R>>,options:MoeSelectionOptions) -> Result<RoutingPlan<R>,MoeError> {
+pub(super) fn select<R:DeviceRuntime>(logits:RudaTensor<R>,bias:Option<RudaTensor<R>>,options:MoeSelectionOptions) -> Result<RoutingPlan<R>,MoeError> {
     match options {
         MoeSelectionOptions::Softmax {top_k,renormalize}=>{
             if bias.is_some() {return Err(MoeError("softmax selection does not accept a sigmoid correction bias"));}
