@@ -29,7 +29,7 @@ harness = false
 [package]
 edition = "2024"
 name = "ruda-store"
-version = "0.21.39"
+version = "0.21.40"
 authors = [ "Dilshod Tadjibaev (@antimora)",]
 build = false
 autolib = false
@@ -64,14 +64,14 @@ path = "src/lib.rs"
 
 [dependencies.ruda-tensor-tch]
 path = "../ruda-tensor-tch"
-version = "0.21.45"
+version = "0.21.46"
 features = [ "default",]
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-wgpu]
 path = "../ruda-tensor-wgpu"
-version = "0.21.32"
+version = "0.21.33"
 features = [ "default",]
 optional = true
 default-features = false
@@ -138,12 +138,12 @@ optional = true
 [dependencies.ruda-model]
 default-features = false
 path = "../ruda-model"
-version = "0.21.40"
+version = "0.21.41"
 
 [dependencies.ruda-tensor]
 default-features = false
 path = "../ruda-tensor"
-version = "0.21.34"
+version = "0.21.35"
 features = [ "api",]
 
 [dependencies.ruda-tensor-device]
@@ -151,7 +151,7 @@ features = [ "cuda-default",]
 optional = true
 default-features = false
 path = "../ruda-tensor-device"
-version = "0.21.33"
+version = "0.21.34"
 
 [dependencies.ruda-core]
 path = "../ruda-core"
