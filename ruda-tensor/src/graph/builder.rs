@@ -37,6 +37,38 @@ impl AvgPool3dOpIr {
     }
 }
 
+impl MaxPool3dOpIr {
+    pub fn create(x: TensorIr, kernel_size: [usize; 3], stride: [usize; 3],
+        padding: [usize; 3], dilation: [usize; 3], ceil_mode: bool,
+        new_id: impl FnOnce() -> TensorId) -> Self {
+        let shape = calculate_pool_output_shape(&x.shape, &kernel_size, &stride,
+            &padding, &dilation, ceil_mode).unwrap();
+        let out = TensorIr::uninit(new_id(), shape, x.dtype);
+        Self { x, kernel_size, stride, padding, dilation, ceil_mode, out }
+    }
+}
+
+impl MaxPool3dWithIndicesOpIr {
+    pub fn create(x: TensorIr, kernel_size: [usize; 3], stride: [usize; 3],
+        padding: [usize; 3], dilation: [usize; 3], ceil_mode: bool,
+        mut new_id: impl FnMut() -> TensorId) -> Self {
+        let shape = calculate_pool_output_shape(&x.shape, &kernel_size, &stride,
+            &padding, &dilation, ceil_mode).unwrap();
+        let out = TensorIr::uninit(new_id(), shape.clone(), x.dtype);
+        let out_indices = TensorIr::uninit(new_id(), shape, DType::I64);
+        Self { x, kernel_size, stride, padding, dilation, ceil_mode, out, out_indices }
+    }
+}
+
+impl MaxPool3dWithIndicesBackwardOpIr {
+    pub fn create(x: TensorIr, grad: TensorIr, indices: TensorIr, kernel_size: [usize; 3],
+        stride: [usize; 3], padding: [usize; 3], dilation: [usize; 3], ceil_mode: bool,
+        new_id: impl FnOnce() -> TensorId) -> Self {
+        let out = TensorIr::uninit(new_id(), x.shape.clone(), x.dtype);
+        Self { x, grad, indices, kernel_size, stride, padding, dilation, ceil_mode, out }
+    }
+}
+
 impl InitOperationIr {
     pub fn create(shape: Shape, dtype: DType, new_id: impl FnOnce() -> TensorId) -> Self {
         let out = TensorIr::uninit(new_id(), shape, dtype);

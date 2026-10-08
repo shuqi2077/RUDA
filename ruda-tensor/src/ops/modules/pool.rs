@@ -37,7 +37,7 @@ pub(crate) fn max_pool3d_backward_from_indices<B: Backend>(input: FloatTensor<B>
     let values = Tensor::<B, 5>::new(crate::TensorPrimitive::Float(grad)).cast(compute)
         .reshape([batch, channels, count]).mask_fill(invalid, 0);
     Tensor::<B, 3>::zeros([batch, channels, volume], (&device, compute))
-        .scatter(2, indices.clamp(0, volume as i64 - 1), values).cast(storage)
+        .scatter(2, indices.clamp(0, volume as i64 - 1), values, crate::IndexingUpdateOp::Add).cast(storage)
         .reshape([batch, channels, depth, height, width]).into_primitive().tensor()
 }
 

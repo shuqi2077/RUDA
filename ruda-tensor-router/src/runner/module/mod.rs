@@ -99,6 +99,11 @@ impl<B: BackendIr> Runner<B> {
                 self.apply_max_pool1d_with_indices_backward(handles, desc)
             }
             ModuleOperationIr::MaxPool2d(desc) => self.apply_max_pool2d(handles, desc),
+            ModuleOperationIr::MaxPool3d(desc) => self.apply_max_pool3d(handles, desc),
+            ModuleOperationIr::MaxPool3dWithIndices(desc) => self.apply_max_pool3d_with_indices(handles, desc),
+            ModuleOperationIr::MaxPool3dWithIndicesBackward(desc) => {
+                self.apply_max_pool3d_with_indices_backward(handles, desc)
+            }
             ModuleOperationIr::MaxPool2dWithIndices(desc) => {
                 self.apply_max_pool2d_with_indices(handles, desc)
             }

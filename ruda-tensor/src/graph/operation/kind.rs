@@ -225,6 +225,12 @@ pub enum ModuleOperationIr {
     AvgPool3d(AvgPool3dOpIr),
     /// Operation corresponding to [volume average gradients](crate::ops::ModuleOps::avg_pool3d_backward).
     AvgPool3dBackward(AvgPool3dBackwardOpIr),
+    /// Native maximum-volume activations.
+    MaxPool3d(MaxPool3dOpIr),
+    /// Native maximum-volume activations and saved I64 positions.
+    MaxPool3dWithIndices(MaxPool3dWithIndicesOpIr),
+    /// Native maximum-volume gradients through saved positions.
+    MaxPool3dWithIndicesBackward(MaxPool3dWithIndicesBackwardOpIr),
 }
 
 /// Basic operations that can be done on any tensor type.

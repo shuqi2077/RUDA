@@ -4,7 +4,7 @@ use ruda_tensor::Element;
 use ruda_tensor::ops::{
     AttentionModuleOptions, ConvOptions, ConvTransposeOptions, DeformConv2dBackward,
     DeformConvOptions, InterpolateOptions, MaxPool1dBackward, MaxPool1dWithIndices,
-    MaxPool2dBackward, MaxPool2dWithIndices, ModuleOps,
+    MaxPool2dBackward, MaxPool2dWithIndices, MaxPool3dBackward, MaxPool3dWithIndices, ModuleOps,
 };
 use ruda_tensor::tensor::{BoolTensor, FloatTensor, IntElem, IntTensor};
 use ruda_tensor::graph::*;
@@ -666,6 +666,35 @@ impl<R: RunnerChannel> ModuleOps<Self> for BackendRouter<R> {
             .output();
 
         MaxPool2dBackward::new(out)
+    }
+
+    fn max_pool3d(x: FloatTensor<Self>, kernel: [usize; 3], stride: [usize; 3],
+        padding: [usize; 3], dilation: [usize; 3], ceil: bool) -> FloatTensor<Self> {
+        let client = x.client.clone();
+        let desc = MaxPool3dOpIr::create(x.into_ir(), kernel, stride, padding, dilation,
+            ceil, || client.create_empty_handle());
+        client.register(OperationIr::Module(ModuleOperationIr::MaxPool3d(desc))).output()
+    }
+
+    fn max_pool3d_with_indices(x: FloatTensor<Self>, kernel: [usize; 3], stride: [usize; 3],
+        padding: [usize; 3], dilation: [usize; 3], ceil: bool) -> MaxPool3dWithIndices<Self> {
+        let client = x.client.clone();
+        let desc = MaxPool3dWithIndicesOpIr::create(x.into_ir(), kernel, stride, padding,
+            dilation, ceil, || client.create_empty_handle());
+        let [out, indices] = client.register(OperationIr::Module(
+            ModuleOperationIr::MaxPool3dWithIndices(desc))).outputs();
+        MaxPool3dWithIndices::new(out, indices)
+    }
+
+    fn max_pool3d_with_indices_backward(x: FloatTensor<Self>, grad: FloatTensor<Self>,
+        indices: IntTensor<Self>, kernel: [usize; 3], stride: [usize; 3], padding: [usize; 3],
+        dilation: [usize; 3], ceil: bool) -> MaxPool3dBackward<Self> {
+        let client = x.client.clone();
+        let desc = MaxPool3dWithIndicesBackwardOpIr::create(x.into_ir(), grad.into_ir(),
+            indices.into_ir(), kernel, stride, padding, dilation, ceil, || client.create_empty_handle());
+        let out = client.register(OperationIr::Module(
+            ModuleOperationIr::MaxPool3dWithIndicesBackward(desc))).output();
+        MaxPool3dBackward::new(out)
     }
 
     fn adaptive_avg_pool1d(x: FloatTensor<Self>, output_size: usize) -> FloatTensor<Self> {

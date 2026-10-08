@@ -211,6 +211,48 @@ pub enum InterpolateModeIr {
     Lanczos3,
 }
 
+/// Native maximum-volume pooling operation.
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
+pub struct MaxPool3dOpIr {
+    pub x: TensorIr,
+    pub kernel_size: [usize; 3],
+    pub stride: [usize; 3],
+    pub padding: [usize; 3],
+    pub dilation: [usize; 3],
+    pub ceil_mode: bool,
+    pub out: TensorIr,
+}
+
+/// Native maximum-volume pooling and original I64 input positions.
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
+pub struct MaxPool3dWithIndicesOpIr {
+    pub x: TensorIr,
+    pub kernel_size: [usize; 3],
+    pub stride: [usize; 3],
+    pub padding: [usize; 3],
+    pub dilation: [usize; 3],
+    pub ceil_mode: bool,
+    pub out: TensorIr,
+    pub out_indices: TensorIr,
+}
+
+/// Native maximum-volume derivatives through saved input positions.
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
+pub struct MaxPool3dWithIndicesBackwardOpIr {
+    pub x: TensorIr,
+    pub grad: TensorIr,
+    pub indices: TensorIr,
+    pub kernel_size: [usize; 3],
+    pub stride: [usize; 3],
+    pub padding: [usize; 3],
+    pub dilation: [usize; 3],
+    pub ceil_mode: bool,
+    pub out: TensorIr,
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
 #[allow(missing_docs)]
 pub struct InterpolateOptionsIr {

@@ -7,6 +7,7 @@ use ruda_tensor::graph::{
     AvgPool2dOpIr, InterpolateBackwardOpIr, InterpolateOpIr, MaxPool1dOpIr,
     MaxPool1dWithIndicesBackwardOpIr, MaxPool1dWithIndicesOpIr, MaxPool2dOpIr,
     MaxPool2dWithIndicesBackwardOpIr, MaxPool2dWithIndicesOpIr,
+    MaxPool3dOpIr, MaxPool3dWithIndicesOpIr, MaxPool3dWithIndicesBackwardOpIr,
 };
 
 impl<B: BackendIr> Runner<B> {
@@ -278,6 +279,31 @@ impl<B: BackendIr> Runner<B> {
             indices,
         );
         handles.register_float_tensor::<B>(&desc.out.id, output.x_grad);
+    }
+
+    pub(super) fn apply_max_pool3d(&self, handles: &mut HandleContainer<B::Handle>, desc: &MaxPool3dOpIr) {
+        let x = handles.get_float_tensor::<B>(&desc.x);
+        let out = B::max_pool3d(x, desc.kernel_size, desc.stride, desc.padding, desc.dilation, desc.ceil_mode);
+        handles.register_float_tensor::<B>(&desc.out.id, out);
+    }
+
+    pub(super) fn apply_max_pool3d_with_indices(&self, handles: &mut HandleContainer<B::Handle>,
+        desc: &MaxPool3dWithIndicesOpIr) {
+        let x = handles.get_float_tensor::<B>(&desc.x);
+        let out = B::max_pool3d_with_indices(x, desc.kernel_size, desc.stride,
+            desc.padding, desc.dilation, desc.ceil_mode);
+        handles.register_float_tensor::<B>(&desc.out.id, out.output);
+        handles.register_int_tensor::<B>(&desc.out_indices.id, out.indices);
+    }
+
+    pub(super) fn apply_max_pool3d_with_indices_backward(&self, handles: &mut HandleContainer<B::Handle>,
+        desc: &MaxPool3dWithIndicesBackwardOpIr) {
+        let x = handles.get_float_tensor::<B>(&desc.x);
+        let grad = handles.get_float_tensor::<B>(&desc.grad);
+        let indices = handles.get_int_tensor::<B>(&desc.indices);
+        let out = B::max_pool3d_with_indices_backward(x, grad, indices, desc.kernel_size,
+            desc.stride, desc.padding, desc.dilation, desc.ceil_mode);
+        handles.register_float_tensor::<B>(&desc.out.id, out.x_grad);
     }
 
     pub(super) fn apply_interpolate(

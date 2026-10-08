@@ -1078,6 +1078,11 @@ impl ModuleOperationIr {
                 Box::new([&repr.x, &repr.indices, &repr.grad].into_iter())
             }
             ModuleOperationIr::MaxPool2d(repr) => Box::new([&repr.x].into_iter()),
+            ModuleOperationIr::MaxPool3d(repr) => Box::new([&repr.x].into_iter()),
+            ModuleOperationIr::MaxPool3dWithIndices(repr) => Box::new([&repr.x].into_iter()),
+            ModuleOperationIr::MaxPool3dWithIndicesBackward(repr) => {
+                Box::new([&repr.x, &repr.indices, &repr.grad].into_iter())
+            }
             ModuleOperationIr::MaxPool2dWithIndices(repr) => Box::new([&repr.x].into_iter()),
             ModuleOperationIr::MaxPool2dWithIndicesBackward(repr) => {
                 Box::new([&repr.x, &repr.indices, &repr.grad].into_iter())
@@ -1203,6 +1208,11 @@ impl ModuleOperationIr {
                 Box::new([&repr.out].into_iter())
             }
             ModuleOperationIr::MaxPool2d(repr) => Box::new([&repr.out].into_iter()),
+            ModuleOperationIr::MaxPool3d(repr) => Box::new([&repr.out].into_iter()),
+            ModuleOperationIr::MaxPool3dWithIndices(repr) => {
+                Box::new([&repr.out, &repr.out_indices].into_iter())
+            }
+            ModuleOperationIr::MaxPool3dWithIndicesBackward(repr) => Box::new([&repr.out].into_iter()),
             ModuleOperationIr::MaxPool2dWithIndices(repr) => {
                 Box::new([&repr.out, &repr.out_indices].into_iter())
             }
@@ -1430,6 +1440,17 @@ impl ModuleOperationIr {
             }
             ModuleOperationIr::MaxPool2d(repr) => {
                 repr.x.mark_read_only(nodes, &mut output);
+            }
+            ModuleOperationIr::MaxPool3d(repr) => {
+                repr.x.mark_read_only(nodes, &mut output);
+            }
+            ModuleOperationIr::MaxPool3dWithIndices(repr) => {
+                repr.x.mark_read_only(nodes, &mut output);
+            }
+            ModuleOperationIr::MaxPool3dWithIndicesBackward(repr) => {
+                repr.x.mark_read_only(nodes, &mut output);
+                repr.grad.mark_read_only(nodes, &mut output);
+                repr.indices.mark_read_only(nodes, &mut output);
             }
             ModuleOperationIr::MaxPool2dWithIndices(repr) => {
                 repr.x.mark_read_only(nodes, &mut output);
