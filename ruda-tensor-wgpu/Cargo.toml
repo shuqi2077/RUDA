@@ -47,7 +47,7 @@ features = [ "wgpu",]
 
 [dependencies.ruda-tensor-device]
 path = "../ruda-tensor-device"
-version = "0.21.32"
+version = "0.21.33"
 default-features = false
 
 [dependencies.ruda-fusion]
