@@ -1,4 +1,4 @@
-use super::{ExpertOwnership,ExpertPartitionContext,ExpertParallelSwiGluExperts,ExpertParallelGeometry,ExpertParallelReceived,ExpertParallelMoeLayer};
+use super::expert_parallel::{ExpertOwnership,ExpertPartitionContext,ExpertParallelSwiGluExperts,ExpertParallelGeometry,ExpertParallelReceived,ExpertParallelMoeLayer};
 use crate::{ExpertLinear,FloatingExpertProjection,AdaptedFloatingSwiGluExperts,FloatingExpertError,FloatingExpertLoRAError,
     LoRALinearConfig,ExpertAdapterTarget,ExpertAdapterProjections,ExpertAdapterProjectionRef,ExpertAdapterMapper,FrozenExpertGeometry,FrozenSelectedExperts,
     transformer::TransformerProjectionShape};
