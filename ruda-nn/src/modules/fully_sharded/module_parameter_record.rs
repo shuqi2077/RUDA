@@ -230,6 +230,10 @@ visit_projected_fields!(FullyShardedAwqTransformerBlock,attention,feed_forward,a
 visit_projected_fields!(FullyShardedAwqTransformerStack,blocks);
 visit_projected_fields!(FullyShardedAwqTransformerHead,projection,normalization);
 visit_projected_fields!(FullyShardedAwqTransformerModel,embeddings,backbone,normalization,head);
+visit_projected_fields!(FullyShardedProjectedCrossAttention,attention,query_norm,memory_norm);
+visit_projected_fields!(FullyShardedProjectedDecoderLayer,backbone,cross_attention);
+visit_projected_fields!(FullyShardedProjectedDecoderStack,layers);
+visit_projected_fields!(FullyShardedProjectedEncoderDecoderModel,source_embeddings,encoder,encoder_normalization,target_embeddings,decoder,decoder_normalization,head);
 visit_fields!(FullyShardedNf4Linear,packed,scales,codebook,bias);
 visit_fields!(FullyShardedNf4LoRALinear,base,adapter_a,adapter_b);
 impl<B:Backend> FullyShardedModule<B> for ShardedPackedParameter<B> {
