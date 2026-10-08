@@ -70,6 +70,9 @@ pub enum NestedValue {
 
     /// An opaque vector of bytes, with alignment.
     Bytes(Bytes),
+
+    /// A unit value, distinct from a missing/default value and an optional `None`.
+    Unit,
 }
 
 impl NestedValue {
@@ -378,6 +381,7 @@ impl fmt::Debug for NestedValue {
             NestedValue::Bytes(bytes) if bytes.len() > 3 => write_vec_truncated(bytes, f),
             // Handle other variants as usual
             NestedValue::Default(origin) => f.debug_tuple("Default").field(origin).finish(),
+            NestedValue::Unit => f.write_str("Unit"),
             NestedValue::Bool(b) => f.debug_tuple("Bool").field(b).finish(),
             NestedValue::String(s) => f.debug_tuple("String").field(s).finish(),
             NestedValue::F32(val) => f.debug_tuple("F32").field(val).finish(),

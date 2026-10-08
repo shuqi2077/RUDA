@@ -69,6 +69,6 @@ jobs:
           cargo check --locked -p ruCCL --lib
       - name: Compile resumable dataset loading
         run: |
-          cargo check --locked -p ruda-model --features dataset --lib
+          cargo check --locked -p ruda-model --features dataset,record-item-custom-serde --lib
       - name: Compile native generation continuation
         run: cargo check --locked -p ruda-llm --lib

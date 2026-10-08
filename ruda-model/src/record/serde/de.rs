@@ -56,6 +56,7 @@ impl<'de, A: RudaModuleAdapter> serde::Deserializer<'de> for Deserializer<A> {
         V: Visitor<'de>,
     {
         match self.value {
+            Some(NestedValue::Unit) => visitor.visit_unit(),
             Some(NestedValue::Bool(value)) => visitor.visit_bool(value),
             Some(NestedValue::String(value)) => visitor.visit_string(value),
             Some(NestedValue::F32(value)) => visitor.visit_f32(value),
@@ -306,22 +307,25 @@ impl<'de, A: RudaModuleAdapter> serde::Deserializer<'de> for Deserializer<A> {
         }
     }
 
-    fn deserialize_unit<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        unimplemented!("deserialize_unit is not implemented")
+        match self.value {
+            Some(NestedValue::Unit | NestedValue::Default(_)) => visitor.visit_unit(),
+            _ => Err(de::Error::custom("Expected unit value")),
+        }
     }
 
     fn deserialize_unit_struct<V>(
         self,
         _name: &'static str,
-        _visitor: V,
+        visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        unimplemented!("deserialize_unit_struct is not implemented")
+        self.deserialize_unit(visitor)
     }
 
     fn deserialize_newtype_struct<V>(
@@ -332,9 +336,16 @@ impl<'de, A: RudaModuleAdapter> serde::Deserializer<'de> for Deserializer<A> {
     where
         V: Visitor<'de>,
     {
-        if name == "__ruda_record_enum_v1" {
+        if name == "__ruda_record_enum_v1" || name.starts_with("__ruda_record_enum_v1:") {
             let value = self.value
                 .ok_or_else(|| <Error as de::Error>::custom("Expected a record enum value"))?;
+            if let Some(record_name) = name.strip_prefix("__ruda_record_enum_v1:") {
+                if matches!(&value, NestedValue::Map(map) if map.len() == 1 && map.contains_key(record_name)) {
+                    return visitor.visit_newtype_struct(Deserializer::<A>::new(
+                        value, self.default_for_missing_fields,
+                    ));
+                }
+            }
             return visitor.visit_seq(enum_probe::RecordEnumProbe::<A>::new(
                 value, self.default_for_missing_fields,
             ));
@@ -417,7 +428,7 @@ impl<'de, A: RudaModuleAdapter> serde::Deserializer<'de> for Deserializer<A> {
     /// using `deserialize_any`, which is not what we want because we want to use methods, such
     /// as `visit_struct`.
     fn deserialize_enum<V>(
-        self,
+        mut self,
         name: &'static str,
         variants: &'static [&'static str],
         visitor: V,
@@ -427,18 +438,23 @@ impl<'de, A: RudaModuleAdapter> serde::Deserializer<'de> for Deserializer<A> {
     {
         let tag = match &self.value {
             Some(NestedValue::Map(map)) if name == "DType" || map.len() == 1 => match map.get(name) {
-                Some(NestedValue::String(variant)) => Some(variant.clone()),
+                Some(NestedValue::String(variant)) => Some((variant.clone(), false)),
+                Some(NestedValue::Map(payload)) if payload.len() == 1 =>
+                    payload.keys().next().map(|variant| (variant.clone(), true)),
                 _ => None,
             },
             _ => None,
         };
-        if let Some(variant) = tag {
-            if !variants.contains(&variant.as_str()) {
+        if let Some((variant, has_payload)) = tag {
+            let Some(&declared_variant) = variants.iter().find(|candidate| **candidate == variant.as_str()) else {
                 return Err(<Error as de::Error>::unknown_variant(&variant, variants));
-            }
-            return visitor.visit_enum(ProbeEnumAccess::<A>::new(
-                NestedValue::String(variant.clone()), variant, self.default_for_missing_fields,
-            ));
+            };
+            let value = if has_payload {
+                let Some(NestedValue::Map(mut outer)) = self.value.take() else { unreachable!() };
+                let Some(NestedValue::Map(mut payload)) = outer.remove(name) else { unreachable!() };
+                payload.remove(&variant).ok_or_else(|| <Error as de::Error>::custom("Missing enum payload"))?
+            } else { NestedValue::String(variant.clone()) };
+            return visitor.visit_enum(ProbeEnumAccess::<A>::new(value, declared_variant, self.default_for_missing_fields));
         }
         fn clone_unsafely<T>(thing: &T) -> T {
             unsafe {
@@ -459,7 +475,7 @@ impl<'de, A: RudaModuleAdapter> serde::Deserializer<'de> for Deserializer<A> {
             let cloned_visitor = clone_unsafely(&visitor);
             let result = cloned_visitor.visit_enum(ProbeEnumAccess::<A>::new(
                 self.value.clone().unwrap(),
-                variant.to_owned(),
+                variant,
                 self.default_for_missing_fields,
             ));
 
@@ -701,13 +717,13 @@ where
 
 struct ProbeEnumAccess<A: RudaModuleAdapter> {
     value: NestedValue,
-    current_variant: String,
+    current_variant: &'static str,
     default_for_missing_fields: bool,
     phantom: std::marker::PhantomData<A>,
 }
 
 impl<A: RudaModuleAdapter> ProbeEnumAccess<A> {
-    fn new(value: NestedValue, current_variant: String, default_for_missing_fields: bool) -> Self {
+    fn new(value: NestedValue, current_variant: &'static str, default_for_missing_fields: bool) -> Self {
         ProbeEnumAccess {
             value,
             current_variant,
@@ -728,7 +744,7 @@ where
     where
         V: DeserializeSeed<'de>,
     {
-        seed.deserialize(self.current_variant.clone().into_deserializer())
+        seed.deserialize(self.current_variant.into_deserializer())
             .map(|v| (v, self))
     }
 }
@@ -753,6 +769,7 @@ where
     fn unit_variant(self) -> Result<(), Self::Error> {
         // Support tensor `DType` deserialization
         match self.value {
+            NestedValue::Unit => Ok(()),
             NestedValue::String(variant) if variant == self.current_variant => Ok(()),
             NestedValue::Map(value) if value.contains_key("DType") => {
                 match value.get("DType") {
@@ -763,32 +780,33 @@ where
                             Err(Error::Other("Wrong variant".to_string())) // wrong match
                         }
                     }
-                    _ => panic!("expected DType variant as string"),
+                    _ => Err(de::Error::custom("Expected DType variant as string")),
                 }
             }
-            _ => unimplemented!(
-                "unit variant is not implemented because it is not used in the ruda module"
-            ),
+            _ => Err(de::Error::custom("Expected unit enum variant")),
         }
     }
 
-    fn tuple_variant<V>(self, _len: usize, _visitor: V) -> Result<V::Value, Self::Error>
+    fn tuple_variant<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        unimplemented!("tuple variant is not implemented because it is not used in the ruda module")
+        serde::Deserializer::deserialize_tuple(
+            Deserializer::<A>::new(self.value, self.default_for_missing_fields), len, visitor,
+        )
     }
 
     fn struct_variant<V>(
         self,
-        _fields: &'static [&'static str],
-        _visitor: V,
+        fields: &'static [&'static str],
+        visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        unimplemented!(
-            "struct variant is not implemented because it is not used in the ruda module"
+        serde::Deserializer::deserialize_struct(
+            Deserializer::<A>::new(self.value, self.default_for_missing_fields),
+            self.current_variant, fields, visitor,
         )
     }
 }
@@ -834,6 +852,16 @@ impl DefaultDeserializer {
 
 impl<'de> serde::Deserializer<'de> for DefaultDeserializer {
     type Error = Error;
+
+    fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where V: Visitor<'de> {
+        visitor.visit_unit()
+    }
+
+    fn deserialize_unit_struct<V>(self, _name: &'static str, visitor: V) -> Result<V::Value, Self::Error>
+    where V: Visitor<'de> {
+        visitor.visit_unit()
+    }
 
     fn deserialize_any<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
@@ -998,7 +1026,7 @@ impl<'de> serde::Deserializer<'de> for DefaultDeserializer {
     }
 
     forward_to_deserialize_any! {
-        u128 bytes byte_buf unit unit_struct newtype_struct
+        u128 bytes byte_buf newtype_struct
         enum identifier ignored_any
     }
 }

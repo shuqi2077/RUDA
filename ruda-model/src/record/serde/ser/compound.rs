@@ -1,5 +1,6 @@
 use super::{Error, NestedValue, Serializer};
-use serde::{Serialize, ser::{SerializeMap, SerializeTuple, SerializeTupleStruct}};
+use serde::{Serialize, ser::{SerializeMap, SerializeStruct, SerializeStructVariant,
+    SerializeTuple, SerializeTupleStruct, SerializeTupleVariant}};
 use std::collections::HashMap;
 
 /// Serializes fixed-length heterogeneous values without sequence specialization.
@@ -52,6 +53,67 @@ impl SerializeTupleStruct for TupleSerializer {
 
     fn end(self) -> Result<NestedValue, Error> {
         self.finish()
+    }
+}
+
+pub(super) fn variant_value(name: &str, variant: &str, value: NestedValue) -> NestedValue {
+    NestedValue::Map(HashMap::from([(name.to_owned(),
+        NestedValue::Map(HashMap::from([(variant.to_owned(), value)])))]))
+}
+
+/// Serializes a named enum's fixed-length positional payload.
+pub struct TupleVariantSerializer {
+    name: &'static str,
+    variant: &'static str,
+    tuple: TupleSerializer,
+}
+
+impl TupleVariantSerializer {
+    pub(super) fn new(name: &'static str, variant: &'static str, len: usize) -> Self {
+        Self { name, variant, tuple: TupleSerializer::new(len) }
+    }
+}
+
+impl SerializeTupleVariant for TupleVariantSerializer {
+    type Ok = NestedValue;
+    type Error = Error;
+
+    fn serialize_field<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Error> {
+        self.tuple.push(value)
+    }
+
+    fn end(self) -> Result<NestedValue, Error> {
+        Ok(variant_value(self.name, self.variant, self.tuple.finish()?))
+    }
+}
+
+/// Serializes a named enum's field payload using the existing struct serializer.
+pub struct StructVariantSerializer {
+    name: &'static str,
+    variant: &'static str,
+    fields: Serializer,
+}
+
+impl StructVariantSerializer {
+    pub(super) fn new(name: &'static str, variant: &'static str) -> Self {
+        Self { name, variant, fields: Serializer::new() }
+    }
+}
+
+impl SerializeStructVariant for StructVariantSerializer {
+    type Ok = NestedValue;
+    type Error = Error;
+
+    fn serialize_field<T: Serialize + ?Sized>(&mut self, key: &'static str, value: &T) -> Result<(), Error> {
+        SerializeStruct::serialize_field(&mut self.fields, key, value)
+    }
+
+    fn skip_field(&mut self, key: &'static str) -> Result<(), Error> {
+        SerializeStruct::skip_field(&mut self.fields, key)
+    }
+
+    fn end(self) -> Result<NestedValue, Error> {
+        Ok(variant_value(self.name, self.variant, SerializeStruct::end(self.fields)?))
     }
 }
 

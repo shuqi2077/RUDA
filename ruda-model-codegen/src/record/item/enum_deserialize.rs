@@ -12,6 +12,7 @@ pub(super) fn generate(
     let model = &paths.model;
     let serde_path = paths.serde;
     let serialized_name = item_name.to_string();
+    let record_marker = format!("__ruda_record_enum_v1:{serialized_name}");
     let mut fields = TokenStream::new();
     let mut tagged_arms = TokenStream::new();
     let mut probes = TokenStream::new();
@@ -95,7 +96,7 @@ pub(super) fn generate(
                     __RudaDeserializer: #model::serde::Deserializer<'__ruda_de>,
                 {
                     deserializer.deserialize_newtype_struct(
-                        "__ruda_record_enum_v1",
+                        #record_marker,
                         __RudaRecordEnumVisitor {
                             marker: ::core::marker::PhantomData::<#item_name #type_generics>,
                         },

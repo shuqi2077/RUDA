@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 mod compound;
-pub use compound::{MapSerializer, TupleSerializer};
+pub use compound::{MapSerializer, StructVariantSerializer, TupleSerializer, TupleVariantSerializer};
 
 use super::{
     data::NestedValue,
@@ -10,7 +10,7 @@ use super::{
 
 use serde::{
     Serialize,
-    ser::{self, SerializeSeq, SerializeStruct, Serializer as SerializerTrait},
+    ser::{SerializeSeq, SerializeStruct, Serializer as SerializerTrait},
 };
 
 /// Simple struct serializer that converts a struct into NestedValues.
@@ -43,10 +43,10 @@ impl SerializerTrait for Serializer {
     type SerializeSeq = Self;
     type SerializeTuple = TupleSerializer;
     type SerializeTupleStruct = TupleSerializer;
-    type SerializeTupleVariant = ser::Impossible<NestedValue, Self::Error>;
+    type SerializeTupleVariant = TupleVariantSerializer;
     type SerializeMap = MapSerializer;
     type SerializeStruct = Self;
-    type SerializeStructVariant = ser::Impossible<NestedValue, Self::Error>;
+    type SerializeStructVariant = StructVariantSerializer;
 
     fn serialize_struct(
         self,
@@ -137,11 +137,11 @@ impl SerializerTrait for Serializer {
     }
 
     fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
-        unimplemented!()
+        Ok(NestedValue::Unit)
     }
 
     fn serialize_unit_struct(self, _name: &'static str) -> Result<Self::Ok, Self::Error> {
-        unimplemented!()
+        Ok(NestedValue::Unit)
     }
 
     fn serialize_unit_variant(
@@ -158,15 +158,15 @@ impl SerializerTrait for Serializer {
 
     fn serialize_newtype_variant<T>(
         self,
-        _name: &'static str,
+        name: &'static str,
         _variant_index: u32,
-        _variant: &'static str,
-        _value: &T,
+        variant: &'static str,
+        value: &T,
     ) -> Result<Self::Ok, Self::Error>
     where
         T: Serialize + ?Sized,
     {
-        unimplemented!()
+        Ok(compound::variant_value(name, variant, value.serialize(Serializer::new())?))
     }
 
     fn serialize_tuple(self, len: usize) -> Result<Self::SerializeTuple, Self::Error> {
@@ -183,12 +183,12 @@ impl SerializerTrait for Serializer {
 
     fn serialize_tuple_variant(
         self,
-        _name: &'static str,
+        name: &'static str,
         _variant_index: u32,
-        _variant: &'static str,
-        _len: usize,
+        variant: &'static str,
+        len: usize,
     ) -> Result<Self::SerializeTupleVariant, Self::Error> {
-        unimplemented!()
+        Ok(TupleVariantSerializer::new(name, variant, len))
     }
 
     fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
@@ -197,12 +197,12 @@ impl SerializerTrait for Serializer {
 
     fn serialize_struct_variant(
         self,
-        _name: &'static str,
+        name: &'static str,
         _variant_index: u32,
-        _variant: &'static str,
+        variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
-        unimplemented!()
+        Ok(StructVariantSerializer::new(name, variant))
     }
 }
 
