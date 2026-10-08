@@ -1,8 +1,9 @@
 use super::*;
 use ruda_model::tensor::{MoeOps,Bool,IntegerTensorCollective};
-use crate::{NativeMoeFeedForward,NativeMoeTransformerBlock,NativeMoeTransformerLayer,NativeMoeTransformerStack,NativeMoeTransformerModel,
-    NativeMoeTransformerError,transformer::TransformerProjection,attention::{DenseAttentionMask,DenseAttentionOptions,
-    PackedSequenceLayout,PackedAttentionOptions,PackedDocumentAttentionMask},cache::TransformerKvCache,loss::CausalCrossEntropyConfig};
+use crate::transformer::{NativeMoeFeedForward,NativeMoeTransformerBlock,NativeMoeTransformerLayer,NativeMoeTransformerStack,NativeMoeTransformerModel,
+    NativeMoeTransformerError,TransformerProjection};
+use crate::{attention::{DenseAttentionMask,DenseAttentionOptions,PackedSequenceLayout,PackedAttentionOptions,PackedDocumentAttentionMask},
+    cache::TransformerKvCache,loss::CausalCrossEntropyConfig};
 use ruda_autodiff::collective::{CollectiveScope,ScopedCollectiveError};
 
 /// Actual routed expert cubes/router and optional shared FFN with local-only persistent leaves.
@@ -215,7 +216,7 @@ impl<B:MoeOps,S:CheckpointStrategy,P:GatherTransformerProjection<Autodiff<B,S>,B
         let scope=CollectiveScope::<B,S>::new();let transport=scope.bind(communicator.clone());
         let hidden=self.forward_hidden(input,masks,options,transport.clone(),positions).map_err(FullyShardedNativeMoeTrainingError::Model)?;
         let loss=self.head.forward_causal_loss(hidden,labels,criterion,label_smoothing,transport)
-            .map_err(|error|FullyShardedNativeMoeTrainingError::Model(error.into()))?;
+            .map_err(|error|FullyShardedNativeMoeTrainingError::<C::Error,<P::Gathered as TransformerProjection<Autodiff<B,S>>>::Error,<Autodiff<B,S> as MoeOps>::MoeError>::Model(error.into()))?;
         complete_fully_sharded_loss(&scope,loss.loss_sum,loss.valid_tokens,communicator).map_err(FullyShardedNativeMoeTrainingError::Loss)
     }
     /// Original packed-document causal targets, empty-rank graph participation and full-vocabulary smoothing.
@@ -227,7 +228,7 @@ impl<B:MoeOps,S:CheckpointStrategy,P:GatherTransformerProjection<Autodiff<B,S>,B
         let scope=CollectiveScope::<B,S>::new();let transport=scope.bind(communicator.clone());
         let hidden=self.forward_packed_hidden(input,layout,masks,options,transport.clone(),positions).map_err(FullyShardedNativeMoeTrainingError::Model)?;
         let loss=self.head.forward_packed_causal_loss(hidden,labels,layout,criterion,label_smoothing,transport)
-            .map_err(|error|FullyShardedNativeMoeTrainingError::Model(error.into()))?;
+            .map_err(|error|FullyShardedNativeMoeTrainingError::<C::Error,<P::Gathered as TransformerProjection<Autodiff<B,S>>>::Error,<Autodiff<B,S> as MoeOps>::MoeError>::Model(error.into()))?;
         complete_fully_sharded_loss(&scope,loss.loss_sum,loss.valid_tokens,communicator).map_err(FullyShardedNativeMoeTrainingError::Loss)
     }
 }
