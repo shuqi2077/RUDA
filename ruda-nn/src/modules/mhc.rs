@@ -177,6 +177,13 @@ impl<B: Backend> Mhc<B> {
         let (merged, mappings) = self.pre(state.clone());
         self.post(state, branch(merged), mappings)
     }
+
+    /// Compose an actual fallible native branch without replacing its original error.
+    pub fn try_forward<F, E>(&self, state: Tensor<B, 4>, branch: F) -> Result<Tensor<B, 4>, E>
+    where F: FnOnce(Tensor<B, 3>) -> Result<Tensor<B, 3>, E> {
+        let (merged, mappings) = self.pre(state.clone());
+        Ok(self.post(state, branch(merged)?, mappings))
+    }
 }
 
 #[cfg(test)]

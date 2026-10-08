@@ -3,6 +3,7 @@ use ruda_model::{module::{Module,ModuleDisplay},tensor::{FrozenAwqOps,FrozenNf4O
 use crate::{Linear,LoRALinear,FrozenNf4Linear,Nf4LoRALinear,FrozenAwqLinear,AwqLoRALinear};
 use super::{AwqTransformerProjection,AwqGroupedQueryAttention,AwqFeedForward,AwqTransformerBlock,
     AwqTransformerStack,AwqTransformerHead,AwqTransformerModel};
+use super::AdaptedProjection;
 
 /// Backend-bound identity for the actual stored projection type.
 /// The blanket implementation retains the original module value and public field layout.
@@ -61,6 +62,16 @@ impl<B:Backend> TransformerProjectionShape<B> for LoRALinear<B> {
     fn dimensions(&self) -> [usize;2] {self.base.weight.val().dims()}
 }
 impl<B:Backend> TransformerProjection<B> for LoRALinear<B> {
+    type Error=Infallible;
+    fn forward<const D:usize>(&self,input:Tensor<B,D>) -> Result<Tensor<B,D>,Self::Error> {Ok(self.forward(input))}
+}
+
+impl<B:Backend> TransformerProjectionShape<B> for AdaptedProjection<B> {
+    fn dimensions(&self) -> [usize;2] {
+        match self {Self::Dense(layer)=>layer.weight.val().dims(),Self::LoRA(layer)=>layer.base.weight.val().dims()}
+    }
+}
+impl<B:Backend> TransformerProjection<B> for AdaptedProjection<B> {
     type Error=Infallible;
     fn forward<const D:usize>(&self,input:Tensor<B,D>) -> Result<Tensor<B,D>,Self::Error> {Ok(self.forward(input))}
 }
