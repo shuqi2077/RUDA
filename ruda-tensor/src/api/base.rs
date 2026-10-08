@@ -1367,7 +1367,7 @@ where
 
         // Return empty tensor if any dimension is 0 (empty slice)
         if output_dims.contains(&0) {
-            return Self::empty(output_dims, &self.device());
+            return Self::empty(output_dims, (&self.device(), self.dtype()));
         }
         Self::new(K::slice(self.primitive, &slices))
     }
