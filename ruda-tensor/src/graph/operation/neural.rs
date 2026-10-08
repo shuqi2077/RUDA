@@ -2,6 +2,14 @@ use super::*;
 
 #[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
 #[allow(missing_docs)]
+pub struct SiluBackwardOpIr {
+    pub x: TensorIr,
+    pub grad: TensorIr,
+    pub out: TensorIr,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
 pub struct SoftmaxOpIr {
     pub x: TensorIr,
     pub dim: usize,

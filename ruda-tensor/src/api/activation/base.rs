@@ -383,6 +383,12 @@ pub fn silu<const D: usize, B: Backend>(tensor: Tensor<B, D>) -> Tensor<B, D> {
     Tensor::from_primitive(TensorPrimitive::Float(B::silu(tensor.primitive.tensor())))
 }
 
+/// Explicit native SiLU with FP32 half-storage arithmetic in forward and first-order backward.
+/// Existing `silu` remains unchanged; backend FP64 inputs retain FP64 working arithmetic.
+pub fn silu_native<const D: usize, B: Backend>(tensor: Tensor<B, D>) -> Tensor<B, D> {
+    Tensor::from_primitive(TensorPrimitive::Float(B::silu_native(tensor.primitive.tensor())))
+}
+
 /// Applies the hard swish function element-wise.
 ///
 #[cfg_attr(

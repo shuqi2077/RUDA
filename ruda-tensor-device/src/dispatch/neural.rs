@@ -63,6 +63,20 @@ where
     I: IntElement,
     BT: BoolElement,
 {
+    fn silu_native(tensor: FloatTensor<Self>) -> FloatTensor<Self> {
+        if matches!(tensor.dtype, ruda_core::tensor::DType::F32 | ruda_core::tensor::DType::F16 | ruda_core::tensor::DType::BF16)
+            && tensor.qparams.is_none() {
+            ruprim::elementwise::unary::silu::launch(tensor)
+        } else { ruda_tensor::ops::activation_training::silu_native::<Self>(tensor) }
+    }
+
+    fn silu_native_backward(input: FloatTensor<Self>, grad: FloatTensor<Self>) -> FloatTensor<Self> {
+        if [&input, &grad].iter().all(|value| value.qparams.is_none()
+            && matches!(value.dtype, ruda_core::tensor::DType::F32 | ruda_core::tensor::DType::F16 | ruda_core::tensor::DType::BF16)) {
+            ruprim::elementwise::unary::silu::launch_backward(input, grad)
+        } else { ruda_tensor::ops::activation_training::silu_native_backward::<Self>(input, grad) }
+    }
+
     fn softmax_with_stats(tensor: FloatTensor<Self>, dim: usize, logarithmic: bool)
         -> ruda_tensor::ops::SoftmaxOutput<Self> {
         let rank = tensor.meta.shape().num_dims();

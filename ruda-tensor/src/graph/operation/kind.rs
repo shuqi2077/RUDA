@@ -255,6 +255,10 @@ pub enum ModuleOperationIr {
     Softmax(SoftmaxOpIr),
     /// First-order softmax/log-softmax VJP from a saved working output.
     SoftmaxBackward(SoftmaxBackwardOpIr),
+    /// Explicit working-storage SiLU forward.
+    SiluNative(UnaryOpIr),
+    /// Independent working-storage SiLU VJP from the original input.
+    SiluNativeBackward(SiluBackwardOpIr),
 }
 
 /// Basic operations that can be done on any tensor type.

@@ -32,6 +32,32 @@ macro_rules! make_ops {
 }
 
 impl<B: FusionBackend> ModuleOps<Fusion<B>> for Fusion<B> {
+    fn silu_native(x: FloatTensor<Self>) -> FloatTensor<Self> {
+        make_ops!(SiluNativeOps, UnaryOpIr, |desc: &UnaryOpIr, handles: &mut HandleContainer<B::Handle>| {
+            let input = handles.get_float_tensor::<B>(&desc.input);
+            handles.register_float_tensor::<B>(&desc.out.id, B::silu_native(input));
+        });
+        let streams = OperationStreams::with_inputs([&x]);
+        let client = x.client.clone();
+        let desc = UnaryOpIr::create(x.into_ir(), || client.create_empty_handle());
+        client.register(streams, OperationIr::Module(ModuleOperationIr::SiluNative(desc.clone())),
+            SiluNativeOps::<B>::new(desc)).output()
+    }
+
+    fn silu_native_backward(x: FloatTensor<Self>, grad: FloatTensor<Self>) -> FloatTensor<Self> {
+        make_ops!(SiluNativeBackwardOps, SiluBackwardOpIr,
+            |desc: &SiluBackwardOpIr, handles: &mut HandleContainer<B::Handle>| {
+                let input = handles.get_float_tensor::<B>(&desc.x);
+                let grad = handles.get_float_tensor::<B>(&desc.grad);
+                handles.register_float_tensor::<B>(&desc.out.id, B::silu_native_backward(input, grad));
+            });
+        let streams = OperationStreams::with_inputs([&x, &grad]);
+        let client = x.client.clone();
+        let desc = SiluBackwardOpIr::create(x.into_ir(), grad.into_ir(), || client.create_empty_handle());
+        client.register(streams, OperationIr::Module(ModuleOperationIr::SiluNativeBackward(desc.clone())),
+            SiluNativeBackwardOps::<B>::new(desc)).output()
+    }
+
     fn softmax_with_stats(x: FloatTensor<Self>, dim: usize, logarithmic: bool) -> ruda_tensor::ops::SoftmaxOutput<Self> {
         make_ops!(SoftmaxOps, SoftmaxOpIr, |desc: &SoftmaxOpIr, handles: &mut HandleContainer<B::Handle>| {
             let x = handles.get_float_tensor::<B>(&desc.x);

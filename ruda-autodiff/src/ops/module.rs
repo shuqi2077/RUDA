@@ -1,6 +1,9 @@
 use crate::Autodiff;
 use crate::checkpoint::base::Checkpointer;
 use crate::checkpoint::strategy::CheckpointStrategy;
+use crate::checkpoint::{retro_forward::RetroForward, state::BackwardStates};
+use crate::retro_unary;
+use core::marker::PhantomData;
 use crate::grads::Gradients;
 use crate::graph::NodeId;
 use crate::ops::{Backward, Ops, broadcast_shape, unary};
@@ -63,6 +66,27 @@ fn causal_attention_probabilities<B: Backend>(
 }
 
 impl<B: Backend, C: CheckpointStrategy> ModuleOps<Autodiff<B, C>> for Autodiff<B, C> {
+    fn silu_native(tensor: AutodiffTensor<B>) -> AutodiffTensor<B> {
+        #[derive(Debug)]
+        struct Silu;
+        retro_unary!(RetroNativeSilu, B::silu_native);
+        impl<B: Backend> Backward<B, 1> for Silu {
+            type State = NodeId;
+            fn backward(self, ops: Ops<Self::State, 1>, grads: &mut Gradients, checkpointer: &mut Checkpointer) {
+                let input = checkpointer.retrieve_node_output::<B::FloatTensorPrimitive>(ops.state);
+                unary::<B, _>(ops.parents, ops.node, grads, |grad| B::silu_native_backward(input, grad));
+            }
+        }
+        match Silu.prepare::<C>([tensor.node.clone()]).memory_bound()
+            .retro_forward(RetroNativeSilu::<B>::new(tensor.node.id)).parents([&tensor]).stateful() {
+            OpsKind::Tracked(mut prep) => {
+                let state = prep.checkpoint(&tensor);
+                prep.finish(state, B::silu_native(tensor.primitive))
+            }
+            OpsKind::UnTracked(prep) => prep.finish(B::silu_native(tensor.primitive)),
+        }
+    }
+
     fn softmax_native(tensor: AutodiffTensor<B>, dim: usize, logarithmic: bool) -> AutodiffTensor<B> {
         #[derive(Debug)]
         struct Softmax;

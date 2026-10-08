@@ -26,6 +26,9 @@ pub mod normalization;
 /// Saved-working-output softmax and log-softmax training on the current backend.
 pub mod softmax;
 
+/// Working-storage activation forward and first-order training operations.
+pub mod activation_training;
+
 /// Module for grid_sample operations
 pub mod grid_sample;
 

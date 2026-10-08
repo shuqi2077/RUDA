@@ -378,6 +378,7 @@ impl<B: ruda_model::tensor::NativeSwiGluOps> Activation<B> {
     /// Explicit native SwiGLU for its actual recorded projections; other configured activations are unchanged.
     pub fn try_forward_native<const D: usize>(&self, input: Tensor<B, D>) -> Result<Tensor<B, D>, B::SwiGluError> {
         match self {
+            Self::Silu(layer) => Ok(layer.forward_native(input)),
             Self::SwiGlu(layer) => layer.try_forward_native(input),
             _ => Ok(self.forward(input)),
         }

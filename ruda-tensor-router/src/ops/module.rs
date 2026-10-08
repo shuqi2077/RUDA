@@ -12,6 +12,18 @@ use ruda_tensor::graph::*;
 use crate::{BackendRouter, RunnerChannel, RunnerClient};
 
 impl<R: RunnerChannel> ModuleOps<Self> for BackendRouter<R> {
+    fn silu_native(x: FloatTensor<Self>) -> FloatTensor<Self> {
+        let client = x.client.clone();
+        let desc = UnaryOpIr::create(x.into_ir(), || client.create_empty_handle());
+        client.register(OperationIr::Module(ModuleOperationIr::SiluNative(desc))).output()
+    }
+
+    fn silu_native_backward(x: FloatTensor<Self>, grad: FloatTensor<Self>) -> FloatTensor<Self> {
+        let client = x.client.clone();
+        let desc = SiluBackwardOpIr::create(x.into_ir(), grad.into_ir(), || client.create_empty_handle());
+        client.register(OperationIr::Module(ModuleOperationIr::SiluNativeBackward(desc))).output()
+    }
+
     fn softmax_with_stats(x: FloatTensor<Self>, dim: usize, logarithmic: bool) -> ruda_tensor::ops::SoftmaxOutput<Self> {
         let client = x.client.clone();
         let desc = SoftmaxOpIr::create(x.into_ir(), dim, logarithmic, || client.create_empty_handle());

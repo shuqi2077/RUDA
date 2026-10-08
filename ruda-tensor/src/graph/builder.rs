@@ -1198,6 +1198,14 @@ impl DequantizeOpIr {
 
 // Operations with multiple outputs
 
+impl SiluBackwardOpIr {
+    pub fn create(x: TensorIr, grad: TensorIr, new_id: impl FnOnce() -> TensorId) -> Self {
+        assert_eq!(x.shape, grad.shape, "SiLU gradient shape differs");
+        let out = TensorIr::uninit(new_id(), x.shape.clone(), x.dtype);
+        Self { x, grad, out }
+    }
+}
+
 impl SoftmaxOpIr {
     pub fn create(x: TensorIr, dim: usize, logarithmic: bool, mut new_id: impl FnMut() -> TensorId) -> Self {
         assert!(dim < x.shape.num_dims(), "softmax axis out of bounds");

@@ -208,6 +208,16 @@ pub use ruda_core::tensor::spatial::AttentionModuleOptions;
 
 /// Module operations trait.
 pub trait ModuleOps<B: Backend> {
+    /// Explicit native SiLU training path, using FP32 for half activation arithmetic.
+    fn silu_native(tensor: FloatTensor<B>) -> FloatTensor<B> {
+        super::activation_training::silu_native::<B>(tensor)
+    }
+
+    /// Independent first-order SiLU VJP, retaining the original input storage.
+    fn silu_native_backward(input: FloatTensor<B>, grad: FloatTensor<B>) -> FloatTensor<B> {
+        super::activation_training::silu_native_backward::<B>(input, grad)
+    }
+
     /// Explicit saved-working-output softmax path; existing activation defaults are unchanged.
     fn softmax_native(tensor: FloatTensor<B>, dim: usize, logarithmic: bool) -> FloatTensor<B> {
         Self::softmax_with_stats(tensor, dim, logarithmic).output

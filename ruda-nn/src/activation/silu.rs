@@ -12,4 +12,9 @@ impl Silu {
     pub fn forward<B: Backend,const D: usize>(&self,input: Tensor<B,D>) -> Tensor<B,D> {
         ruda_model::tensor::activation::silu(input)
     }
+
+    /// Explicit native SiLU training with FP32 low-precision VJP arithmetic.
+    pub fn forward_native<B: Backend, const D: usize>(&self, input: Tensor<B, D>) -> Tensor<B, D> {
+        ruda_model::tensor::activation::silu_native(input)
+    }
 }

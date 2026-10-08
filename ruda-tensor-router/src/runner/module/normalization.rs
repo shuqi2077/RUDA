@@ -1,6 +1,17 @@
 use super::*;
 
 impl<B: BackendIr> Runner<B> {
+    pub(super) fn apply_silu_native(&self, handles: &mut HandleContainer<B::Handle>, desc: &UnaryOpIr) {
+        let input = handles.get_float_tensor::<B>(&desc.input);
+        handles.register_float_tensor::<B>(&desc.out.id, B::silu_native(input));
+    }
+
+    pub(super) fn apply_silu_native_backward(&self, handles: &mut HandleContainer<B::Handle>, desc: &SiluBackwardOpIr) {
+        let input = handles.get_float_tensor::<B>(&desc.x);
+        let grad = handles.get_float_tensor::<B>(&desc.grad);
+        handles.register_float_tensor::<B>(&desc.out.id, B::silu_native_backward(input, grad));
+    }
+
     pub(super) fn apply_softmax(&self, handles: &mut HandleContainer<B::Handle>, desc: &SoftmaxOpIr) {
         let x = handles.get_float_tensor::<B>(&desc.x);
         let out = B::softmax_with_stats(x, desc.dim, desc.logarithmic);
