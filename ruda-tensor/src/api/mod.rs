@@ -19,6 +19,7 @@ pub use moe_exchange::{NativeMoeDispatched,dispatch_moe,combine_moe,received_moe
 mod options;
 mod orderable;
 mod pad;
+mod spatial_pool;
 pub use pad::IntoPadding;
 mod take;
 mod transaction;

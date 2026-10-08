@@ -118,6 +118,8 @@ pub enum PaddingConfig3d {
     /// Applies explicit symmetric padding values.
     /// Format: (depth, height, width) — same padding on both sides of each dimension.
     Explicit(usize, usize, usize),
+    /// Explicit `(before, after)` pairs for depth, height and width.
+    ExplicitAsymmetric([(usize, usize); 3]),
 }
 
 impl PaddingConfig3d {
@@ -135,6 +137,7 @@ impl PaddingConfig3d {
             Self::Explicit(depth, height, width) => {
                 [(*depth, *depth), (*height, *height), (*width, *width)]
             }
+            Self::ExplicitAsymmetric(padding) => *padding,
         }
     }
 
@@ -163,6 +166,11 @@ impl PaddingConfig3d {
                 [front, top, left]
             }
             Self::Explicit(depth, height, width) => [*depth, *height, *width],
+            Self::ExplicitAsymmetric(padding) => {
+                assert!(padding.iter().all(|(start, end)| start == end),
+                    "Asymmetric padding should be handled via calculate_padding_3d_pairs");
+                padding.map(|(start, _)| start)
+            }
         }
     }
 }
