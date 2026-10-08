@@ -1,4 +1,4 @@
-use ruda_model::tensor::{Bool,DType,Int,IntDType,Tensor,activation::log_softmax,backend::Backend};
+use ruda_model::tensor::{Bool,DType,Int,IntDType,Tensor,activation::{log_softmax,log_softmax_native},backend::Backend};
 use super::CrossEntropyLoss;
 
 /// Unreduced native classification loss and its actual selected normalization weights.
@@ -76,11 +76,13 @@ fn row_mask<B: Backend>(inputs: &Tensor<B,2>,visible: Option<Tensor<B,1,Bool>>) 
     } else {Tensor::<B,1,Bool>::zeros([inputs.dims()[0]],&inputs.device())}
 }
 
-fn probabilities<B: Backend>(criterion: &CrossEntropyLoss<B>,inputs: Tensor<B,2>,excluded: Tensor<B,1,Bool>,dtype: DType)
+fn probabilities<B: Backend>(criterion: &CrossEntropyLoss<B>,inputs: Tensor<B,2>,excluded: Tensor<B,1,Bool>,dtype: DType,native: bool)
     -> Tensor<B,2> {
     let shape = inputs.dims();
     let inputs = inputs.cast(dtype).mask_fill(excluded.reshape([shape[0],1]).expand(shape),if criterion.logits {0} else {1});
-    if criterion.logits {log_softmax(inputs,1)} else {inputs.log()}
+    if criterion.logits {
+        if native {log_softmax_native(inputs,1)} else {log_softmax(inputs,1)}
+    } else {inputs.log()}
 }
 
 pub(super) fn product<B: Backend,const D: usize>(value: Tensor<B,D>,coefficient: Tensor<B,D>) -> Tensor<B,D> {
@@ -94,6 +96,17 @@ impl<B: Backend> CrossEntropyLoss<B> {
     /// This opt-in API normalizes only selected weights, leaving legacy forward unchanged.
     pub fn forward_terms(&self,inputs: Tensor<B,2>,targets: Tensor<B,1,Int>,ignore_index: Option<i64>,
         visible: Option<Tensor<B,1,Bool>>) -> CategoricalLossTerms<B> {
+        self.forward_terms_impl(inputs,targets,ignore_index,visible,false)
+    }
+
+    /// Explicit native log-softmax with unchanged hard-target masks, weights and smoothing.
+    pub fn forward_terms_native(&self,inputs: Tensor<B,2>,targets: Tensor<B,1,Int>,ignore_index: Option<i64>,
+        visible: Option<Tensor<B,1,Bool>>) -> CategoricalLossTerms<B> {
+        self.forward_terms_impl(inputs,targets,ignore_index,visible,true)
+    }
+
+    fn forward_terms_impl(&self,inputs: Tensor<B,2>,targets: Tensor<B,1,Int>,ignore_index: Option<i64>,
+        visible: Option<Tensor<B,1,Bool>>,native: bool) -> CategoricalLossTerms<B> {
         let [rows,classes] = inputs.dims();
         assert_eq!(targets.dims(),[rows],"classification input and target rows differ");
         assert_eq!(targets.device(),inputs.device(),"classification inputs and targets must share a device");
@@ -114,7 +127,7 @@ impl<B: Backend> CrossEntropyLoss<B> {
         let targets = targets.mask_fill(excluded.clone(),0);
         let normalizers = if let Some(weights) = &self.weights {weights.clone().cast(dtype).gather(0,targets.clone())}
             else {Tensor::ones([rows],(&inputs.device(),dtype))};
-        let log_probabilities = probabilities(self,inputs,excluded.clone(),dtype);
+        let log_probabilities = probabilities(self,inputs,excluded.clone(),dtype,native);
         let alpha = f64::from(self.smoothing.unwrap_or(0.0));
         let mut values = if alpha == 1.0 {Tensor::zeros([rows],(&targets.device(),dtype))} else {
             let selected = log_probabilities.clone().gather(1,targets.reshape([rows,1])).reshape([rows]);
@@ -136,6 +149,17 @@ impl<B: Backend> CrossEntropyLoss<B> {
     /// When logits=false, actual probabilities are logged without epsilon clipping.
     pub fn forward_soft_terms(&self,inputs: Tensor<B,2>,targets: Tensor<B,2>,visible: Option<Tensor<B,1,Bool>>)
         -> CategoricalLossTerms<B> {
+        self.forward_soft_terms_impl(inputs,targets,visible,false)
+    }
+
+    /// Native log-softmax for actual differentiable soft targets, without renormalizing them.
+    pub fn forward_soft_terms_native(&self,inputs: Tensor<B,2>,targets: Tensor<B,2>,visible: Option<Tensor<B,1,Bool>>)
+        -> CategoricalLossTerms<B> {
+        self.forward_soft_terms_impl(inputs,targets,visible,true)
+    }
+
+    fn forward_soft_terms_impl(&self,inputs: Tensor<B,2>,targets: Tensor<B,2>,visible: Option<Tensor<B,1,Bool>>,native: bool)
+        -> CategoricalLossTerms<B> {
         assert_eq!(inputs.dims(),targets.dims(),"soft classification input/target class geometry differs");
         assert_eq!(inputs.device(),targets.device(),"soft classification inputs and targets must share a device");
         check_float(targets.dtype());
@@ -153,7 +177,7 @@ impl<B: Backend> CrossEntropyLoss<B> {
         let targets = if alpha == 0.0 {targets} else {targets.mul_scalar(1.0-alpha).add_scalar(alpha/classes as f64)};
         let targets = targets.mask_fill(excluded_classes,0);
         let coefficients = if let Some(weights) = &self.weights {targets*weights.clone().cast(dtype).reshape([1,classes])} else {targets};
-        let log_probabilities = probabilities(self,inputs,excluded.clone(),dtype);
+        let log_probabilities = probabilities(self,inputs,excluded.clone(),dtype,native);
         let values = product(log_probabilities,coefficients).sum_dim(1).reshape([rows]).neg().mask_fill(excluded,0);
         let normalizers = valid.clone().float().cast(dtype);
         CategoricalLossTerms {values,normalizers,valid}
@@ -162,17 +186,39 @@ impl<B: Backend> CrossEntropyLoss<B> {
     /// Per-token classification of [batch,tokens,classes], with no causal target shift.
     pub fn forward_token_terms(&self,inputs: Tensor<B,3>,targets: Tensor<B,2,Int>,ignore_index: Option<i64>,
         visible: Option<Tensor<B,2,Bool>>) -> CategoricalLossTerms<B,2> {
+        self.forward_token_terms_impl(inputs,targets,ignore_index,visible,false)
+    }
+
+    /// Native token classification, without adding a causal shift to the supplied targets.
+    pub fn forward_token_terms_native(&self,inputs: Tensor<B,3>,targets: Tensor<B,2,Int>,ignore_index: Option<i64>,
+        visible: Option<Tensor<B,2,Bool>>) -> CategoricalLossTerms<B,2> {
+        self.forward_token_terms_impl(inputs,targets,ignore_index,visible,true)
+    }
+
+    fn forward_token_terms_impl(&self,inputs: Tensor<B,3>,targets: Tensor<B,2,Int>,ignore_index: Option<i64>,
+        visible: Option<Tensor<B,2,Bool>>,native: bool) -> CategoricalLossTerms<B,2> {
         let [batch,tokens,classes] = inputs.dims();
         assert_eq!(targets.dims(),[batch,tokens],"token classification targets differ from actual token rows");
         let rows = batch.checked_mul(tokens).expect("token classification row count overflow");
         let visible = visible.map(|visible| {
             assert_eq!(visible.dims(),[batch,tokens],"token classification visibility differs from actual rows"); visible.reshape([rows])
         });
-        self.forward_terms(inputs.reshape([rows,classes]),targets.reshape([rows]),ignore_index,visible).reshape([batch,tokens])
+        self.forward_terms_impl(inputs.reshape([rows,classes]),targets.reshape([rows]),ignore_index,visible,native).reshape([batch,tokens])
     }
 
     /// Per-token soft labels with actual full-class distributions and unchanged token axes.
     pub fn forward_soft_token_terms(&self,inputs: Tensor<B,3>,targets: Tensor<B,3>,visible: Option<Tensor<B,2,Bool>>)
+        -> CategoricalLossTerms<B,2> {
+        self.forward_soft_token_terms_impl(inputs,targets,visible,false)
+    }
+
+    /// Native full-class soft-target token loss with the original actual token geometry.
+    pub fn forward_soft_token_terms_native(&self,inputs: Tensor<B,3>,targets: Tensor<B,3>,visible: Option<Tensor<B,2,Bool>>)
+        -> CategoricalLossTerms<B,2> {
+        self.forward_soft_token_terms_impl(inputs,targets,visible,true)
+    }
+
+    fn forward_soft_token_terms_impl(&self,inputs: Tensor<B,3>,targets: Tensor<B,3>,visible: Option<Tensor<B,2,Bool>>,native: bool)
         -> CategoricalLossTerms<B,2> {
         let [batch,tokens,classes] = inputs.dims();
         assert_eq!(targets.dims(),[batch,tokens,classes],"soft token label geometry differs");
@@ -180,24 +226,46 @@ impl<B: Backend> CrossEntropyLoss<B> {
         let visible = visible.map(|visible| {
             assert_eq!(visible.dims(),[batch,tokens],"soft token visibility differs from actual rows"); visible.reshape([rows])
         });
-        self.forward_soft_terms(inputs.reshape([rows,classes]),targets.reshape([rows,classes]),visible).reshape([batch,tokens])
+        self.forward_soft_terms_impl(inputs.reshape([rows,classes]),targets.reshape([rows,classes]),visible,native).reshape([batch,tokens])
     }
 
     /// Native per-pixel classification of NCHW logits against actual [N,H,W] class indices.
     pub fn forward_pixel_terms(&self,inputs: Tensor<B,4>,targets: Tensor<B,3,Int>,ignore_index: Option<i64>,
         visible: Option<Tensor<B,3,Bool>>) -> CategoricalLossTerms<B,3> {
+        self.forward_pixel_terms_impl(inputs,targets,ignore_index,visible,false)
+    }
+
+    /// Native NCHW hard-target loss; channel axes, visibility and selected-weight reduction are retained.
+    pub fn forward_pixel_terms_native(&self,inputs: Tensor<B,4>,targets: Tensor<B,3,Int>,ignore_index: Option<i64>,
+        visible: Option<Tensor<B,3,Bool>>) -> CategoricalLossTerms<B,3> {
+        self.forward_pixel_terms_impl(inputs,targets,ignore_index,visible,true)
+    }
+
+    fn forward_pixel_terms_impl(&self,inputs: Tensor<B,4>,targets: Tensor<B,3,Int>,ignore_index: Option<i64>,
+        visible: Option<Tensor<B,3,Bool>>,native: bool) -> CategoricalLossTerms<B,3> {
         let [batch,classes,height,width] = inputs.dims();
         assert_eq!(targets.dims(),[batch,height,width],"pixel classification target geometry differs");
         let rows = batch.checked_mul(height).and_then(|rows|rows.checked_mul(width)).expect("pixel classification row count overflow");
         let visible = visible.map(|visible| {
             assert_eq!(visible.dims(),[batch,height,width],"pixel classification visibility differs"); visible.reshape([rows])
         });
-        self.forward_terms(inputs.permute([0,2,3,1]).reshape([rows,classes]),targets.reshape([rows]),ignore_index,visible)
+        self.forward_terms_impl(inputs.permute([0,2,3,1]).reshape([rows,classes]),targets.reshape([rows]),ignore_index,visible,native)
             .reshape([batch,height,width])
     }
 
     /// Native NCHW soft-label pixel loss, preserving every actual class probability.
     pub fn forward_soft_pixel_terms(&self,inputs: Tensor<B,4>,targets: Tensor<B,4>,visible: Option<Tensor<B,3,Bool>>)
+        -> CategoricalLossTerms<B,3> {
+        self.forward_soft_pixel_terms_impl(inputs,targets,visible,false)
+    }
+
+    /// Native full-class NCHW soft-target loss; original soft-target gradients remain connected.
+    pub fn forward_soft_pixel_terms_native(&self,inputs: Tensor<B,4>,targets: Tensor<B,4>,visible: Option<Tensor<B,3,Bool>>)
+        -> CategoricalLossTerms<B,3> {
+        self.forward_soft_pixel_terms_impl(inputs,targets,visible,true)
+    }
+
+    fn forward_soft_pixel_terms_impl(&self,inputs: Tensor<B,4>,targets: Tensor<B,4>,visible: Option<Tensor<B,3,Bool>>,native: bool)
         -> CategoricalLossTerms<B,3> {
         let [batch,classes,height,width] = inputs.dims();
         assert_eq!(targets.dims(),[batch,classes,height,width],"soft pixel target geometry differs");
@@ -205,7 +273,7 @@ impl<B: Backend> CrossEntropyLoss<B> {
         let visible = visible.map(|visible| {
             assert_eq!(visible.dims(),[batch,height,width],"soft pixel visibility differs"); visible.reshape([rows])
         });
-        self.forward_soft_terms(inputs.permute([0,2,3,1]).reshape([rows,classes]),targets.permute([0,2,3,1]).reshape([rows,classes]),visible)
+        self.forward_soft_terms_impl(inputs.permute([0,2,3,1]).reshape([rows,classes]),targets.permute([0,2,3,1]).reshape([rows,classes]),visible,native)
             .reshape([batch,height,width])
     }
 }
