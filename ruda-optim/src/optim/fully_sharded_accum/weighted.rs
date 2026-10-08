@@ -80,6 +80,24 @@ impl<B:Backend> FullyShardedWeightedGradientsRecord<B> {
         }
         Ok(first)
     }
+    pub(super) async fn validate_migration_weights_async(records:&[Self]) -> Result<&Self,RecorderError> {
+        let invalid=|message:&str|RecorderError::Unknown(message.to_string());
+        let first=records.first().ok_or_else(||invalid("complete original weighted pending-gradient rank set required"))?;
+        let mut expected=None;
+        for record in records {
+            if record.global_weight.dims()!=[1] || record.global_weight.dtype()!=record.window.state.dtype {
+                return Err(invalid("saved global weight geometry/work precision differs"));
+            }
+            let data=record.global_weight.clone().into_data_async().await.map_err(|error|invalid(&error.to_string()))?;
+            let weight=data.iter::<f64>().next().ok_or_else(||invalid("actual global weight scalar required"))?;
+            if !weight.is_finite() || weight<0.0 {return Err(invalid("saved effective weight must be finite and nonnegative"));}
+            if expected.is_some_and(|previous|previous!=weight) || (record.window.state.microbatches==0 && weight!=0.0) {
+                return Err(invalid("actual global weights differ across saved rank windows"));
+            }
+            expected=Some(weight);
+        }
+        Ok(first)
+    }
 }
 
 /// Actual globally weighted accumulation result, preserving selected-element counts separately.

@@ -24,7 +24,17 @@ impl FullyShardedGradientsRecord {
     /// migration, graph replay or session reconstruction is performed here.
     pub fn reshard_explicit<B:Backend>(records:&[Self],migrations:&[FullyShardedGradientMigration],device:&B::Device)
         -> Result<Self,RecorderError> {
-        let sources=records.iter().collect::<Vec<_>>();migrate::<B>(&sources,migrations,device)
+        let sources=records.iter().collect::<Vec<_>>();let migrated=migrate::<B>(&sources,migrations,device)?;
+        let gradients=migrated.gradients.try_to_record::<B>()?;Ok(migrated.into_record(gradients))
+    }
+
+    /// Same original overlap-copy using actual asynchronous native readback.
+    /// No blocking-read fallback is required by backends whose execution permits
+    /// asynchronous device reads only. Input archives remain caller-owned.
+    pub async fn reshard_explicit_async<B:Backend>(records:&[Self],migrations:&[FullyShardedGradientMigration],device:&B::Device)
+        -> Result<Self,RecorderError> {
+        let sources=records.iter().collect::<Vec<_>>();let migrated=migrate::<B>(&sources,migrations,device)?;
+        let gradients=migrated.gradients.to_record_async::<B>().await?;Ok(migrated.into_record(gradients))
     }
 }
 
@@ -36,13 +46,36 @@ impl<B:Backend> FullyShardedWeightedGradientsRecord<B> {
         -> Result<Self,RecorderError> {
         let first=Self::validate_migration_weights(records)?;
         let windows=records.iter().map(Self::window_record).collect::<Vec<_>>();
-        let window=migrate::<B>(&windows,migrations,device)?;
+        let migrated=migrate::<B>(&windows,migrations,device)?;
+        let gradients=migrated.gradients.try_to_record::<B>()?;let window=migrated.into_record(gradients);
+        Ok(Self::with_migrated_window(first,window,device))
+    }
+
+    /// Async original weighted-window migration, including native denominator
+    /// comparison and pending-gradient readback. No scalar is read synchronously.
+    pub async fn reshard_explicit_async(records:&[Self],migrations:&[FullyShardedGradientMigration],device:&B::Device)
+        -> Result<Self,RecorderError> {
+        let first=Self::validate_migration_weights_async(records).await?;
+        let windows=records.iter().map(Self::window_record).collect::<Vec<_>>();
+        let migrated=migrate::<B>(&windows,migrations,device)?;
+        let gradients=migrated.gradients.to_record_async::<B>().await?;let window=migrated.into_record(gradients);
         Ok(Self::with_migrated_window(first,window,device))
     }
 }
 
+struct NativeMigration {
+    gradients:GradientsParams,
+    state:FullyShardedAccumulationState,
+    placement:Placement,
+}
+impl NativeMigration {
+    fn into_record(self,gradients:GradientsParamsRecord) -> FullyShardedGradientsRecord {
+        FullyShardedGradientsRecord {version:1,gradients,state:self.state,placement:self.placement}
+    }
+}
+
 fn migrate<B:Backend>(records:&[&FullyShardedGradientsRecord],migrations:&[FullyShardedGradientMigration],device:&B::Device)
-    -> Result<FullyShardedGradientsRecord,RecorderError> {
+    -> Result<NativeMigration,RecorderError> {
     let invalid=|message:&str|RecorderError::Unknown(message.to_string());
     let first=records.first().ok_or_else(||invalid("actual original pending-gradient archives required"))?;
     work_dtype(&first.state).map_err(|error|invalid(&error.to_string()))?;
@@ -107,5 +140,5 @@ fn migrate<B:Backend>(records:&[&FullyShardedGradientsRecord],migrations:&[Fully
         if let Some(value)=value {target.register(binding.parameter,value);}
     }
     placement.sort_by_key(|entry|entry.0);
-    Ok(FullyShardedGradientsRecord {version:1,gradients:target.try_to_record::<B>()?,state:first.state.clone(),placement})
+    Ok(NativeMigration {gradients:target,state:first.state.clone(),placement})
 }
