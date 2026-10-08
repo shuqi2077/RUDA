@@ -38,7 +38,9 @@ struct ParameterEntry<B:Backend> {
 impl<B:Backend> ParameterEntry<B> {
     fn capture(parameter:&Param<Tensor<B,3>>) -> Self {
         let value=parameter.val();let key=key(parameter);let shape=value.dims();let dtype=value.dtype();
-        let record=parameter.clone().map(|value|value.detach()).into_record().map(|value|value.detach());
+        let record=parameter.clone().map(|value| {
+            let trainable=value.is_require_grad();value.detach().set_require_grad(trainable)
+        }).into_record().map(|value|value.detach());
         Self {key,shape,dtype,record}
     }
 }

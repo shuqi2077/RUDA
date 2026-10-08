@@ -196,7 +196,7 @@ impl<P:fmt::Debug,G:fmt::Debug,S:fmt::Debug> fmt::Display for AdaptedExpertError
     fn fmt(&self,f:&mut fmt::Formatter<'_>) -> fmt::Result {match self {Self::Projection(error)=>write!(f,"{error}"),Self::Activation(error)=>write!(f,"native expert SwiGLU: {error:?}")}}
 }
 impl<P:fmt::Debug,G:fmt::Debug,S:fmt::Debug> core::error::Error for AdaptedExpertError<P,G,S> {}
-/// Explicit source expert projection roles; absent roles retain the original frozen payload.
+/// Explicit source expert projection roles; absent roles retain their original values and flags.
 #[derive(Clone,Copy,Debug,PartialEq,Eq,PartialOrd,Ord,ruda_model::serde::Serialize,ruda_model::serde::Deserialize)]
 #[serde(crate="ruda_model::serde")]
 pub enum ExpertAdapterTarget {Gate,Up,Down}
