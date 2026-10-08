@@ -8,6 +8,8 @@ mod snapshot;
 use snapshot::{snapshot,parameter_geometry,trim_padding,clip_logical_gradient};
 mod state;
 pub use state::{FullyShardedMuonAdamWRecord,FullyShardedMuonAdamWState};
+mod recovery;
+pub use recovery::*;
 
 type States<B:AutodiffBackend> = HashMap<ParamId,FullyShardedMuonAdamWState<<B as AutodiffBackend>::InnerBackend>>;
 type FlatManifest=Vec<(u64,usize,bool,String)>;
@@ -111,10 +113,15 @@ impl<M,B,C> FullyShardedMuonAdamW<M,B,C>
     /// Presence votes distinguish globally unused parameters from an absent local derivative. Only the latter
     /// contributes zeros to an otherwise used parameter; globally unused momentum and decay remain unchanged.
     /// Proposed optimizer state commits after transport succeeds, not as an asynchronous device transaction.
-    pub fn try_step_with_lrs(&mut self,muon_lr:LearningRate,adamw_lr:LearningRate,module:M,mut grads:GradientsParams)
+    pub fn try_step_with_lrs(&mut self,muon_lr:LearningRate,adamw_lr:LearningRate,module:M,grads:GradientsParams)
         -> Result<M,MuonShardedError<C::Error>> {
+        let (states,mut mapper)=self.prepare_step_with_lrs(muon_lr,adamw_lr,&module,grads)?;
+        let module=module.map(&mut mapper);self.states=states;Ok(module)
+    }
+    fn prepare_step_with_lrs(&self,muon_lr:LearningRate,adamw_lr:LearningRate,module:&M,mut grads:GradientsParams)
+        -> Result<(States<B>,Updates<B>),MuonShardedError<C::Error>> {
         valid_lr(muon_lr).map_err(MuonShardedError::Muon)?;valid_lr(adamw_lr).map_err(MuonShardedError::Muon)?;
-        let inspected=snapshot::<B,M,C>(&module,&self.bindings,&self.indices,&self.muon,self.master.is_some(),Some(&grads),muon_lr)?;
+        let inspected=snapshot::<B,M,C>(module,&self.bindings,&self.indices,&self.muon,self.master.is_some(),Some(&grads),muon_lr)?;
         if inspected.manifest!=self.manifest {return Err(MuonShardedError::Muon(MuonError::ModelChanged));}
         let mut states=self.states.clone();
         let mut mapper=Updates::<B> {values:TensorContainer::new(),updated:TensorContainer::new(),backend:PhantomData};
@@ -161,7 +168,7 @@ impl<M,B,C> FullyShardedMuonAdamW<M,B,C>
             let tensor=trim_padding(tensor,binding).map_err(MuonShardedError::Muon)?;
             mapper.values.register::<B::InnerBackend>(id,tensor.into_primitive());states.insert(id,state);
         }
-        let module=module.map(&mut mapper);self.states=states;Ok(module)
+        Ok((states,mapper))
     }
 }
 
