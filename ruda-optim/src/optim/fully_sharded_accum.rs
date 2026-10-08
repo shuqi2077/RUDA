@@ -13,6 +13,8 @@ pub use weighted::*;
 mod reshard;
 mod norm;
 pub use norm::*;
+mod hybrid_norm;
+pub use hybrid_norm::*;
 
 /// Exact continuation counters for globally summed, already reduce-scattered local gradients.
 #[derive(Clone,Debug,PartialEq,Serialize,Deserialize)]
