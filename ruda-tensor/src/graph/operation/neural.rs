@@ -2,6 +2,27 @@ use super::*;
 
 #[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
 #[allow(missing_docs)]
+pub struct RmsNormOpIr {
+    pub x: TensorIr,
+    pub gamma: TensorIr,
+    pub epsilon: ScalarIr,
+    pub out: TensorIr,
+    pub rstd: TensorIr,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
+pub struct RmsNormBackwardOpIr {
+    pub x: TensorIr,
+    pub gamma: TensorIr,
+    pub grad: TensorIr,
+    pub rstd: TensorIr,
+    pub input_grad: TensorIr,
+    pub weight_grad: TensorIr,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
 pub struct LayerNormOpIr {
     pub x: TensorIr,
     pub gamma: TensorIr,

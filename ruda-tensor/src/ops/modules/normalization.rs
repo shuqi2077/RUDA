@@ -1,6 +1,63 @@
 use crate::{Backend, DType, FloatDType, TensorMetadata, tensor::FloatTensor};
 use ruda_core::tensor::Shape;
-use super::{LayerNormBackward, LayerNormOutput};
+use super::{LayerNormBackward, LayerNormOutput, RmsNormBackward, RmsNormOutput};
+
+/// Last-axis RMSNorm retaining FP32/FP64 row statistics on the current backend.
+pub fn rms_norm_with_stats<B: Backend>(input: FloatTensor<B>, gamma: FloatTensor<B>, epsilon: f64) -> RmsNormOutput<B> {
+    let shape = input.shape();
+    let width = *shape.last().expect("RMSNorm requires an axis");
+    assert!(width > 0, "RMSNorm final axis must be nonempty");
+    assert_eq!(gamma.shape(), Shape::new([width]), "RMSNorm weight shape differs");
+    assert!(epsilon.is_finite() && epsilon > 0.0, "RMSNorm epsilon must be finite and positive");
+    let rows = shape.num_elements() / width;
+    let storage: FloatDType = input.dtype().into();
+    let compute = if input.dtype() == DType::F64 { FloatDType::F64 } else { FloatDType::F32 };
+    if rows == 0 {
+        let device = B::float_device(&input);
+        return RmsNormOutput { output: input, rstd: B::float_zeros(Shape::new([0]), &device, compute) };
+    }
+    let input = B::float_reshape(B::float_cast(input, compute), Shape::new([rows, width]));
+    let square_mean = B::float_mean_dim(B::float_mul(input.clone(), input.clone()), 1);
+    let rstd = B::float_recip(B::float_sqrt(B::float_add_scalar(square_mean, epsilon.into())));
+    let gamma = B::float_reshape(B::float_cast(gamma, compute), Shape::new([1, width]));
+    let output = B::float_mul(B::float_mul(input, rstd.clone()), gamma);
+    RmsNormOutput { output: B::float_reshape(B::float_cast(output, storage), shape),
+        rstd: B::float_reshape(rstd, Shape::new([rows])) }
+}
+
+/// RMSNorm derivatives from saved reciprocal norms and the original working values.
+pub fn rms_norm_backward<B: Backend>(input: FloatTensor<B>, gamma: FloatTensor<B>, grad: FloatTensor<B>,
+    rstd: FloatTensor<B>) -> RmsNormBackward<B> {
+    let shape = input.shape();
+    let width = *shape.last().expect("RMSNorm requires an axis");
+    assert!(width > 0, "RMSNorm final axis must be nonempty");
+    let rows = shape.num_elements() / width;
+    assert_eq!(gamma.shape(), Shape::new([width]), "RMSNorm weight shape differs");
+    assert_eq!(grad.shape(), shape, "RMSNorm gradient shape differs");
+    assert_eq!(rstd.shape(), Shape::new([rows]), "RMSNorm reciprocal norm shape differs");
+    let storage: FloatDType = input.dtype().into();
+    let weight_storage: FloatDType = gamma.dtype().into();
+    let forward_compute = if input.dtype() == DType::F64 { FloatDType::F64 } else { FloatDType::F32 };
+    let compute = if [&input, &gamma, &grad, &rstd].iter().any(|value| value.dtype() == DType::F64) {
+        FloatDType::F64
+    } else { FloatDType::F32 };
+    if rows == 0 {
+        let device = B::float_device(&input);
+        return RmsNormBackward { input, weight: B::float_zeros(Shape::new([width]), &device, weight_storage) };
+    }
+    let input = B::float_reshape(B::float_cast(input, forward_compute), Shape::new([rows, width]));
+    let rstd = B::float_reshape(B::float_cast(rstd, forward_compute), Shape::new([rows, 1]));
+    let normalized = B::float_cast(B::float_mul(input, rstd.clone()), compute);
+    let rstd = B::float_cast(rstd, compute);
+    let gamma = B::float_reshape(B::float_cast(B::float_cast(gamma, forward_compute), compute), Shape::new([1, width]));
+    let grad = B::float_reshape(B::float_cast(grad, compute), Shape::new([rows, width]));
+    let scaled_grad = B::float_mul(grad.clone(), gamma);
+    let correction = B::float_mean_dim(B::float_mul(scaled_grad.clone(), normalized.clone()), 1);
+    let input_grad = B::float_mul(rstd, B::float_sub(scaled_grad, B::float_mul(normalized.clone(), correction)));
+    let weight_grad = B::float_sum_dim(B::float_mul(grad, normalized), 0);
+    RmsNormBackward { input: B::float_reshape(B::float_cast(input_grad, storage), shape),
+        weight: B::float_reshape(B::float_cast(weight_grad, weight_storage), Shape::new([width])) }
+}
 
 /// Last-axis normalization on the current backend, retaining FP32/FP64 row statistics.
 pub fn layer_norm_with_stats<B: Backend>(

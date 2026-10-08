@@ -591,6 +591,16 @@ impl RelativeOps for ModuleOperationIr {
                 rstd: desc.rstd.to_relative(converter), input_grad: desc.input_grad.to_relative(converter),
                 weight_grad: desc.weight_grad.to_relative(converter), bias_grad: desc.bias_grad.to_relative(converter),
             }),
+            ModuleOperationIr::RmsNorm(desc) => ModuleOperationIr::RmsNorm(RmsNormOpIr {
+                x: desc.x.to_relative(converter), gamma: desc.gamma.to_relative(converter),
+                epsilon: desc.epsilon.to_relative(converter), out: desc.out.to_relative(converter),
+                rstd: desc.rstd.to_relative(converter),
+            }),
+            ModuleOperationIr::RmsNormBackward(desc) => ModuleOperationIr::RmsNormBackward(RmsNormBackwardOpIr {
+                x: desc.x.to_relative(converter), gamma: desc.gamma.to_relative(converter),
+                grad: desc.grad.to_relative(converter), rstd: desc.rstd.to_relative(converter),
+                input_grad: desc.input_grad.to_relative(converter), weight_grad: desc.weight_grad.to_relative(converter),
+            }),
             ModuleOperationIr::Interpolate(desc) => {
                 ModuleOperationIr::Interpolate(InterpolateOpIr {
                     x: desc.x.to_relative(converter),

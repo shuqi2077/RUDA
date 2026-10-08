@@ -63,6 +63,36 @@ fn causal_attention_probabilities<B: Backend>(
 }
 
 impl<B: Backend, C: CheckpointStrategy> ModuleOps<Autodiff<B, C>> for Autodiff<B, C> {
+    fn rms_norm(tensor: AutodiffTensor<B>, gamma: AutodiffTensor<B>, epsilon: f64) -> AutodiffTensor<B> {
+        if !B::has_rms_norm_backward() {
+            return ruda_tensor::ops::normalization::rms_norm_with_stats::<Self>(tensor, gamma, epsilon).output;
+        }
+        #[derive(Debug)]
+        struct RmsNorm;
+        impl<B: Backend> Backward<B, 2> for RmsNorm {
+            type State = (NodeId, NodeId, B::FloatTensorPrimitive);
+            fn backward(self, ops: Ops<Self::State, 2>, grads: &mut Gradients, checkpointer: &mut Checkpointer) {
+                let (input, gamma, rstd) = ops.state;
+                let input = checkpointer.retrieve_node_output(input);
+                let gamma = checkpointer.retrieve_node_output(gamma);
+                let grad = grads.consume::<B>(&ops.node);
+                let out = B::rms_norm_backward(input, gamma, grad, rstd);
+                for (parent, value) in ops.parents.into_iter().zip([out.input, out.weight]) {
+                    if let Some(parent) = parent { grads.register::<B>(parent.id, value); }
+                }
+            }
+        }
+        match RmsNorm.prepare::<C>([tensor.node.clone(), gamma.node.clone()]).compute_bound().stateful() {
+            OpsKind::Tracked(mut prep) => {
+                let input = prep.checkpoint(&tensor);
+                let weight = prep.checkpoint(&gamma);
+                let out = B::rms_norm_with_stats(tensor.primitive, gamma.primitive, epsilon);
+                prep.finish((input, weight, out.rstd), out.output)
+            }
+            OpsKind::UnTracked(prep) => prep.finish(B::rms_norm(tensor.primitive, gamma.primitive, epsilon)),
+        }
+    }
+
     fn layer_norm(
         tensor: AutodiffTensor<B>, gamma: AutodiffTensor<B>,
         beta: Option<AutodiffTensor<B>>, epsilon: f64,

@@ -32,13 +32,7 @@ pub fn rms_norm<R: Runtime>(
     let output = empty_device_contiguous_dtype(input.client.clone(), input.device.clone(), shape.clone().into(), input.dtype);
     let rows = elements.unwrap() / width;
     if rows == 0 { return Ok(output); }
-    let vectorized = width >= 128;
-    let floor_power = |n: usize| 1usize << n.ilog2();
-    let columns = floor_power(if vectorized { width / 4 } else { width }).min(512);
-    let lanes = columns.min(plane as usize);
-    let row_groups = floor_power(rows).min(512 / lanes);
-    let threads = columns.min(512 / row_groups).min(maximum as usize).max(plane as usize);
-    let threads = floor_power(threads) as u32;
+    let (threads, vectorized) = launch_parameters(width, rows, plane, maximum);
     let client = input.client.clone();
     let dtype = input.dtype;
     row_rms_norm::launch::<R>(
@@ -50,12 +44,19 @@ pub fn rms_norm<R: Runtime>(
     Ok(output)
 }
 
-#[ruda(launch)]
-fn row_rms_norm<F: Float>(
-    input: &Array<F>, gamma: &Array<f32>, output: &mut Array<F>, width: u32, epsilon: f32,
-    #[comptime] threads: u32, #[comptime] vectorized: bool, #[comptime] _source: String,
-    #[define(F)] _dtype: StorageType,
-) {
+pub(super) fn launch_parameters(width: usize, rows: usize, plane: u32, maximum: u32) -> (u32, bool) {
+    let vectorized = width >= 128;
+    let floor_power = |n: usize| 1usize << n.ilog2();
+    let columns = floor_power(if vectorized { width / 4 } else { width }).min(512);
+    let lanes = columns.min(plane as usize);
+    let row_groups = floor_power(rows.max(1)).min(512 / lanes);
+    let threads = columns.min(512 / row_groups).min(maximum as usize).max(plane as usize);
+    (floor_power(threads) as u32, vectorized)
+}
+
+#[ruda]
+fn row_statistics<F: Float>(input: &Array<F>, width: u32, epsilon: f32,
+    #[comptime] threads: u32, #[comptime] vectorized: bool) -> f32 {
     let width = width as usize;
     let base = RUDA_POS_X as usize * width;
     let lane = UNIT_POS as usize;
@@ -94,7 +95,14 @@ fn row_rms_norm<F: Float>(
             column += step * 4;
         }
     }
-    let mut sum = ((sums[0] + sums[1]) + sums[2]) + sums[3];
+    let sum = ((sums[0] + sums[1]) + sums[2]) + sums[3];
+    (reduce_row(sum, width as f32, threads) + epsilon).inverse_sqrt()
+}
+
+#[ruda]
+fn reduce_row(value: f32, divisor: f32, #[comptime] threads: u32) -> f32 {
+    let mut sum = value;
+    let lane = UNIT_POS as usize;
     let mut shared = SharedMemory::<f32>::new(threads as usize);
     shared[lane] = sum;
     let mut offset = RUDA_DIM / 2;
@@ -112,9 +120,22 @@ fn row_rms_norm<F: Float>(
         sum += plane_shuffle_down(sum, offset);
         offset /= 2;
     }
-    if lane == 0 { shared[0] = sum / width as f32; }
+    if lane == 0 { shared[0] = sum / divisor; }
     sync_ruda();
-    let inverse = (shared[0] + epsilon).inverse_sqrt();
+    shared[0]
+}
+
+#[ruda(launch)]
+fn row_rms_norm<F: Float>(
+    input: &Array<F>, gamma: &Array<f32>, output: &mut Array<F>, width: u32, epsilon: f32,
+    #[comptime] threads: u32, #[comptime] vectorized: bool, #[comptime] _source: String,
+    #[define(F)] _dtype: StorageType,
+) {
+    let inverse = row_statistics(input, width, epsilon, threads, vectorized);
+    let width = width as usize;
+    let base = RUDA_POS_X as usize * width;
+    let lane = UNIT_POS as usize;
+    let step = threads as usize;
     let mut column = lane;
     while column < width {
         let value = f32::cast_from(input[base + column]);
@@ -122,4 +143,84 @@ fn row_rms_norm<F: Float>(
         if width - column <= step { break; }
         column += step;
     }
+}
+
+#[ruda(launch)]
+pub(super) fn training_forward<F: Float, W: Float>(
+    input: &Array<F>, gamma: &Array<W>, output: &mut Array<F>, rstd: &mut Array<f32>,
+    width: u32, epsilon: f32, #[comptime] threads: u32, #[comptime] vectorized: bool,
+    #[define(F, W)] _types: [StorageType; 2],
+) {
+    let inverse = row_statistics(input, width, epsilon, threads, vectorized);
+    let row = RUDA_POS_X as usize;
+    if UNIT_POS == 0 { rstd[row] = inverse; }
+    let width = width as usize;
+    let base = row * width;
+    let mut column = UNIT_POS as usize;
+    while column < width {
+        let value = f32::cast_from(input[base + column]);
+        output[base + column] = F::cast_from((value * inverse) * f32::cast_from(gamma[column]));
+        if width - column <= threads as usize { break; }
+        column += threads as usize;
+    }
+}
+
+#[ruda(launch)]
+pub(super) fn input_backward<F: Float, W: Float, G: Float>(
+    input: &Array<F>, gamma: &Array<W>, grad: &Array<G>, rstd: &Array<f32>, output: &mut Array<F>,
+    width: u32, #[comptime] threads: u32,
+    #[define(F, W, G)] _types: [StorageType; 3],
+) {
+    let row = RUDA_POS_X as usize;
+    let inverse = rstd[row];
+    let width = width as usize;
+    let base = row * width;
+    let mut product = 0.0f32;
+    let mut column = UNIT_POS as usize;
+    while column < width {
+        let normalized = f32::cast_from(input[base + column]) * inverse;
+        let scaled_grad = f32::cast_from(grad[base + column]) * f32::cast_from(gamma[column]);
+        product += scaled_grad * normalized;
+        if width - column <= threads as usize { break; }
+        column += threads as usize;
+    }
+    let average_product = reduce_row(product, width as f32, threads);
+    column = UNIT_POS as usize;
+    while column < width {
+        let normalized = f32::cast_from(input[base + column]) * inverse;
+        let scaled_grad = f32::cast_from(grad[base + column]) * f32::cast_from(gamma[column]);
+        output[base + column] = F::cast_from(inverse * (scaled_grad - normalized * average_product));
+        if width - column <= threads as usize { break; }
+        column += threads as usize;
+    }
+}
+
+#[ruda(launch)]
+pub(super) fn weight_partial<F: Float, G: Float>(
+    input: &Array<F>, grad: &Array<G>, rstd: &Array<f32>, output: &mut Array<f32>,
+    width: u32, parts: u32, #[define(F, G)] _types: [StorageType; 2],
+) {
+    let position = ABSOLUTE_POS as usize;
+    if position >= output.len() { terminate!(); }
+    let width = width as usize;
+    let column = position % width;
+    let mut row = position / width;
+    let mut sum = 0.0f32;
+    while row < rstd.len() {
+        let normalized = f32::cast_from(input[row * width + column]) * rstd[row];
+        sum += f32::cast_from(grad[row * width + column]) * normalized;
+        if rstd.len() - row <= parts as usize { break; }
+        row += parts as usize;
+    }
+    output[position] = sum;
+}
+
+#[ruda(launch)]
+pub(super) fn weight_merge<W: Float>(partial: &Array<f32>, output: &mut Array<W>, parts: u32,
+    #[define(W)] _storage: StorageType) {
+    let column = ABSOLUTE_POS as usize;
+    if column >= output.len() { terminate!(); }
+    let mut sum = 0.0f32;
+    for part in 0..parts as usize { sum += partial[part * output.len() + column]; }
+    output[column] = W::cast_from(sum);
 }

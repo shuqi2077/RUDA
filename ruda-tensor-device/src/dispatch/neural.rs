@@ -39,6 +39,18 @@ fn native_norm_supported<R: DeviceRuntime>(tensor: &crate::RudaTensor<R>) -> boo
             && tensor.meta.num_elements() / width <= hardware.max_ruda_count.0 as usize)
 }
 
+fn native_rms_supported<R: DeviceRuntime>(tensor: &crate::RudaTensor<R>) -> bool {
+    let properties = tensor.client.properties();
+    let hardware = &properties.hardware;
+    let plane = hardware.plane_size_max;
+    matches!(tensor.dtype, ruda_core::tensor::DType::F32 | ruda_core::tensor::DType::F16 | ruda_core::tensor::DType::BF16)
+        && tensor.meta.num_elements() <= u32::MAX as usize
+        && properties.features.plane.contains(ruda_core::ir::features::Plane::Ops)
+        && plane.is_power_of_two() && plane <= hardware.max_ruda_dim.0.min(hardware.max_units_per_ruda)
+        && tensor.meta.shape().last().is_some_and(|width| *width > 0 && *width <= u32::MAX as usize
+            && tensor.meta.num_elements() / width <= hardware.max_ruda_count.0 as usize)
+}
+
 impl<R, F, I, BT> ModuleOps<Self> for DeviceBackend<R, F, I, BT>
 where
     R: DeviceRuntime,
@@ -47,6 +59,30 @@ where
     BT: BoolElement,
 {
     fn has_layer_norm_backward() -> bool { true }
+
+    fn has_rms_norm_backward() -> bool { true }
+
+    fn rms_norm_with_stats(tensor: FloatTensor<Self>, gamma: FloatTensor<Self>, epsilon: f64)
+        -> ruda_tensor::ops::RmsNormOutput<Self> {
+        if native_rms_supported(&tensor) && native_rms_supported(&gamma)
+            && (epsilon as f32).is_finite() && (epsilon as f32) > 0.0 {
+            let [output, rstd] = rudnn::normalization::rms_norm_with_stats(tensor, gamma, epsilon as f32)
+                .expect("invalid native RMSNorm bindings");
+            return ruda_tensor::ops::RmsNormOutput { output, rstd };
+        }
+        ruda_tensor::ops::normalization::rms_norm_with_stats::<Self>(tensor, gamma, epsilon)
+    }
+
+    fn rms_norm_backward(tensor: FloatTensor<Self>, gamma: FloatTensor<Self>, grad: FloatTensor<Self>,
+        rstd: FloatTensor<Self>) -> ruda_tensor::ops::RmsNormBackward<Self> {
+        if native_rms_supported(&tensor) && native_rms_supported(&gamma) && native_rms_supported(&grad)
+            && rstd.dtype == ruda_core::tensor::DType::F32 {
+            let [input, weight] = rudnn::normalization::rms_norm_backward(tensor, gamma, grad, rstd)
+                .expect("invalid native RMSNorm backward bindings");
+            return ruda_tensor::ops::RmsNormBackward { input, weight };
+        }
+        ruda_tensor::ops::normalization::rms_norm_backward::<Self>(tensor, gamma, grad, rstd)
+    }
 
     fn layer_norm(
         tensor: FloatTensor<Self>, gamma: FloatTensor<Self>,

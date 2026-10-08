@@ -243,6 +243,10 @@ pub enum ModuleOperationIr {
     LayerNorm(LayerNormOpIr),
     /// Complete first-order LayerNorm derivatives using saved statistics.
     LayerNormBackward(LayerNormBackwardOpIr),
+    /// Saved-statistics last-axis RMSNorm.
+    RmsNorm(RmsNormOpIr),
+    /// Complete first-order RMSNorm derivatives using saved statistics.
+    RmsNormBackward(RmsNormBackwardOpIr),
 }
 
 /// Basic operations that can be done on any tensor type.

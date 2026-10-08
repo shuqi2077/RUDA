@@ -1198,6 +1198,33 @@ impl DequantizeOpIr {
 
 // Operations with multiple outputs
 
+impl RmsNormOpIr {
+    pub fn create(x: TensorIr, gamma: TensorIr, epsilon: f64, mut new_id: impl FnMut() -> TensorId) -> Self {
+        let width = *x.shape.last().expect("RMSNorm requires an axis");
+        assert!(width > 0, "RMSNorm final axis must be nonempty");
+        assert_eq!(gamma.shape, Shape::new([width]), "RMSNorm weight shape differs");
+        assert!(epsilon.is_finite() && epsilon > 0.0, "RMSNorm epsilon must be finite and positive");
+        let dtype = if x.dtype == DType::F64 { DType::F64 } else { DType::F32 };
+        let rstd = TensorIr::uninit(new_id(), Shape::new([x.shape.num_elements() / width]), dtype);
+        let out = TensorIr::uninit(new_id(), x.shape.clone(), x.dtype);
+        Self { x, gamma, epsilon: ScalarIr::Float(epsilon), out, rstd }
+    }
+}
+
+impl RmsNormBackwardOpIr {
+    pub fn create(x: TensorIr, gamma: TensorIr, grad: TensorIr, rstd: TensorIr,
+        mut new_id: impl FnMut() -> TensorId) -> Self {
+        let width = *x.shape.last().expect("RMSNorm requires an axis");
+        assert!(width > 0, "RMSNorm final axis must be nonempty");
+        assert_eq!(gamma.shape, Shape::new([width]), "RMSNorm weight shape differs");
+        assert_eq!(grad.shape, x.shape, "RMSNorm gradient shape differs");
+        assert_eq!(rstd.shape, Shape::new([x.shape.num_elements() / width]), "RMSNorm reciprocal norm shape differs");
+        let input_grad = TensorIr::uninit(new_id(), x.shape.clone(), x.dtype);
+        let weight_grad = TensorIr::uninit(new_id(), gamma.shape.clone(), gamma.dtype);
+        Self { x, gamma, grad, rstd, input_grad, weight_grad }
+    }
+}
+
 impl LayerNormOpIr {
     pub fn create(x: TensorIr, gamma: TensorIr, beta: Option<TensorIr>, epsilon: f64,
         mut new_id: impl FnMut() -> TensorId) -> Self {

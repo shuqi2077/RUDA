@@ -19,6 +19,14 @@ pub use super::spatial_pool::{
     max_pool3d_with_indices_padded,
 };
 
+/// Last-axis RMSNorm with working arithmetic and one output-storage cast.
+/// F32/F16/BF16 activations use FP32 statistics; F64 activations retain FP64.
+pub fn rms_norm<B: Backend, const D: usize>(input: Tensor<B, D>, gamma: Tensor<B, 1>, epsilon: f64) -> Tensor<B, D> {
+    Tensor::new(TensorPrimitive::Float(B::rms_norm(
+        input.into_primitive().tensor(), gamma.into_primitive().tensor(), epsilon,
+    )))
+}
+
 /// Computes the [CTC loss](crate::api::ops::ModuleOps::ctc_loss).
 ///
 /// # Arguments

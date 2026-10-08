@@ -12,6 +12,25 @@ use ruda_tensor::graph::*;
 use crate::{BackendRouter, RunnerChannel, RunnerClient};
 
 impl<R: RunnerChannel> ModuleOps<Self> for BackendRouter<R> {
+    fn has_rms_norm_backward() -> bool { true }
+
+    fn rms_norm_with_stats(x: FloatTensor<Self>, gamma: FloatTensor<Self>, epsilon: f64)
+        -> ruda_tensor::ops::RmsNormOutput<Self> {
+        let client = x.client.clone();
+        let desc = RmsNormOpIr::create(x.into_ir(), gamma.into_ir(), epsilon, || client.create_empty_handle());
+        let [output, rstd] = client.register(OperationIr::Module(ModuleOperationIr::RmsNorm(desc))).outputs();
+        ruda_tensor::ops::RmsNormOutput { output, rstd }
+    }
+
+    fn rms_norm_backward(x: FloatTensor<Self>, gamma: FloatTensor<Self>, grad: FloatTensor<Self>, rstd: FloatTensor<Self>)
+        -> ruda_tensor::ops::RmsNormBackward<Self> {
+        let client = x.client.clone();
+        let desc = RmsNormBackwardOpIr::create(x.into_ir(), gamma.into_ir(), grad.into_ir(), rstd.into_ir(),
+            || client.create_empty_handle());
+        let [input, weight] = client.register(OperationIr::Module(ModuleOperationIr::RmsNormBackward(desc))).outputs();
+        ruda_tensor::ops::RmsNormBackward { input, weight }
+    }
+
     fn has_layer_norm_backward() -> bool { true }
 
     fn layer_norm(x: FloatTensor<Self>, gamma: FloatTensor<Self>, beta: Option<FloatTensor<Self>>, epsilon: f64)

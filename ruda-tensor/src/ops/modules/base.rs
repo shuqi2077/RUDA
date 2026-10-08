@@ -24,6 +24,22 @@ pub struct LayerNormBackward<B: Backend> {
     pub bias: FloatTensor<B>,
 }
 
+/// RMSNorm output and reciprocal row norms retained for first-order backward.
+pub struct RmsNormOutput<B: Backend> {
+    /// Affine-normalized output in the input storage dtype.
+    pub output: FloatTensor<B>,
+    /// Reciprocal row norms in the working dtype, including epsilon.
+    pub rstd: FloatTensor<B>,
+}
+
+/// RMSNorm input and affine-weight gradients.
+pub struct RmsNormBackward<B: Backend> {
+    /// Input gradient in the original activation storage.
+    pub input: FloatTensor<B>,
+    /// Weight gradient in the original affine storage.
+    pub weight: FloatTensor<B>,
+}
+
 /// Gradient computed during the backward pass for each tensor used by [conv2d](ModuleOps::conv2d).
 #[derive(new)]
 pub struct Conv2dBackward<B: Backend> {
@@ -868,6 +884,25 @@ pub trait ModuleOps<B: Backend> {
 
     /// Whether native forward statistics and complete first-order backward are available.
     fn has_layer_norm_backward() -> bool { false }
+
+    /// Whether saved RMSNorm statistics and complete first-order backward are available.
+    fn has_rms_norm_backward() -> bool { false }
+
+    /// Last-axis RMSNorm with working arithmetic and one final output-storage cast.
+    fn rms_norm(tensor: FloatTensor<B>, gamma: FloatTensor<B>, epsilon: f64) -> FloatTensor<B> {
+        Self::rms_norm_with_stats(tensor, gamma, epsilon).output
+    }
+
+    /// RMSNorm forward retaining reciprocal row norms for backward.
+    fn rms_norm_with_stats(tensor: FloatTensor<B>, gamma: FloatTensor<B>, epsilon: f64) -> RmsNormOutput<B> {
+        super::normalization::rms_norm_with_stats::<B>(tensor, gamma, epsilon)
+    }
+
+    /// RMSNorm derivatives from saved reciprocal row norms, without repeating forward.
+    fn rms_norm_backward(tensor: FloatTensor<B>, gamma: FloatTensor<B>, grad: FloatTensor<B>,
+        rstd: FloatTensor<B>) -> RmsNormBackward<B> {
+        super::normalization::rms_norm_backward::<B>(tensor, gamma, grad, rstd)
+    }
 
     /// Native forward with statistics retained for backward.
     fn layer_norm_with_stats(

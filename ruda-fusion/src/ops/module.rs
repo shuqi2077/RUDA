@@ -32,6 +32,46 @@ macro_rules! make_ops {
 }
 
 impl<B: FusionBackend> ModuleOps<Fusion<B>> for Fusion<B> {
+    fn has_rms_norm_backward() -> bool { B::has_rms_norm_backward() }
+
+    fn rms_norm_with_stats(x: FloatTensor<Self>, gamma: FloatTensor<Self>, epsilon: f64)
+        -> ruda_tensor::ops::RmsNormOutput<Self> {
+        make_ops!(RmsNormOps, RmsNormOpIr, |desc: &RmsNormOpIr, handles: &mut HandleContainer<B::Handle>| {
+            let x = handles.get_float_tensor::<B>(&desc.x);
+            let gamma = handles.get_float_tensor::<B>(&desc.gamma);
+            let out = B::rms_norm_with_stats(x, gamma, desc.epsilon.elem());
+            handles.register_float_tensor::<B>(&desc.out.id, out.output);
+            handles.register_float_tensor::<B>(&desc.rstd.id, out.rstd);
+        });
+        let streams = OperationStreams::with_inputs([&x, &gamma]);
+        let client = x.client.clone();
+        let desc = RmsNormOpIr::create(x.into_ir(), gamma.into_ir(), epsilon, || client.create_empty_handle());
+        let [output, rstd] = client.register(streams, OperationIr::Module(ModuleOperationIr::RmsNorm(desc.clone())),
+            RmsNormOps::<B>::new(desc)).outputs();
+        ruda_tensor::ops::RmsNormOutput { output, rstd }
+    }
+
+    fn rms_norm_backward(x: FloatTensor<Self>, gamma: FloatTensor<Self>, grad: FloatTensor<Self>, rstd: FloatTensor<Self>)
+        -> ruda_tensor::ops::RmsNormBackward<Self> {
+        make_ops!(RmsNormBackwardOps, RmsNormBackwardOpIr,
+            |desc: &RmsNormBackwardOpIr, handles: &mut HandleContainer<B::Handle>| {
+                let x = handles.get_float_tensor::<B>(&desc.x);
+                let gamma = handles.get_float_tensor::<B>(&desc.gamma);
+                let grad = handles.get_float_tensor::<B>(&desc.grad);
+                let rstd = handles.get_float_tensor::<B>(&desc.rstd);
+                let out = B::rms_norm_backward(x, gamma, grad, rstd);
+                handles.register_float_tensor::<B>(&desc.input_grad.id, out.input);
+                handles.register_float_tensor::<B>(&desc.weight_grad.id, out.weight);
+            });
+        let streams = OperationStreams::with_inputs([&x, &gamma, &grad, &rstd]);
+        let client = x.client.clone();
+        let desc = RmsNormBackwardOpIr::create(x.into_ir(), gamma.into_ir(), grad.into_ir(), rstd.into_ir(),
+            || client.create_empty_handle());
+        let [input, weight] = client.register(streams, OperationIr::Module(ModuleOperationIr::RmsNormBackward(desc.clone())),
+            RmsNormBackwardOps::<B>::new(desc)).outputs();
+        ruda_tensor::ops::RmsNormBackward { input, weight }
+    }
+
     fn has_layer_norm_backward() -> bool { B::has_layer_norm_backward() }
 
     fn layer_norm(x: FloatTensor<Self>, gamma: FloatTensor<Self>, beta: Option<FloatTensor<Self>>, epsilon: f64)

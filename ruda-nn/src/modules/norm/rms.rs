@@ -59,6 +59,12 @@ pub struct RmsNorm<B: Backend> {
 }
 
 impl<B: Backend> RmsNorm<B> {
+    /// Select the native saved-statistics training path with FP32 working arithmetic
+    /// for F32/F16/BF16 activations and one final storage cast; F64 retains FP64.
+    pub fn forward_native<const D: usize>(&self, input: Tensor<B, D>) -> Tensor<B, D> {
+        ruda_model::tensor::module::rms_norm(input, self.gamma.val(), self.epsilon)
+    }
+
     pub fn forward_with_compute_dtype<const D: usize>(
         &self,
         input: Tensor<B, D>,
