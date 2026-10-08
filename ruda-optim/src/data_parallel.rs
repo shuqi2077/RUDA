@@ -28,6 +28,8 @@ mod selected;
 /// Explicit parameter-subset replica groups over the original rank-local model.
 pub use selected::SelectedDataParallel;
 use selected::{map_selection, selected_device_matches, visit_selection};
+mod reduction_plan;
+pub use reduction_plan::*;
 
 mod bounded_broadcast;
 pub use bounded_broadcast::{ChunkedBroadcastCommunicator, BoundedBroadcastCommunicator};
@@ -186,6 +188,7 @@ struct Schema {
     storage_aliases: HashMap<(ParamId, bool), usize>,
     synchronize_buffers: bool,
     device_error: Option<String>,
+    require_loaded: bool,
 }
 
 impl Schema {
@@ -198,6 +201,7 @@ impl Schema {
             storage_aliases: HashMap::new(),
             synchronize_buffers,
             device_error: None,
+            require_loaded: false,
         }
     }
 
@@ -234,6 +238,10 @@ impl<B: AutodiffBackend> ModuleVisitor<B> for Schema {
         self.path.pop();
     }
     fn visit_float<const D: usize>(&mut self, param: &Param<Tensor<B, D>>) {
+        if self.require_loaded && !param.is_initialized() {
+            self.device_error = Some("gradient-only binding requires initialized selected parameters".into());
+            return;
+        }
         let tensor = param.val();
         if !matches!(tensor.dtype(), DType::F32 | DType::F16 | DType::BF16) {
             self.device_error =
@@ -247,6 +255,10 @@ impl<B: AutodiffBackend> ModuleVisitor<B> for Schema {
         );
     }
     fn visit_int<const D: usize>(&mut self, param: &Param<Tensor<B, D, Int>>) {
+        if self.require_loaded && !param.is_initialized() {
+            self.device_error = Some("gradient-only binding requires initialized selected buffers".into());
+            return;
+        }
         if !self.synchronize_buffers {
             self.device_error =
                 Some("integer parameter buffers require explicit synchronization".into());
@@ -259,6 +271,10 @@ impl<B: AutodiffBackend> ModuleVisitor<B> for Schema {
         self.register(param.id, tensor.dims().to_vec(), tensor.dtype(), false);
     }
     fn visit_bool<const D: usize>(&mut self, param: &Param<Tensor<B, D, Bool>>) {
+        if self.require_loaded && !param.is_initialized() {
+            self.device_error = Some("gradient-only binding requires initialized selected buffers".into());
+            return;
+        }
         if !self.synchronize_buffers {
             self.device_error =
                 Some("Bool parameter buffers require explicit synchronization".into());
@@ -310,6 +326,14 @@ struct Initialization {
     error: Option<String>,
 }
 #[derive(Serialize, Deserialize)]
+struct BindingInitialization {
+    #[serde(flatten)]
+    original: Initialization,
+    #[serde(default, skip_serializing_if = "not_binding")]
+    bind_loaded: bool,
+}
+fn not_binding(value: &bool) -> bool { !*value }
+#[derive(Serialize, Deserialize)]
 struct Window {
     weight: u64,
     policy: MissingGradientPolicy,
@@ -351,44 +375,9 @@ impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> DataParal
         synchronize_buffers: bool,
         selection: Option<&[ParamId]>,
     ) -> Result<(Self, M), DataParallelError> {
-        let mut schema = Schema::new(synchronize_buffers);
-        let known = visit_selection::<B, _, _>(&model, &mut schema, selection);
-        let mut error = schema.device_error;
-        if !known {
-            error = Some("selected parameter IDs are duplicated or absent from the actual model".into());
-        }
-        if root >= communicator.world_size() {
-            error = Some("broadcast root is outside the world".into());
-        }
-        if !selected_device_matches::<B, _>(&model, communicator.device(), selection) {
-            error = Some("each replica must reside on its communicator's device".into());
-        }
-        let requests = gather::<B::InnerBackend, C, _>(
-            &communicator,
-            &Initialization {
-                contract: schema.contract.clone(),
-                root,
-                synchronize_buffers,
-                selected: selection.is_some(),
-                error,
-            },
-        )?;
-        for (rank, request) in requests.iter().enumerate() {
-            if let Some(error) = &request.error {
-                return Err(contract(format!("rank {rank}: {error}")));
-            }
-            if request.root != root
-                || request.contract != schema.contract
-                || request.synchronize_buffers != synchronize_buffers
-                || request.selected != selection.is_some()
-            {
-                return Err(contract(
-                    "replica paths, shapes, dtypes, frozen flags or tied aliases differ",
-                ));
-            }
-        }
+        let session = Self::bind_inner(communicator, &model, root, synchronize_buffers, selection, false)?;
         let mut mapper = Broadcast::<B, C> {
-            communicator: &communicator,
+            communicator: &session.communicator,
             root,
             tensors: TensorContainer::new(),
             integers: HashMap::new(),
@@ -396,19 +385,88 @@ impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> DataParal
             error: None,
         };
         let model = map_selection::<B, _, _>(model, &mut mapper, selection);
-        if let Some(error) = mapper.error {
-            return Err(error.into());
+        if let Some(error) = mapper.error { return Err(error.into()); }
+        Ok((session, model))
+    }
+
+    /// Bind a model whose replica values have already been loaded/synchronized.
+    /// Only actual metadata is exchanged; no broadcast, value/ID/leaf/mapper
+    /// replacement, initialization, optimizer mutation or host tensor read occurs.
+    /// Identical replica contents remain the caller's original loaded-state contract.
+    pub fn bind_loaded<M: AutodiffModule<B>>(communicator: C, model: &M) -> Result<Self, DataParallelError> {
+        Self::bind_inner(communicator, model, 0, false, None, true)
+    }
+
+    /// Include actual original native integer/Bool buffer metadata without
+    /// broadcasting or converting those caller-loaded values.
+    pub fn bind_loaded_with_buffers<M: AutodiffModule<B>>(communicator: C, model: &M) -> Result<Self, DataParallelError> {
+        Self::bind_inner(communicator, model, 0, true, None, true)
+    }
+
+    fn bind_inner<M: AutodiffModule<B>>(communicator: C, model: &M, root: u32,
+        synchronize_buffers: bool, selection: Option<&[ParamId]>, bind_loaded: bool) -> Result<Self, DataParallelError> {
+        let mut schema = Schema::new(synchronize_buffers);
+        schema.require_loaded = bind_loaded;
+        let known = visit_selection::<B, _, _>(model, &mut schema, selection);
+        let mut error = schema.device_error;
+        if !known {
+            error = Some("selected parameter IDs are duplicated or absent from the actual model".into());
         }
-        Ok((
-            Self {
+        if root >= communicator.world_size() {
+            error = Some("broadcast root is outside the world".into());
+        }
+        // Do not initialize a lazy value while reporting a loaded-binding error.
+        if !(bind_loaded && error.is_some()) && !selected_device_matches::<B, _>(model, communicator.device(), selection) {
+            error = Some("each replica must reside on its communicator's device".into());
+        }
+        let requests = gather::<B::InnerBackend, C, _>(
+            &communicator,
+            &BindingInitialization { original: Initialization {
+                contract: schema.contract.clone(),
+                root,
+                synchronize_buffers,
+                selected: selection.is_some(),
+                error,
+            }, bind_loaded },
+        )?;
+        for (rank, request) in requests.iter().enumerate() {
+            let bind_matches = request.bind_loaded == bind_loaded;
+            let request = &request.original;
+            if let Some(error) = &request.error {
+                return Err(contract(format!("rank {rank}: {error}")));
+            }
+            if request.root != root
+                || request.contract != schema.contract
+                || request.synchronize_buffers != synchronize_buffers
+                || request.selected != selection.is_some()
+                || !bind_matches
+            {
+                return Err(contract(
+                    "replica paths, shapes, dtypes, frozen flags or tied aliases differ",
+                ));
+            }
+        }
+        Ok(Self {
                 communicator,
                 contract: schema.contract,
                 ids: schema.ids,
                 synchronize_buffers,
                 backend: PhantomData,
-            },
-            model,
-        ))
+            })
+    }
+
+    fn validate_loaded_inner<M: AutodiffModule<B>>(&self, model: &M, selection: Option<&[ParamId]>) -> Result<(), DataParallelError> {
+        let mut schema = Schema::new(self.synchronize_buffers);
+        schema.require_loaded = true;
+        let known = visit_selection::<B, _, _>(model, &mut schema, selection);
+        if let Some(error) = schema.device_error { return Err(contract(error)); }
+        if !known || schema.contract != self.contract || schema.ids != self.ids {
+            return Err(contract("original loaded replica paths, IDs, storage or aliases changed"));
+        }
+        if !selected_device_matches::<B, _>(model, self.communicator.device(), selection) {
+            return Err(contract("loaded replica moved off its actual communicator device"));
+        }
+        Ok(())
     }
 
     /// This replica's rank.
@@ -562,8 +620,11 @@ fn gather<B: Backend, C: DataParallelCommunicator<B>, T: Serialize + Deserialize
     value: &T,
 ) -> Result<Vec<T>, DataParallelError> {
     let payload = serde_json::to_vec(value).map_err(|e| contract(e.to_string()))?;
-    communicator
-        .all_gather_bytes(payload)?
+    let messages = communicator.all_gather_bytes(payload)?;
+    if messages.len() != communicator.world_size() as usize || communicator.world_size() == 0 || communicator.rank() >= communicator.world_size() {
+        return Err(contract("training metadata must contain every original rank in order"));
+    }
+    messages
         .into_iter()
         .map(|bytes| serde_json::from_slice(&bytes).map_err(|e| contract(e.to_string())))
         .collect()

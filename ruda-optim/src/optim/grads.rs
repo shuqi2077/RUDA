@@ -123,6 +123,17 @@ impl GradientsParams {
         self.len() == 0
     }
 
+    /// Retain original native primitive values/IDs/devices for a pending-gradient
+    /// continuation. No readback, cast, normalization or missing value is created.
+    /// `B` must be the same backend used to register these actual derivatives.
+    pub fn clone_native<B: Backend>(&self) -> Self {
+        let mut values = Self::new();
+        for id in self.container.ids() {
+            if let Some(value) = self.container.get::<B>(id) { values.container.register::<B>(*id, value); }
+        }
+        values
+    }
+
     /// Move actual native derivatives into an explicit ID subset and its unchanged remainder.
     /// No tensor copies, dtype conversions, normalization or missing-gradient values are created.
     pub fn partition<B: Backend>(mut self, parameters: &[ParamId]) -> (Self, Self) {

@@ -165,8 +165,8 @@ pub struct SelectedDataParallel<
         TensorDevice<<B as AutodiffBackend>::InnerBackend>,
     >,
 > {
-    inner: DataParallel<B, C>,
-    parameters: Vec<ParamId>,
+    pub(super) inner: DataParallel<B, C>,
+    pub(super) parameters: Vec<ParamId>,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
@@ -176,6 +176,28 @@ struct ReductionMode {
 }
 
 impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> SelectedDataParallel<B, C> {
+    /// Read actual loaded selected metadata without initialization, mutation or
+    /// communication; reductions retain their existing collective agreement.
+    pub fn validate_loaded<M: AutodiffModule<B>>(&self, model: &M) -> Result<(), DataParallelError> {
+        self.inner.validate_loaded_inner(model, Some(&self.parameters))
+    }
+    /// Bind only explicit caller-loaded replica IDs without copying values or
+    /// replacing existing autodiff leaves, aliases, IDs or record mappers.
+    /// This can attach SUM-only groups to restored FSDP/EP models/optimizers.
+    pub fn bind_loaded<M: AutodiffModule<B>>(communicator: C, model: &M, parameters: &[ParamId])
+        -> Result<Self, DataParallelError> {
+        let inner = DataParallel::bind_inner(communicator, model, 0, false, Some(parameters), true)?;
+        Ok(Self { inner, parameters: parameters.to_vec() })
+    }
+
+    /// Validate selected native NF4/AWQ/integer/Bool state metadata too, retaining
+    /// the actual payloads unchanged and outside floating gradient reduction.
+    pub fn bind_loaded_with_buffers<M: AutodiffModule<B>>(communicator: C, model: &M, parameters: &[ParamId])
+        -> Result<Self, DataParallelError> {
+        let inner = DataParallel::bind_inner(communicator, model, 0, true, Some(parameters), true)?;
+        Ok(Self { inner, parameters: parameters.to_vec() })
+    }
+
     /// Collectively validate and broadcast only the selected F32/F16/BF16 parameters.
     ///
     /// The actual full model is returned with its original IDs, frozen flags,
