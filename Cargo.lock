@@ -6163,7 +6163,7 @@ dependencies = [
 
 [[package]]
 name = "ruda-tensor-remote"
-version = "0.21.36"
+version = "0.21.37"
 dependencies = [
  "async-channel",
  "axum",
