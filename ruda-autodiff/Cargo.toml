@@ -12,7 +12,7 @@
 [package]
 edition = "2024"
 name = "ruda-autodiff"
-version = "0.21.43"
+version = "0.21.44"
 authors = ["nathanielsimard <nathaniel.simard.42@gmail.com>"]
 build = false
 autolib = false
@@ -64,7 +64,7 @@ path = "src/lib.rs"
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
-version = "0.21.38"
+version = "0.21.39"
 default-features = false
 features = ["api"]
 
@@ -125,20 +125,20 @@ invalid_html_tags = "deny"
 
 [dependencies.rusolver]
 path = "../ruSOLVER"
-version = "0.1.56"
+version = "0.1.57"
 package = "ruda-solver"
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-host]
 path = "../ruda-tensor-host"
-version = "0.21.35"
+version = "0.21.36"
 optional = true
 default-features = false
 features = ["std"]
 
 [dev-dependencies.ruda-tensor-host]
 path = "../ruda-tensor-host"
-version = "0.21.35"
+version = "0.21.36"
 default-features = false
 features = ["std"]
