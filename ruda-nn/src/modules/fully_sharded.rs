@@ -40,6 +40,8 @@ mod projected;
 pub use projected::*;
 mod projected_paired;
 pub use projected_paired::*;
+mod adapter_delta;
+pub use adapter_delta::*;
 
 /// Explicit construction context preserving one local autograd leaf per source ID.
 /// Reuse a context for all tied layers, then drop it after model construction. It
