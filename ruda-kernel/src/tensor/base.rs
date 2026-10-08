@@ -44,8 +44,19 @@ impl<R: Runtime> crate::dsl::tune::AutotuneOutput for RudaTensor<R> {
         if self.dtype != other.dtype || self.meta.shape != other.meta.shape {
             return Err("autotune tensor dtype/shape mismatch".into());
         }
-        // Packed quantized data needs a scheme-aware validator, not an integer-code comparison.
-        if matches!(self.dtype, DType::QFloat(_)) { return Ok(false); }
+        if matches!(self.dtype, DType::QFloat(_)) {
+            #[cfg(feature = "device-tensor-dequantize")]
+            {
+                let bytes = self.meta.shape.iter().try_fold(1u64, |size, &extent| size.checked_mul(extent as u64))
+                    .and_then(|size| size.checked_mul(8));
+                if bytes.is_none_or(|bytes| bytes > max_bytes) { return Ok(false); }
+                let expected = super::dequantize::dequantize(self.clone(), DType::F32);
+                let actual = super::dequantize::dequantize(other.clone(), DType::F32);
+                return expected.validate_for_tuning(&actual, absolute, relative, max_bytes);
+            }
+            #[cfg(not(feature = "device-tensor-dequantize"))]
+            return Ok(false);
+        }
         let bytes = self.meta.shape.iter().try_fold(1u64, |n, &d| n.checked_mul(d as u64))
             .and_then(|n| n.checked_mul(self.elem_size() as u64)).and_then(|n| n.checked_mul(2));
         if bytes.is_none_or(|n| n > max_bytes) { return Ok(false); }

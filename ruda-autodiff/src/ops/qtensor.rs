@@ -124,6 +124,16 @@ impl<B: Backend, C: CheckpointStrategy> QTensorOps<Self> for Autodiff<B, C> {
         });
         AutodiffQTensor { primitive, surrogate }
     }
+
+    fn quantize_dynamic_with_precision(tensor: FloatTensor<Self>, scheme: &QuantScheme,
+        calibration_dtype: FloatDType) -> QuantizedTensor<Self> {
+        let primitive = B::quantize_dynamic_with_precision(tensor.primitive.clone(), scheme, calibration_dtype);
+        let surrogate = tensor.is_tracked().then(|| {
+            let value = B::dequantize(primitive.clone(), tensor.dtype().into());
+            ste::<B, C>(tensor, value)
+        });
+        AutodiffQTensor { primitive, surrogate }
+    }
     fn dequantize(tensor: QuantizedTensor<Self>, dtype: FloatDType) -> FloatTensor<Self> {
         let value = B::dequantize(tensor.primitive, dtype);
         match tensor.surrogate {

@@ -151,6 +151,16 @@ pub trait QTensorOps<B: Backend> {
         Self::quantize(tensor, scheme, qparams)
     }
 
+    /// Explicit calibration arithmetic independent of the original input and packed parameter storage.
+    /// Quantizes the original input rather than its calibration copy, retaining the selected scheme.
+    fn quantize_dynamic_with_precision(tensor: FloatTensor<B>, scheme: &QuantScheme,
+        calibration_dtype: FloatDType) -> QuantizedTensor<B> {
+        let calibration = B::float_cast(tensor.clone(), calibration_dtype);
+        let (min, max) = compute_range::<B>(scheme, calibration, &Calibration::MinMax);
+        let qparams = compute_q_params::<B>(scheme, min, max);
+        Self::quantize(tensor, scheme, qparams)
+    }
+
     /// Convert the tensor back to a higher precision data type.
     fn dequantize(tensor: QuantizedTensor<B>, dtype: FloatDType) -> FloatTensor<B>;
 

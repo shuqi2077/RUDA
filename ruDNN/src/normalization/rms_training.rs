@@ -45,12 +45,37 @@ fn weight<R: Runtime>(input: &RudaTensor<R>, gamma: &RudaTensor<R>, width: usize
 /// Reuses the original FP32 statistics and affine arithmetic with one output cast.
 pub fn rms_norm_with_stats<R: Runtime>(input: RudaTensor<R>, gamma: RudaTensor<R>, epsilon: f32)
     -> Result<[RudaTensor<R>; 2], NormalizationError> {
+    let (rows, width, _, _) = layout(&input)?;
+    weight(&input, &gamma, width)?;
+    if !epsilon.is_finite() || epsilon <= 0.0 { return Err(NormalizationError("invalid RMSNorm epsilon")); }
+    if rows > 0 {
+        let hardware = &input.client.properties().hardware;
+        let maximum = hardware.max_ruda_dim.0.min(hardware.max_units_per_ruda);
+        let plane = hardware.plane_size_max;
+        let mut candidates = vec![("original_launch", (0u32, false))];
+        for (name, threads, vectorized) in [("scalar_plane", plane, false), ("vector_plane", plane, true),
+            ("scalar_128", 128, false), ("vector_128", 128, true), ("scalar_256", 256, false), ("vector_256", 256, true)] {
+            if threads >= plane && threads <= maximum { candidates.push((name, (threads, vectorized))); }
+        }
+        let output = ruda_kernel::tensor::tuning::execute_variants(vec![input.clone(), gamma.clone()], "rms_norm_forward_v1",
+            format!("epsilon={:08x}", epsilon.to_bits()), candidates, move |values, config| {
+                rms_norm_forward_inner(values[0].clone(), values[1].clone(), epsilon, config)
+                    .map(|output| output.into_iter().collect()).map_err(|error| error.to_string())
+            }).map_err(|_| NormalizationError("RMSNorm forward autotune failed without replay"))?;
+        if let Some(output) = output { return Ok(output.try_into().expect("RMSNorm output and actual reciprocal norms")); }
+    }
+    rms_norm_forward_inner(input, gamma, epsilon, (0, false))
+}
+
+fn rms_norm_forward_inner<R: Runtime>(input: RudaTensor<R>, gamma: RudaTensor<R>, epsilon: f32, config: (u32, bool))
+    -> Result<[RudaTensor<R>; 2], NormalizationError> {
     let (rows, width, threads, vectorized) = layout(&input)?;
     weight(&input, &gamma, width)?;
     if !epsilon.is_finite() || epsilon <= 0.0 { return Err(NormalizationError("invalid RMSNorm epsilon")); }
     let output = empty_device_contiguous_dtype(input.client.clone(), input.device.clone(), input.meta.shape().clone(), input.dtype);
     let rstd = empty_device_contiguous_dtype(input.client.clone(), input.device.clone(), Shape::new([rows]), DType::F32);
     if rows > 0 {
+        let (threads, vectorized) = if config.0 == 0 { (threads, vectorized) } else { config };
         let types = [input.dtype.into(), gamma.dtype.into()];
         rms::training_forward::launch(&output.client, RudaCount::Static(rows as u32, 1, 1), RudaDim::new_1d(threads),
             into_contiguous(input).into_array_arg(), into_contiguous(gamma).into_array_arg(),
@@ -109,8 +134,43 @@ fn backward_layout<R: Runtime>(input: &RudaTensor<R>, gamma: &RudaTensor<R>, gra
 pub fn rms_norm_backward_select<R: Runtime>(input: RudaTensor<R>, gamma: RudaTensor<R>, grad: RudaTensor<R>,
     rstd: RudaTensor<R>, mask: [bool; 2]) -> Result<[Option<RudaTensor<R>>; 2], NormalizationError> {
     if mask == [false; 2] { return Ok([None, None]); }
-    if mask == [true; 2] { return Ok(rms_norm_backward(input, gamma, grad, rstd)?.map(Some)); }
+    let (rows, width, _) = backward_layout(&input, &gamma, &grad, &rstd)?;
+    if rows > 0 {
+        let hardware = &input.client.properties().hardware;
+        let maximum = hardware.max_ruda_dim.0.min(hardware.max_units_per_ruda);
+        let plane = hardware.plane_size_max;
+        let mut candidates = vec![("original_launch", (0u32, 0usize))];
+        if mask[0] {
+            for (name, threads) in [("threads_plane", plane), ("threads_128", 128), ("threads_256", 256)] {
+                if threads >= plane && threads <= maximum { candidates.push((name, (threads, 0))); }
+            }
+        }
+        if mask[1] {
+            let default = rows.div_ceil(32).clamp(1, 128);
+            for (name, parts) in [("parts_1", 1usize), ("parts_8", 8), ("parts_32", 32), ("parts_128", 128)] {
+                if parts != default && parts <= rows && parts.checked_mul(width).is_some_and(|work| work <= u32::MAX as usize) {
+                    candidates.push((name, (0, parts)));
+                }
+            }
+        }
+        let output = ruda_kernel::tensor::tuning::execute_variants(vec![input.clone(), gamma.clone(), grad.clone(), rstd.clone()],
+            "rms_norm_backward_v1", format!("leaves={mask:?}"), candidates, move |values, (threads, parts)| {
+                rms_norm_backward_inner(values[0].clone(), values[1].clone(), values[2].clone(), values[3].clone(), mask, threads, parts)
+                    .map(|output| output.into_iter().flatten().collect()).map_err(|error| error.to_string())
+            }).map_err(|_| NormalizationError("RMSNorm backward autotune failed without replay"))?;
+        if let Some(output) = output {
+            let mut output = output.into_iter();
+            return Ok(core::array::from_fn(|index| mask[index].then(|| output.next().expect("requested RMSNorm derivative"))));
+        }
+    }
+    rms_norm_backward_inner(input, gamma, grad, rstd, mask, 0, 0)
+}
+
+fn rms_norm_backward_inner<R: Runtime>(input: RudaTensor<R>, gamma: RudaTensor<R>, grad: RudaTensor<R>,
+    rstd: RudaTensor<R>, mask: [bool; 2], selected_threads: u32, partitions: usize) -> Result<[Option<RudaTensor<R>>; 2], NormalizationError> {
+    if mask == [false; 2] { return Ok([None, None]); }
     let (rows, width, threads) = backward_layout(&input, &gamma, &grad, &rstd)?;
+    let threads = if selected_threads == 0 { threads } else { selected_threads };
     let allocate = |shape, dtype| empty_device_contiguous_dtype(input.client.clone(), input.device.clone(), shape, dtype);
     let input_grad = mask[0].then(|| allocate(input.meta.shape().clone(), input.dtype));
     let weight_grad = mask[1].then(|| allocate(Shape::new([width]), gamma.dtype));
@@ -128,7 +188,7 @@ pub fn rms_norm_backward_select<R: Runtime>(input: RudaTensor<R>, gamma: RudaTen
         }
     }
     if let Some(output) = &weight_grad {
-        let parts = rows.div_ceil(32).clamp(1, 128);
+        let parts = if partitions == 0 { rows.div_ceil(32).clamp(1, 128) } else { partitions };
         let work = parts * width;
         let partial = empty_device_contiguous_dtype(client.clone(), input.device.clone(), Shape::new([parts, width]), DType::F32);
         let dim = RudaDim::new(client.properties(), work);

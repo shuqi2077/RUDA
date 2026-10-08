@@ -31,10 +31,22 @@ fn binding<R: Runtime>(input: &RudaTensor<R>, value: &RudaTensor<R>) {
 pub fn launch<R: Runtime>(input: RudaTensor<R>, alpha: RudaTensor<R>) -> RudaTensor<R> {
     let info = layout(&input, &alpha);
     if info.elements == 0 { return input; }
+    let candidates = ruda_kernel::tensor::tuning::elementwise_candidates(&input);
+    let output = ruda_kernel::tensor::tuning::execute_variants(vec![input.clone(), alpha.clone()], "prelu_forward_v1",
+        format!("shared={};channels={};spatial={}", info.parameters == 1, info.channels, info.spatial), candidates,
+        |values, units| Ok(vec![forward_inner(values[0].clone(), values[1].clone(), units)]))
+        .expect("PReLU autotune failed without replay");
+    if let Some(mut output) = output { return output.pop().expect("actual PReLU output"); }
+    forward_inner(input, alpha, 0)
+}
+
+fn forward_inner<R: Runtime>(input: RudaTensor<R>, alpha: RudaTensor<R>, units: u32) -> RudaTensor<R> {
+    let info = layout(&input, &alpha);
+    if info.elements == 0 { return input; }
     let input = into_contiguous(input);
     let alpha = into_contiguous(alpha);
     let output = empty_device_contiguous_dtype(input.client.clone(), input.device.clone(), input.meta.shape().clone(), input.dtype);
-    let dim = RudaDim::new(input.client.properties(), info.elements);
+    let dim = if units == 0 { RudaDim::new(input.client.properties(), info.elements) } else { RudaDim::new_1d(units) };
     let count = calculate_ruda_count_elemwise(&input.client, info.elements, dim);
     forward::launch(&input.client, count, dim, input.clone().into_array_arg(), alpha.clone().into_array_arg(), output.clone().into_array_arg(),
         info.channels as u32, info.spatial as u32, info.parameters == 1, include_str!("prelu.rs").to_owned(), [input.dtype.into(), alpha.dtype.into()]);
@@ -44,6 +56,39 @@ pub fn launch<R: Runtime>(input: RudaTensor<R>, alpha: RudaTensor<R>) -> RudaTen
 /// Selected PReLU VJPs; absent gradients allocate neither output nor reduction scratch.
 pub fn launch_backward_select<R: Runtime>(input: RudaTensor<R>, alpha: RudaTensor<R>, grad: RudaTensor<R>,
     mask: [bool; 2]) -> [Option<RudaTensor<R>>; 2] {
+    if mask == [false; 2] { return [None, None]; }
+    let info = layout(&input, &alpha);
+    binding(&input, &grad);
+    assert_eq!(input.meta.shape(), grad.meta.shape(), "PReLU gradient shape differs");
+    if info.elements > 0 {
+        let mut candidates = vec![("original_launch", (0u32, 0usize))];
+        if mask[0] {
+            candidates.extend(ruda_kernel::tensor::tuning::elementwise_candidates(&input).into_iter().skip(1)
+                .map(|(name, units)| (name, (units, 0))));
+        }
+        if mask[1] && info.parameters > 0 {
+            let rows = info.elements / info.parameters;
+            let default = rows.div_ceil(32).clamp(1, 128).min(u32::MAX as usize / info.parameters);
+            for (name, parts) in [("parts_1", 1usize), ("parts_8", 8), ("parts_32", 32), ("parts_128", 128)] {
+                if parts != default && parts <= rows && parts.checked_mul(info.parameters).is_some_and(|work| work <= u32::MAX as usize) {
+                    candidates.push((name, (0, parts)));
+                }
+            }
+        }
+        let output = ruda_kernel::tensor::tuning::execute_variants(vec![input.clone(), alpha.clone(), grad.clone()], "prelu_backward_v1",
+            format!("shared={};channels={};spatial={};leaves={mask:?}", info.parameters == 1, info.channels, info.spatial), candidates,
+            move |values, (units, parts)| Ok(backward_inner(values[0].clone(), values[1].clone(), values[2].clone(), mask, units, parts)
+                .into_iter().flatten().collect())).expect("PReLU backward autotune failed without replay");
+        if let Some(output) = output {
+            let mut output = output.into_iter();
+            return core::array::from_fn(|index| mask[index].then(|| output.next().expect("requested PReLU derivative")));
+        }
+    }
+    backward_inner(input, alpha, grad, mask, 0, 0)
+}
+
+fn backward_inner<R: Runtime>(input: RudaTensor<R>, alpha: RudaTensor<R>, grad: RudaTensor<R>,
+    mask: [bool; 2], units: u32, partitions: usize) -> [Option<RudaTensor<R>>; 2] {
     if mask == [false; 2] { return [None, None]; }
     let info = layout(&input, &alpha);
     binding(&input, &grad);
@@ -58,7 +103,7 @@ pub fn launch_backward_select<R: Runtime>(input: RudaTensor<R>, alpha: RudaTenso
     if let Some(dx) = &dx {
         if info.elements > 0 {
             let alpha = into_contiguous(alpha.clone());
-            let dim = RudaDim::new(client.properties(), info.elements);
+            let dim = if units == 0 { RudaDim::new(client.properties(), info.elements) } else { RudaDim::new_1d(units) };
             let count = calculate_ruda_count_elemwise(&client, info.elements, dim);
             input_backward::launch(&client, count, dim, input.clone().into_array_arg(), alpha.clone().into_array_arg(), grad.clone().into_array_arg(),
                 dx.clone().into_array_arg(), info.channels as u32, info.spatial as u32, info.parameters == 1,
@@ -68,7 +113,7 @@ pub fn launch_backward_select<R: Runtime>(input: RudaTensor<R>, alpha: RudaTenso
     if let Some(da) = &da {
         if info.parameters > 0 {
             let rows = info.elements / info.parameters;
-            let parts = rows.div_ceil(32).clamp(1, 128).min(u32::MAX as usize / info.parameters);
+            let parts = if partitions == 0 { rows.div_ceil(32).clamp(1, 128).min(u32::MAX as usize / info.parameters) } else { partitions };
             let work = parts * info.parameters;
             let partial = allocate(Shape::new([parts, info.parameters]), DType::F32);
             let dim = RudaDim::new(client.properties(), work);

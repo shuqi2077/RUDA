@@ -430,6 +430,23 @@ $$\text{erf}\(x\) = \frac{2}{\sqrt{\pi}} \int_0^x e^{-t^2} dt$$
         )))
     }
 
+    /// Quantize using explicitly selected calibration arithmetic without changing original input storage.
+    /// For example, FP16/BF16 inputs can retain FP32 range/scale arithmetic for any supported packed scheme.
+    /// The scheme still determines INT2/4/8 or FP4/FP8 values, scale storage, blocks and packing.
+    pub fn quantize_dynamic_with_precision(self, scheme: &QuantScheme, calibration_dtype: crate::FloatDType) -> Tensor<B, D> {
+        Tensor::new(TensorPrimitive::QFloat(B::quantize_dynamic_with_precision(self.primitive.tensor(), scheme, calibration_dtype)))
+    }
+
+    /// Dequantize directly into the requested floating storage, independent of device defaults.
+    /// Ordinary floating tensors are explicitly cast rather than returned with an unrelated dtype.
+    pub fn dequantize_with_dtype(self, dtype: crate::FloatDType) -> Tensor<B, D> {
+        let tensor = match self.primitive {
+            TensorPrimitive::QFloat(tensor) => B::dequantize(tensor, dtype),
+            TensorPrimitive::Float(tensor) => B::float_cast(tensor, dtype),
+        };
+        Tensor::new(TensorPrimitive::Float(tensor))
+    }
+
     /// Convert the tensor back to a higher precision data type.
     ///
     /// If the tensor is not quantized, its value is simply returned.

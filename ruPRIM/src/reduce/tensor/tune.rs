@@ -33,7 +33,20 @@ pub fn autotune_reduce<R: Runtime>(
         const PRIORITY_MIN: i8 = 1;
         const PRIORITY_SKIP: i8 = -1;
 
-        let mut set = TunableSet::new(create_key::<R>, reduce_input_gen::<R>);
+        let mut set = TunableSet::new(create_key::<R>, reduce_input_gen::<R>)
+            .with_stack_tuning(0, "reduce-whole-operator-v1", |(input, output, axis, config, dtypes)| {
+                format!("input={};output={};axis={axis};operation={config:?};precision={dtypes:?}",
+                    input.autotune_signature(), output.autotune_signature())
+            })
+            .with(Tunable::new("reduce_reference", |(input, output, axis, config, dtypes):
+                (RudaTensor<R>, RudaTensor<R>, usize, ReduceOperationConfig, ReduceDtypes)| {
+                let strategy = ReduceStrategy {
+                    routine: RoutineStrategy::Unit(BlueprintStrategy::Inferred(UnitStrategy)),
+                    vectorization: VectorizationStrategy { parallel_output_vectorization: false },
+                };
+                crate::reduce::reduce::<R>(&output.client, input.binding(), output.clone().binding(), axis, strategy, config, dtypes)
+                    .map(|()| output).map_err(|error| format!("{error}"))
+            }));
 
         let default_group =
             TuneGroup::<ReduceAutotuneKey>::new("default_reduce", |_key| PRIORITY_MAX);
@@ -112,6 +125,7 @@ pub fn autotune_reduce<R: Runtime>(
                             config,
                             dtypes,
                         )
+                        .map(|()| output)
                         .map_err(|e| format!("{e}"))
                     },
                 );
@@ -200,7 +214,12 @@ mod reduce_ops {
         ReduceOperationConfig,
         ReduceDtypes,
     ) {
-        (input.clone(), output.copy(), *dim, *config, *dtypes)
+        let mut scratch = output.clone();
+        let mut handle = output.client.empty(usize::try_from(output.handle.size()).expect("reduce scratch span exceeds usize"));
+        handle.offset_start = output.handle.offset_start;
+        handle.offset_end = output.handle.offset_end;
+        scratch.handle = handle;
+        (input.clone(), scratch, *dim, *config, *dtypes)
     }
 }
 
@@ -216,14 +235,15 @@ pub fn autotune_sum<R: Runtime>(
 
     let tunables = TUNER.init(|| {
         TunableSet::new(create_key_sum::<R>, sum_input_gen::<R>)
+            .with_stack_tuning(0, "sum-whole-operator-v1", |input| input.autotune_signature())
             .with(Tunable::new("sum_chained", sum_chained::<R>))
-            .with(Tunable::new("sum_one_shot", sum_one_shot::<R, 1>))
-            .with(Tunable::new("sum_one_shot", sum_one_shot::<R, 2>))
-            .with(Tunable::new("sum_one_shot", sum_one_shot::<R, 4>))
-            .with(Tunable::new("sum_one_shot", sum_one_shot::<R, 8>))
-            .with(Tunable::new("sum_one_shot", sum_one_shot::<R, 16>))
-            .with(Tunable::new("sum_one_shot", sum_one_shot::<R, 32>))
-            .with(Tunable::new("sum_one_shot", sum_one_shot::<R, 64>))
+            .with(Tunable::new("sum_one_shot_1", sum_one_shot::<R, 1>))
+            .with(Tunable::new("sum_one_shot_2", sum_one_shot::<R, 2>))
+            .with(Tunable::new("sum_one_shot_4", sum_one_shot::<R, 4>))
+            .with(Tunable::new("sum_one_shot_8", sum_one_shot::<R, 8>))
+            .with(Tunable::new("sum_one_shot_16", sum_one_shot::<R, 16>))
+            .with(Tunable::new("sum_one_shot_32", sum_one_shot::<R, 32>))
+            .with(Tunable::new("sum_one_shot_64", sum_one_shot::<R, 64>))
     });
 
     TUNER.execute(

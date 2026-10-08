@@ -52,6 +52,30 @@ pub fn group_norm_with_stats<R: Runtime>(input: RudaTensor<R>, gamma: Option<Rud
     groups: usize, epsilon: f32) -> Result<[RudaTensor<R>; 3], NormalizationError> {
     let info = layout(&input, groups)?;
     for value in gamma.iter().chain(beta.iter()) { affine(&input, value, info.channels)?; }
+    if info.rows > 0 {
+        let has_gamma = gamma.is_some();
+        let has_beta = beta.is_some();
+        let mut operands = vec![input.clone()];
+        operands.extend(gamma.iter().cloned());
+        operands.extend(beta.iter().cloned());
+        let candidates = ruda_kernel::tensor::tuning::elementwise_candidates(&input);
+        let output = ruda_kernel::tensor::tuning::execute_variants(operands, "group_norm_forward_v1",
+            format!("groups={groups};epsilon={:08x};weight={has_gamma};bias={has_beta}", epsilon.to_bits()), candidates,
+            move |values, units| {
+                let gamma = has_gamma.then(|| values[1].clone());
+                let beta = has_beta.then(|| values[1 + usize::from(has_gamma)].clone());
+                group_norm_forward_inner(values[0].clone(), gamma, beta, groups, epsilon, units)
+                    .map(|output| output.into_iter().collect()).map_err(|error| error.to_string())
+            }).map_err(|_| NormalizationError("GroupNorm forward autotune failed without replay"))?;
+        if let Some(output) = output { return Ok(output.try_into().expect("GroupNorm output and both saved statistics")); }
+    }
+    group_norm_forward_inner(input, gamma, beta, groups, epsilon, 0)
+}
+
+fn group_norm_forward_inner<R: Runtime>(input: RudaTensor<R>, gamma: Option<RudaTensor<R>>, beta: Option<RudaTensor<R>>,
+    groups: usize, epsilon: f32, units: u32) -> Result<[RudaTensor<R>; 3], NormalizationError> {
+    let info = layout(&input, groups)?;
+    for value in gamma.iter().chain(beta.iter()) { affine(&input, value, info.channels)?; }
     let allocate = |shape, dtype| empty_device_contiguous_dtype(input.client.clone(), input.device.clone(), shape, dtype);
     let output = allocate(input.meta.shape().clone(), input.dtype);
     let mean = allocate(Shape::new([info.batch, groups]), DType::F32);
@@ -61,7 +85,7 @@ pub fn group_norm_with_stats<R: Runtime>(input: RudaTensor<R>, gamma: Option<Rud
     kernel::statistics::launch(&input.client, RudaCount::Static(info.rows as u32, 1, 1), info.dim,
         input.clone().into_array_arg(), mean.clone().into_array_arg(), rstd.clone().into_array_arg(), info.width as u32,
         epsilon, [include_str!("group_kernel.rs"), include_str!("kernel.rs")].concat(), input.dtype.into());
-    let dim = RudaDim::new(input.client.properties(), input.meta.num_elements());
+    let dim = if units == 0 { RudaDim::new(input.client.properties(), input.meta.num_elements()) } else { RudaDim::new_1d(units) };
     let count = calculate_ruda_count_elemwise(&input.client, input.meta.num_elements(), dim);
     match (gamma.map(into_contiguous), beta.map(into_contiguous)) {
         (Some(gamma), Some(beta)) => kernel::forward_affine::launch(&input.client, count, dim,
@@ -84,6 +108,37 @@ pub fn group_norm_with_stats<R: Runtime>(input: RudaTensor<R>, gamma: Option<Rud
 /// Bias-only work does not read input/weight/statistic values. Unrequested outputs and scratch are absent.
 pub fn group_norm_backward_select<R: Runtime>(input: RudaTensor<R>, gamma: Option<RudaTensor<R>>, grad: RudaTensor<R>,
     mean: RudaTensor<R>, rstd: RudaTensor<R>, groups: usize, mask: [bool; 3])
+    -> Result<[Option<RudaTensor<R>>; 3], NormalizationError> {
+    if mask == [false; 3] { return Ok([None, None, None]); }
+    let info = layout(&input, groups)?;
+    if info.rows > 0 && (mask[1] || mask[2]) {
+        let has_gamma = gamma.is_some();
+        let mut operands = vec![input.clone(), grad.clone(), mean.clone(), rstd.clone()];
+        operands.extend(gamma.iter().cloned());
+        let rows = info.batch * info.spatial;
+        let default = rows.div_ceil(32).clamp(1, 128);
+        let mut candidates = vec![("original_partitions", 0usize)];
+        for (name, parts) in [("parts_1", 1usize), ("parts_8", 8), ("parts_32", 32), ("parts_128", 128)] {
+            if parts <= rows && parts != default && parts.checked_mul(info.channels).is_some_and(|work| work <= u32::MAX as usize) {
+                candidates.push((name, parts));
+            }
+        }
+        let output = ruda_kernel::tensor::tuning::execute_variants(operands, "group_norm_backward_v1",
+            format!("groups={groups};weight={has_gamma};leaves={mask:?}"), candidates, move |values, parts| {
+                group_norm_backward_inner(values[0].clone(), has_gamma.then(|| values[4].clone()), values[1].clone(),
+                    values[2].clone(), values[3].clone(), groups, mask, parts)
+                    .map(|output| output.into_iter().flatten().collect()).map_err(|error| error.to_string())
+            }).map_err(|_| NormalizationError("GroupNorm backward autotune failed without replay"))?;
+        if let Some(output) = output {
+            let mut output = output.into_iter();
+            return Ok(core::array::from_fn(|index| mask[index].then(|| output.next().expect("requested GroupNorm derivative"))));
+        }
+    }
+    group_norm_backward_inner(input, gamma, grad, mean, rstd, groups, mask, 0)
+}
+
+fn group_norm_backward_inner<R: Runtime>(input: RudaTensor<R>, gamma: Option<RudaTensor<R>>, grad: RudaTensor<R>,
+    mean: RudaTensor<R>, rstd: RudaTensor<R>, groups: usize, mask: [bool; 3], partitions: usize)
     -> Result<[Option<RudaTensor<R>>; 3], NormalizationError> {
     if mask == [false; 3] { return Ok([None, None, None]); }
     let info = layout(&input, groups)?;
@@ -120,7 +175,7 @@ pub fn group_norm_backward_select<R: Runtime>(input: RudaTensor<R>, gamma: Optio
         }
     }
     if dw.is_some() || db.is_some() {
-        let parts = (info.batch * info.spatial).div_ceil(32).clamp(1, 128);
+        let parts = if partitions == 0 { (info.batch * info.spatial).div_ceil(32).clamp(1, 128) } else { partitions };
         let work = parts * info.channels;
         let scratch = || empty_device_contiguous_dtype(client.clone(), device.clone(), Shape::new([parts, info.channels]), DType::F32);
         let wp = dw.as_ref().map(|_| scratch());

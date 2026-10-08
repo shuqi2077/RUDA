@@ -33,3 +33,5 @@ pub mod capability;
 pub mod transaction;
 
 pub mod info;
+/// Shared-controller tuning of actual native forward/statistics/gradient outputs.
+pub mod tuning;
