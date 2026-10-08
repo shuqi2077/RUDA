@@ -13,6 +13,8 @@ use ruda_model::module::{AutodiffModule, ModuleMapper, Param, ParamId};
 use ruda_model::tensor::{Bool, Int, Tensor, backend::AutodiffBackend, container::TensorContainer};
 use core::marker::PhantomData;
 use hashbrown::HashMap;
+mod grouped;
+pub use grouped::*;
 
 /// Wrapper struct that adapts any [simple optimizer](SimpleOptimizer) into
 /// an [optimizer](Optimizer).
