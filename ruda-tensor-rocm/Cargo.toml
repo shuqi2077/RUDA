@@ -1,7 +1,7 @@
 [package]
 edition = "2024"
 name = "ruda-tensor-rocm"
-version = "0.21.36"
+version = "0.21.37"
 authors = [ "nathanielsimard <nathaniel.simard.42@gmail.com>",]
 build = false
 autolib = false
