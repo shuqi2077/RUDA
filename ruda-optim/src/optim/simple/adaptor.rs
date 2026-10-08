@@ -80,14 +80,15 @@ where
         self
     }
 
-    /// Update only explicitly selected original parameter IDs and return all other derivatives.
+    /// Update only explicitly selected original parameter IDs and return all unused derivatives.
     ///
     /// Suitable for independently owned expert/non-expert optimizer groups over
     /// one full model. Unselected parameters are returned without materializing
     /// lazy values or changing flags, record mappers, devices or optimizer state.
     /// Selected tied occurrences share one update and state, just as in `step`.
     /// No reduction, scheduler or accumulation reset is implicit. Unknown IDs
-    /// are not mapped; repeated IDs select the same parameter only once.
+    /// are not mapped; repeated IDs select the same parameter only once. Gradients
+    /// for unknown or exclusively frozen selected IDs are returned, not discarded.
     pub fn step_selected(
         &mut self,
         lr: LearningRate,
@@ -105,7 +106,13 @@ where
             self.grad_clipping.as_ref(),
         );
         mapper.selection = Some(parameter_ids);
-        (module.map(&mut mapper), remaining)
+        let module = module.map(&mut mapper);
+        let GradAdaptor::Single(unused) = selected else {
+            unreachable!("selected updates always use a single native gradient container");
+        };
+        let remaining = remaining.merge_disjoint::<B::InnerBackend>(unused)
+            .expect("partitioned optimizer derivatives cannot overlap");
+        (module, remaining)
     }
 
     fn step_common(&mut self, lr: LearningRate, module: M, mut grads: GradAdaptor) -> M {
