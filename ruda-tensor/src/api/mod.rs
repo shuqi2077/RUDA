@@ -12,6 +12,7 @@ mod float;
 mod fmod;
 mod int;
 mod numeric;
+mod moe;
 mod options;
 mod orderable;
 mod pad;
@@ -29,6 +30,7 @@ pub use tensor_cast::*;
 pub use crate::element::cast;
 pub use float::{DEFAULT_ATOL, DEFAULT_RTOL};
 pub use numeric::*;
+pub use moe::{selected_router_weights,selected_router_weights_backward};
 pub use options::*;
 pub use transaction::*;
 
