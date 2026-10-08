@@ -89,6 +89,13 @@ pub fn irfft_launch_padded<R: Runtime>(
     spec_bins: usize,
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
+    irfft_launch_padded_with_units(client, spectrum_re, spectrum_im, signal, dim, spec_bins, dtype, 0)
+}
+
+pub(crate) fn irfft_launch_padded_with_units<R: Runtime>(
+    client: &ComputeClient<R>, spectrum_re: TensorBinding<R>, spectrum_im: TensorBinding<R>,
+    signal: TensorBinding<R>, dim: usize, spec_bins: usize, dtype: StorageType, units: u32,
+) -> Result<(), LaunchError> {
     assert_eq!(dtype, f32::as_type_native_unchecked().storage_type(),
         "ruFFT device kernels require F32 storage; other dtypes must not be reinterpreted");
 
@@ -137,7 +144,9 @@ pub fn irfft_launch_padded<R: Runtime>(
     }
 
     let log2_n = n_fft.trailing_zeros() as usize;
-    let threads_per_ruda = (n_fft / 2).clamp(1, MAX_UNITS_PER_RUDA);
+    let original_threads = (n_fft / 2).clamp(1, MAX_UNITS_PER_RUDA);
+    assert!(units == 0 || units as usize <= original_threads, "FFT tuned block exceeds its shared-kernel schedule");
+    let threads_per_ruda = if units == 0 { original_threads } else { units as usize };
 
     let ruda_dim = RudaDim::new_1d(threads_per_ruda as u32);
     let ruda_count = ruda_kernel::dsl::calculate_ruda_count_elemwise(client, count, RudaDim::new_single());

@@ -13,6 +13,10 @@ on:
       - 'ruBLAS/**'
       - 'ruDNN/**'
       - 'ruCCL/**'
+      - 'ruFFT/**'
+      - 'ruSPARSE/**'
+      - 'ruSOLVER/**'
+      - 'ruda-kernel/**'
       - 'ruda-torch/**'
       - 'ruda-model/**'
       - 'ruda-model-codegen/**'
@@ -73,6 +77,12 @@ jobs:
           cargo check --locked -p ruda-model --features dataset,record-item-custom-serde --lib
       - name: Compile native generation continuation
         run: cargo check --locked -p ruda-llm --lib
+      - name: Compile native FFT sparse and solver tuning
+        run: |
+          cargo check --locked -p ruda-fft --features tensor --lib
+          cargo check --locked -p ruSPARSE --features tensor --lib
+          cargo check --locked -p ruda-solver --features tensor --lib
+          cargo check --locked -p ruda-solver --features warp-solvers --lib
       - name: Compile standalone native spatial features
         run: |
           for feature in pooling interpolation grid-sample; do

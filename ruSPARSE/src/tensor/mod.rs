@@ -168,6 +168,28 @@ impl<R: Runtime> CsrTensor<R> {
     }
 }
 
+fn sparse_candidates<R: Runtime>(matrix: &CsrTensor<R>, elements: usize) -> Result<Vec<(&'static str, u32)>, SparseError> {
+    matrix.grid(elements)?;
+    let hardware = &matrix.values.client.properties().hardware;
+    let mut candidates = vec![("planes_4_original", 128)];
+    for (name, units) in [("planes_1", 32), ("planes_2", 64), ("planes_8", 256), ("planes_16", 512)] {
+        if units <= hardware.max_ruda_dim.0.min(hardware.max_units_per_ruda)
+            && (elements as u64 * 32).div_ceil(units as u64) <= hardware.max_ruda_count.0 as u64 {
+            candidates.push((name, units));
+        }
+    }
+    Ok(candidates)
+}
+
+fn sparse_signature<R: Runtime>(matrix: &CsrTensor<R>, alpha: f32, beta: f32) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut structure = std::collections::hash_map::DefaultHasher::new();
+    matrix.host_offsets.hash(&mut structure);
+    matrix.host_indices.hash(&mut structure);
+    format!("rows={};columns={};nnz={};base={};structure={:016x};alpha={:08x};beta={:08x}",
+        matrix.rows, matrix.columns, matrix.nnz, matrix.base.value(), structure.finish(), alpha.to_bits(), beta.to_bits())
+}
+
 /// `alpha * A * x + beta * y`, with FP32 lane-wise FMA and a 32-lane row reduction.
 pub fn csrmv<R: Runtime>(
     matrix: &CsrTensor<R>,
@@ -178,7 +200,24 @@ pub fn csrmv<R: Runtime>(
 ) -> Result<RudaTensor<R>, SparseError> {
     matrix.validate_dense(&x, &[matrix.columns])?;
     matrix.validate_dense(&y, &[matrix.rows])?;
-    let grid = matrix.grid(matrix.rows)?;
+    let candidates = sparse_candidates(matrix, matrix.rows)?;
+    if matrix.rows > 0 && ruda_kernel::tensor::tuning::is_enabled() {
+        let original = matrix.clone();
+        let output = ruda_kernel::tensor::tuning::execute_variants(vec![matrix.offsets.clone(), matrix.indices.clone(),
+            matrix.values.clone(), x.clone(), y.clone()], "sparse_csrmv", sparse_signature(matrix, alpha, beta),
+            candidates, move |inputs, units| csrmv_inner(&original, alpha, inputs[3].clone(), beta, inputs[4].clone(), units)
+                .map(|value| vec![value]).map_err(|error| error.to_string()))
+            .map_err(|_| SparseError::Device("sparse autotune failed without replay"))?;
+        if let Some(mut outputs) = output { return Ok(outputs.remove(0)); }
+    }
+    csrmv_inner(matrix, alpha, x, beta, y, 128)
+}
+
+fn csrmv_inner<R: Runtime>(matrix: &CsrTensor<R>, alpha: f32, x: RudaTensor<R>, beta: f32,
+    y: RudaTensor<R>, units: u32) -> Result<RudaTensor<R>, SparseError> {
+    let lanes = dimension(matrix.rows, "sparse output")?.checked_mul(32)
+        .ok_or(SparseError::SizeOverflow("sparse launch lanes"))?;
+    let grid = RudaCount::Static(lanes.div_ceil(units), 1, 1);
     let output = empty_device_contiguous_dtype(
         matrix.values.client.clone(),
         matrix.values.device.clone(),
@@ -191,7 +230,7 @@ pub fn csrmv<R: Runtime>(
     kernel::csrmv::launch::<R>(
         &matrix.values.client,
         grid,
-        RudaDim::new_1d(128),
+        RudaDim::new_1d(units),
         matrix.offsets.clone().into_array_arg(),
         matrix.indices.clone().into_array_arg(),
         matrix.values.clone().into_array_arg(),
@@ -233,7 +272,30 @@ pub fn csrmm<R: Runtime>(
         .rows
         .checked_mul(columns)
         .ok_or(SparseError::SizeOverflow("SpMM output"))?;
-    let grid = matrix.grid(elements)?;
+    let candidates = sparse_candidates(matrix, elements)?;
+    if elements > 0 && ruda_kernel::tensor::tuning::is_enabled() {
+        let original = matrix.clone();
+        let present_c = c.is_some();
+        let mut inputs = vec![matrix.offsets.clone(), matrix.indices.clone(), matrix.values.clone(), b.clone()];
+        if let Some(c) = &c { inputs.push(c.clone()); }
+        let output = ruda_kernel::tensor::tuning::execute_variants(inputs, "sparse_csrmm",
+            format!("{};operation_b={operation_b:?};output_order={output_order:?};c={present_c}", sparse_signature(matrix, alpha, beta)),
+            candidates, move |inputs, units| csrmm_inner(&original, alpha, inputs[3].clone(), beta,
+                if present_c { Some(inputs[4].clone()) } else { None }, output_order, units)
+                .map(|value| vec![value]).map_err(|error| error.to_string()))
+            .map_err(|_| SparseError::Device("sparse autotune failed without replay"))?;
+        if let Some(mut outputs) = output { return Ok(outputs.remove(0)); }
+    }
+    csrmm_inner(matrix, alpha, b, beta, c, output_order, 128)
+}
+
+fn csrmm_inner<R: Runtime>(matrix: &CsrTensor<R>, alpha: f32, b: RudaTensor<R>, beta: f32,
+    c: Option<RudaTensor<R>>, output_order: DenseOrder, units: u32) -> Result<RudaTensor<R>, SparseError> {
+    let columns = b.meta.shape()[1];
+    let elements = matrix.rows.checked_mul(columns).ok_or(SparseError::SizeOverflow("SpMM output"))?;
+    let lanes = dimension(elements, "sparse output")?.checked_mul(32)
+        .ok_or(SparseError::SizeOverflow("sparse launch lanes"))?;
+    let grid = RudaCount::Static(lanes.div_ceil(units), 1, 1);
     let (shape, row_stride, column_stride) = match output_order {
         DenseOrder::RowMajor => (
             [matrix.rows, columns],
@@ -268,7 +330,7 @@ pub fn csrmm<R: Runtime>(
     kernel::csrmm::launch::<R>(
         &matrix.values.client,
         grid,
-        RudaDim::new_1d(128),
+        RudaDim::new_1d(units),
         matrix.offsets.clone().into_array_arg(),
         matrix.indices.clone().into_array_arg(),
         matrix.values.clone().into_array_arg(),

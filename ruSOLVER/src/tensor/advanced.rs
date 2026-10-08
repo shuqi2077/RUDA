@@ -33,10 +33,38 @@ impl<R:Runtime>BatchedLuResult<R>{pub fn check_status_sync(&self)->Result<(),Dev
 /// info is a singular pivot (one-based); -1 nonfinite input, -3 arithmetic failure.
 /// Failed factors/solutions are zero and pivots -1. Input buffers are unchanged.
 pub fn lu_solve_batched<R:Runtime>(a:&RudaTensor<R>,b:&RudaTensor<R>,o:BatchedLuOptions)->Result<BatchedLuResult<R>,DeviceSolverError>{
+    let(batch,n)=square(a,32)?;rhs(a,b,batch,n,8)?;tolerance(o.pivot_absolute_tolerance,o.pivot_relative_tolerance,false)?;
+    if batch > 0 {
+        let mut candidates = ruda_kernel::tensor::tuning::elementwise_candidates(a);
+        #[cfg(feature = "warp-solvers")]
+        if super::warp::plan(a, b, crate::kernel_plan::WarpDirectKind::Lu).is_ok() {
+            candidates.push(("warp_cooperative_32", u32::MAX));
+        }
+        let output = ruda_kernel::tensor::tuning::execute_variants(vec![a.clone(), b.clone()],
+            "solver_lu_solve", format!("atol={:08x};rtol={:08x}", o.pivot_absolute_tolerance.to_bits(),
+                o.pivot_relative_tolerance.to_bits()), candidates, move |inputs, units| {
+                #[cfg(feature = "warp-solvers")]
+                let result = if units == u32::MAX { super::warp::lu_solve_batched_warp(&inputs[0], &inputs[1], o) }
+                    else { lu_solve_batched_inner(&inputs[0], &inputs[1], o, units) };
+                #[cfg(not(feature = "warp-solvers"))]
+                let result = lu_solve_batched_inner(&inputs[0], &inputs[1], o, units);
+                let result = result.map_err(|error| error.to_string())?;
+                Ok(vec![result.packed_lu, result.pivots, result.solution, result.info])
+            }).map_err(DeviceSolverError::Autotune)?;
+        if let Some(outputs) = output {
+            let mut outputs = outputs.into_iter();
+            return Ok(BatchedLuResult { packed_lu: outputs.next().expect("factor output"),
+                pivots: outputs.next().expect("pivot output"), solution: outputs.next().expect("solution output"),
+                info: outputs.next().expect("status output"), submitted_kernels: 1 });
+        }
+    }
+    lu_solve_batched_inner(a, b, o, 0)
+}
+fn lu_solve_batched_inner<R:Runtime>(a:&RudaTensor<R>,b:&RudaTensor<R>,o:BatchedLuOptions,units:u32)->Result<BatchedLuResult<R>,DeviceSolverError>{
     let(batch,n)=square(a,32)?;let nr=rhs(a,b,batch,n,8)?;tolerance(o.pivot_absolute_tolerance,o.pivot_relative_tolerance,false)?;
     let packed_lu=alloc(a,[batch,n,n],DType::F32);let solution=alloc(a,[batch,n,nr],DType::F32);
     let pivots=alloc(a,[batch,n],DType::I32);let info=alloc(a,[batch],DType::I32);
-    if batch>0{let dim=RudaDim::new(a.client.properties(),batch);
+    if batch>0{let dim=if units == 0 { RudaDim::new(a.client.properties(),batch) } else { RudaDim::new_1d(units) };
         advanced_kernel::lu_solve::launch::<R>(&a.client,calculate_ruda_count_elemwise(&a.client,batch,dim),dim,
             a.clone().into_array_arg(),b.clone().into_array_arg(),packed_lu.clone().into_array_arg(),solution.clone().into_array_arg(),
             pivots.clone().into_array_arg(),info.clone().into_array_arg(),n as u32,nr as u32,o.pivot_absolute_tolerance,o.pivot_relative_tolerance,SOURCE.to_owned());}

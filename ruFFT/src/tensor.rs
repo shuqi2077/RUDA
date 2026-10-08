@@ -3,6 +3,37 @@ use ruda_kernel::dsl::prelude::*;
 use ruda_kernel::tensor::{RudaTensor, allocation::empty_device_dtype, reshape::reshape};
 use crate::{FftMode, RealFftPlan};
 
+fn tune_shared_fft<R: Runtime>(inputs: Vec<RudaTensor<R>>, dim: usize, length: usize, used: usize,
+    inverse: bool) -> Option<Vec<RudaTensor<R>>> {
+    if !ruda_kernel::tensor::tuning::is_enabled() || !length.is_power_of_two() || !(2..=4096).contains(&length) {
+        return None;
+    }
+    let hardware = &inputs[0].client.properties().hardware;
+    let maximum = ((length / 2).clamp(1, 256) as u32).min(hardware.max_ruda_dim.0).min(hardware.max_units_per_ruda);
+    let mut candidates = vec![("original_shared_schedule", 0)];
+    for (name, units) in [("units_1", 1), ("units_8", 8), ("units_32", 32), ("units_64", 64), ("units_128", 128)] {
+        if units <= maximum { candidates.push((name, units)); }
+    }
+    ruda_kernel::tensor::tuning::execute_variants(inputs, if inverse { "fft_irfft_shared" } else { "fft_rfft_shared" },
+        format!("axis={dim};length={length};used={used};normalized_inverse={inverse}"), candidates, move |values, units| {
+            let input = &values[0];
+            let mut shape = input.shape();
+            shape[dim] = if inverse { length } else { length / 2 + 1 };
+            let output = empty_device_dtype(input.client.clone(), input.device.clone(), shape.clone(), DType::F32);
+            let dtype = f32::as_type_native_unchecked().storage_type();
+            if inverse {
+                crate::fft::irfft_launch_padded_with_units(&input.client, input.clone().binding(), values[1].clone().binding(),
+                    output.clone().binding(), dim, used, dtype, units).map_err(|error| format!("{error:?}"))?;
+                Ok(vec![output])
+            } else {
+                let imag = empty_device_dtype(input.client.clone(), input.device.clone(), shape, DType::F32);
+                crate::fft::rfft_launch_padded_with_units(&input.client, input.clone().binding(), output.clone().binding(),
+                    imag.clone().binding(), dim, used, dtype, units).map_err(|error| format!("{error:?}"))?;
+                Ok(vec![output, imag])
+            }
+        }).unwrap_or_else(|error| panic!("FFT autotune failed without replay: {error}"))
+}
+
 /// Legacy compatibility API: the requested signal length is rounded up to a
 /// power of two. Use `rfft_exact` for an actual N-point DFT. Virtual padding
 /// avoids allocating and copying a padded signal.
@@ -37,6 +68,13 @@ fn forward<R: Runtime>(signal: RudaTensor<R>, dim: usize, n: Option<usize>, exac
     let (signal, dim) = if rank_one {
         (reshape(signal, Shape::new([1, shape[0]])), 1)
     } else { (signal, dim) };
+    if let Some(outputs) = tune_shared_fft(vec![signal.clone()], dim, length, used, false) {
+        let mut outputs = outputs.into_iter();
+        let real = outputs.next().expect("real spectrum output");
+        let imag = outputs.next().expect("imaginary spectrum output");
+        return if rank_one { (reshape(real, Shape::new([length / 2 + 1])), reshape(imag, Shape::new([length / 2 + 1]))) }
+            else { (real, imag) };
+    }
     let mut plan = RealFftPlan::new(signal.client.clone(), length, FftMode::Forward)
         .unwrap_or_else(|e| panic!("rfft plan failed (requested={requested}, actual={length}): {e}"));
     let mut out_shape = signal.shape();
@@ -87,13 +125,18 @@ fn inverse<R: Runtime>(real: RudaTensor<R>, imag: RudaTensor<R>, dim: usize, n: 
     let (real, imag, dim) = if rank_one {
         (reshape(real, Shape::new([1, shape[0]])), reshape(imag, Shape::new([1, shape[0]])), 1)
     } else { (real, imag, dim) };
-    let mut plan = RealFftPlan::new(real.client.clone(), length, FftMode::Inverse)
-        .unwrap_or_else(|e| panic!("irfft plan failed (requested={requested}, actual={length}): {e}"));
     let mut out_shape = real.shape();
     out_shape[dim] = length;
-    let output = empty_device_dtype(real.client.clone(), real.device.clone(), out_shape.clone(), DType::F32);
-    plan.inverse(real.binding(), imag.binding(), output.clone().binding(), dim, used)
-        .unwrap_or_else(|e| panic!("irfft launch failed (requested={requested}, actual={length}): {e}"));
+    let output = if let Some(mut outputs) = tune_shared_fft(vec![real.clone(), imag.clone()], dim, length, used, true) {
+        outputs.remove(0)
+    } else {
+        let mut plan = RealFftPlan::new(real.client.clone(), length, FftMode::Inverse)
+            .unwrap_or_else(|e| panic!("irfft plan failed (requested={requested}, actual={length}): {e}"));
+        let output = empty_device_dtype(real.client.clone(), real.device.clone(), out_shape.clone(), DType::F32);
+        plan.inverse(real.binding(), imag.binding(), output.clone().binding(), dim, used)
+            .unwrap_or_else(|e| panic!("irfft launch failed (requested={requested}, actual={length}): {e}"));
+        output
+    };
     // Cropping is part of the old API only. Neither path pads/copies spectra.
     let output = if length != requested {
         let ranges: Vec<_> = out_shape.iter().enumerate()

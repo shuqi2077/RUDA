@@ -15,7 +15,7 @@ fn map_plan(e: WarpPlanError) -> DeviceSolverError {
         WarpPlanError::Unsupported(s) => DeviceSolverError::InvalidInput(s),
     }
 }
-fn plan<R:Runtime>(a:&RudaTensor<R>,b:&RudaTensor<R>,kind:WarpDirectKind)->Result<WarpDirectPlan,DeviceSolverError> {
+pub(super) fn plan<R:Runtime>(a:&RudaTensor<R>,b:&RudaTensor<R>,kind:WarpDirectKind)->Result<WarpDirectPlan,DeviceSolverError> {
     validate_tensor(a)?; validate_tensor(b)?;
     let s=a.meta.shape();let t=b.meta.shape();
     if s[1]!=s[2] || s[0]!=t[0] || s[1]!=t[1] {

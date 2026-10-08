@@ -60,6 +60,14 @@ where R: Runtime, C: Copy + Send + Sync + 'static,
     }
 }
 
+/// Whether this target has an installed shared controller. Avoid preparing expensive keys when disabled.
+pub fn is_enabled() -> bool {
+    #[cfg(all(any(feature = "std", feature = "frontend-std"), any(target_os = "windows", target_os = "linux", target_os = "macos", target_os = "android")))]
+    { crate::dsl::tune::stack::stack_autotuner().is_some() }
+    #[cfg(not(all(any(feature = "std", feature = "frontend-std"), any(target_os = "windows", target_os = "linux", target_os = "macos", target_os = "android"))))]
+    { false }
+}
+
 /// Original launch plus actual eligible one-dimensional block-size alternatives.
 pub fn elementwise_candidates<R: Runtime>(input: &RudaTensor<R>) -> Vec<(&'static str, u32)> {
     let hardware = &input.client.properties().hardware;
