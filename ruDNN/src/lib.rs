@@ -20,6 +20,9 @@ pub mod convolution;
 #[cfg(feature = "pooling")]
 pub mod pooling;
 
+#[cfg(any(feature = "pooling", feature = "interpolation"))]
+mod indexing;
+
 #[cfg(feature = "interpolation")]
 pub mod interpolation;
 

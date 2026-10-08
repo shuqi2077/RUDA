@@ -9,54 +9,19 @@ use ruda_kernel::tensor::{
     permutation::{permute_nchw_to_nhwc, permute_nhwc_to_nchw},
 };
 use ruda_core::{ir::AddressType, tensor::{DType, Shape}};
-
-#[ruda]
-fn bin_division(index: usize, input_extent: usize, output_extent: usize,
-    #[comptime] max_value: usize) -> (usize, usize) {
-    let whole = index * (input_extent / output_extent);
-    let fraction = input_extent % output_extent;
-    if index == 0 || fraction == 0 {
-        (whole, 0)
-    } else if fraction <= max_value / index {
-        let product = index * fraction;
-        (whole + product / output_extent, product % output_extent)
-    } else {
-        let mut quotient = 0usize;
-        let mut remainder = 0usize;
-        let mut shift = 64usize;
-        while shift > 0 {
-            shift -= 1;
-            if remainder >= output_extent - remainder {
-                remainder -= output_extent - remainder;
-                quotient = quotient * 2 + 1;
-            } else {
-                remainder *= 2;
-                quotient *= 2;
-            }
-            if ((index >> shift) & 1) != 0 {
-                if remainder >= output_extent - fraction {
-                    remainder -= output_extent - fraction;
-                    quotient += 1;
-                } else {
-                    remainder += fraction;
-                }
-            }
-        }
-        (whole + quotient, remainder)
-    }
-}
+use crate::indexing::scaled_index_division;
 
 #[ruda]
 fn bin_start(index: usize, output_extent: usize, input_extent: usize,
     #[comptime] max_value: usize) -> usize {
-    let (quotient, _) = bin_division(index, input_extent, output_extent, max_value);
+    let (quotient, _) = scaled_index_division(index, input_extent, output_extent, max_value);
     quotient
 }
 
 #[ruda]
 fn bin_end(index: usize, output_extent: usize, input_extent: usize,
     #[comptime] max_value: usize) -> usize {
-    let (quotient, remainder) = bin_division(index + 1, input_extent, output_extent, max_value);
+    let (quotient, remainder) = scaled_index_division(index + 1, input_extent, output_extent, max_value);
     if remainder == 0 { quotient } else { quotient + 1 }
 }
 

@@ -1,6 +1,6 @@
 use alloc::format;
 
-use ruda_model::tensor::module::{interpolate, interpolate1d};
+use ruda_model::tensor::module::interpolate1d;
 
 
 use ruda_model::config::Config;
@@ -113,18 +113,12 @@ impl Interpolate1d {
     pub fn forward<B: Backend>(&self, input: Tensor<B, 3>) -> Tensor<B, 3> {
         let output_size = calculate_output_size(input.dims(), self.output_size, self.scale_factor);
 
-        // Use the interpolate operation to resize the temporal input tensor
-        // by adding a new dimension for the interpolation axis
-        let input = input.unsqueeze_dim(2);
-
-        let result = interpolate(
+        interpolate1d(
             input,
-            [1, output_size],
+            output_size,
             InterpolateOptions::new(self.mode.clone().into())
                 .with_align_corners(self.align_corners),
-        );
-
-        result.squeeze_dims(&[2])
+        )
     }
 }
 

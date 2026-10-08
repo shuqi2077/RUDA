@@ -11,6 +11,8 @@ use ruda_kernel::tensor::layout::linear_layout;
 use ruda_kernel::tensor::layout::shape_divmod;
 use ruda_kernel::tensor::layout::max_vector_size;
 use ruda_kernel::tensor::RudaTensor;
+use ruda_core::ir::AddressType;
+use crate::indexing::scaled_index_division;
 
 #[ruda(launch_unchecked, address_type = "dynamic")]
 fn interpolate_nearest_kernel<F: Float, N: Size>(
@@ -18,6 +20,7 @@ fn interpolate_nearest_kernel<F: Float, N: Size>(
     output: &mut Tensor<Vector<F, N>>,
     shape_out: Sequence<FastDivmod<usize>>,
     out_layout: LinearLayout,
+    #[comptime] max_value: usize,
     #[define(F)] _dtype: StorageType,
 ) {
     if ABSOLUTE_POS >= output.len() {
@@ -36,8 +39,8 @@ fn interpolate_nearest_kernel<F: Float, N: Size>(
     let (rem, x) = shape_out[2].div_mod(rem);
     let (b, y) = shape_out[1].div_mod(rem);
 
-    let y = y * h_in / h_out;
-    let x = x * w_in / w_out;
+    let (y, _) = scaled_index_division(y, h_in, h_out, max_value);
+    let (x, _) = scaled_index_division(x, w_in, w_out, max_value);
 
     let in_idx =
         b * input.stride(0) + y * input.stride(1) + x * input.stride(2) + c * input.stride(3);
@@ -59,18 +62,21 @@ pub fn interpolate_nearest_launch<R: Runtime>(
 
     let shape_out = shape_divmod(&output);
     let out_layout = linear_layout(&output, vector_size);
+    let address = address_type!(input, output);
+    let max_value = if address == AddressType::U64 { usize::MAX } else { u32::MAX as usize };
 
     unsafe {
         interpolate_nearest_kernel::launch_unchecked(
             &client,
             ruda_count,
             ruda_dim,
-            address_type!(input, output),
+            address,
             vector_size,
             input.into_tensor_arg(),
             output.clone().into_tensor_arg(),
             shape_out,
             out_layout,
+            max_value,
             output.dtype.into(),
         )
     };
