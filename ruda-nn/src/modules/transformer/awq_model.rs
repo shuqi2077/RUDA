@@ -5,6 +5,8 @@ use super::{AwqTransformerProjection,AwqTransformerStack,DenseTransformerNorm,Tr
 use super::{TransformerProjectionShape,TransformerProjection};
 use crate::loss::{CausalCrossEntropyConfig,CausalLoss};
 use crate::pool::{pool_sequence,pool_packed_sequences,SequencePooling,SequencePoolOutput};
+use ruda_model::tensor::NativeSwiGluOps;
+use super::NativeFeedForwardError;
 
 /// Native original output normalization/dropout plus explicit dense or packed projection.
 #[derive(Module,Debug)]
@@ -149,5 +151,93 @@ impl<B:Backend,P:TransformerProjection<B>> AwqTransformerModel<B,P> {
         where F:FnMut(usize,Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
         let hidden=self.forward_packed_hidden_with_positions(tokens,positions,token_types,embedding_dtypes,layout,masks,options,projected_positions)?;
         criterion.try_forward_packed_hidden_with_smoothing(hidden,labels,layout,|rows|self.head.forward(rows),label_smoothing)
+    }
+}
+
+impl<B: NativeSwiGluOps, P: TransformerProjection<B>> AwqTransformerModel<B, P> {
+    /// Actual embeddings and loaded block order with explicitly selected native gate/up training.
+    /// Hidden-state output omits vocabulary projection, retaining the original final normalization.
+    pub fn try_forward_hidden_native_with_positions<F>(
+        &self, tokens: Tensor<B, 2, Int>, positions: Option<Tensor<B, 2, Int>>, token_types: Option<Tensor<B, 2, Int>>,
+        embedding_dtypes: Option<(FloatDType, FloatDType)>, masks: DenseAttentionMask<B>, options: DenseAttentionOptions,
+        projected_positions: F,
+    ) -> Result<Tensor<B, 3>, NativeFeedForwardError<P::Error, B::SwiGluError>>
+        where F: FnMut(usize, Tensor<B, 4>, Tensor<B, 4>) -> (Tensor<B, 4>, Tensor<B, 4>) {
+        let hidden = self.embed(tokens, positions, token_types, embedding_dtypes);
+        let hidden = self.backbone.try_forward_native_with_positions(hidden, masks, options, projected_positions)?;
+        Ok(self.normalize(hidden))
+    }
+
+    /// Complete original native token-to-logit model, with no head/base conversion or inferred positions.
+    pub fn try_forward_native_with_positions<F>(
+        &self, tokens: Tensor<B, 2, Int>, positions: Option<Tensor<B, 2, Int>>, token_types: Option<Tensor<B, 2, Int>>,
+        embedding_dtypes: Option<(FloatDType, FloatDType)>, masks: DenseAttentionMask<B>, options: DenseAttentionOptions,
+        projected_positions: F,
+    ) -> Result<Tensor<B, 3>, NativeFeedForwardError<P::Error, B::SwiGluError>>
+        where F: FnMut(usize, Tensor<B, 4>, Tensor<B, 4>) -> (Tensor<B, 4>, Tensor<B, 4>) {
+        let hidden = self.try_forward_hidden_native_with_positions(tokens, positions, token_types, embedding_dtypes,
+            masks, options, projected_positions)?;
+        self.head.forward(hidden).map_err(NativeFeedForwardError::Execution)
+    }
+
+    /// Original packed embeddings, masks and independent documents, followed by native gated FFNs.
+    pub fn try_forward_packed_hidden_native_with_positions<F>(
+        &self, tokens: Tensor<B, 1, Int>, positions: Option<Tensor<B, 1, Int>>, token_types: Option<Tensor<B, 1, Int>>,
+        embedding_dtypes: Option<(FloatDType, FloatDType)>, layout: &PackedSequenceLayout,
+        masks: Option<&[PackedDocumentAttentionMask<B>]>, options: PackedAttentionOptions, projected_positions: F,
+    ) -> Result<Tensor<B, 2>, NativeFeedForwardError<P::Error, B::SwiGluError>>
+        where F: FnMut(usize, Tensor<B, 3>, Tensor<B, 3>) -> (Tensor<B, 3>, Tensor<B, 3>) {
+        let count = layout.tokens();
+        assert_eq!(tokens.dims(), [count], "packed IDs/document boundaries differ");
+        for ids in positions.iter().chain(token_types.iter()) {
+            assert_eq!(ids.dims(), [count], "packed optional ID shape differs");
+        }
+        let width = self.embeddings.token.weight.val().dims()[1];
+        let hidden = self.embed(tokens.reshape([1, count]), positions.map(|ids| ids.reshape([1, count])),
+            token_types.map(|ids| ids.reshape([1, count])), embedding_dtypes).reshape([count, width]);
+        let hidden = self.backbone.try_forward_packed_native_with_positions(hidden, layout, masks, options, projected_positions)?;
+        Ok(self.normalize(hidden))
+    }
+
+    /// Packed original head projection without allocating padded document logits.
+    pub fn try_forward_packed_native_with_positions<F>(
+        &self, tokens: Tensor<B, 1, Int>, positions: Option<Tensor<B, 1, Int>>, token_types: Option<Tensor<B, 1, Int>>,
+        embedding_dtypes: Option<(FloatDType, FloatDType)>, layout: &PackedSequenceLayout,
+        masks: Option<&[PackedDocumentAttentionMask<B>]>, options: PackedAttentionOptions, projected_positions: F,
+    ) -> Result<Tensor<B, 2>, NativeFeedForwardError<P::Error, B::SwiGluError>>
+        where F: FnMut(usize, Tensor<B, 3>, Tensor<B, 3>) -> (Tensor<B, 3>, Tensor<B, 3>) {
+        let hidden = self.try_forward_packed_hidden_native_with_positions(tokens, positions, token_types, embedding_dtypes,
+            layout, masks, options, projected_positions)?;
+        self.head.forward(hidden).map_err(NativeFeedForwardError::Execution)
+    }
+
+    /// Loaded dense/LoRA/AWQ/NF4/mixed model with native gate/up VJPs and native FP32 vocabulary normalization.
+    /// The actual criterion still owns chunk size, causal shift, ignore sentinel and label smoothing.
+    pub fn try_forward_causal_native_with_positions<F>(
+        &self, tokens: Tensor<B, 2, Int>, positions: Option<Tensor<B, 2, Int>>, token_types: Option<Tensor<B, 2, Int>>,
+        embedding_dtypes: Option<(FloatDType, FloatDType)>, labels: Tensor<B, 2, Int>,
+        masks: DenseAttentionMask<B>, options: DenseAttentionOptions, criterion: &CausalCrossEntropyConfig,
+        label_smoothing: f64, projected_positions: F,
+    ) -> Result<CausalLoss<B>, NativeFeedForwardError<P::Error, B::SwiGluError>>
+        where F: FnMut(usize, Tensor<B, 4>, Tensor<B, 4>) -> (Tensor<B, 4>, Tensor<B, 4>) {
+        let hidden = self.try_forward_hidden_native_with_positions(tokens, positions, token_types, embedding_dtypes,
+            masks, options, projected_positions)?;
+        criterion.try_forward_hidden_native_with_smoothing(hidden, labels,
+            |rows| self.head.forward(rows).map_err(NativeFeedForwardError::Execution), label_smoothing)
+    }
+
+    /// Complete original packed causal objective with actual document-local attention and shifted targets.
+    /// Projection/activation errors are returned without skipped chunks, altered weights or inferred loss masks.
+    pub fn try_forward_packed_causal_native_with_positions<F>(
+        &self, tokens: Tensor<B, 1, Int>, positions: Option<Tensor<B, 1, Int>>, token_types: Option<Tensor<B, 1, Int>>,
+        embedding_dtypes: Option<(FloatDType, FloatDType)>, labels: Tensor<B, 1, Int>, layout: &PackedSequenceLayout,
+        masks: Option<&[PackedDocumentAttentionMask<B>]>, options: PackedAttentionOptions,
+        criterion: &CausalCrossEntropyConfig, label_smoothing: f64, projected_positions: F,
+    ) -> Result<CausalLoss<B>, NativeFeedForwardError<P::Error, B::SwiGluError>>
+        where F: FnMut(usize, Tensor<B, 3>, Tensor<B, 3>) -> (Tensor<B, 3>, Tensor<B, 3>) {
+        let hidden = self.try_forward_packed_hidden_native_with_positions(tokens, positions, token_types, embedding_dtypes,
+            layout, masks, options, projected_positions)?;
+        criterion.try_forward_packed_hidden_native_with_smoothing(hidden, labels, layout,
+            |rows| self.head.forward(rows).map_err(NativeFeedForwardError::Execution), label_smoothing)
     }
 }
