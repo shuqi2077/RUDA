@@ -109,8 +109,16 @@ impl<B:FrozenPackedExpertOps> FrozenPackedExpertProjection<B> {
 impl<B:FrozenPackedExpertOps> FrozenAwqExpertProjection<B> {
     /// Direct native original AWQ selected expert projection with real input derivatives.
     pub fn forward(&self,input:Tensor<B,2>,global_ids:Tensor<B,1,Int>,expert_start:usize) -> Result<Tensor<B,2>,B::PackedExpertError> {
-        B::packed_expert_forward(input.into_primitive().tensor(),global_ids.into_primitive(),PackedExpertPayload::Awq(self.primitives(expert_start)))
-            .map(|(output,_)|Tensor::from_primitive(TensorPrimitive::Float(output)))
+        self.forward_with_state(input,global_ids,expert_start).map(|(output,_)|output)
+    }
+    /// Preserve actual native row mapping and original packed coefficients for an explicit first-order VJP.
+    pub fn forward_with_state(&self,input:Tensor<B,2>,global_ids:Tensor<B,1,Int>,expert_start:usize) -> Result<(Tensor<B,2>,B::PackedProjectionState),B::PackedExpertError> {
+        let (output,state)=B::packed_expert_forward(input.into_primitive().tensor(),global_ids.into_primitive(),PackedExpertPayload::Awq(self.primitives(expert_start)))?;
+        Ok((Tensor::from_primitive(TensorPrimitive::Float(output)),state))
+    }
+    /// Original rounded-AWQ-coefficient transpose derivative, retaining original input activation storage.
+    pub fn input_backward(&self,state:B::PackedProjectionState,gradient:Tensor<B,2>) -> Result<Tensor<B,2>,B::PackedExpertError> {
+        B::packed_expert_input_backward(state,gradient.into_primitive().tensor()).map(|value|Tensor::from_primitive(TensorPrimitive::Float(value)))
     }
 }
 /// Three actual independently selected AWQ/NF4 gate/up/down projections and original native SwiGLU.
