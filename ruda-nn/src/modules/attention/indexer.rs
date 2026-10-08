@@ -5,6 +5,7 @@ use ruda_model::{config::Config, module::Module,
 use crate::{Linear, LinearConfig, LayerNorm, LayerNormConfig};
 use super::{SparseRotaryEmbedding, indexer_kl_loss, sparse_gather_entries, sparse_stable_topk};
 use super::sparse_ops::{positions, work_dtype};
+use super::CompressedAttentionProjection;
 #[cfg(not(feature = "std"))]
 #[allow(unused_imports)]
 use num_traits::Float as _;
@@ -41,10 +42,10 @@ pub struct LightningIndexerConfig {
 
 /// Native score projections, optional token-key path, and chunk-bounded selection.
 #[derive(Module, Debug)]
-pub struct LightningIndexer<B: Backend> {
-    pub query: Linear<B>,
-    pub head_weight: Linear<B>,
-    pub key: Option<Linear<B>>,
+pub struct LightningIndexer<B: Backend, P: Module<B> = Linear<B>> {
+    pub query: P,
+    pub head_weight: P,
+    pub key: Option<P>,
     pub key_norm: Option<LayerNorm<B>>,
     pub rotary: SparseRotaryEmbedding,
     pub width: usize,
@@ -58,7 +59,7 @@ pub struct LightningIndexer<B: Backend> {
 }
 
 /// Alias for the same native dynamic sparse attention indexer, not another scoring rule.
-pub type DSAIndexer<B> = LightningIndexer<B>;
+pub type DSAIndexer<B, P = Linear<B>> = LightningIndexer<B, P>;
 
 /// Optional actual visibility and absolute position metadata for streaming selection.
 #[derive(Clone, Debug)]
@@ -106,28 +107,28 @@ impl LightningIndexerConfig {
     }
 }
 
-impl<B: Backend> LightningIndexer<B> {
+impl<B: Backend, P: CompressedAttentionProjection<B>> LightningIndexer<B, P> {
     /// Connect actual checkpoint projections and affine key normalization as-is.
-    pub fn from_parts(query: Linear<B>, head_weight: Linear<B>, key: Option<Linear<B>>,
+    pub fn from_parts(query: P, head_weight: P, key: Option<P>,
         key_norm: Option<LayerNorm<B>>, rotary: SparseRotaryEmbedding, topk: usize,
         query_chunk_size: usize, key_chunk_size: usize, detach_inputs: bool) -> Self {
-        let [query_dim, query_output] = query.weight.val().dims();
-        let [width, num_heads] = head_weight.weight.val().dims();
+        let [query_dim, query_output] = query.dimensions();
+        let [width, num_heads] = head_weight.dimensions();
         assert!(width > 0 && query_dim > 0 && num_heads > 0 && query_output > 0
             && query_output.is_multiple_of(num_heads) && topk > 0 && query_chunk_size > 0 && key_chunk_size > 0,
             "invalid loaded indexer geometry/budget");
         let head_dim = query_output / num_heads;
         assert!(rotary.rope_dim <= head_dim, "indexer rotary width exceeds a head");
-        assert!(query.bias.is_none() && head_weight.bias.is_none(), "indexer projections must be bias-free");
-        let device = query.weight.val().device();
-        assert_eq!(head_weight.weight.val().device(), device, "indexer projection devices differ");
+        assert!(!query.has_bias() && !head_weight.has_bias(), "indexer projections must be bias-free");
+        let device = query.device();
+        assert_eq!(head_weight.device(), device, "indexer projection devices differ");
         match (&key, &key_norm) {
             (Some(key), Some(norm)) => {
-                assert_eq!(key.weight.val().dims(), [width, head_dim], "indexer token-key geometry differs");
-                assert!(key.bias.is_none(), "indexer token-key projection must be bias-free");
+                assert_eq!(key.dimensions(), [width, head_dim], "indexer token-key geometry differs");
+                assert!(!key.has_bias(), "indexer token-key projection must be bias-free");
                 assert_eq!(norm.gamma.val().dims(), [head_dim], "indexer key normalization width differs");
                 assert!(norm.epsilon().is_finite() && norm.epsilon() > 0.0, "invalid indexer key normalization epsilon");
-                assert!(key.weight.val().device() == device && norm.gamma.val().device() == device
+                assert!(key.device() == device && norm.gamma.val().device() == device
                     && norm.beta.as_ref().is_none_or(|beta| beta.val().device() == device),
                     "indexer key parameters must share a device");
             }
@@ -141,7 +142,7 @@ impl<B: Backend> LightningIndexer<B> {
     /// Prepare token keys; externally compressed keys bypass this path entirely.
     pub fn project_keys(&self, input: Tensor<B, 3>, pos: Option<Tensor<B, 1, Int>>) -> Tensor<B, 3> {
         assert_eq!(input.dims()[2], self.width, "indexer token feature width differs");
-        assert_eq!(input.device(), self.query.weight.val().device(), "indexer token feature device differs");
+        assert_eq!(input.device(), self.query.device(), "indexer token feature device differs");
         work_dtype(input.dtype());
         let key = self.key.as_ref().expect("external-key indexer has no token-key projection");
         let norm = self.key_norm.as_ref().expect("indexer token-key normalization missing");
@@ -154,7 +155,7 @@ impl<B: Backend> LightningIndexer<B> {
         selection: bool) -> (Tensor<B, 4>, Tensor<B, 3>) {
         let [batch, tokens, width] = input.dims();
         assert_eq!(width, self.width, "indexer feature width differs");
-        assert_eq!(input.device(), self.query.weight.val().device(), "indexer feature/parameter device differs");
+        assert_eq!(input.device(), self.query.device(), "indexer feature/parameter device differs");
         let latent = latent.unwrap_or_else(|| input.clone());
         assert_eq!(latent.dims(), [batch, tokens, self.query_dim], "indexer query latent geometry differs");
         assert_eq!(latent.device(), input.device(), "indexer query latent device differs");
@@ -163,13 +164,10 @@ impl<B: Backend> LightningIndexer<B> {
         let pos = pos.unwrap_or_else(|| positions::<B>(tokens, 0, &input.device()));
         let input = if selection || self.detach_inputs { input.detach() } else { input };
         let latent = if selection || self.detach_inputs { latent.detach() } else { latent };
-        let mut query_weight = self.query.weight.val();
-        let mut head_weight = self.head_weight.weight.val();
-        if selection { query_weight = query_weight.detach(); head_weight = head_weight.detach(); }
-        let q = latent.cast(compute).matmul(query_weight.cast(compute).unsqueeze::<3>())
+        let q = self.query.forward_in_compute(latent.cast(compute), compute, 0..self.num_heads * self.head_dim, selection)
             .reshape([batch, tokens, self.num_heads, self.head_dim]);
         let scale = 1.0 / ((self.head_dim as f64) * (self.num_heads as f64)).sqrt();
-        let weights = input.cast(compute).matmul(head_weight.cast(compute).unsqueeze::<3>()).mul_scalar(scale);
+        let weights = self.head_weight.forward_in_compute(input.cast(compute), compute, 0..self.num_heads, selection).mul_scalar(scale);
         (self.rotary.forward(q, pos, false), weights)
     }
 

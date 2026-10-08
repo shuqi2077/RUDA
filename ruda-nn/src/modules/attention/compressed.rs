@@ -6,6 +6,7 @@ use crate::{Linear, LinearConfig};
 use super::{CompressionState, LearnedKVCompressor, LearnedKVCompressorConfig, LightningIndexer,
     LightningIndexerConfig, IndexerMask, SparseRotaryEmbedding, sparse_gather_entries, indexer_kl_loss};
 use super::sparse_ops::{masked_softmax, positions, rms, valid_mask, work_dtype};
+use super::CompressedAttentionProjection;
 #[cfg(not(feature = "std"))]
 #[allow(unused_imports)]
 use num_traits::Float as _;
@@ -51,24 +52,24 @@ pub struct CompressedAttentionConfig {
 
 /// Actual checkpoint projections and learned compression/indexing parameters.
 #[derive(Module, Debug)]
-pub struct CompressedAttentionParts<B: Backend> {
-    pub query_down: Linear<B>,
-    pub query_up: Linear<B>,
+pub struct CompressedAttentionParts<B: Backend, P: Module<B> = Linear<B>> {
+    pub query_down: P,
+    pub query_up: P,
     pub query_norm: Param<Tensor<B, 1>>,
-    pub local_kv: Linear<B>,
+    pub local_kv: P,
     pub local_norm: Param<Tensor<B, 1>>,
-    pub compressor: LearnedKVCompressor<B>,
-    pub output_down: Vec<Linear<B>>,
-    pub output_up: Linear<B>,
+    pub compressor: LearnedKVCompressor<B, P>,
+    pub output_down: Vec<P>,
+    pub output_up: P,
     pub sink: Option<Param<Tensor<B, 1>>>,
-    pub indexer: Option<LightningIndexer<B>>,
-    pub index_compressor: Option<LearnedKVCompressor<B>>,
+    pub indexer: Option<LightningIndexer<B, P>>,
+    pub index_compressor: Option<LearnedKVCompressor<B, P>>,
 }
 
 /// Native CSA/HCA: local and compressed entries share one per-head softmax.
 #[derive(Module, Debug)]
-pub struct CompressedAttention<B: Backend> {
-    pub parts: CompressedAttentionParts<B>,
+pub struct CompressedAttention<B: Backend, P: Module<B> = Linear<B>> {
+    pub parts: CompressedAttentionParts<B, P>,
     pub rotary: SparseRotaryEmbedding,
     pub width: usize,
     pub num_heads: usize,
@@ -139,13 +140,13 @@ impl CompressedAttentionConfig {
     }
 }
 
-impl<B: Backend> CompressedAttention<B> {
+impl<B: Backend, P: CompressedAttentionProjection<B>> CompressedAttention<B, P> {
     /// Connect complete actual loaded leaves, retaining the original parameter identities.
-    pub fn from_parts(parts: CompressedAttentionParts<B>, rotary: SparseRotaryEmbedding,
+    pub fn from_parts(parts: CompressedAttentionParts<B, P>, rotary: SparseRotaryEmbedding,
         window_size: usize, query_chunk_size: usize, epsilon: f64) -> Self {
-        let [width, query_rank] = parts.query_down.weight.val().dims();
-        let [up_rank, query_output] = parts.query_up.weight.val().dims();
-        let [local_width, head_dim] = parts.local_kv.weight.val().dims();
+        let [width, query_rank] = parts.query_down.dimensions();
+        let [up_rank, query_output] = parts.query_up.dimensions();
+        let [local_width, head_dim] = parts.local_kv.dimensions();
         let output_groups = parts.output_down.len();
         assert!(width > 0 && query_rank > 0 && head_dim > 0 && query_output > 0
             && query_output.is_multiple_of(head_dim) && output_groups > 0 && window_size > 0
@@ -157,22 +158,22 @@ impl<B: Backend> CompressedAttention<B> {
         assert_eq!(parts.local_norm.val().dims(), [head_dim], "local normalization rank differs");
         assert_eq!((parts.compressor.width, parts.compressor.head_dim), (width, head_dim), "attention compressor geometry differs");
         assert!(rotary.rope_dim <= head_dim, "attention rotary channels exceed a head");
-        let output_rank = parts.output_down[0].weight.val().dims()[1];
+        let output_rank = parts.output_down[0].dimensions()[1];
         assert!(output_rank > 0, "attention output rank must be positive");
-        assert_eq!(parts.output_up.weight.val().dims(), [output_groups.checked_mul(output_rank).expect("output rank overflow"), width],
+        assert_eq!(parts.output_up.dimensions(), [output_groups.checked_mul(output_rank).expect("output rank overflow"), width],
             "attention output-up projection geometry differs");
-        let device = parts.query_down.weight.val().device();
+        let device = parts.query_down.device();
         for layer in [&parts.query_down, &parts.query_up, &parts.local_kv, &parts.output_up] {
-            assert!(layer.bias.is_none(), "compressed attention projections must be bias-free");
-            assert_eq!(layer.weight.val().device(), device, "attention projection devices differ");
+            assert!(!layer.has_bias(), "compressed attention projections must be bias-free");
+            assert_eq!(layer.device(), device, "attention projection devices differ");
         }
         for layer in &parts.output_down {
-            assert_eq!(layer.weight.val().dims(), [query_output / output_groups, output_rank], "grouped output-down geometry differs");
-            assert!(layer.bias.is_none(), "compressed attention output-down must be bias-free");
-            assert_eq!(layer.weight.val().device(), device, "attention output-down device differs");
+            assert_eq!(layer.dimensions(), [query_output / output_groups, output_rank], "grouped output-down geometry differs");
+            assert!(!layer.has_bias(), "compressed attention output-down must be bias-free");
+            assert_eq!(layer.device(), device, "attention output-down device differs");
         }
         assert!(parts.query_norm.val().device() == device && parts.local_norm.val().device() == device
-            && parts.compressor.value.weight.val().device() == device, "attention normalization/compression device differs");
+            && parts.compressor.value.device() == device, "attention normalization/compression device differs");
         if let Some(sink) = &parts.sink {
             assert_eq!(sink.val().dims(), [num_heads], "attention sink head count differs");
             assert_eq!(sink.val().device(), device, "attention sink device differs");
@@ -184,7 +185,7 @@ impl<B: Backend> CompressedAttention<B> {
                 assert_eq!((indexer.width, indexer.query_dim), (width, query_rank), "CSA indexer query geometry differs");
                 assert_eq!((compressor.width, compressor.head_dim, compressor.ratio), (width, indexer.head_dim, parts.compressor.ratio),
                     "CSA key compressor geometry differs");
-                assert!(indexer.query.weight.val().device() == device && compressor.value.weight.val().device() == device,
+                assert!(indexer.query.device() == device && compressor.value.device() == device,
                     "CSA indexing device differs");
             }
             (None, None) => assert!(!parts.compressor.overlap, "HCA must use non-overlapping compression"),
@@ -198,7 +199,7 @@ impl<B: Backend> CompressedAttention<B> {
         let [batch, tokens, width] = input.dims();
         assert!(batch > 0 && tokens > 0 && width == self.width, "compressed attention needs nonempty actual input rows");
         work_dtype(input.dtype());
-        assert_eq!(input.device(), self.parts.query_down.weight.val().device(), "compressed attention input device differs");
+        assert_eq!(input.device(), self.parts.query_down.device(), "compressed attention input device differs");
         valid_mask(input, valid)
     }
 
@@ -338,8 +339,8 @@ impl<B: Backend> CompressedAttention<B> {
 
     /// Bind incremental state to this immutable actual module. Rust borrowing prevents
     /// loading/updating/moving its parameters while the live inference session exists.
-    pub fn inference_session(&self) -> CompressedAttentionSession<'_, B> {
-        assert!(!B::ad_enabled(&self.parts.query_down.weight.val().device()), "cached attention requires autograd-disabled inference");
+    pub fn inference_session(&self) -> CompressedAttentionSession<'_, B, P> {
+        assert!(!B::ad_enabled(&self.parts.query_down.device()), "cached attention requires autograd-disabled inference");
         CompressedAttentionSession { module: self, cache: None }
     }
 }
@@ -358,12 +359,12 @@ struct CompressedHistory<B: Backend> {
 
 /// Prefill/decode session borrowing one unchanged module, with no transferable stale cache.
 #[derive(Debug)]
-pub struct CompressedAttentionSession<'a, B: Backend> {
-    module: &'a CompressedAttention<B>,
+pub struct CompressedAttentionSession<'a, B: Backend, P: Module<B> = Linear<B>> {
+    module: &'a CompressedAttention<B, P>,
     cache: Option<CompressedHistory<B>>,
 }
 
-impl<'a, B: Backend> CompressedAttentionSession<'a, B> {
+impl<'a, B: Backend, P: CompressedAttentionProjection<B>> CompressedAttentionSession<'a, B, P> {
     pub fn position(&self) -> usize { self.cache.as_ref().map_or(0, |cache| cache.seen) }
 
     pub fn compressed_blocks(&self) -> usize { self.cache.as_ref().map_or(0, |cache| cache.compressed.dims()[1]) }

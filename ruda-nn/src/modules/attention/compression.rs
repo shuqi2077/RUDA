@@ -3,6 +3,7 @@ use ruda_model::{config::Config, module::{Initializer, Module, Param},
     tensor::{Bool, Int, Tensor, backend::Backend}};
 use crate::{Linear, LinearConfig};
 use super::sparse_ops::{masked_softmax, rms, valid_mask, work_dtype};
+use super::CompressedAttentionProjection;
 
 /// Learned per-channel gated pooling over complete physical token blocks.
 #[derive(Config, Debug)]
@@ -19,9 +20,9 @@ pub struct LearnedKVCompressorConfig {
 
 /// Native differentiable KV compression with offset bias and RMS normalization.
 #[derive(Module, Debug)]
-pub struct LearnedKVCompressor<B: Backend> {
-    pub value: Linear<B>,
-    pub gate: Linear<B>,
+pub struct LearnedKVCompressor<B: Backend, P: Module<B> = Linear<B>> {
+    pub value: P,
+    pub gate: P,
     /// [ratio, streams * head_dim], with previous-path channels first.
     pub position_bias: Param<Tensor<B, 2>>,
     pub norm_weight: Param<Tensor<B, 1>>,
@@ -75,21 +76,21 @@ impl LearnedKVCompressorConfig {
     }
 }
 
-impl<B: Backend> LearnedKVCompressor<B> {
+impl<B: Backend, P: CompressedAttentionProjection<B>> LearnedKVCompressor<B, P> {
     /// Attach actual loaded linear/normalization leaves without replacing parameter IDs or mappers.
-    pub fn from_parts(value: Linear<B>, gate: Linear<B>, position_bias: Param<Tensor<B, 2>>,
+    pub fn from_parts(value: P, gate: P, position_bias: Param<Tensor<B, 2>>,
         norm_weight: Param<Tensor<B, 1>>, overlap: bool, epsilon: f64) -> Self {
-        let [width, output] = value.weight.val().dims();
+        let [width, output] = value.dimensions();
         let [ratio, bias_output] = position_bias.val().dims();
         let [head_dim] = norm_weight.val().dims();
         assert!(width > 0 && ratio > 0 && head_dim > 0 && epsilon.is_finite() && epsilon > 0.0,
             "invalid loaded compression geometry/epsilon");
         assert_eq!(output, head_dim.checked_mul(if overlap { 2 } else { 1 }).expect("compression width overflow"));
-        assert_eq!(gate.weight.val().dims(), [width, output], "compression value/gate layouts differ");
+        assert_eq!(gate.dimensions(), [width, output], "compression value/gate layouts differ");
         assert_eq!(bias_output, output, "compression offset bias width differs");
-        assert!(value.bias.is_none() && gate.bias.is_none(), "compression projections must not add a linear bias");
-        let device = value.weight.val().device();
-        assert!(gate.weight.val().device() == device && position_bias.val().device() == device
+        assert!(!value.has_bias() && !gate.has_bias(), "compression projections must not add a linear bias");
+        let device = value.device();
+        assert!(gate.device() == device && position_bias.val().device() == device
             && norm_weight.val().device() == device, "compression parameters must share a device");
         Self { value, gate, position_bias, norm_weight, width, head_dim, ratio, overlap, epsilon }
     }
@@ -97,7 +98,7 @@ impl<B: Backend> LearnedKVCompressor<B> {
     fn validate(&self, input: &Tensor<B, 3>, valid: Option<Tensor<B, 2, Bool>>) -> Tensor<B, 2, Bool> {
         work_dtype(input.dtype());
         assert_eq!(input.dims()[2], self.width, "compression feature width differs");
-        assert_eq!(input.device(), self.value.weight.val().device(), "compression input/parameter device differs");
+        assert_eq!(input.device(), self.value.device(), "compression input/parameter device differs");
         valid_mask(input, valid)
     }
 
@@ -115,17 +116,16 @@ impl<B: Backend> LearnedKVCompressor<B> {
         }
         let complete = input.slice_dim(1, 0..blocks * r).cast(compute);
         let output = if self.overlap { 2 * d } else { d };
-        let values = complete.clone().matmul(self.value.weight.val().cast(compute).unsqueeze::<3>())
+        let values = self.value.forward_in_compute(complete.clone(), compute, 0..output, false)
             .reshape([batch, blocks, r, output]);
-        let gates = complete.matmul(self.gate.weight.val().cast(compute).unsqueeze::<3>())
+        let gates = self.gate.forward_in_compute(complete, compute, 0..output, false)
             .reshape([batch, blocks, r, output]) + self.position_bias.val().cast(compute).reshape([1, 1, r, output]);
         let mask = valid.slice_dim(1, 0..blocks * r).reshape([batch, blocks, r, 1]);
         let (values, gates, mask) = if self.overlap {
             let (pv, pg, pm) = if let Some((previous, previous_valid)) = previous {
                 let previous = previous.cast(compute);
-                let pv = previous.clone().matmul(self.value.weight.val().cast(compute)
-                    .slice_dim(1, 0..d).unsqueeze::<3>()).reshape([batch, 1, r, d]);
-                let pg = (previous.matmul(self.gate.weight.val().cast(compute).slice_dim(1, 0..d).unsqueeze::<3>())
+                let pv = self.value.forward_in_compute(previous.clone(), compute, 0..d, false).reshape([batch, 1, r, d]);
+                let pg = (self.gate.forward_in_compute(previous, compute, 0..d, false)
                     + self.position_bias.val().cast(compute).slice_dim(1, 0..d).reshape([1, r, d]))
                     .reshape([batch, 1, r, d]);
                 (pv, pg, previous_valid.reshape([batch, 1, r, 1]))

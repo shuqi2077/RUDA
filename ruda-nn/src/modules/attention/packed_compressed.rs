@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 use ruda_model::tensor::{Bool, Tensor, backend::Backend};
-use super::{CompressedAttention, PackedSequenceLayout};
+use super::{CompressedAttention, PackedSequenceLayout, CompressedAttentionProjection};
 use super::sparse_ops::work_dtype;
 
 /// Actual packed token output and one independent indexer KL value per document.
@@ -11,7 +11,7 @@ pub struct PackedCompressedAttentionOutput<B: Backend> {
     pub document_indexer_losses: Tensor<B, 1>,
 }
 
-impl<B: Backend> CompressedAttention<B> {
+impl<B: Backend, P: CompressedAttentionProjection<B>> CompressedAttention<B, P> {
     /// Independent document CSA/HCA: RoPE positions, local windows, incomplete
     /// blocks and overlap reset at every actual document boundary.
     pub fn forward_packed(&self, input: Tensor<B, 2>, layout: &PackedSequenceLayout,
@@ -33,7 +33,7 @@ impl<B: Backend> CompressedAttention<B> {
         let device = input.device();
         let storage = input.dtype();
         let compute = work_dtype(storage);
-        assert_eq!(device, self.parts.query_down.weight.val().device(), "packed compression device differs");
+        assert_eq!(device, self.parts.query_down.device(), "packed compression device differs");
         if let Some(valid) = &valid {
             assert_eq!(valid.dims(), [tokens], "packed compression validity count differs");
             assert_eq!(valid.device(), device, "packed compression validity device differs");
