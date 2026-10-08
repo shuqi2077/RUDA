@@ -143,7 +143,10 @@ impl<B:Backend> ExpertLoRAAdapterRecord<B> {
     /// Capture actual A/B leaves, including their IDs/dtypes, without pinning frozen expert payloads.
     pub fn capture<Base:ExpertAdapterRecordBase<B>>(layer:&PackedExpertLoRA<B,Base>,base_id:&str) -> Result<Self,RecorderError> {
         let schema=ExpertLoRAAdapterSchema::capture(layer,base_id)?;
-        let adapters=(layer.adapter_a.clone(),layer.adapter_b.clone());let dtypes=ModuleDTypeRecord::capture(&adapters)?;
+        let snapshot=|mut adapter:ExpertLinear<B>| {
+            adapter.weight=adapter.weight.map(|value| {let trainable=value.is_require_grad();value.detach().set_require_grad(trainable)});adapter
+        };
+        let adapters=(snapshot(layer.adapter_a.clone()),snapshot(layer.adapter_b.clone()));let dtypes=ModuleDTypeRecord::capture(&adapters)?;
         Ok(Self {schema,adapter_a:adapters.0.into_record(),adapter_b:adapters.1.into_record(),dtypes})
     }
     /// Save only actual expert A/B and source metadata using an existing native recorder.
