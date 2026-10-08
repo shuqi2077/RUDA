@@ -33,7 +33,7 @@ where B:AutodiffBackend,M:AutodiffModule<B>,O:ElementwiseShardOptimizer<B::Inner
         let optimizer=self.optimizer.clone();let clipping=self.clipping.clone();
         self.step_recoverable_configured(module,gradients,move |_|(optimizer.clone(),clipping.clone(),lr))
     }
-    fn step_recoverable_configured<F>(&mut self,module:M,gradients:GradientsParams,configuration:F)
+    pub(super) fn step_recoverable_configured<F>(&mut self,module:M,gradients:GradientsParams,configuration:F)
         -> Result<M,FullyShardedElementwiseStepFailure<M,C::Error>>
     where F:FnMut(ParamId)->(O,Option<GradientClipping>,LearningRate) {
         let input=gradients.clone_native::<B::InnerBackend>();
