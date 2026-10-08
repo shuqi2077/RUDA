@@ -3,6 +3,7 @@ use ruda_model::tensor::{DType,backend::Backend};
 use crate::{Linear,attention::GroupedQueryAttention};
 use super::{TransformerAdapterConfig,LayerAdapterConfig,AttentionAdapterTarget,FeedForwardAdapterTarget,
     TransformerProjectionShape,AwqTransformerProjection,Nf4TransformerProjection,MixedTransformerProjection,
+    QuantizedTransformerProjection,UniversalTransformerProjection,
     AwqGroupedQueryAttention,AwqFeedForward,AwqTransformerBlock,AwqTransformerStack,AwqTransformerModel,
     DenseFeedForward,DenseTransformerBlock,DenseTransformerStack,TransformerEmbeddings,TransformerHead,DenseTransformerNorm,AdaptedProjection,
     ProjectedCrossAttentionBlock,ProjectedEncoderDecoderLayer,ProjectedEncoderDecoderStack,ProjectedEncoderDecoderModel,
@@ -59,6 +60,20 @@ adapt_original_projection!(AwqTransformerProjection,[Awq=>AwqLoRA,init_awq]);
 adapt_original_projection!(Nf4TransformerProjection,[Nf4=>Nf4LoRA,init_nf4]);
 adapt_original_projection!(MixedTransformerProjection,[Awq=>AwqLoRA,init_awq,Nf4=>Nf4LoRA,init_nf4]);
 adapt_original_projection!(AdaptedProjection,[]);
+adapt_original_projection!(QuantizedTransformerProjection,[Quantized=>QuantizedLoRA,init_quantized]);
+
+impl<B:Backend> From<Linear<B>> for UniversalTransformerProjection<B> {
+    fn from(layer:Linear<B>) -> Self {Self::Mixed(MixedTransformerProjection::Dense(layer))}
+}
+impl<B:Backend> AdaptTransformerProjection<B> for UniversalTransformerProjection<B> {
+    fn validate_adapter(&self,config:&TransformerAdapterConfig) {
+        match self {Self::Mixed(layer)=>layer.validate_adapter(config),Self::Generic(layer)=>layer.validate_adapter(config)}
+    }
+    fn with_adapter(self,config:&TransformerAdapterConfig) -> Self {
+        self.validate_adapter(config);
+        match self {Self::Mixed(layer)=>Self::Mixed(layer.with_adapter(config)),Self::Generic(layer)=>Self::Generic(layer.with_adapter(config))}
+    }
+}
 
 impl<B:Backend,P:TransformerProjectionShape<B>+From<Linear<B>>> AwqGroupedQueryAttention<B,P> {
     /// Consume actual original dense projections, preserving IDs/trainability and attention geometry.

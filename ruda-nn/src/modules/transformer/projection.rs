@@ -1,6 +1,7 @@
 use core::{convert::Infallible,fmt};
 use ruda_model::{module::{Module,ModuleDisplay},tensor::{FrozenAwqOps,FrozenNf4Ops,Tensor,backend::Backend}};
-use crate::{Linear,LoRALinear,FrozenNf4Linear,Nf4LoRALinear,FrozenAwqLinear,AwqLoRALinear};
+use crate::{Linear,LoRALinear,FrozenNf4Linear,Nf4LoRALinear,FrozenAwqLinear,AwqLoRALinear,
+    QuantizedLinear,QuantizedLoRALinear};
 use super::{AwqTransformerProjection,AwqGroupedQueryAttention,AwqFeedForward,AwqTransformerBlock,
     AwqTransformerStack,AwqTransformerHead,AwqTransformerModel};
 use super::AdaptedProjection;
@@ -64,6 +65,62 @@ impl<B:Backend> TransformerProjectionShape<B> for LoRALinear<B> {
 impl<B:Backend> TransformerProjection<B> for LoRALinear<B> {
     type Error=Infallible;
     fn forward<const D:usize>(&self,input:Tensor<B,D>) -> Result<Tensor<B,D>,Self::Error> {Ok(self.forward(input))}
+}
+
+impl<B:Backend> TransformerProjectionShape<B> for QuantizedLinear<B> {
+    fn dimensions(&self) -> [usize;2] {let [output,input]=self.weight.val().dims();[input,output]}
+}
+impl<B:Backend> TransformerProjection<B> for QuantizedLinear<B> {
+    type Error=Infallible;
+    fn forward<const D:usize>(&self,input:Tensor<B,D>) -> Result<Tensor<B,D>,Self::Error> {Ok(self.forward(input))}
+}
+impl<B:Backend> TransformerProjectionShape<B> for QuantizedLoRALinear<B> {
+    fn dimensions(&self) -> [usize;2] {self.base.dimensions()}
+}
+impl<B:Backend> TransformerProjection<B> for QuantizedLoRALinear<B> {
+    type Error=Infallible;
+    fn forward<const D:usize>(&self,input:Tensor<B,D>) -> Result<Tensor<B,D>,Self::Error> {Ok(self.forward(input))}
+}
+
+/// Per-role native floating, INT2/4/8, FP4 E2M1 or FP8 E4M3/E5M2 projection storage.
+/// Plugs directly into the existing projected attention, FFN, head and model graphs.
+#[derive(Module,Debug)]
+pub enum QuantizedTransformerProjection<B:Backend> {
+    /// Original floating projection and its existing training flags.
+    Dense(Linear<B>),
+    /// Original floating base and actual trainable adapters.
+    LoRA(LoRALinear<B>),
+    /// Original generic packed weight/scales and optional frozen bias.
+    Quantized(QuantizedLinear<B>),
+    /// Original generic packed base with independently stored A/B leaves.
+    QuantizedLoRA(QuantizedLoRALinear<B>),
+}
+impl<B:Backend> TransformerProjectionShape<B> for QuantizedTransformerProjection<B> {
+    fn dimensions(&self) -> [usize;2] {
+        match self {Self::Dense(layer)=>layer.dimensions(),Self::LoRA(layer)=>layer.dimensions(),
+            Self::Quantized(layer)=>layer.dimensions(),Self::QuantizedLoRA(layer)=>layer.dimensions()}
+    }
+}
+impl<B:Backend> TransformerProjection<B> for QuantizedTransformerProjection<B> {
+    type Error=Infallible;
+    fn forward<const D:usize>(&self,input:Tensor<B,D>) -> Result<Tensor<B,D>,Self::Error> {
+        Ok(match self {Self::Dense(layer)=>layer.forward(input),Self::LoRA(layer)=>layer.forward(input),
+            Self::Quantized(layer)=>layer.forward(input),Self::QuantizedLoRA(layer)=>layer.forward(input)})
+    }
+}
+impl<B:Backend> QuantizedTransformerProjection<B> {
+    /// Pack a caller-selected actual floating role; preserve existing LoRA IDs, values,
+    /// dropout and scaling. Already packed roles are not decoded or silently requantized.
+    pub fn pack_float(self, scheme:&ruda_model::tensor::quantization::QuantScheme,
+        calibration_dtype:ruda_model::tensor::FloatDType) -> Self {
+        match self {
+            Self::Dense(layer)=>Self::Quantized(QuantizedLinear::from_linear(layer,scheme,calibration_dtype)),
+            Self::LoRA(layer)=>Self::QuantizedLoRA(QuantizedLoRALinear {
+                base:QuantizedLinear::from_linear(layer.base,scheme,calibration_dtype),
+                adapter_a:layer.adapter_a,adapter_b:layer.adapter_b,dropout:layer.dropout,scale:layer.scale}),
+            _=>panic!("pack_float requires an actual floating base, not an already packed checkpoint"),
+        }
+    }
 }
 
 impl<B:Backend> TransformerProjectionShape<B> for AdaptedProjection<B> {
@@ -163,6 +220,34 @@ impl<B:FrozenAwqOps+FrozenNf4Ops> TransformerProjection<B> for MixedTransformerP
             Self::AwqLoRA(layer)=>layer.forward(input).map_err(MixedProjectionError::Awq),
             Self::Nf4(layer)=>layer.forward(input).map_err(MixedProjectionError::Nf4),
             Self::Nf4LoRA(layer)=>layer.forward(input).map_err(MixedProjectionError::Nf4)}
+    }
+}
+
+/// One native model graph may mix all existing packed formats without changing any
+/// role's original codes, scale storage, block geometry, bias or adapter identities.
+#[derive(Module,Debug)]
+pub enum UniversalTransformerProjection<B:Backend> {
+    /// Existing dense/LoRA/AWQ/NF4 implementations and their original error contracts.
+    Mixed(MixedTransformerProjection<B>),
+    /// Native generic INT2/4/8 or FP4/FP8 roles, with or without actual LoRA adapters.
+    Generic(QuantizedTransformerProjection<B>),
+}
+impl<B:Backend> From<MixedTransformerProjection<B>> for UniversalTransformerProjection<B> {
+    fn from(value:MixedTransformerProjection<B>) -> Self {Self::Mixed(value)}
+}
+impl<B:Backend> From<QuantizedTransformerProjection<B>> for UniversalTransformerProjection<B> {
+    fn from(value:QuantizedTransformerProjection<B>) -> Self {Self::Generic(value)}
+}
+impl<B:Backend> TransformerProjectionShape<B> for UniversalTransformerProjection<B> {
+    fn dimensions(&self) -> [usize;2] {
+        match self {Self::Mixed(layer)=>layer.dimensions(),Self::Generic(layer)=>layer.dimensions()}
+    }
+}
+impl<B:FrozenAwqOps+FrozenNf4Ops> TransformerProjection<B> for UniversalTransformerProjection<B> {
+    type Error=MixedProjectionError<B::AwqError,B::Nf4Error>;
+    fn forward<const D:usize>(&self,input:Tensor<B,D>) -> Result<Tensor<B,D>,Self::Error> {
+        match self {Self::Mixed(layer)=>layer.forward(input),
+            Self::Generic(layer)=>layer.forward(input).map_err(|never| match never {})}
     }
 }
 

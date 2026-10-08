@@ -200,7 +200,7 @@ pub(super) fn lu_solve_warp(
             let mut candidate = 0.0f32;
             if lane >= k && lane < n { candidate = matrix[lane * pitch + k].abs(); }
             let best = plane_max(candidate);
-            let mut candidate_row = n as u32;
+            let mut candidate_row = u32::new(n as i64);
             if lane >= k && lane < n && candidate == best { candidate_row = lane as u32; }
             // Lowest row on ties, matching the serial first-maximum pivot rule.
             let pivot = plane_min(candidate_row) as usize;
@@ -291,7 +291,7 @@ pub(super) fn lu_solve_warp(
         i += 32;
     }
     if lane < n {
-        let mut value = -1i32;
+        let mut value = i32::new(-1);
         if code == 0 { value = pivots[lane]; }
         piv[system * n + lane] = value;
     }

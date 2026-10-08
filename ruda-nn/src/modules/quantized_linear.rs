@@ -19,17 +19,25 @@ pub struct QuantizedLinear<B: Backend> {
 impl<B: Backend> QuantizedLinear<B> {
     /// Adopt existing packed parameter storage without decoding or requantizing it.
     pub fn from_parameters(weight: Param<Tensor<B, 2>>, bias: Option<Param<Tensor<B, 1>>>) -> Self {
-        let value = weight.val();
+        let layer = Self { weight: weight.map(|value| value.set_require_grad(false)),
+            bias: bias.map(|value| value.map(|value| value.set_require_grad(false))) };
+        layer.validate();
+        layer
+    }
+
+    /// Check original packed geometry, floating bias and frozen flags without decoding values.
+    pub fn validate(&self) {
+        let value = self.weight.val();
         let [output, input] = value.dims();
         assert!(input > 0 && output > 0 && matches!(value.dtype(), DType::QFloat(_)), "quantized linear requires nonempty original packed weights");
-        if let Some(bias) = &bias {
+        assert!(!value.is_require_grad(), "quantized linear base must remain frozen");
+        if let Some(bias) = &self.bias {
             let bias = bias.val();
             assert_eq!(bias.dims(), [output], "quantized linear bias shape differs");
             assert_eq!(bias.device(), value.device(), "quantized linear bias device differs");
             assert!(matches!(bias.dtype(), DType::F16 | DType::BF16 | DType::F32), "quantized linear bias must use FP16/BF16/FP32");
+            assert!(!bias.is_require_grad(), "quantized linear bias must remain frozen");
         }
-        Self { weight: weight.map(|value| value.set_require_grad(false)),
-            bias: bias.map(|value| value.map(|value| value.set_require_grad(false))) }
     }
 
     /// Adopt actual packed tensors without temporarily creating a trainable dense surrogate.
@@ -44,6 +52,15 @@ impl<B: Backend> QuantizedLinear<B> {
         calibration_dtype: FloatDType) -> Self {
         let weight = weight.detach().set_require_grad(false).quantize_dynamic_with_precision(scheme, calibration_dtype);
         Self::from_quantized(weight, bias)
+    }
+
+    /// Pack an actual native floating Linear, preserving original weight/bias parameter IDs.
+    /// Native `[input,output]` weights are transposed before applying the explicitly supplied
+    /// block scheme in packed `[output,input]` coordinates; no geometry is inferred.
+    pub fn from_linear(layer: Linear<B>, scheme: &QuantScheme, calibration_dtype: FloatDType) -> Self {
+        let weight = layer.weight.map(|value| value.detach().set_require_grad(false).transpose()
+            .quantize_dynamic_with_precision(scheme, calibration_dtype));
+        Self::from_parameters(weight, layer.bias)
     }
 
     /// Project actual last-axis inputs using FP16/BF16/FP32 storage and the backend's packed matmul.
