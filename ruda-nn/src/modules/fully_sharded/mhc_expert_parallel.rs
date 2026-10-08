@@ -1,7 +1,9 @@
 use super::*;
-use ruda_model::{module::ModuleDisplay, tensor::{IntegerTensorCollective, VariableTensorCollective, MoeDispatchOps, MoeReceivedOps}};
+use ruda_model::{module::ModuleDisplay, tensor::{Bool, IntegerTensorCollective, VariableTensorCollective, MoeDispatchOps, MoeReceivedOps}};
 use crate::expert_parallel::ExpertParallelReceived;
-use crate::transformer::{ExpertParallelMhcFeedForward, ExpertParallelMhcError, MixedMhcFeedForward, MhcResidualBranchShape, TransformerProjection};
+use crate::transformer::{ExpertParallelMhcFeedForward, ExpertParallelMhcError, MixedMhcFeedForward, MixedMhcBranchError,
+    MhcResidualBranchShape, MhcResidualBranch, TransformerProjection};
+use crate::attention::{CompressedAttentionProjection, CompressedAttentionOutput, PackedCompressedAttentionOutput, PackedSequenceLayout};
 
 /// Original expert-owned mHC branch and explicitly present shared FFN, with all
 /// persistent native weights kept as local data-axis slices.
@@ -91,6 +93,69 @@ macro_rules! execute_sharded_mhc_experts {
 }
 execute_sharded_mhc_experts!(B, [B: MoeDispatchOps + MoeReceivedOps], forward_inference, forward_inference);
 execute_sharded_mhc_experts!(Autodiff<B, S>, [B: MoeDispatchOps + MoeReceivedOps, S: CheckpointStrategy], forward, forward);
+
+/// Native branch errors retain local, router, owned-expert and expert-transport
+/// categories, separately from data gathers and the actual task-head error.
+pub type FullyShardedMixedMhcModelError<D, C, L, P, E, H> = FullyShardedMhcModelError<D, MixedMhcBranchError<L, C, P, E>, H>;
+
+macro_rules! execute_mixed_mhc_model {
+    ($backend:ty, [$($generics:tt)*], $native:ident, $with:ident, $hidden_with:ident, $aux_with:ident, $packed_with:ident, $packed_aux_with:ident,
+        $forward:ident, $hidden:ident, $aux:ident, $packed:ident, $packed_aux:ident) => {
+        impl<$($generics)*, A: GatherTransformerProjection<$backend, B>, L: GatherMhcResidualBranch<$backend, B>,
+            P: GatherTransformerProjection<$backend, B>, E: GatherOwnedExperts<$backend, B>, H: GatherTransformerProjection<$backend, B>>
+            FullyShardedMhcResidualModel<$backend, A, FullyShardedMixedMhcFeedForward<$backend, L, P, E>, H>
+        where A::Gathered: CompressedAttentionProjection<$backend>, L::Gathered: MhcResidualBranch<$backend>,
+            P::Gathered: TransformerProjection<$backend>, E::Gathered: ExpertParallelReceived<$backend>, H::Gathered: TransformerProjection<$backend> {
+            /// The expert-group factory is evaluated only on actual parallel
+            /// branches. It may return separately scope-bound per-layer groups;
+            /// data gather order and original native branch graphs are unchanged.
+            pub fn $forward<D, C, G>(&self, tokens: Tensor<$backend, 2, Int>, valid: Option<Tensor<$backend, 2, Bool>>, data: D, mut experts: G)
+                -> Result<Tensor<$backend, 3>, FullyShardedMixedMhcModelError<D::Error, C::Error,
+                    <L::Gathered as MhcResidualBranch<$backend>>::Error, <P::Gathered as TransformerProjection<$backend>>::Error,
+                    <E::Gathered as ExpertParallelReceived<$backend>>::Error, <H::Gathered as TransformerProjection<$backend>>::Error>>
+            where D: IntegerTensorCollective<B>, C: VariableTensorCollective<B>, G: FnMut(usize) -> C {
+                self.$with(tokens, valid, data, |index, feed, input, _| feed.$native(input, || experts(index)))
+            }
+            pub fn $hidden<D, C, G>(&self, tokens: Tensor<$backend, 2, Int>, valid: Option<Tensor<$backend, 2, Bool>>, data: D, mut experts: G)
+                -> Result<Tensor<$backend, 3>, FullyShardedMixedMhcModelError<D::Error, C::Error,
+                    <L::Gathered as MhcResidualBranch<$backend>>::Error, <P::Gathered as TransformerProjection<$backend>>::Error,
+                    <E::Gathered as ExpertParallelReceived<$backend>>::Error, <H::Gathered as TransformerProjection<$backend>>::Error>>
+            where D: IntegerTensorCollective<B>, C: VariableTensorCollective<B>, G: FnMut(usize) -> C {
+                self.$hidden_with(tokens, valid, data, |index, feed, input, _| feed.$native(input, || experts(index)))
+            }
+            pub fn $aux<D, C, G>(&self, tokens: Tensor<$backend, 2, Int>, valid: Option<Tensor<$backend, 2, Bool>>,
+                indexer_warmup: bool, data: D, mut experts: G)
+                -> Result<CompressedAttentionOutput<$backend>, FullyShardedMixedMhcModelError<D::Error, C::Error,
+                    <L::Gathered as MhcResidualBranch<$backend>>::Error, <P::Gathered as TransformerProjection<$backend>>::Error,
+                    <E::Gathered as ExpertParallelReceived<$backend>>::Error, <H::Gathered as TransformerProjection<$backend>>::Error>>
+            where D: IntegerTensorCollective<B>, C: VariableTensorCollective<B>, G: FnMut(usize) -> C {
+                self.$aux_with(tokens, valid, indexer_warmup, data, |index, feed, input, _| feed.$native(input, || experts(index)))
+            }
+            pub fn $packed<D, C, G>(&self, tokens: Tensor<$backend, 1, Int>, layout: &PackedSequenceLayout,
+                valid: Option<Tensor<$backend, 1, Bool>>, data: D, mut experts: G)
+                -> Result<Tensor<$backend, 2>, FullyShardedMixedMhcModelError<D::Error, C::Error,
+                    <L::Gathered as MhcResidualBranch<$backend>>::Error, <P::Gathered as TransformerProjection<$backend>>::Error,
+                    <E::Gathered as ExpertParallelReceived<$backend>>::Error, <H::Gathered as TransformerProjection<$backend>>::Error>>
+            where D: IntegerTensorCollective<B>, C: VariableTensorCollective<B>, G: FnMut(usize) -> C {
+                self.$packed_with(tokens, layout, valid, data, |index, feed, input, _| feed.$native(input, || experts(index)))
+            }
+            pub fn $packed_aux<D, C, G>(&self, tokens: Tensor<$backend, 1, Int>, layout: &PackedSequenceLayout,
+                valid: Option<Tensor<$backend, 1, Bool>>, indexer_warmup: bool, data: D, mut experts: G)
+                -> Result<PackedCompressedAttentionOutput<$backend>, FullyShardedMixedMhcModelError<D::Error, C::Error,
+                    <L::Gathered as MhcResidualBranch<$backend>>::Error, <P::Gathered as TransformerProjection<$backend>>::Error,
+                    <E::Gathered as ExpertParallelReceived<$backend>>::Error, <H::Gathered as TransformerProjection<$backend>>::Error>>
+            where D: IntegerTensorCollective<B>, C: VariableTensorCollective<B>, G: FnMut(usize) -> C {
+                self.$packed_aux_with(tokens, layout, valid, indexer_warmup, data, |index, feed, input, _| feed.$native(input, || experts(index)))
+            }
+        }
+    };
+}
+execute_mixed_mhc_model!(B, [B: MoeDispatchOps + MoeReceivedOps], forward_inference,
+    try_forward_with_inference, try_forward_hidden_with_inference, try_forward_with_aux_inference, try_forward_packed_with_inference, try_forward_packed_with_aux_inference,
+    forward_with_experts_inference, forward_hidden_with_experts_inference, forward_with_experts_aux_inference, forward_packed_with_experts_inference, forward_packed_with_experts_aux_inference);
+execute_mixed_mhc_model!(Autodiff<B, S>, [B: MoeDispatchOps + MoeReceivedOps, S: CheckpointStrategy], forward,
+    try_forward_with, try_forward_hidden_with, try_forward_with_aux, try_forward_packed_with, try_forward_packed_with_aux,
+    forward_with_experts, forward_hidden_with_experts, forward_with_experts_aux, forward_packed_with_experts, forward_packed_with_experts_aux);
 
 impl<B: Backend, P: FullyShardedModule<B> + ModuleDisplay, E: FullyShardedModule<B> + ModuleDisplay> FullyShardedModule<B>
     for FullyShardedExpertParallelMhcFeedForward<B, P, E> {
