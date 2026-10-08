@@ -29,6 +29,7 @@ mod expert_lora;
 mod floating_expert_lora;
 mod mixed_expert_lora;
 mod expert_lora_record;
+mod expert_adapter_access;
 mod moe;
 /// Explicit tensor-parallel linear projections for replicated-loss model partitions.
 #[cfg(feature = "tensor-parallel")]
@@ -68,6 +69,7 @@ pub use expert_lora::*;
 pub use floating_expert_lora::*;
 pub use mixed_expert_lora::*;
 pub use expert_lora_record::*;
+pub use expert_adapter_access::*;
 pub use moe::*;
 pub use mhc::*;
 #[cfg(feature = "sparse")]

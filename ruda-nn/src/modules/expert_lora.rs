@@ -197,7 +197,8 @@ impl<P:fmt::Debug,G:fmt::Debug,S:fmt::Debug> fmt::Display for AdaptedExpertError
 }
 impl<P:fmt::Debug,G:fmt::Debug,S:fmt::Debug> core::error::Error for AdaptedExpertError<P,G,S> {}
 /// Explicit source expert projection roles; absent roles retain the original frozen payload.
-#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+#[derive(Clone,Copy,Debug,PartialEq,Eq,PartialOrd,Ord,ruda_model::serde::Serialize,ruda_model::serde::Deserialize)]
+#[serde(crate="ruda_model::serde")]
 pub enum ExpertAdapterTarget {Gate,Up,Down}
 /// Actual independently adapted gate/up/down and original native storage-rounded activation.
 #[derive(Module,Debug)]
