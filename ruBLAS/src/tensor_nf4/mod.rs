@@ -1,5 +1,8 @@
 //! RUDA high-nibble-first row-major NF4, shared with the native PyTorch bridge.
 pub mod kernels;
+mod grouped;
+mod grouped_kernel;
+pub use grouped::Nf4GroupedGemm;
 use crate::tensor_matmul::{matmul_with_precision,MatmulStrategy,F32MathMode};
 use crate::kernel_ir::definition::MatmulSetupError;
 use ruda_core::{device::Device,tensor::{DType,Metadata,Shape},ir::{ElemType,FloatKind,features::MmaConfig}};

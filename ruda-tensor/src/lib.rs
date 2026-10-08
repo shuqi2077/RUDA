@@ -26,6 +26,8 @@ pub mod collective;
 pub mod frozen_awq;
 /// Original RUDA byte-packed NF4 frozen projections and input derivatives.
 pub mod frozen_nf4;
+/// Original byte-packed NF4 selected expert projections and SwiGLU derivatives.
+pub mod grouped_nf4;
 /// Native selected router weights and complete local MoE training operations.
 pub mod moe;
 /// Original native expert-parallel dispatch/receive/combine contracts.

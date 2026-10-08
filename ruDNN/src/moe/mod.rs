@@ -3,6 +3,10 @@ mod experts;
 mod kernels;
 mod routing;
 mod received;
+#[cfg(feature="tensor-nf4-moe")]
+mod nf4;
+#[cfg(feature="tensor-nf4-moe")]
+pub use nf4::{Nf4ExpertProjection,Nf4ExpertError,Nf4ExpertExecution,Nf4SwiGluExperts,Nf4SwiGluCache};
 
 pub use dispatch::{DispatchedTokens,CombineBackward,CombineGradientStrategy,CombineGradientSelection,CombineBackwardSelected};
 pub use experts::{SwiGluExperts,ExpertTrainingCache,ExpertTrainingOutput,ExpertBackward,ExpertGradientSelection,ExpertBackwardSelected,GroupedExpertRows};
