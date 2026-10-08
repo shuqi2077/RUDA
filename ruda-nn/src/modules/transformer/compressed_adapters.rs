@@ -97,6 +97,12 @@ fn wrap<B: Backend>(projection: Linear<B>, selected: bool, config: &TransformerA
     } else { AdaptedProjection::Dense(projection) }
 }
 
+fn planned_projection<B: Backend, T: PartialEq>(projection: Linear<B>, target: &T,
+    plan: &[(T, TransformerAdapterConfig)]) -> AdaptedProjection<B> {
+    if let Some((_, config)) = plan.iter().find(|(selected, _)| selected == target) { wrap(projection, true, config) }
+    else { AdaptedProjection::Dense(projection) }
+}
+
 impl<B: Backend, P: CompressedAttentionProjection<B>> MhcTransformerBlock<B, P> {
     pub fn visit_projections<'a>(&'a self, mut visitor: impl FnMut(MhcTransformerProjectionRole, &'a P)) {
         self.attention.visit_projections(|role, projection| visitor(MhcTransformerProjectionRole::Attention(role), projection));
@@ -128,12 +134,20 @@ impl<B: Backend> MhcTransformerBlock<B> {
     /// compressor/indexer channels. All mHC/norm/sink leaves retain their existing flags.
     pub fn with_adapters(self, config: &TransformerAdapterConfig, targets: &[MhcTransformerProjectionRole])
         -> MhcTransformerBlock<B, AdaptedProjection<B>> {
-        unique(targets);
-        if !targets.is_empty() { check_options(config); }
+        let plan: Vec<_> = targets.iter().map(|target| (*target, config.clone())).collect();
+        self.with_adapter_plan(&plan)
+    }
+
+    /// Independent rank, scale, dropout and storage for every selected actual role.
+    pub fn with_adapter_plan(self, plan: &[(MhcTransformerProjectionRole, TransformerAdapterConfig)])
+        -> MhcTransformerBlock<B, AdaptedProjection<B>> {
+        let targets: Vec<_> = plan.iter().map(|(target, _)| *target).collect();
+        unique(&targets);
+        for (_, config) in plan { check_options(config); }
         let mut actual = Vec::new();
         self.visit_projections(|role, _| actual.push(role));
         assert!(targets.iter().all(|target| actual.contains(target)), "selected hybrid block projection does not exist");
-        self.map_projections(|role, projection| wrap(projection, targets.contains(&role), config))
+        self.map_projections(|role, projection| planned_projection(projection, &role, plan))
     }
 }
 
@@ -163,12 +177,19 @@ impl<B: Backend> HybridAttentionBackbone<B> {
     /// Validate the complete declared target set before allocating any A/B matrices.
     pub fn with_adapters(self, config: &TransformerAdapterConfig, targets: &[HybridAttentionAdapterTarget])
         -> HybridAttentionBackbone<B, AdaptedProjection<B>> {
-        unique(targets);
-        if !targets.is_empty() { check_options(config); }
+        let plan: Vec<_> = targets.iter().map(|target| (*target, config.clone())).collect();
+        self.with_adapter_plan(&plan)
+    }
+
+    pub fn with_adapter_plan(self, plan: &[(HybridAttentionAdapterTarget, TransformerAdapterConfig)])
+        -> HybridAttentionBackbone<B, AdaptedProjection<B>> {
+        let targets: Vec<_> = plan.iter().map(|(target, _)| *target).collect();
+        unique(&targets);
+        for (_, config) in plan { check_options(config); }
         let mut actual = Vec::new();
         self.visit_projections(|target, _| actual.push(target));
         assert!(targets.iter().all(|target| actual.contains(target)), "selected hybrid backbone projection does not exist");
-        self.map_projections(|target, projection| wrap(projection, targets.contains(&target), config))
+        self.map_projections(|target, projection| planned_projection(projection, &target, plan))
     }
 }
 
@@ -204,14 +225,22 @@ impl<B: Backend> HybridAttentionLanguageModel<B> {
     /// a selected tied head adds only A/B to the already-frozen shared embedding.
     pub fn with_adapters(self, config: &TransformerAdapterConfig, targets: &[HybridAttentionAdapterTarget])
         -> HybridAttentionLanguageModel<B, AdaptedProjection<B>> {
-        unique(targets);
-        if !targets.is_empty() { check_options(config); }
+        let plan: Vec<_> = targets.iter().map(|target| (*target, config.clone())).collect();
+        self.with_adapter_plan(&plan)
+    }
+
+    /// Per-layer/per-role adapter settings, including an independently configured vocabulary head.
+    pub fn with_adapter_plan(self, plan: &[(HybridAttentionAdapterTarget, TransformerAdapterConfig)])
+        -> HybridAttentionLanguageModel<B, AdaptedProjection<B>> {
+        let targets: Vec<_> = plan.iter().map(|(target, _)| *target).collect();
+        unique(&targets);
+        for (_, config) in plan { check_options(config); }
         let mut actual = Vec::new();
         self.visit_projections(|target, _| actual.push(target));
         actual.push(HybridAttentionAdapterTarget::Head);
         assert!(targets.iter().all(|target| actual.contains(target)), "selected hybrid model projection does not exist");
-        let selected_head = targets.contains(&HybridAttentionAdapterTarget::Head);
-        if selected_head {
+        let head_config = plan.iter().find(|(target, _)| *target == HybridAttentionAdapterTarget::Head).map(|(_, config)| config);
+        if head_config.is_some() {
             match &self.head {
                 HybridAttentionHead::TiedEmbedding(_) => assert!(!self.backbone.embedding.weight.val().is_require_grad(),
                     "freeze the complete shared embedding before selecting its head adapter"),
@@ -219,12 +248,12 @@ impl<B: Backend> HybridAttentionLanguageModel<B> {
                 HybridAttentionHead::Linear(_) => {}
             }
         }
-        let backbone = self.backbone.map_projections(|target, projection| wrap(projection, targets.contains(&target), config));
+        let backbone = self.backbone.map_projections(|target, projection| planned_projection(projection, &target, plan));
         let head = match self.head {
-            HybridAttentionHead::Linear(head) => HybridAttentionHead::Linear(wrap(head, selected_head, config)),
-            HybridAttentionHead::TiedEmbedding(_) if selected_head => HybridAttentionHead::TiedEmbeddingLoRA(
-                HybridTiedEmbeddingAdapter::init(&backbone.embedding, config)),
-            HybridAttentionHead::TiedEmbedding(_) => HybridAttentionHead::TiedEmbedding(core::marker::PhantomData),
+            HybridAttentionHead::Linear(head) => HybridAttentionHead::Linear(planned_projection(head, &HybridAttentionAdapterTarget::Head, plan)),
+            HybridAttentionHead::TiedEmbedding(_) => if let Some(config) = head_config {
+                HybridAttentionHead::TiedEmbeddingLoRA(HybridTiedEmbeddingAdapter::init(&backbone.embedding, config))
+            } else { HybridAttentionHead::TiedEmbedding(core::marker::PhantomData) },
             HybridAttentionHead::TiedEmbeddingLoRA(adapter) => HybridAttentionHead::TiedEmbeddingLoRA(adapter),
         };
         HybridAttentionLanguageModel::from_parts(backbone, head)
