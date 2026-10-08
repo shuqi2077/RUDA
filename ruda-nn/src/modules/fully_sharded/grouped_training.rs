@@ -1,7 +1,7 @@
 use super::*;
 use core::fmt;
 use crate::loss::LossTerms;
-use ruda_autodiff::collective::{CollectiveScope,ScopedTensorCollective,ScopedCollectiveError,GroupedCollectiveError,complete_collective_scope_pair};
+use ruda_autodiff::collective::{CollectiveScope,ScopedTensorCollective,ScopedCollectiveError,GroupedCollectiveError,complete_collective_scope_pair,complete_collective_scopes};
 
 /// Original DP, EP, graph-coordinator and objective-statistics transports.
 /// The coordinator covers all DP/EP participants. The separate statistics
@@ -93,3 +93,39 @@ impl<M:fmt::Debug,O:fmt::Debug,D:fmt::Debug,E:fmt::Debug,G:fmt::Debug,N:fmt::Deb
     }
 }
 impl<M:fmt::Debug,O:fmt::Debug,D:fmt::Debug,E:fmt::Debug,G:fmt::Debug,N:fmt::Debug> core::error::Error for HybridModelTrainingError<M,O,D,E,G,N> {}
+
+/// Arbitrary explicit ordered transport slots for DP/TP/EP or different
+/// per-layer expert groups. Slot semantics and topology belong to the caller;
+/// no layer, owner prefix, replica multiplicity or normalization group is guessed.
+pub struct GroupedCollectiveLossContext<B:Backend,S:CheckpointStrategy,C,G,N> {
+    groups:Vec<(CollectiveScope<B,S>,C)>,
+    coordinator:G,
+    statistics:N,
+}
+impl<B:Backend,S:CheckpointStrategy,C,G,N> GroupedCollectiveLossContext<B,S,C,G,N>
+where C:BroadcastTensorCollective<B>,G:BroadcastTensorCollective<B>,N:BroadcastTensorCollective<B> {
+    /// Every coordinator rank supplies the same slot count/order and participates
+    /// in its corresponding original subgroup for each slot. Transport instances
+    /// may have different ranks/world sizes and members, but share one native type.
+    pub fn new(groups:Vec<C>,coordinator:G,statistics:N) -> Self {
+        Self {groups:groups.into_iter().map(|transport|(CollectiveScope::new(),transport)).collect(),coordinator,statistics}
+    }
+    pub fn len(&self) -> usize {self.groups.len()}
+    pub fn is_empty(&self) -> bool {self.groups.is_empty()}
+    pub fn transport(&self,slot:usize) -> ScopedTensorCollective<C,B,S> {
+        let (scope,transport)=self.groups.get(slot).expect("actual declared collective slot is required");scope.bind(transport.clone())
+    }
+    pub fn complete(self,loss_sum:Tensor<Autodiff<B,S>,1>,local_count:Tensor<Autodiff<B,S>,1,Int>)
+        -> Result<HybridFullyShardedLoss<B,S>,HybridLossError<C::Error,C::Error,G::Error,N::Error>> {
+        let graph=complete_collective_scopes(&self.groups,loss_sum,self.coordinator).map_err(HybridLossError::Graph)?;
+        let statistics=super::training::loss_statistics(graph.loss,local_count,self.statistics).map_err(HybridLossError::Statistics)?;
+        Ok(HybridFullyShardedLoss {statistics,completion_rounds:graph.rounds,local_anchors_added:graph.local_anchors_added})
+    }
+    pub fn complete_terms<const K:usize>(self,terms:LossTerms<Autodiff<B,S>,K>)
+        -> Result<HybridFullyShardedWeightedLoss<B,S>,HybridLossError<C::Error,C::Error,G::Error,N::Error>> {
+        let work=super::training::loss_terms_work(&terms).map_err(|error|HybridLossError::Statistics(ScopedCollectiveError::Protocol(error)))?;
+        let graph=complete_collective_scopes(&self.groups,terms.values.clone().cast(work).sum(),self.coordinator).map_err(HybridLossError::Graph)?;
+        let statistics=super::training::weighted_statistics(terms,graph.loss,self.statistics).map_err(HybridLossError::Statistics)?;
+        Ok(HybridFullyShardedWeightedLoss {statistics,completion_rounds:graph.rounds,local_anchors_added:graph.local_anchors_added})
+    }
+}

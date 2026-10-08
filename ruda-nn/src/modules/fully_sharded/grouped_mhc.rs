@@ -87,4 +87,67 @@ where P::Gathered:CompressedAttentionProjection<Autodiff<B,S>>,H::Gathered:Trans
         let terms=objective(hidden,&head).map_err(HybridModelTrainingError::Objective)?;
         context.complete_terms(terms).map_err(HybridModelTrainingError::Loss)
     }
+    /// Per-layer branch hooks select actual declared transport slots. Parameter
+    /// gathers use only the explicitly selected data slot, even when different
+    /// original layers have different expert-world partitions.
+    pub fn try_forward_grouped_causal_with<C,G,N,R,Q>(&self,tokens:Tensor<Autodiff<B,S>,2,Int>,labels:Tensor<Autodiff<B,S>,2,Int>,
+        valid:Option<Tensor<Autodiff<B,S>,2,Bool>>,criterion:&CausalCrossEntropyConfig,label_smoothing:f64,data_slot:usize,
+        context:GroupedCollectiveLossContext<B,S,C,G,N>,mut branch:Q)
+        -> Result<HybridFullyShardedLoss<B,S>,MhcHybridTrainingError<C::Error,C::Error,G::Error,N::Error,R,
+            <H::Gathered as TransformerProjection<Autodiff<B,S>>>::Error>>
+    where C:IntegerTensorCollective<B>,G:BroadcastTensorCollective<B>,N:BroadcastTensorCollective<B>,R:fmt::Debug,
+        Q:FnMut(usize,&F::Gathered,Tensor<Autodiff<B,S>,3>,&GroupedCollectiveLossContext<B,S,C,G,N>)->Result<Tensor<Autodiff<B,S>,3>,R> {
+        assert_eq!(tokens.dims(),labels.dims(),"grouped mHC causal token/label geometry differs");
+        let hidden=self.try_forward_hidden_with(tokens,valid,context.transport(data_slot),|index,feed,input,_|branch(index,feed,input,&context))
+            .map_err(HybridModelTrainingError::Model)?;
+        let head=self.head.gather(context.transport(data_slot)).map_err(|error|HybridModelTrainingError::Model(
+            FullyShardedMhcModelError::Head(FullyShardedProjectedError::Collective(error))))?;
+        let causal=criterion.try_forward_hidden_with_smoothing(hidden,labels,|rows|head.forward(rows),label_smoothing)
+            .map_err(|error|HybridModelTrainingError::Model(FullyShardedMhcModelError::Head(FullyShardedProjectedError::Projection(error))))?;
+        context.complete(causal.loss_sum,causal.valid_tokens).map_err(HybridModelTrainingError::Loss)
+    }
+    pub fn try_forward_grouped_packed_causal_with<C,G,N,R,Q>(&self,tokens:Tensor<Autodiff<B,S>,1,Int>,labels:Tensor<Autodiff<B,S>,1,Int>,
+        layout:&PackedSequenceLayout,valid:Option<Tensor<Autodiff<B,S>,1,Bool>>,criterion:&CausalCrossEntropyConfig,label_smoothing:f64,data_slot:usize,
+        context:GroupedCollectiveLossContext<B,S,C,G,N>,mut branch:Q)
+        -> Result<HybridFullyShardedLoss<B,S>,MhcHybridTrainingError<C::Error,C::Error,G::Error,N::Error,R,
+            <H::Gathered as TransformerProjection<Autodiff<B,S>>>::Error>>
+    where C:IntegerTensorCollective<B>,G:BroadcastTensorCollective<B>,N:BroadcastTensorCollective<B>,R:fmt::Debug,
+        Q:FnMut(usize,&F::Gathered,Tensor<Autodiff<B,S>,3>,&GroupedCollectiveLossContext<B,S,C,G,N>)->Result<Tensor<Autodiff<B,S>,3>,R> {
+        assert_eq!(tokens.dims(),labels.dims(),"grouped mHC packed token/label geometry differs");
+        let hidden=self.try_forward_packed_hidden_with(tokens,layout,valid,context.transport(data_slot),|index,feed,input,_|branch(index,feed,input,&context))
+            .map_err(HybridModelTrainingError::Model)?;
+        let head=self.head.gather(context.transport(data_slot)).map_err(|error|HybridModelTrainingError::Model(
+            FullyShardedMhcModelError::Head(FullyShardedProjectedError::Collective(error))))?;
+        let causal=criterion.try_forward_packed_hidden_with_smoothing(hidden,labels,layout,|rows|head.forward(rows),label_smoothing)
+            .map_err(|error|HybridModelTrainingError::Model(FullyShardedMhcModelError::Head(FullyShardedProjectedError::Projection(error))))?;
+        context.complete(causal.loss_sum,causal.valid_tokens).map_err(HybridModelTrainingError::Loss)
+    }
+    pub fn try_forward_grouped_objective_with<C,G,N,R,Q,O,Z,const K:usize>(&self,tokens:Tensor<Autodiff<B,S>,2,Int>,valid:Option<Tensor<Autodiff<B,S>,2,Bool>>,
+        indexer_warmup:bool,data_slot:usize,context:GroupedCollectiveLossContext<B,S,C,G,N>,mut branch:Q,objective:O)
+        -> Result<HybridFullyShardedWeightedLoss<B,S>,MhcHybridTrainingError<C::Error,C::Error,G::Error,N::Error,R,
+            <H::Gathered as TransformerProjection<Autodiff<B,S>>>::Error,Z>>
+    where C:IntegerTensorCollective<B>,G:BroadcastTensorCollective<B>,N:BroadcastTensorCollective<B>,R:fmt::Debug,Z:fmt::Debug,
+        Q:FnMut(usize,&F::Gathered,Tensor<Autodiff<B,S>,3>,&GroupedCollectiveLossContext<B,S,C,G,N>)->Result<Tensor<Autodiff<B,S>,3>,R>,
+        O:FnOnce(CompressedAttentionOutput<Autodiff<B,S>>,&ProjectedTransformerHead<Autodiff<B,S>,H::Gathered>)->Result<LossTerms<Autodiff<B,S>,K>,Z> {
+        let hidden=self.try_forward_hidden_with_aux(tokens,valid,indexer_warmup,context.transport(data_slot),|index,feed,input,_|branch(index,feed,input,&context))
+            .map_err(HybridModelTrainingError::Model)?;
+        let head=self.head.gather(context.transport(data_slot)).map_err(|error|HybridModelTrainingError::Model(
+            FullyShardedMhcModelError::Head(FullyShardedProjectedError::Collective(error))))?;
+        let terms=objective(hidden,&head).map_err(HybridModelTrainingError::Objective)?;
+        context.complete_terms(terms).map_err(HybridModelTrainingError::Loss)
+    }
+    pub fn try_forward_grouped_packed_objective_with<C,G,N,R,Q,O,Z,const K:usize>(&self,tokens:Tensor<Autodiff<B,S>,1,Int>,layout:&PackedSequenceLayout,
+        valid:Option<Tensor<Autodiff<B,S>,1,Bool>>,indexer_warmup:bool,data_slot:usize,context:GroupedCollectiveLossContext<B,S,C,G,N>,mut branch:Q,objective:O)
+        -> Result<HybridFullyShardedWeightedLoss<B,S>,MhcHybridTrainingError<C::Error,C::Error,G::Error,N::Error,R,
+            <H::Gathered as TransformerProjection<Autodiff<B,S>>>::Error,Z>>
+    where C:IntegerTensorCollective<B>,G:BroadcastTensorCollective<B>,N:BroadcastTensorCollective<B>,R:fmt::Debug,Z:fmt::Debug,
+        Q:FnMut(usize,&F::Gathered,Tensor<Autodiff<B,S>,3>,&GroupedCollectiveLossContext<B,S,C,G,N>)->Result<Tensor<Autodiff<B,S>,3>,R>,
+        O:FnOnce(PackedCompressedAttentionOutput<Autodiff<B,S>>,&ProjectedTransformerHead<Autodiff<B,S>,H::Gathered>)->Result<LossTerms<Autodiff<B,S>,K>,Z> {
+        let hidden=self.try_forward_packed_hidden_with_aux(tokens,layout,valid,indexer_warmup,context.transport(data_slot),|index,feed,input,_|branch(index,feed,input,&context))
+            .map_err(HybridModelTrainingError::Model)?;
+        let head=self.head.gather(context.transport(data_slot)).map_err(|error|HybridModelTrainingError::Model(
+            FullyShardedMhcModelError::Head(FullyShardedProjectedError::Collective(error))))?;
+        let terms=objective(hidden,&head).map_err(HybridModelTrainingError::Objective)?;
+        context.complete_terms(terms).map_err(HybridModelTrainingError::Loss)
+    }
 }

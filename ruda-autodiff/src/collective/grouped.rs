@@ -8,12 +8,13 @@ use ruda_tensor::{DType,TensorData};
 pub enum GroupedCollectiveError<A:fmt::Debug,C:fmt::Debug,G:fmt::Debug> {
     First(ScopedCollectiveError<A>),
     Second(ScopedCollectiveError<C>),
+    Indexed {index:usize,error:ScopedCollectiveError<A>},
     Coordinator(ScopedCollectiveError<G>),
 }
 impl<A:fmt::Debug,C:fmt::Debug,G:fmt::Debug> fmt::Display for GroupedCollectiveError<A,C,G> {
     fn fmt(&self,f:&mut fmt::Formatter<'_>) -> fmt::Result {
         match self {Self::First(error)=>write!(f,"first loss group: {error}"),Self::Second(error)=>write!(f,"second loss group: {error}"),
-            Self::Coordinator(error)=>write!(f,"loss graph coordinator: {error}")}
+            Self::Indexed {index,error}=>write!(f,"loss group slot {index}: {error}"),Self::Coordinator(error)=>write!(f,"loss graph coordinator: {error}")}
     }
 }
 impl<A:fmt::Debug,C:fmt::Debug,G:fmt::Debug> core::error::Error for GroupedCollectiveError<A,C,G> {}
@@ -109,13 +110,13 @@ where B:Backend,S:CheckpointStrategy,C:BroadcastTensorCollective<B>,G:BroadcastT
         if groups[..index].iter().any(|(other,_)|scope.same_window(other)) || transport.world_size()>coordinator.world_size() {
             return Err(GroupedCollectiveError::Coordinator(ScopedCollectiveError::Protocol("distinct covered original group windows are required")));
         }
-        windows.push(scope.prepare_completion(&loss,transport.clone()).map_err(GroupedCollectiveError::First)?);
+        windows.push(scope.prepare_completion(&loss,transport.clone()).map_err(|error|GroupedCollectiveError::Indexed {index,error})?);
     }
     let device=loss.device();let mut rounds=0usize;let mut local_anchors_added=0usize;
     loop {
         let mut added=0usize;
-        for window in &windows {
-            let step=window.propagate(loss).map_err(GroupedCollectiveError::First)?;loss=step.loss;
+        for (index,window) in windows.iter().enumerate() {
+            let step=window.propagate(loss).map_err(|error|GroupedCollectiveError::Indexed {index,error})?;loss=step.loss;
             added=added.checked_add(step.added_anchors).ok_or(GroupedCollectiveError::Coordinator(ScopedCollectiveError::Protocol("completion anchor count overflows")))?;
         }
         local_anchors_added=local_anchors_added.checked_add(added).ok_or(GroupedCollectiveError::Coordinator(ScopedCollectiveError::Protocol("completion total anchor count overflows")))?;

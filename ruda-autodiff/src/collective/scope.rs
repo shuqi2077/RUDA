@@ -134,7 +134,8 @@ impl<B:Backend,S:CheckpointStrategy> CollectiveScope<B,S> {
         let counts=Tensor::<B,1>::from_data(TensorData::new(words,[4]),(&loss.device(),DType::F32));
         let counts=if world==1 {counts} else {Tensor::from_primitive(TensorPrimitive::Float(communicator.all_gather_float(counts.into_primitive().tensor())
             .map_err(ScopedCollectiveError::Collective)?))};
-        if counts.dims()!=[world as usize*4] || counts.dtype()!=DType::F32 || counts.device()!=loss.device() {
+        let expected=(world as usize).checked_mul(4).ok_or(ScopedCollectiveError::Protocol("scope count size overflows"))?;
+        if counts.dims()!=[expected] || counts.dtype()!=DType::F32 || counts.device()!=loss.device() {
             return Err(ScopedCollectiveError::Protocol("scope count transport changed original shape/storage/device"));
         }
         let words=counts.into_data().to_vec::<f32>().map_err(|_|ScopedCollectiveError::Protocol("scope count metadata cannot be decoded"))?;
