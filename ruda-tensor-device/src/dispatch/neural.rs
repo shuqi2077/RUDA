@@ -415,6 +415,24 @@ where
         rudnn::interpolation::interpolate_backward(x, grad, output_size, options)
     }
 
+    fn interpolate1d(x: FloatTensor<Self>, size: usize, options: InterpolateOptions) -> FloatTensor<Self> {
+        rudnn::interpolation::interpolate1d(x, size, options)
+    }
+
+    fn interpolate1d_backward(x: FloatTensor<Self>, grad: FloatTensor<Self>, size: usize,
+        options: InterpolateOptions) -> FloatTensor<Self> {
+        rudnn::interpolation::interpolate1d_backward(x, grad, size, options)
+    }
+
+    fn interpolate3d(x: FloatTensor<Self>, size: [usize; 3], options: InterpolateOptions) -> FloatTensor<Self> {
+        rudnn::interpolation::interpolate3d(x, size, options)
+    }
+
+    fn interpolate3d_backward(x: FloatTensor<Self>, grad: FloatTensor<Self>, size: [usize; 3],
+        options: InterpolateOptions) -> FloatTensor<Self> {
+        rudnn::interpolation::interpolate3d_backward(x, grad, size, options)
+    }
+
     fn attention(
         query: FloatTensor<Self>,
         key: FloatTensor<Self>,

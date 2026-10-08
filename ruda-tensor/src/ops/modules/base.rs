@@ -1,4 +1,4 @@
-use super::{conv, ctc, embedding, linear, pool};
+use super::{conv, ctc, embedding, interpolation, linear, pool};
 use crate::ops::unfold::unfold4d_using_conv2d;
 use crate::tensor::{BoolTensor, FloatTensor, IntTensor};
 use crate::{Backend, ElementConversion, TensorMetadata};
@@ -789,6 +789,28 @@ pub trait ModuleOps<B: Backend> {
         output_size: [usize; 2],
         options: InterpolateOptions,
     ) -> FloatTensor<B>;
+
+    /// Resize native `[batch, channels, width]` lines with the original filter.
+    fn interpolate1d(x: FloatTensor<B>, size: usize, options: InterpolateOptions) -> FloatTensor<B> {
+        interpolation::interpolate1d_from_2d::<B>(x, size, options)
+    }
+
+    /// Backward line resizing in the original input geometry and storage.
+    fn interpolate1d_backward(x: FloatTensor<B>, grad: FloatTensor<B>, size: usize,
+        options: InterpolateOptions) -> FloatTensor<B> {
+        interpolation::interpolate1d_backward_from_2d::<B>(x, grad, size, options)
+    }
+
+    /// Resize native volumes using the existing spatial-then-depth filter sequence.
+    fn interpolate3d(x: FloatTensor<B>, size: [usize; 3], options: InterpolateOptions) -> FloatTensor<B> {
+        interpolation::interpolate3d_from_2d::<B>(x, size, options)
+    }
+
+    /// Backward volume resizing through the original spatial and depth filters.
+    fn interpolate3d_backward(x: FloatTensor<B>, grad: FloatTensor<B>, size: [usize; 3],
+        options: InterpolateOptions) -> FloatTensor<B> {
+        interpolation::interpolate3d_backward_from_2d::<B>(x, grad, size, options)
+    }
 
     /// Computes scaled dot-product attention: softmax(QKᵗ * scale) · V,
     /// where scale defaults to 1/sqrt(head_dim). Optionally applies masking,

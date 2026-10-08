@@ -2038,6 +2038,56 @@ impl<B: Backend, C: CheckpointStrategy> ModuleOps<Autodiff<B, C>> for Autodiff<B
         }
     }
 
+    fn interpolate1d(x: AutodiffTensor<B>, size: usize, options: InterpolateOptions) -> AutodiffTensor<B> {
+        #[derive(Debug)]
+        struct InterpolateLine;
+        impl<B: Backend> Backward<B, 1> for InterpolateLine {
+            type State = (NodeId, usize, InterpolateOptions);
+            fn backward(self, ops: Ops<Self::State, 1>, grads: &mut Gradients, checkpointer: &mut Checkpointer) {
+                let [parent] = ops.parents;
+                let gradient = grads.consume::<B>(&ops.node);
+                if let Some(parent) = parent {
+                    let (input, size, options) = ops.state;
+                    let input = checkpointer.retrieve_node_output(input);
+                    grads.register::<B>(parent.id, B::interpolate1d_backward(input, gradient, size, options));
+                }
+            }
+        }
+        match InterpolateLine.prepare::<C>([x.node.clone()]).compute_bound().stateful() {
+            OpsKind::Tracked(mut prep) => {
+                let input = prep.checkpoint(&x);
+                let output = B::interpolate1d(x.primitive, size, options.clone());
+                prep.finish((input, size, options), output)
+            }
+            OpsKind::UnTracked(prep) => prep.finish(B::interpolate1d(x.primitive, size, options)),
+        }
+    }
+
+    fn interpolate3d(x: AutodiffTensor<B>, size: [usize; 3], options: InterpolateOptions) -> AutodiffTensor<B> {
+        #[derive(Debug)]
+        struct InterpolateVolume;
+        impl<B: Backend> Backward<B, 1> for InterpolateVolume {
+            type State = (NodeId, [usize; 3], InterpolateOptions);
+            fn backward(self, ops: Ops<Self::State, 1>, grads: &mut Gradients, checkpointer: &mut Checkpointer) {
+                let [parent] = ops.parents;
+                let gradient = grads.consume::<B>(&ops.node);
+                if let Some(parent) = parent {
+                    let (input, size, options) = ops.state;
+                    let input = checkpointer.retrieve_node_output(input);
+                    grads.register::<B>(parent.id, B::interpolate3d_backward(input, gradient, size, options));
+                }
+            }
+        }
+        match InterpolateVolume.prepare::<C>([x.node.clone()]).compute_bound().stateful() {
+            OpsKind::Tracked(mut prep) => {
+                let input = prep.checkpoint(&x);
+                let output = B::interpolate3d(x.primitive, size, options.clone());
+                prep.finish((input, size, options), output)
+            }
+            OpsKind::UnTracked(prep) => prep.finish(B::interpolate3d(x.primitive, size, options)),
+        }
+    }
+
     fn interpolate_backward(
         x: FloatTensor<Autodiff<B, C>>,
         grad: FloatTensor<Autodiff<B, C>>,

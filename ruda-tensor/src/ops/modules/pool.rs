@@ -41,14 +41,14 @@ pub(crate) fn max_pool3d_backward_from_indices<B: Backend>(input: FloatTensor<B>
         .reshape([batch, channels, depth, height, width]).into_primitive().tensor()
 }
 
-fn volume_planes<B: Backend>(input: FloatTensor<B>) -> FloatTensor<B> {
+pub(super) fn volume_planes<B: Backend>(input: FloatTensor<B>) -> FloatTensor<B> {
     let [batch, channels, depth, height, width] = input.shape().dims();
     let planes = batch.checked_mul(depth).expect("pooling plane count overflow");
     B::float_reshape(B::float_permute(input, &[0, 2, 1, 3, 4]),
         Shape::new([planes, channels, height, width]))
 }
 
-fn plane_depth_lines<B: Backend>(
+pub(super) fn plane_depth_lines<B: Backend>(
     planes: FloatTensor<B>, batch: usize, depth: usize,
 ) -> FloatTensor<B> {
     let [_, channels, height, width] = planes.shape().dims();
@@ -58,7 +58,7 @@ fn plane_depth_lines<B: Backend>(
     B::float_reshape(B::float_permute(volume, &[0, 2, 3, 4, 1]), Shape::new([lines, 1, depth]))
 }
 
-fn depth_lines_volume<B: Backend>(
+pub(super) fn depth_lines_volume<B: Backend>(
     lines: FloatTensor<B>, batch: usize, channels: usize, height: usize, width: usize,
 ) -> FloatTensor<B> {
     let [_, _, depth] = lines.shape().dims();

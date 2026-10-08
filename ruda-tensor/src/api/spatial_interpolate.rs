@@ -1,6 +1,4 @@
-use super::{Tensor, backend::Backend, ops::InterpolateOptions};
-use super::module::interpolate;
-use super::spatial_pool::{volume_planes, plane_depth_lines, depth_lines_volume};
+use super::{Tensor, TensorPrimitive, backend::Backend, ops::InterpolateOptions};
 
 /// Resize native `[batch, channels, length]` activations.
 ///
@@ -11,7 +9,7 @@ pub fn interpolate1d<B: Backend>(
     output_size: usize,
     options: InterpolateOptions,
 ) -> Tensor<B, 3> {
-    interpolate(input.unsqueeze_dim(2), [1, output_size], options).squeeze_dim(2)
+    Tensor::new(TensorPrimitive::Float(B::interpolate1d(input.into_primitive().tensor(), output_size, options)))
 }
 
 /// Resize native `[batch, channels, depth, height, width]` activations.
@@ -25,9 +23,5 @@ pub fn interpolate3d<B: Backend>(
     output_size: [usize; 3],
     options: InterpolateOptions,
 ) -> Tensor<B, 5> {
-    let [batch, channels, depth, _, _] = input.dims();
-    let planes = interpolate(volume_planes(input), [output_size[1], output_size[2]], options.clone());
-    let [_, _, height, width] = planes.dims();
-    let lines = interpolate1d(plane_depth_lines(planes, batch, depth), output_size[0], options);
-    depth_lines_volume(lines, batch, channels, height, width)
+    Tensor::new(TensorPrimitive::Float(B::interpolate3d(input.into_primitive().tensor(), output_size, options)))
 }

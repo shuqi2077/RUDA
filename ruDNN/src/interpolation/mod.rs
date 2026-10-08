@@ -7,5 +7,7 @@ mod lanczos3;
 mod lanczos3_backward;
 mod nearest;
 mod nearest_backward;
+mod volume;
 
 pub use base::*;
+pub use volume::*;
