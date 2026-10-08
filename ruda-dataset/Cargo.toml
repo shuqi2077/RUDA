@@ -108,7 +108,7 @@ default-features = false
 
 [dependencies.ruda-core]
 path = "../ruda-core"
-version = "0.1.5"
+version = "0.1.6"
 features = ["std", "serde", "shared-bytes", "tensor-data", "id-tests-std"]
 optional = true
 default-features = false
