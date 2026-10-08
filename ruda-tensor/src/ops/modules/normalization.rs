@@ -53,6 +53,7 @@ pub fn layer_norm_backward<B: Backend>(
     assert_eq!(rstd.shape(), mean.shape(), "LayerNorm reciprocal deviation shape differs");
     let input_storage: FloatDType = input.dtype().into();
     let weight_storage: FloatDType = gamma.dtype().into();
+    let forward_compute = if input.dtype() == DType::F64 { FloatDType::F64 } else { FloatDType::F32 };
     let compute = if [&input, &gamma, &grad, &mean, &rstd].iter().any(|value| value.dtype() == DType::F64) {
         FloatDType::F64
     } else { FloatDType::F32 };
@@ -62,12 +63,13 @@ pub fn layer_norm_backward<B: Backend>(
             weight: B::float_zeros(Shape::new([width]), &device, weight_storage),
             bias: B::float_zeros(Shape::new([width]), &device, compute) };
     }
-    let input = B::float_reshape(B::float_cast(input, compute), Shape::new([rows, width]));
+    let input = B::float_reshape(B::float_cast(input, forward_compute), Shape::new([rows, width]));
     let grad = B::float_reshape(B::float_cast(grad, compute), Shape::new([rows, width]));
-    let mean = B::float_reshape(B::float_cast(mean, compute), Shape::new([rows, 1]));
-    let rstd = B::float_reshape(B::float_cast(rstd, compute), Shape::new([rows, 1]));
-    let normalized = B::float_mul(B::float_sub(input, mean), rstd.clone());
-    let gamma = B::float_reshape(B::float_cast(gamma, compute), Shape::new([1, width]));
+    let mean = B::float_reshape(B::float_cast(mean, forward_compute), Shape::new([rows, 1]));
+    let rstd = B::float_reshape(B::float_cast(rstd, forward_compute), Shape::new([rows, 1]));
+    let normalized = B::float_cast(B::float_mul(B::float_sub(input, mean), rstd.clone()), compute);
+    let rstd = B::float_cast(rstd, compute);
+    let gamma = B::float_reshape(B::float_cast(B::float_cast(gamma, forward_compute), compute), Shape::new([1, width]));
     let scaled_grad = B::float_mul(grad.clone(), gamma);
     let average_grad = B::float_mean_dim(scaled_grad.clone(), 1);
     let average_product = B::float_mean_dim(B::float_mul(scaled_grad.clone(), normalized.clone()), 1);
