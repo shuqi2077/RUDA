@@ -12,6 +12,21 @@ use ruda_tensor::graph::*;
 use crate::{BackendRouter, RunnerChannel, RunnerClient};
 
 impl<R: RunnerChannel> ModuleOps<Self> for BackendRouter<R> {
+    fn softmax_with_stats(x: FloatTensor<Self>, dim: usize, logarithmic: bool) -> ruda_tensor::ops::SoftmaxOutput<Self> {
+        let client = x.client.clone();
+        let desc = SoftmaxOpIr::create(x.into_ir(), dim, logarithmic, || client.create_empty_handle());
+        let [output, working] = client.register(OperationIr::Module(ModuleOperationIr::Softmax(desc))).outputs();
+        ruda_tensor::ops::SoftmaxOutput { output, working }
+    }
+
+    fn softmax_native_backward(working: FloatTensor<Self>, grad: FloatTensor<Self>, dim: usize,
+        logarithmic: bool) -> FloatTensor<Self> {
+        let client = working.client.clone();
+        let desc = SoftmaxBackwardOpIr::create(working.into_ir(), grad.into_ir(), dim, logarithmic,
+            || client.create_empty_handle());
+        client.register(OperationIr::Module(ModuleOperationIr::SoftmaxBackward(desc))).output()
+    }
+
     fn rms_norm_backward_select(x: FloatTensor<Self>, gamma: FloatTensor<Self>, grad: FloatTensor<Self>,
         rstd: FloatTensor<Self>, mask: [bool; 2]) -> [Option<FloatTensor<Self>>; 2] {
         if mask == [false; 2] { return [None, None]; }

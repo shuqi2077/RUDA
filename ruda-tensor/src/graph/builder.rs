@@ -1198,6 +1198,30 @@ impl DequantizeOpIr {
 
 // Operations with multiple outputs
 
+impl SoftmaxOpIr {
+    pub fn create(x: TensorIr, dim: usize, logarithmic: bool, mut new_id: impl FnMut() -> TensorId) -> Self {
+        assert!(dim < x.shape.num_dims(), "softmax axis out of bounds");
+        assert!(x.shape[dim] > 0, "softmax axis must be nonempty");
+        let dtype = if x.dtype == DType::F64 { DType::F64 } else { DType::F32 };
+        let out = TensorIr::uninit(new_id(), x.shape.clone(), x.dtype);
+        let working = TensorIr::uninit(new_id(), x.shape.clone(), dtype);
+        Self { x, dim, logarithmic, out, working }
+    }
+}
+
+impl SoftmaxBackwardOpIr {
+    pub fn create(working: TensorIr, grad: TensorIr, dim: usize, logarithmic: bool,
+        mut new_id: impl FnMut() -> TensorId) -> Self {
+        assert!(dim < working.shape.num_dims(), "softmax backward axis out of bounds");
+        assert!(working.shape[dim] > 0, "softmax backward axis must be nonempty");
+        assert_eq!(grad.shape, working.shape, "softmax gradient shape differs");
+        assert!(matches!(working.dtype, DType::F32 | DType::F64), "softmax saved output must use working storage");
+        let dtype = if working.dtype == DType::F64 || grad.dtype == DType::F64 { DType::F64 } else { DType::F32 };
+        let out = TensorIr::uninit(new_id(), working.shape.clone(), dtype);
+        Self { working, grad, dim, logarithmic, out }
+    }
+}
+
 impl RmsNormBackwardSelectOpIr {
     pub fn create(x: TensorIr, gamma: TensorIr, grad: TensorIr, rstd: TensorIr, mask: [bool; 2],
         mut new_id: impl FnMut() -> TensorId) -> Self {

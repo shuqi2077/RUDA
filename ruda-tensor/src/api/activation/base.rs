@@ -177,6 +177,19 @@ pub fn softmax<const D: usize, B: Backend>(tensor: Tensor<B, D>, dim: usize) -> 
     )))
 }
 
+/// Explicit native softmax with FP32 half-storage arithmetic and a saved unrounded backward value.
+/// Backends without a native kernel use the same-device working-dtype tensor operations.
+pub fn softmax_native<const D: usize, B: Backend>(tensor: Tensor<B, D>, dim: usize) -> Tensor<B, D> {
+    check!(TensorCheck::dim_ops::<D>("softmax_native", dim));
+    Tensor::from_primitive(TensorPrimitive::Float(B::softmax_native(tensor.primitive.tensor(), dim, false)))
+}
+
+/// Explicit native log-softmax; output storage follows the input, while backward uses working storage.
+pub fn log_softmax_native<const D: usize, B: Backend>(tensor: Tensor<B, D>, dim: usize) -> Tensor<B, D> {
+    check!(TensorCheck::dim_ops::<D>("log_softmax_native", dim));
+    Tensor::from_primitive(TensorPrimitive::Float(B::softmax_native(tensor.primitive.tensor(), dim, true)))
+}
+
 /// Applies the softmin function on the input tensor along the given dimension.
 ///
 #[cfg_attr(

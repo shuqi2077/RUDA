@@ -5,7 +5,7 @@ use ruda_tensor::{
     TensorMetadata,
     ops::{
         AttentionModuleOptions, ConvOptions, ConvTransposeOptions, DeformConv2dBackward,
-        DeformConvOptions, InterpolateOptions, MaxPool2dBackward, MaxPool2dWithIndices, ModuleOps,
+        DeformConvOptions, FloatTensorOps, InterpolateOptions, MaxPool2dBackward, MaxPool2dWithIndices, ModuleOps,
     },
 };
 
@@ -51,6 +51,11 @@ fn native_rms_supported<R: DeviceRuntime>(tensor: &crate::RudaTensor<R>) -> bool
             && tensor.meta.num_elements() / width <= hardware.max_ruda_count.0 as usize)
 }
 
+fn native_softmax_supported<R: DeviceRuntime>(tensor: &crate::RudaTensor<R>) -> bool {
+    native_rms_supported(tensor) && tensor.qparams.is_none()
+        && tensor.client.properties().hardware.plane_size_min == tensor.client.properties().hardware.plane_size_max
+}
+
 impl<R, F, I, BT> ModuleOps<Self> for DeviceBackend<R, F, I, BT>
 where
     R: DeviceRuntime,
@@ -58,6 +63,41 @@ where
     I: IntElement,
     BT: BoolElement,
 {
+    fn softmax_with_stats(tensor: FloatTensor<Self>, dim: usize, logarithmic: bool)
+        -> ruda_tensor::ops::SoftmaxOutput<Self> {
+        let rank = tensor.meta.shape().num_dims();
+        assert!(dim < rank, "softmax axis out of bounds");
+        assert!(tensor.meta.shape()[dim] > 0, "softmax axis must be nonempty");
+        let storage: ruda_core::tensor::FloatDType = tensor.dtype.into();
+        let tensor = if dim == rank - 1 { tensor } else { Self::float_swap_dims(tensor, dim, rank - 1) };
+        let result = if native_softmax_supported(&tensor) {
+            let working = rudnn::normalization::softmax_last_axis_working(tensor, logarithmic)
+                .expect("invalid native softmax bindings");
+            ruda_tensor::ops::SoftmaxOutput { output: Self::float_cast(working.clone(), storage), working }
+        } else { ruda_tensor::ops::softmax::softmax_with_stats::<Self>(tensor, rank - 1, logarithmic) };
+        if dim == rank - 1 { result } else {
+            ruda_tensor::ops::SoftmaxOutput {
+                output: Self::float_swap_dims(result.output, dim, rank - 1),
+                working: Self::float_swap_dims(result.working, dim, rank - 1),
+            }
+        }
+    }
+
+    fn softmax_native_backward(working: FloatTensor<Self>, grad: FloatTensor<Self>, dim: usize,
+        logarithmic: bool) -> FloatTensor<Self> {
+        let rank = working.meta.shape().num_dims();
+        assert!(dim < rank, "softmax backward axis out of bounds");
+        assert_eq!(grad.meta.shape(), working.meta.shape(), "softmax gradient shape differs");
+        let working = if dim == rank - 1 { working } else { Self::float_swap_dims(working, dim, rank - 1) };
+        let grad = if dim == rank - 1 { grad } else { Self::float_swap_dims(grad, dim, rank - 1) };
+        let result = if working.dtype == ruda_core::tensor::DType::F32
+            && native_softmax_supported(&working) && native_softmax_supported(&grad) {
+            rudnn::normalization::softmax_last_axis_backward(working, grad, logarithmic)
+                .expect("invalid native softmax backward bindings")
+        } else { ruda_tensor::ops::softmax::softmax_backward::<Self>(working, grad, rank - 1, logarithmic) };
+        if dim == rank - 1 { result } else { Self::float_swap_dims(result, dim, rank - 1) }
+    }
+
     fn has_layer_norm_backward() -> bool { true }
 
     fn layer_norm_backward_select(tensor: FloatTensor<Self>, gamma: FloatTensor<Self>, grad: FloatTensor<Self>,

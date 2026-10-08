@@ -63,6 +63,28 @@ fn causal_attention_probabilities<B: Backend>(
 }
 
 impl<B: Backend, C: CheckpointStrategy> ModuleOps<Autodiff<B, C>> for Autodiff<B, C> {
+    fn softmax_native(tensor: AutodiffTensor<B>, dim: usize, logarithmic: bool) -> AutodiffTensor<B> {
+        #[derive(Debug)]
+        struct Softmax;
+        impl<B: Backend> Backward<B, 1> for Softmax {
+            type State = (B::FloatTensorPrimitive, usize, bool, FloatDType);
+            fn backward(self, ops: Ops<Self::State, 1>, grads: &mut Gradients, _checkpointer: &mut Checkpointer) {
+                let (working, dim, logarithmic, storage) = ops.state;
+                unary::<B, _>(ops.parents, ops.node, grads, |grad| {
+                    B::float_cast(B::softmax_native_backward(working, grad, dim, logarithmic), storage)
+                });
+            }
+        }
+        let storage = tensor.primitive.dtype().into();
+        match Softmax.prepare::<C>([tensor.node.clone()]).compute_bound().stateful() {
+            OpsKind::Tracked(prep) => {
+                let out = B::softmax_with_stats(tensor.primitive, dim, logarithmic);
+                prep.finish((out.working, dim, logarithmic, storage), out.output)
+            }
+            OpsKind::UnTracked(prep) => prep.finish(B::softmax_native(tensor.primitive, dim, logarithmic)),
+        }
+    }
+
     fn rms_norm(tensor: AutodiffTensor<B>, gamma: AutodiffTensor<B>, epsilon: f64) -> AutodiffTensor<B> {
         if !B::has_rms_norm_backward() {
             return ruda_tensor::ops::normalization::rms_norm_with_stats::<Self>(tensor, gamma, epsilon).output;

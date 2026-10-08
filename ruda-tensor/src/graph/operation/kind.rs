@@ -251,6 +251,10 @@ pub enum ModuleOperationIr {
     RmsNormBackwardSelect(RmsNormBackwardSelectOpIr),
     /// LayerNorm derivatives restricted to requested leaves.
     LayerNormBackwardSelect(LayerNormBackwardSelectOpIr),
+    /// Softmax/log-softmax with an unrounded working output.
+    Softmax(SoftmaxOpIr),
+    /// First-order softmax/log-softmax VJP from a saved working output.
+    SoftmaxBackward(SoftmaxBackwardOpIr),
 }
 
 /// Basic operations that can be done on any tensor type.

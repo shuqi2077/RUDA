@@ -2,6 +2,26 @@ use super::*;
 
 #[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
 #[allow(missing_docs)]
+pub struct SoftmaxOpIr {
+    pub x: TensorIr,
+    pub dim: usize,
+    pub logarithmic: bool,
+    pub out: TensorIr,
+    pub working: TensorIr,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
+pub struct SoftmaxBackwardOpIr {
+    pub working: TensorIr,
+    pub grad: TensorIr,
+    pub dim: usize,
+    pub logarithmic: bool,
+    pub out: TensorIr,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
 pub struct RmsNormBackwardSelectOpIr {
     pub x: TensorIr,
     pub gamma: TensorIr,

@@ -1,6 +1,20 @@
 use super::*;
 
 impl<B: BackendIr> Runner<B> {
+    pub(super) fn apply_softmax(&self, handles: &mut HandleContainer<B::Handle>, desc: &SoftmaxOpIr) {
+        let x = handles.get_float_tensor::<B>(&desc.x);
+        let out = B::softmax_with_stats(x, desc.dim, desc.logarithmic);
+        handles.register_float_tensor::<B>(&desc.out.id, out.output);
+        handles.register_float_tensor::<B>(&desc.working.id, out.working);
+    }
+
+    pub(super) fn apply_softmax_backward(&self, handles: &mut HandleContainer<B::Handle>, desc: &SoftmaxBackwardOpIr) {
+        let working = handles.get_float_tensor::<B>(&desc.working);
+        let grad = handles.get_float_tensor::<B>(&desc.grad);
+        let out = B::softmax_native_backward(working, grad, desc.dim, desc.logarithmic);
+        handles.register_float_tensor::<B>(&desc.out.id, out);
+    }
+
     pub(super) fn apply_rms_norm_backward_select(&self, handles: &mut HandleContainer<B::Handle>, desc: &RmsNormBackwardSelectOpIr) {
         let x = handles.get_float_tensor::<B>(&desc.x);
         let gamma = handles.get_float_tensor::<B>(&desc.gamma);

@@ -32,6 +32,38 @@ macro_rules! make_ops {
 }
 
 impl<B: FusionBackend> ModuleOps<Fusion<B>> for Fusion<B> {
+    fn softmax_with_stats(x: FloatTensor<Self>, dim: usize, logarithmic: bool) -> ruda_tensor::ops::SoftmaxOutput<Self> {
+        make_ops!(SoftmaxOps, SoftmaxOpIr, |desc: &SoftmaxOpIr, handles: &mut HandleContainer<B::Handle>| {
+            let x = handles.get_float_tensor::<B>(&desc.x);
+            let out = B::softmax_with_stats(x, desc.dim, desc.logarithmic);
+            handles.register_float_tensor::<B>(&desc.out.id, out.output);
+            handles.register_float_tensor::<B>(&desc.working.id, out.working);
+        });
+        let streams = OperationStreams::with_inputs([&x]);
+        let client = x.client.clone();
+        let desc = SoftmaxOpIr::create(x.into_ir(), dim, logarithmic, || client.create_empty_handle());
+        let [output, working] = client.register(streams, OperationIr::Module(ModuleOperationIr::Softmax(desc.clone())),
+            SoftmaxOps::<B>::new(desc)).outputs();
+        ruda_tensor::ops::SoftmaxOutput { output, working }
+    }
+
+    fn softmax_native_backward(working: FloatTensor<Self>, grad: FloatTensor<Self>, dim: usize,
+        logarithmic: bool) -> FloatTensor<Self> {
+        make_ops!(SoftmaxBackwardOps, SoftmaxBackwardOpIr,
+            |desc: &SoftmaxBackwardOpIr, handles: &mut HandleContainer<B::Handle>| {
+                let working = handles.get_float_tensor::<B>(&desc.working);
+                let grad = handles.get_float_tensor::<B>(&desc.grad);
+                let out = B::softmax_native_backward(working, grad, desc.dim, desc.logarithmic);
+                handles.register_float_tensor::<B>(&desc.out.id, out);
+            });
+        let streams = OperationStreams::with_inputs([&working, &grad]);
+        let client = working.client.clone();
+        let desc = SoftmaxBackwardOpIr::create(working.into_ir(), grad.into_ir(), dim, logarithmic,
+            || client.create_empty_handle());
+        client.register(streams, OperationIr::Module(ModuleOperationIr::SoftmaxBackward(desc.clone())),
+            SoftmaxBackwardOps::<B>::new(desc)).output()
+    }
+
     fn rms_norm_backward_select(x: FloatTensor<Self>, gamma: FloatTensor<Self>, grad: FloatTensor<Self>,
         rstd: FloatTensor<Self>, mask: [bool; 2]) -> [Option<FloatTensor<Self>>; 2] {
         if mask == [false; 2] { return [None, None]; }

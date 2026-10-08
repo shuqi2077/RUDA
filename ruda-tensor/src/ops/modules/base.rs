@@ -4,6 +4,14 @@ use crate::tensor::{BoolTensor, FloatTensor, IntTensor};
 use crate::{Backend, ElementConversion, TensorMetadata};
 use ruda_core::tensor::Shape;
 
+/// Softmax/log-softmax output and its unrounded working-storage value.
+pub struct SoftmaxOutput<B: Backend> {
+    /// Output in the original input storage dtype.
+    pub output: FloatTensor<B>,
+    /// FP32 output, or FP64 for FP64 inputs, retained for first-order backward.
+    pub working: FloatTensor<B>,
+}
+
 /// LayerNorm output and saved statistics used by its native backward operation.
 pub struct LayerNormOutput<B: Backend> {
     /// Affine-normalized output.
@@ -200,6 +208,22 @@ pub use ruda_core::tensor::spatial::AttentionModuleOptions;
 
 /// Module operations trait.
 pub trait ModuleOps<B: Backend> {
+    /// Explicit saved-working-output softmax path; existing activation defaults are unchanged.
+    fn softmax_native(tensor: FloatTensor<B>, dim: usize, logarithmic: bool) -> FloatTensor<B> {
+        Self::softmax_with_stats(tensor, dim, logarithmic).output
+    }
+
+    /// Softmax/log-softmax retaining its working output, with FP32 low-precision arithmetic.
+    fn softmax_with_stats(tensor: FloatTensor<B>, dim: usize, logarithmic: bool) -> SoftmaxOutput<B> {
+        super::softmax::softmax_with_stats::<B>(tensor, dim, logarithmic)
+    }
+
+    /// VJP from the saved working output, retaining FP64 if either argument uses FP64.
+    fn softmax_native_backward(working: FloatTensor<B>, grad: FloatTensor<B>, dim: usize,
+        logarithmic: bool) -> FloatTensor<B> {
+        super::softmax::softmax_backward::<B>(working, grad, dim, logarithmic)
+    }
+
     /// Embedding operation.
     ///
     /// # Arguments

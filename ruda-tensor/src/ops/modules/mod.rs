@@ -23,6 +23,9 @@ pub mod interpolation;
 /// Saved-statistics normalization and complete first-order gradients.
 pub mod normalization;
 
+/// Saved-working-output softmax and log-softmax training on the current backend.
+pub mod softmax;
+
 /// Module for grid_sample operations
 pub mod grid_sample;
 
