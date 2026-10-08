@@ -6,7 +6,7 @@ use crate::record::{PrecisionSettings, Record};
 use crate::tensor::backend::Backend;
 
 /// Explicit handling of an epoch that does not divide the data rank count.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Record)]
 pub enum SampleTail {
     /// Unequal final shard lengths; never repeat or pad examples.
     Uneven,

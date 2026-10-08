@@ -11,7 +11,7 @@ use crate::tensor::{Distribution, Tensor, s};
 use num_traits::Float as _;
 
 /// Enum specifying with what values a tensor should be initialized
-#[derive(Config, Debug, PartialEq)]
+#[derive(Config, Debug, PartialEq, crate::record::Record)]
 pub enum Initializer {
     /// Fills tensor with specified value everywhere
     Constant {

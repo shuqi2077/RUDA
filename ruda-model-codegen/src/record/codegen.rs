@@ -35,8 +35,10 @@ impl<G: RecordItemCodegen> RecordCodegen<G> {
         let param: syn::Generics = parse_quote! { <S: #model::record::PrecisionSettings >};
         let mut generics = self.ty.generics.clone();
 
-        for param in param.params.into_iter() {
-            generics.params.push(param);
+        if self.codegen.item_has_payload() {
+            for param in param.params.into_iter() {
+                generics.params.push(param);
+            }
         }
 
         // Generate the record item definition
@@ -96,11 +98,13 @@ impl<G: RecordItemCodegen> RecordCodegen<G> {
         let model = &paths.model;
         let param: syn::Generics = parse_quote! { <S: #model::record::PrecisionSettings >};
         let mut generics = self.ty.generics.clone();
-        for param in param.params.into_iter() {
-            generics.params.push(param);
+        if self.codegen.item_has_payload() {
+            for param in param.params.into_iter() {
+                generics.params.push(param);
+            }
         }
 
-        if !self.ty.has_backend {
+        if !self.ty.has_backend && self.codegen.item_has_payload() {
             let param: syn::TypeParam = parse_quote! { B: #model::tensor::backend::Backend };
             generics.params.push(syn::GenericParam::Type(param));
         }

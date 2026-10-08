@@ -36,7 +36,7 @@ pub struct MultiThreadDataLoader<B: Backend, I, O> {
 }
 
 /// A message that can be sent between threads.
-#[derive(Debug)]
+#[derive(Debug, crate::record::Record)]
 pub enum Message<O> {
     /// A batch of items.
     Batch(usize, O, Progress),

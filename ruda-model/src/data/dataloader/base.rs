@@ -5,7 +5,7 @@ use core::iter::Iterator;
 use std::sync::Arc;
 
 /// A progress struct that can be used to track the progress of a data loader.
-#[derive(new, Clone, Debug)]
+#[derive(new, Clone, Debug, crate::record::Record)]
 pub struct Progress {
     /// The number of items that have been processed.
     pub items_processed: usize,

@@ -3,6 +3,7 @@ use syn::Generics;
 
 /// Basic trait to be implemented for record generation.
 pub(crate) trait RecordItemCodegen {
+    fn item_has_payload(&self) -> bool { true }
     /// Initialize the record item.
     fn from_ast(ast: &syn::DeriveInput, _paths: &crate::DerivePaths) -> syn::Result<Self>
     where

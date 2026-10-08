@@ -157,7 +157,7 @@ impl<B: Backend> Record<B> for RangeFull {
 }
 
 /// Serialized original included/excluded/unbounded range endpoints.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Record)]
 pub enum BoundItem<T> {
     /// An included endpoint.
     Included(T),
