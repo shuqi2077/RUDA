@@ -1,6 +1,7 @@
 //! Complete continuation with caller-owned heterogeneous optimizer/parallel groups.
 
 use super::*;
+mod fully_sharded;
 
 /// Serialize an original inner-backend record alongside autodiff model records.
 ///

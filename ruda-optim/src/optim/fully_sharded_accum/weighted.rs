@@ -6,6 +6,19 @@ pub struct FullyShardedWeightedAccumulationContract<B:AutodiffBackend> {
     continuation:FullyShardedAccumulationContract,
     global_weight:Tensor<B::InnerBackend,1>,
 }
+impl<B:AutodiffBackend> FullyShardedWeightedAccumulationContract<B> {
+    /// Match actual original logical placement, window counters and fractional
+    /// scalar work storage without reading numerical model/gradient values.
+    pub fn validate_for<M:AutodiffModule<B>>(&self,module:&M) -> Result<(),FullyShardedAccumulationError> {
+        if self.global_weight.dims()!=[1] || self.global_weight.dtype()!=self.continuation.state.dtype {
+            return Err(FullyShardedAccumulationError::State);
+        }
+        self.continuation.validate_for::<B,M>(module)?;
+        Ok(())
+    }
+    pub fn state(&self) -> &FullyShardedAccumulationState {self.continuation.state()}
+    pub fn global_weight(&self) -> Tensor<B::InnerBackend,1> {self.global_weight.clone()}
+}
 impl<B:AutodiffBackend> Record<B> for FullyShardedWeightedAccumulationContract<B> {
     type Item<S:PrecisionSettings>=(FullyShardedAccumulationContract,TensorData);
     fn into_item<S:PrecisionSettings>(self) -> Self::Item<S> {(self.continuation,self.global_weight.into_data())}
@@ -81,9 +94,7 @@ impl<M:AutodiffModule<B>,B:AutodiffBackend> FullyShardedWeightedGradientsAccumul
     /// Reattach native weighted continuation to the same combined-record pending local derivatives.
     pub fn from_accumulator(module:&M,accumulator:GradientsAccumulator<M>,continuation:FullyShardedWeightedAccumulationContract<B>)
         -> Result<Self,FullyShardedAccumulationError> {
-        if continuation.global_weight.dims()!=[1] || continuation.global_weight.dtype()!=continuation.continuation.state.dtype {
-            return Err(FullyShardedAccumulationError::State);
-        }
+        continuation.validate_for(module)?;
         let window=FullyShardedGradientsAccumulator::from_accumulator::<B>(module,accumulator,continuation.continuation)?;
         Ok(Self {window,global_weight:continuation.global_weight})
     }
