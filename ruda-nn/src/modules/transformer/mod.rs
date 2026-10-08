@@ -3,6 +3,7 @@ mod encoder;
 mod pwff;
 mod dense;
 mod compressed;
+mod packed_compressed;
 mod heads;
 mod adapted_head;
 mod embeddings;

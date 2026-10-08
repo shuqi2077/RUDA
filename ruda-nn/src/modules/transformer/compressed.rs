@@ -300,7 +300,7 @@ pub enum HybridAttentionHead<B: Backend> {
 }
 
 impl<B: Backend> HybridAttentionHead<B> {
-    fn forward(&self, hidden: Tensor<B, 3>, embedding: &Embedding<B>) -> Tensor<B, 3> {
+    pub(super) fn forward(&self, hidden: Tensor<B, 3>, embedding: &Embedding<B>) -> Tensor<B, 3> {
         match self {
             Self::Linear(head) => head.forward(hidden),
             Self::TiedEmbedding(_) => hidden.matmul(embedding.weight.val().transpose().unsqueeze::<3>()),
