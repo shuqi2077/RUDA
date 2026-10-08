@@ -4,7 +4,7 @@ mod delta;
 pub use delta::FullyShardedStorageDeltaRecord;
 
 fn packed_geometry(shape:&[usize],rank:usize,world:usize) -> Result<(usize,usize),FullyShardedParameterError> {
-    if world==0 || rank>=world || shape.contains(&0) {return Err(FullyShardedParameterError::Geometry("invalid packed axes/rank/world"));}
+    if world==0 || rank>=world {return Err(FullyShardedParameterError::Geometry("invalid packed rank/world"));}
     let elements=shape.iter().try_fold(1usize,|n,&d|n.checked_mul(d)).ok_or(FullyShardedParameterError::Geometry("packed logical size overflows"))?;
     let size=elements.div_ceil(world);
     size.checked_mul(world).ok_or(FullyShardedParameterError::Geometry("packed padded size overflows"))?;

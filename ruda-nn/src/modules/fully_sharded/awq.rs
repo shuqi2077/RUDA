@@ -19,7 +19,7 @@ pub struct ShardedPackedParameter<B: Backend> {
 impl<B: Backend> ShardedPackedParameter<B> {
     /// Load an actual local slice with its original ID and logical axes.
     pub fn from_local(local: Param<Tensor<B, 1, Int>>, logical_shape: Vec<usize>, rank: usize, world_size: usize) -> Self {
-        assert!(world_size > 0 && rank < world_size && !logical_shape.contains(&0), "invalid packed shard geometry");
+        assert!(world_size > 0 && rank < world_size, "invalid packed shard geometry");
         let elements = logical_shape.iter().try_fold(1usize, |n, &d| n.checked_mul(d)).expect("packed logical size overflows");
         let size = elements.div_ceil(world_size);
         size.checked_mul(world_size).expect("packed padded size overflows");
@@ -34,7 +34,6 @@ impl<B: Backend> ShardedPackedParameter<B> {
         assert!(world_size > 0 && rank < world_size, "invalid packed shard topology");
         let value = parameter.val(); let shape = value.dims().to_vec();
         let elements = shape.iter().try_fold(1usize, |n, &d| n.checked_mul(d)).expect("packed logical size overflows");
-        assert!(elements > 0, "packed source cannot be empty");
         let size = elements.div_ceil(world_size);
         size.checked_mul(world_size).expect("packed padded size overflows");
         let start = rank * size; let end = (start + size).min(elements);

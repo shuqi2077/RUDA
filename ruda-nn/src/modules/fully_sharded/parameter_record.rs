@@ -30,8 +30,8 @@ impl fmt::Display for FullyShardedParameterError {
 impl core::error::Error for FullyShardedParameterError {}
 
 fn geometry(shape:&[usize],rank:usize,world:usize) -> Result<(usize,usize),FullyShardedParameterError> {
-    if world==0 || rank>=world || shape.contains(&0) {
-        return Err(FullyShardedParameterError::Geometry("positive logical axes and valid rank/world are required"));
+    if world==0 || rank>=world {
+        return Err(FullyShardedParameterError::Geometry("valid rank/world are required"));
     }
     let elements = shape.iter().try_fold(1usize,|total,axis|total.checked_mul(*axis))
         .ok_or(FullyShardedParameterError::Geometry("logical size overflows"))?;

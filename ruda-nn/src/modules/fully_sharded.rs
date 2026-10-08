@@ -56,6 +56,12 @@ mod mhc_model;
 pub use mhc_model::*;
 mod mhc_training;
 pub use mhc_training::*;
+mod packed_experts;
+pub use packed_experts::*;
+mod expert_chains;
+pub use expert_chains::*;
+mod packed_mhc;
+pub use packed_mhc::*;
 
 /// Explicit construction context preserving one local autograd leaf per source ID.
 /// Reuse a context for all tied layers, then drop it after model construction. It
@@ -200,7 +206,6 @@ impl<B:Backend> ShardedParameter<B> {
     /// Construct from an already loaded local checkpoint slice; no full tensor is needed.
     pub fn from_local(local:Param<Tensor<B,1>>,logical_shape:Vec<usize>,rank:usize,world_size:usize)->Self {
         assert!(world_size>0 && rank<world_size,"invalid parameter shard topology");
-        assert!(logical_shape.iter().all(|&n|n>0),"logical parameter dimensions must be positive");
         let elements=logical_shape.iter().try_fold(1usize,|n,&d|n.checked_mul(d)).expect("logical parameter size overflow");
         assert_eq!(local.val().dims(),[elements.div_ceil(world_size)],"local parameter slice length differs");
         assert!(matches!(local.val().dtype(),DType::F32|DType::F16|DType::BF16|DType::F64),"floating parameter storage required");
@@ -214,7 +219,6 @@ impl<B:Backend> ShardedParameter<B> {
         let value=parameter.val();
         let shape=value.dims().to_vec();
         let elements=shape.iter().try_fold(1usize,|n,&d|n.checked_mul(d)).expect("logical parameter size overflow");
-        assert!(elements>0,"logical parameter cannot be empty");
         let size=elements.div_ceil(world_size);
         let start=rank*size;
         let end=(start+size).min(elements);
