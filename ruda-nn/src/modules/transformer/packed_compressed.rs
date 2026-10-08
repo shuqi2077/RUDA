@@ -63,16 +63,18 @@ impl<B: Backend> HybridAttentionBackbone<B> {
 impl<B: Backend> HybridAttentionLanguageModel<B> {
     pub fn forward_packed(&self, tokens: Tensor<B, 1, Int>, layout: &PackedSequenceLayout,
         valid: Option<Tensor<B, 1, Bool>>) -> Tensor<B, 2> {
-        self.packed_logits(self.backbone.forward_packed(tokens, layout, valid))
+        self.project_tokens(self.backbone.forward_packed(tokens, layout, valid))
     }
 
     pub fn forward_packed_with_aux(&self, tokens: Tensor<B, 1, Int>, layout: &PackedSequenceLayout,
         valid: Option<Tensor<B, 1, Bool>>, indexer_warmup: bool) -> PackedCompressedAttentionOutput<B> {
         let result = self.backbone.forward_packed_with_aux(tokens, layout, valid, indexer_warmup);
-        PackedCompressedAttentionOutput { output: self.packed_logits(result.output), document_indexer_losses: result.document_indexer_losses }
+        PackedCompressedAttentionOutput { output: self.project_tokens(result.output), document_indexer_losses: result.document_indexer_losses }
     }
 
-    fn packed_logits(&self, hidden: Tensor<B, 2>) -> Tensor<B, 2> {
+    /// Project only actual selected hidden rows against the complete original vocabulary.
+    /// Chunking is controlled by the caller or the existing causal-loss implementation.
+    pub fn project_tokens(&self, hidden: Tensor<B, 2>) -> Tensor<B, 2> {
         let [tokens, width] = hidden.dims();
         let vocab = self.backbone.embedding.weight.val().dims()[0];
         if tokens == 0 {
