@@ -1,7 +1,7 @@
 //! Actual expert-owned native cubes and differentiable assignment exchanges; transport is explicit.
-use alloc::vec::Vec;
+use alloc::{vec::Vec,collections::BTreeMap};
 use core::{fmt,ops::Range};
-use ruda_model::{module::{Module,Param},tensor::{Tensor,Int,DType,FloatDType,MoeOptions,MoeDispatchOps,MoeReceivedOps,
+use ruda_model::{module::{Module,Param,ParamId},tensor::{Tensor,Int,DType,FloatDType,MoeOptions,MoeDispatchOps,MoeReceivedOps,
     MoeReceivedOptions,dispatch_moe,combine_moe,received_moe_experts,VariableTensorCollective,VariableTensorExchange,backend::Backend}};
 use ruda_autodiff::{Autodiff,checkpoint::strategy::CheckpointStrategy,collective::{all_to_all_v_coordinated,ScopedCollectiveError}};
 use crate::{NativeSwiGluExperts,transformer::{TransformerProjectionShape,TransformerProjection}};
@@ -41,12 +41,15 @@ pub struct ExpertParallelSwiGluExperts<B:Backend> {
     /// Actual original expert-world rank, independent of any data-axis rank.
     pub rank:usize,
 }
-fn local_cube<B:Backend>(parameter:Param<Tensor<B,3>>,range:Range<usize>) -> Param<Tensor<B,3>> {
+fn local_cube<B:Backend>(parameter:Param<Tensor<B,3>>,range:Range<usize>,shared:&mut BTreeMap<ParamId,([usize;3],Param<Tensor<B,3>>)>) -> Param<Tensor<B,3>> {
     let source=parameter.val();let [_,rows,columns]=source.dims();let count=range.len();
+    if let Some((shape,local))=shared.get(&parameter.id) {let value=local.val();assert_eq!(*shape,source.dims(),"tied expert source cube shapes differ");
+        assert_eq!(value.dtype(),source.dtype(),"tied expert source storage differs");assert_eq!(value.device(),source.device(),"tied expert source devices differ");
+        assert_eq!(value.is_require_grad(),source.is_require_grad(),"tied expert source trainability differs");return local.clone();}
     let mut local=Tensor::<B,3>::empty([count,rows,columns],(&source.device(),source.dtype()));
     if count!=0 {local=local.slice_assign([0..count,0..rows,0..columns],source.clone().slice([range,0..rows,0..columns]));}
     // Preserve source identity/flags while making only the owned GPU copy a new optimizer leaf.
-    Param::initialized(parameter.id,local.detach().set_require_grad(source.is_require_grad()))
+    let local=Param::initialized(parameter.id,local.detach().set_require_grad(source.is_require_grad()));shared.insert(parameter.id,(source.dims(),local.clone()));local
 }
 impl<B:Backend> ExpertParallelSwiGluExperts<B> {
     /// Connect caller-loaded actual local values, retaining all original source IDs and flags.
@@ -57,7 +60,8 @@ impl<B:Backend> ExpertParallelSwiGluExperts<B> {
     /// No model values are downloaded or quantized, and no rank ownership is guessed.
     pub fn from_full(experts:NativeSwiGluExperts<B>,ownership:ExpertOwnership,rank:usize) -> Self {
         experts.validate();assert_eq!(experts.dimensions()[0],ownership.experts(),"global source cube count differs from actual declared ownership");
-        let range=ownership.range(rank);Self::from_parameters(local_cube(experts.gate,range.clone()),local_cube(experts.up,range.clone()),local_cube(experts.down,range),ownership,rank)
+        let range=ownership.range(rank);let mut shared=BTreeMap::new();
+        Self::from_parameters(local_cube(experts.gate,range.clone(),&mut shared),local_cube(experts.up,range.clone(),&mut shared),local_cube(experts.down,range,&mut shared),ownership,rank)
     }
     /// Actual original `[owned_experts,hidden,intermediate]` local geometry.
     pub fn dimensions(&self) -> [usize;3] {let [experts,inner,hidden]=self.gate.val().dims();[experts,hidden,inner]}
