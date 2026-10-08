@@ -17,7 +17,7 @@ path = "tests/test_record_resilience.rs"
 [package]
 edition = "2024"
 name = "ruda-model"
-version = "0.21.39"
+version = "0.21.40"
 authors = [ "nathanielsimard <nathaniel.simard.42@gmail.com>",]
 build = false
 autolib = false
@@ -149,7 +149,7 @@ features = [ "serde", "shared-bytes", "tensor-data", "id",]
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
-version = "0.21.33"
+version = "0.21.34"
 default-features = false
 features = [ "api",]
 
@@ -222,32 +222,32 @@ features = [ "alloc",]
 
 [target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-tensor-remote]
 path = "../ruda-tensor-remote"
-version = "0.21.31"
+version = "0.21.32"
 optional = true
 default-features = false
 
 [target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-tensor-rocm]
 path = "../ruda-tensor-rocm"
-version = "0.21.31"
+version = "0.21.32"
 optional = true
 default-features = false
 
 [target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-tensor-router]
 path = "../ruda-tensor-router"
-version = "0.21.32"
+version = "0.21.33"
 optional = true
 default-features = false
 
 [target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-tensor-tch]
 path = "../ruda-tensor-tch"
-version = "0.21.44"
+version = "0.21.45"
 features = [ "default",]
 optional = true
 default-features = false
 
 [target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-tensor-wgpu]
 path = "../ruda-tensor-wgpu"
-version = "0.21.31"
+version = "0.21.32"
 optional = true
 default-features = false
 
@@ -260,7 +260,7 @@ default-features = false
 optional = true
 default-features = false
 path = "../ruda-tensor-device"
-version = "0.21.32"
+version = "0.21.33"
 features = [ "cuda",]
 
 [target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-fusion]
@@ -268,4 +268,4 @@ features = [ "std", "tracing",]
 optional = true
 default-features = false
 path = "../ruda-fusion"
-version = "0.21.31"
+version = "0.21.32"

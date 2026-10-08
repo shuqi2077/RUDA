@@ -1,7 +1,7 @@
 [package]
 edition = "2024"
 name = "ruda-tensor-remote"
-version = "0.21.31"
+version = "0.21.32"
 authors = [ "nathanielsimard <nathaniel.simard.42@gmail.com>",]
 build = false
 autolib = false
@@ -88,7 +88,7 @@ optional = true
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
-version = "0.21.33"
+version = "0.21.34"
 default-features = false
 features = [ "graph", "std", "serde",]
 
@@ -112,13 +112,13 @@ optional = true
 
 [dependencies.ruda-tensor-router]
 path = "../ruda-tensor-router"
-version = "0.21.32"
+version = "0.21.33"
 default-features = false
 features = [ "default",]
 
 [dependencies.ruda-communication]
 path = "../ruda-communication"
-version = "0.21.30"
+version = "0.21.31"
 default-features = false
 features = [ "data-service", "websocket",]
 

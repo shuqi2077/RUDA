@@ -12,7 +12,7 @@
 [package]
 edition = "2024"
 name = "ruda-fusion"
-version = "0.21.31"
+version = "0.21.32"
 authors = ["nathanielsimard <nathaniel.simard.42@gmail.com>"]
 build = false
 autolib = false
@@ -76,7 +76,7 @@ path = "src/lib.rs"
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
-version = "0.21.33"
+version = "0.21.34"
 features = ["std", "graph"]
 default-features = false
 
@@ -147,7 +147,7 @@ features = ["kernel-ir", "quantization-kernels"]
 
 [dependencies.rublas]
 path = "../ruBLAS"
-version = "0.1.46"
+version = "0.1.47"
 default-features = false
 optional = true
 features = ["kernel-ir", "std"]
