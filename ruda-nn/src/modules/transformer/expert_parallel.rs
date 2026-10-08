@@ -1,5 +1,5 @@
 use alloc::{vec::Vec,collections::BTreeSet};
-use ruda_model::{module::{Module,ModuleVisitor,Param,ParamId},tensor::{Tensor,Int,Bool,MoeDispatchOps,MoeReceivedOps,VariableTensorCollective,backend::Backend}};
+use ruda_model::{module::{Module,ModuleVisitor,Param,ParamId,list_param_ids},tensor::{Tensor,Int,Bool,MoeDispatchOps,MoeReceivedOps,VariableTensorCollective,backend::Backend}};
 use ruda_autodiff::{Autodiff,checkpoint::strategy::CheckpointStrategy,collective::{CollectiveScope,ScopedTensorCollective,ScopedCollectiveError}};
 use crate::{Dropout,expert_parallel::{ExpertParallelMoeLayer,ExpertParallelMoeError,ExpertParallelSwiGluExperts,ExpertParallelGeometry,ExpertParallelReceived},attention::{DenseAttentionMask,DenseAttentionOptions,
     PackedSequenceLayout,PackedAttentionOptions,PackedDocumentAttentionMask},cache::{ProjectedKvCache,TransformerKvCache},
@@ -104,6 +104,31 @@ impl<B:Backend,P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>> Expe
     pub fn non_expert_parameter_ids(&self) -> Vec<ParamId> {
         let owned=self.owned_expert_parameter_ids().into_iter().collect::<BTreeSet<_>>();let mut ids=FloatIds(BTreeSet::new());self.visit(&mut ids);
         ids.0.difference(&owned).copied().collect()
+    }
+
+    /// Actual locally owned expert parameter and buffer IDs, including native packed payloads.
+    /// Visits original expert modules without initializing any lazy parameter or
+    /// downloading weights. NF4 bytes/scales/book and AWQ words/scales remain
+    /// separate original IDs; all tied occurrences are selected by that same ID.
+    /// This describes ownership, not which other ranks replicate these experts.
+    pub fn owned_expert_state_ids(&self) -> Vec<ParamId> {
+        let mut ids=BTreeSet::new();
+        for layer in &self.layers {
+            if let ExpertParallelTransformerLayer::Parallel(block)=layer {
+                ids.extend(list_param_ids::<_,B>(&block.routed.experts));
+            }
+        }
+        ids.into_iter().collect()
+    }
+
+    /// Actual parameter/buffer IDs outside the original locally owned expert modules.
+    /// Includes non-expert packed quantized projections, not just their floating
+    /// scales/adapters. The caller explicitly selects replication/TP/data groups;
+    /// this does not classify a custom projection as a full replicated tensor.
+    pub fn non_expert_state_ids(&self) -> Vec<ParamId> {
+        let owned=self.owned_expert_state_ids().into_iter().collect::<BTreeSet<_>>();
+        let all=list_param_ids::<_,B>(self).into_iter().collect::<BTreeSet<_>>();
+        all.difference(&owned).copied().collect()
     }
     fn normalize<const D:usize>(&self,hidden:Tensor<B,D>) -> Tensor<B,D> {if let Some(norm)=&self.normalization {norm.forward(hidden)} else {hidden}}
 }

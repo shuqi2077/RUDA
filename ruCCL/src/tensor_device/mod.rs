@@ -11,6 +11,7 @@ mod reduction;
 mod storage;
 mod communicator;
 mod tensor;
+mod bounded_broadcast;
 mod exchange;
 
 pub use element::TensorElement;

@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 mod all_gather;
 mod all_to_all;
 mod direct;
+mod bounded_broadcast;
 mod output;
 mod point_to_point;
 mod reduce_dispatch;
@@ -25,6 +26,7 @@ mod reduction;
 mod ring;
 
 pub use output::{ReceivedMessage, VariableCollectiveOutput};
+pub use bounded_broadcast::{ChunkedBroadcastPlan, BroadcastProgress};
 
 pub struct DeviceCollective<'a, T, D: RankDevice<T>> {
     execution: &'a D,

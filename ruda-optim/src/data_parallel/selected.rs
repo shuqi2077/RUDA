@@ -202,6 +202,26 @@ impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> SelectedD
         ))
     }
 
+    /// Initialize selected floating weights and native integer/Bool parameter buffers together.
+    ///
+    /// Select actual NF4 U8 bytes and original scales/codebook, or AWQ I32/U32
+    /// words and scales/bias, together with the desired adapter parameters.
+    /// Integer payloads retain their native width and bit pattern; no dense base,
+    /// requantization, scale conversion or optimizer state is created for them.
+    /// Quantization/architecture settings remain those of the caller's prepared
+    /// original model. This broadcasts once, not before every forward pass.
+    /// Unselected experts/parameters/devices remain outside this group's schema.
+    pub fn initialize_with_buffers<M: AutodiffModule<B>>(
+        communicator: C,
+        model: M,
+        root: u32,
+        parameters: &[ParamId],
+    ) -> Result<(Self, M), DataParallelError> {
+        let (inner, model) =
+            DataParallel::initialize_inner(communicator, model, root, true, Some(parameters))?;
+        Ok((Self { inner, parameters: parameters.to_vec() }, model))
+    }
+
     /// Rank within this explicit replica group.
     pub fn rank(&self) -> u32 {
         self.inner.rank()

@@ -29,6 +29,9 @@ mod selected;
 pub use selected::SelectedDataParallel;
 use selected::{map_selection, selected_device_matches, visit_selection};
 
+mod bounded_broadcast;
+pub use bounded_broadcast::{ChunkedBroadcastCommunicator, BoundedBroadcastCommunicator};
+
 /// An explicit policy for trainable parameters unused by a local backward pass.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MissingGradientPolicy {
@@ -87,7 +90,7 @@ pub trait DataParallelCommunicator<B: Backend> {
         value: B::FloatTensorPrimitive,
         root: u32,
     ) -> Result<B::FloatTensorPrimitive, TensorDeviceError>;
-    /// Broadcast an I32/I64 parameter buffer without floating conversion.
+    /// Broadcast a native U8/U32/I32/I64 parameter buffer without floating conversion.
     fn broadcast_int(
         &self,
         value: B::IntTensorPrimitive,
@@ -244,8 +247,8 @@ impl<B: AutodiffBackend> ModuleVisitor<B> for Schema {
             return;
         }
         let tensor = param.val();
-        if !matches!(tensor.dtype(), DType::I32 | DType::I64) {
-            self.device_error = Some("data parallel buffers support I32 and I64 integers".into());
+        if !matches!(tensor.dtype(), DType::U8 | DType::U32 | DType::I32 | DType::I64) {
+            self.device_error = Some("data parallel buffers support U8, U32, I32 and I64 integers".into());
         }
         self.register(param.id, tensor.dims().to_vec(), tensor.dtype(), false);
     }
@@ -324,7 +327,7 @@ impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> DataParal
     }
 
     /// Initialize a replica and explicitly broadcast integer and Bool parameter buffers too.
-    /// I32/I64 buffers retain their width; Bool buffers are transported as integer 0/1.
+    /// U8/U32/I32/I64 buffers retain their width; Bool buffers are transported as integer 0/1.
     /// Buffers retain local IDs and aliases and never enter gradient reduction or optimization.
     /// This synchronizes buffers once, not automatically before each forward pass.
     pub fn initialize_with_buffers<M: AutodiffModule<B>>(

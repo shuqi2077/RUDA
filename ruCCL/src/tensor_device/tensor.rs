@@ -170,7 +170,7 @@ impl<B: Backend> RankCommunicator<TensorDevice<B>> {
         Ok(B::int_reshape(output.int_tensor()?, plan.output))
     }
 
-    /// Broadcast a U32, I32 or I64 tensor without converting integer storage to floating point.
+    /// Broadcast a U8, U32, I32 or I64 tensor without converting integer storage to floating point.
     /// Shape, dtype and each rank's local device are retained; transfers are host-staged.
     pub fn broadcast_int(
         &self,
@@ -178,6 +178,7 @@ impl<B: Backend> RankCommunicator<TensorDevice<B>> {
         root: u32,
     ) -> Result<B::IntTensorPrimitive, TensorDeviceError> {
         match value.dtype() {
+            DType::U8 => self.integer_collective::<u8>(value, None, root),
             DType::U32 => self.integer_collective::<u32>(value, None, root),
             DType::I32 => self.integer_collective::<i32>(value, None, root),
             DType::I64 => self.integer_collective::<i64>(value, None, root),
