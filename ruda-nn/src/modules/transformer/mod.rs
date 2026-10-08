@@ -23,6 +23,7 @@ mod projected_paired_model;
 mod native_attention;
 mod moe;
 mod moe_model;
+mod moe_adapters;
 
 pub use decoder::*;
 pub use encoder::*;
@@ -44,3 +45,4 @@ pub use projected_decoder::*;
 pub use projected_paired_model::*;
 pub use moe::*;
 pub use moe_model::*;
+pub use moe_adapters::*;

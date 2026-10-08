@@ -92,7 +92,7 @@ impl<B:Backend,P:TransformerProjectionShape<B>+From<Linear<B>>> AwqFeedForward<B
     }
 }
 impl<B:Backend,P:AdaptTransformerProjection<B>> AwqFeedForward<B,P> {
-    fn validate_adapters(&self,config:&TransformerAdapterConfig,targets:&[FeedForwardAdapterTarget]) {
+    pub(super) fn validate_adapters(&self,config:&TransformerAdapterConfig,targets:&[FeedForwardAdapterTarget]) {
         unique(targets);
         for target in targets {
             match target {FeedForwardAdapterTarget::Up=>self.up.validate_adapter(config),FeedForwardAdapterTarget::Down=>self.down.validate_adapter(config),
