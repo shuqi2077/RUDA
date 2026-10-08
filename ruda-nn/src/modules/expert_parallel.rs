@@ -41,15 +41,32 @@ pub struct ExpertParallelSwiGluExperts<B:Backend> {
     /// Actual original expert-world rank, independent of any data-axis rank.
     pub rank:usize,
 }
-fn local_cube<B:Backend>(parameter:Param<Tensor<B,3>>,range:Range<usize>,shared:&mut BTreeMap<ParamId,([usize;3],Param<Tensor<B,3>>)>) -> Param<Tensor<B,3>> {
+struct ExpertEntry<B:Backend> {source_shape:[usize;3],range:Range<usize>,local:Param<Tensor<B,3>>}
+/// Canonical original shared expert IDs across the complete loaded model.
+/// Keeps only rank-owned native copies, never full source cubes or their graphs.
+pub struct ExpertPartitionContext<B:Backend> {shared:BTreeMap<ParamId,ExpertEntry<B>>}
+impl<B:Backend> Default for ExpertPartitionContext<B> {fn default() -> Self {Self::new()}}
+impl<B:Backend> ExpertPartitionContext<B> {
+    /// Start an explicit shared-ID expert partition context, without choosing rank or ownership.
+    pub fn new() -> Self {Self {shared:BTreeMap::new()}}
+    /// Copy original caller-selected expert intervals, reusing one actual leaf for every tied source ID.
+    pub fn experts(&mut self,experts:NativeSwiGluExperts<B>,ownership:ExpertOwnership,rank:usize) -> ExpertParallelSwiGluExperts<B> {
+        experts.validate();assert_eq!(experts.dimensions()[0],ownership.experts(),"global source cube count differs from actual declared ownership");
+        let range=ownership.range(rank);ExpertParallelSwiGluExperts::from_parameters(local_cube(experts.gate,range.clone(),&mut self.shared),
+            local_cube(experts.up,range.clone(),&mut self.shared),local_cube(experts.down,range,&mut self.shared),ownership,rank)
+    }
+}
+fn local_cube<B:Backend>(parameter:Param<Tensor<B,3>>,range:Range<usize>,shared:&mut BTreeMap<ParamId,ExpertEntry<B>>) -> Param<Tensor<B,3>> {
     let source=parameter.val();let [_,rows,columns]=source.dims();let count=range.len();
-    if let Some((shape,local))=shared.get(&parameter.id) {let value=local.val();assert_eq!(*shape,source.dims(),"tied expert source cube shapes differ");
+    if let Some(entry)=shared.get(&parameter.id) {let value=entry.local.val();assert_eq!(entry.source_shape,source.dims(),"tied expert source cube shapes differ");
+        assert_eq!(entry.range,range,"one tied expert source ID cannot have different rank-owned intervals");
         assert_eq!(value.dtype(),source.dtype(),"tied expert source storage differs");assert_eq!(value.device(),source.device(),"tied expert source devices differ");
-        assert_eq!(value.is_require_grad(),source.is_require_grad(),"tied expert source trainability differs");return local.clone();}
+        assert_eq!(value.is_require_grad(),source.is_require_grad(),"tied expert source trainability differs");return entry.local.clone();}
     let mut local=Tensor::<B,3>::empty([count,rows,columns],(&source.device(),source.dtype()));
-    if count!=0 {local=local.slice_assign([0..count,0..rows,0..columns],source.clone().slice([range,0..rows,0..columns]));}
+    if count!=0 {local=local.slice_assign([0..count,0..rows,0..columns],source.clone().slice([range.clone(),0..rows,0..columns]));}
     // Preserve source identity/flags while making only the owned GPU copy a new optimizer leaf.
-    let local=Param::initialized(parameter.id,local.detach().set_require_grad(source.is_require_grad()));shared.insert(parameter.id,(source.dims(),local.clone()));local
+    let local=Param::initialized(parameter.id,local.detach().set_require_grad(source.is_require_grad()));
+    shared.insert(parameter.id,ExpertEntry {source_shape:source.dims(),range,local:local.clone()});local
 }
 impl<B:Backend> ExpertParallelSwiGluExperts<B> {
     /// Connect caller-loaded actual local values, retaining all original source IDs and flags.
@@ -59,9 +76,7 @@ impl<B:Backend> ExpertParallelSwiGluExperts<B> {
     /// Copy only this rank's actual original expert rows on the source backend, then release full source graphs.
     /// No model values are downloaded or quantized, and no rank ownership is guessed.
     pub fn from_full(experts:NativeSwiGluExperts<B>,ownership:ExpertOwnership,rank:usize) -> Self {
-        experts.validate();assert_eq!(experts.dimensions()[0],ownership.experts(),"global source cube count differs from actual declared ownership");
-        let range=ownership.range(rank);let mut shared=BTreeMap::new();
-        Self::from_parameters(local_cube(experts.gate,range.clone(),&mut shared),local_cube(experts.up,range.clone(),&mut shared),local_cube(experts.down,range,&mut shared),ownership,rank)
+        ExpertPartitionContext::new().experts(experts,ownership,rank)
     }
     /// Actual original `[owned_experts,hidden,intermediate]` local geometry.
     pub fn dimensions(&self) -> [usize;3] {let [experts,inner,hidden]=self.gate.val().dims();[experts,hidden,inner]}
