@@ -238,6 +238,14 @@ visit_fields!(FullyShardedNf4Linear,packed,scales,codebook,bias);
 visit_fields!(FullyShardedNf4LoRALinear,base,adapter_a,adapter_b);
 visit_fields!(FullyShardedNativeSwiGluExperts,gate,up,down);
 visit_projected_fields!(FullyShardedNativeMoeLayer,router,experts,correction_bias);
+visit_projected_fields!(FullyShardedNativeMoeFeedForward,routed,shared);
+visit_projected_fields!(FullyShardedNativeMoeTransformerBlock,attention,feed_forward,attention_norm,feed_forward_norm);
+visit_projected_fields!(FullyShardedNativeMoeTransformerStack,layers);
+visit_projected_fields!(FullyShardedNativeMoeTransformerModel,embeddings,backbone,normalization,head);
+impl<B:Backend,P:FullyShardedModule<B>+ruda_model::module::ModuleDisplay> FullyShardedModule<B> for FullyShardedNativeMoeTransformerLayer<B,P> {
+    fn visit_shards<F:FnMut(&ShardedParameter<B>)>(&self,visitor:&mut F) {match self {Self::Dense(block)=>block.visit_shards(visitor),Self::Routed(block)=>block.visit_shards(visitor)}}
+    fn visit_packed_shards<F:FnMut(&ShardedPackedParameter<B>)>(&self,visitor:&mut F) {match self {Self::Dense(block)=>block.visit_packed_shards(visitor),Self::Routed(block)=>block.visit_packed_shards(visitor)}}
+}
 impl<B:Backend> FullyShardedModule<B> for ShardedPackedParameter<B> {
     fn visit_shards<F:FnMut(&ShardedParameter<B>)>(&self,_visitor:&mut F) {}
     fn visit_packed_shards<F:FnMut(&ShardedPackedParameter<B>)>(&self,visitor:&mut F) {visitor(self);}

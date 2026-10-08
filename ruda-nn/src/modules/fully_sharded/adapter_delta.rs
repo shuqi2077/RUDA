@@ -102,3 +102,10 @@ adapter_components!(FullyShardedProjectedDecoderLayer,[backbone,cross_attention]
 adapter_components!(FullyShardedProjectedDecoderStack,[layers]);
 adapter_components!(FullyShardedProjectedEncoderDecoderModel,[encoder,decoder,head]);
 adapter_components!(FullyShardedNativeMoeLayer,[router]);
+adapter_components!(FullyShardedNativeMoeFeedForward,[routed,shared]);
+adapter_components!(FullyShardedNativeMoeTransformerBlock,[attention,feed_forward]);
+adapter_components!(FullyShardedNativeMoeTransformerStack,[layers]);
+adapter_components!(FullyShardedNativeMoeTransformerModel,[backbone,head]);
+impl<B:Backend,P:FullyShardedAdapterModule<B>+ModuleDisplay> FullyShardedAdapterModule<B> for FullyShardedNativeMoeTransformerLayer<B,P> {
+    fn visit_adapter_shards<F:FnMut(&ShardedParameter<B>)>(&self,visitor:&mut F) {match self {Self::Dense(block)=>block.visit_adapter_shards(visitor),Self::Routed(block)=>block.visit_adapter_shards(visitor)}}
+}

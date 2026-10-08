@@ -44,6 +44,8 @@ mod adapter_delta;
 pub use adapter_delta::*;
 mod moe;
 pub use moe::*;
+mod moe_transformer;
+pub use moe_transformer::*;
 
 /// Explicit construction context preserving one local autograd leaf per source ID.
 /// Reuse a context for all tied layers, then drop it after model construction. It
