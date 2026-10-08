@@ -14,6 +14,10 @@ pub struct DispatchedTokens<R: Runtime> {
     pub(super) slot_rows: RudaTensor<R>,
     pub(super) sorted_slots: RudaTensor<R>,
 }
+pub(super) struct RowDispatch<R:Runtime> {
+    pub values:RudaTensor<R>,pub row_experts:RudaTensor<R>,pub offsets:RudaTensor<R>,
+    pub slot_rows:RudaTensor<R>,pub sorted_slots:RudaTensor<R>,
+}
 
 /// Explicit original combine outputs required by the trainable graph.
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
@@ -44,25 +48,33 @@ impl<R: Runtime> RoutingPlan<R> {
                 "MoE dispatch requires [tokens, nonzero hidden] input",
             ));
         }
+        let rows=sort_token_rows(input,self.indices.clone(),self.experts,self.top_k)?;
+        Ok(DispatchedTokens {routing:self,values:rows.values,row_experts:rows.row_experts,offsets:rows.offsets,
+            slot_rows:rows.slot_rows,sorted_slots:rows.sorted_slots})
+    }
+}
+
+// Callers retain the private original valid IDs (native routing or validated received rows).
+pub(super) fn sort_token_rows<R:Runtime>(input:RudaTensor<R>,indices:RudaTensor<R>,experts:usize,top_k:usize) -> Result<RowDispatch<R>,MoeError> {
+        let tokens=input.meta.shape()[0];
         let hidden = input.meta.shape()[1];
-        let rows = elements(&[self.tokens, self.top_k])?;
+        let rows = elements(&[tokens, top_k])?;
         let size = elements(&[rows, hidden])?;
-        let offset_count = self
-            .experts
+        let offset_count = experts
             .checked_add(1)
             .ok_or(MoeError("MoE offset size overflow"))?;
         elements(&[offset_count])?;
-        let counts = empty(&input, [self.experts], DType::U32);
+        let counts = empty(&input, [experts], DType::U32);
         let offsets = empty(&input, [offset_count], DType::U32);
         let ranks = empty(&input, [rows], DType::U32);
         let sorted_slots = empty(&input, [rows], DType::U32);
         let slot_rows = empty(&input, [rows], DType::U32);
         let row_experts = empty(&input, [rows], DType::U32);
         let values = empty(&input, [rows, hidden], input.dtype);
-        let dim = RudaDim::new(input.client.properties(), self.experts);
+        let dim = RudaDim::new(input.client.properties(), experts);
         kernels::dispatch::clear_counts::launch::<R>(
             &input.client,
-            calculate_ruda_count_elemwise(&input.client, self.experts, dim),
+            calculate_ruda_count_elemwise(&input.client, experts, dim),
             dim,
             counts.clone().into_array_arg(),
         );
@@ -72,7 +84,7 @@ impl<R: Runtime> RoutingPlan<R> {
                 &input.client,
                 calculate_ruda_count_elemwise(&input.client, rows, dim),
                 dim,
-                self.indices.clone().into_array_arg(),
+                indices.clone().into_array_arg(),
                 counts.clone().into_array_arg(),
                 ranks.clone().into_array_arg(),
             );
@@ -91,7 +103,7 @@ impl<R: Runtime> RoutingPlan<R> {
                 &input.client,
                 calculate_ruda_count_elemwise(&input.client, rows, dim),
                 dim,
-                self.indices.clone().into_array_arg(),
+                indices.into_array_arg(),
                 ranks.into_array_arg(),
                 offsets.clone().into_array_arg(),
                 sorted_slots.clone().into_array_arg(),
@@ -108,19 +120,17 @@ impl<R: Runtime> RoutingPlan<R> {
                 sorted_slots.clone().into_array_arg(),
                 values.clone().into_array_arg(),
                 hidden as u32,
-                self.top_k as u32,
+                top_k as u32,
                 input.dtype.into(),
             );
         }
-        Ok(DispatchedTokens {
-            routing: self,
+        Ok(RowDispatch {
             values,
             row_experts,
             offsets,
             slot_rows,
             sorted_slots,
         })
-    }
 }
 
 /// Serial preserves the old reduction order; Plane is an explicit GPU tuning option.
@@ -143,6 +153,15 @@ impl<R: Runtime> DispatchedTokens<R> {
     }
     pub fn routing(&self) -> &RoutingPlan<R> {
         &self.routing
+    }
+    /// Retain the original valid discrete mappings and replace only explicitly supplied continuous weights.
+    pub fn with_weights(mut self,weights:RudaTensor<R>) -> Result<Self,MoeError> {
+        float_tensor(&weights)?;same_device(&self.values,&weights)?;
+        if weights.meta.shape()[..]!=[self.routing.tokens,self.routing.top_k] || weights.dtype!=DType::F32
+            || !weights.client.same_execution_queue(&self.values.client) {
+            return Err(MoeError("explicit training combine weights must be FP32 [tokens,top_k] on the original queue"));
+        }
+        self.routing.weights=into_contiguous(weights);Ok(self)
     }
 
     /// First-order backward of `combine`. Returns gradient for contiguous

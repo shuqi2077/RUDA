@@ -40,6 +40,19 @@ pub struct ExpertBackwardSelected<R:Runtime> {
     pub dinput:Option<RudaTensor<R>>,pub dgate:Option<RudaTensor<R>>,pub dup:Option<RudaTensor<R>>,pub ddown:Option<RudaTensor<R>>,
 }
 
+/// Private-producer native grouped expert inputs. Segments are constructed on device,
+/// not supplied as unchecked raw offsets by callers.
+#[derive(Debug,Clone)]
+pub struct GroupedExpertRows<R:Runtime> {
+    pub(super) values:RudaTensor<R>,pub(super) row_experts:RudaTensor<R>,pub(super) offsets:RudaTensor<R>,pub(super) experts:usize,
+}
+impl<R:Runtime> DispatchedTokens<R> {
+    /// Original native grouped rows, retaining valid private dispatch metadata.
+    pub fn grouped_rows(&self) -> GroupedExpertRows<R> {
+        GroupedExpertRows {values:self.values.clone(),row_experts:self.row_experts.clone(),offsets:self.offsets.clone(),experts:self.routing.experts}
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SwiGluExperts<R: Runtime> {
     gate: RudaTensor<R>,
@@ -93,15 +106,18 @@ impl<R: Runtime> SwiGluExperts<R> {
     pub fn forward_dispatched_with_strategy(
         &self, dispatched: &DispatchedTokens<R>, strategy: GroupedStrategy,
     ) -> Result<RudaTensor<R>, MoeError> {
+        self.forward_grouped_rows(&dispatched.grouped_rows(),strategy)
+    }
+    /// Execute original expert GEMM/SwiGLU kernels on a private-producer validated group.
+    pub fn forward_grouped_rows(&self,dispatched:&GroupedExpertRows<R>,strategy:GroupedStrategy) -> Result<RudaTensor<R>,MoeError> {
         same_device(&self.gate, &dispatched.values)?;
-        if dispatched.routing.experts != self.gate.meta.shape()[0]
+        if dispatched.experts != self.gate.meta.shape()[0]
             || dispatched.values.meta.shape()[1] != self.gate.meta.shape()[2]
             || dispatched.values.dtype != self.gate.dtype
         {
             return Err(MoeError("MoE dispatch and expert weights do not match"));
         }
-        // SAFETY: DispatchedTokens fields are private and RoutingPlan::dispatch
-        // constructs complete, monotone expert segments without token dropping.
+        // SAFETY: private native producers construct complete monotone expert segments without dropping rows.
         let product = |input, weights| unsafe {
             grouped_matmul_nt_segmented(input, weights, dispatched.row_experts.clone(),
                 dispatched.offsets.clone(), strategy)
@@ -136,8 +152,12 @@ impl<R: Runtime> SwiGluExperts<R> {
     /// first-order expert backward; routing/top-k selection remains caller-owned.
     pub fn forward_dispatched_training(&self, dispatched:&DispatchedTokens<R>, strategy:GroupedStrategy)
         ->Result<ExpertTrainingOutput<R>,MoeError> {
+        self.forward_grouped_training(&dispatched.grouped_rows(),strategy)
+    }
+    /// Original first-order expert training on private native dispatch or received-row groups.
+    pub fn forward_grouped_training(&self,dispatched:&GroupedExpertRows<R>,strategy:GroupedStrategy) -> Result<ExpertTrainingOutput<R>,MoeError> {
         same_device(&self.gate,&dispatched.values)?;
-        if dispatched.routing.experts!=self.gate.meta.shape()[0]
+        if dispatched.experts!=self.gate.meta.shape()[0]
             || dispatched.values.meta.shape()[1]!=self.gate.meta.shape()[2]
             || dispatched.values.dtype!=self.gate.dtype
         { return Err(MoeError("MoE training dispatch and expert weights do not match")); }

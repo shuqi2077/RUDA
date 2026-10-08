@@ -2,9 +2,11 @@ mod dispatch;
 mod experts;
 mod kernels;
 mod routing;
+mod received;
 
 pub use dispatch::{DispatchedTokens,CombineBackward,CombineGradientStrategy,CombineGradientSelection,CombineBackwardSelected};
-pub use experts::{SwiGluExperts,ExpertTrainingCache,ExpertTrainingOutput,ExpertBackward,ExpertGradientSelection,ExpertBackwardSelected};
+pub use experts::{SwiGluExperts,ExpertTrainingCache,ExpertTrainingOutput,ExpertBackward,ExpertGradientSelection,ExpertBackwardSelected,GroupedExpertRows};
+pub use received::ReceivedExpertRows;
 pub use routing::{RoutingOptions, RoutingPlan, route};
 
 use ruda_core::{
