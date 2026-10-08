@@ -301,3 +301,114 @@ pub fn max_pool3d_padded<B: Backend>(
     };
     max_pool3d(input, kernel_size, stride, padding, dilation, ceil_mode)
 }
+
+fn unpad_pool_indices<B: Backend, const D: usize, const N: usize>(
+    indices: Tensor<B, D, Int>,
+    input_size: [usize; N],
+    padding: [(usize, usize); N],
+) -> Tensor<B, D, Int> {
+    let padded_size: [usize; N] = core::array::from_fn(|axis| {
+        input_size[axis].checked_add(padding[axis].0)
+            .and_then(|size| size.checked_add(padding[axis].1))
+            .expect("padded pooling index extent overflow")
+    });
+    let padded_volume = padded_size.iter().try_fold(1usize,
+        |size, axis| size.checked_mul(*axis)).expect("padded pooling index volume overflow");
+    let input_volume = input_size.iter().try_fold(1usize,
+        |size, axis| size.checked_mul(*axis)).expect("pooling input index volume overflow");
+    assert!(padded_volume > 0 && padded_volume <= i64::MAX as usize
+        && input_volume <= i64::MAX as usize, "pooling indices cannot be represented in I64");
+    let indices = indices.cast(DType::I64);
+    if input_volume == 0 {
+        return indices.zeros_like().sub_scalar(1);
+    }
+    let mut invalid = indices.clone().lower_elem(0)
+        .bool_or(indices.clone().greater_equal_elem(padded_volume as i64));
+    let mut remaining = indices.clone().clamp(0, padded_volume as i64 - 1);
+    let mut unpadded = indices.zeros_like();
+    let mut input_stride = 1usize;
+    for axis in (0..N).rev() {
+        let coordinate = remaining.clone().remainder_scalar(padded_size[axis] as i64)
+            .sub_scalar(padding[axis].0 as i64);
+        remaining = remaining.div_scalar(padded_size[axis] as i64);
+        invalid = invalid.bool_or(coordinate.clone().lower_elem(0))
+            .bool_or(coordinate.clone().greater_equal_elem(input_size[axis] as i64));
+        unpadded = unpadded + coordinate.clamp(0, input_size[axis].saturating_sub(1) as i64)
+            .mul_scalar(input_stride as i64);
+        input_stride = input_stride.checked_mul(input_size[axis])
+            .expect("pooling input index stride overflow");
+    }
+    unpadded.mask_fill(invalid, -1)
+}
+
+/// Maximum pooling with asymmetric length padding and original input positions.
+///
+/// Native symmetric indices retain their backend storage. Asymmetric indices
+/// are remapped on the device to I64 input coordinates; padding selections and
+/// native invalid indices are `-1`. Values retain the native gradient graph.
+pub fn max_pool1d_with_indices_padded<B: Backend>(
+    input: Tensor<B, 3>,
+    kernel_size: usize,
+    stride: usize,
+    padding: [(usize, usize); 1],
+    dilation: usize,
+    ceil_mode: bool,
+) -> (Tensor<B, 3>, Tensor<B, 3, Int>) {
+    let [(left, right)] = padding;
+    if left == right {
+        return max_pool1d_with_indices(input, kernel_size, stride, left, dilation, ceil_mode);
+    }
+    let [_, _, length] = input.dims();
+    let (values, indices) = max_pool1d_with_indices(
+        input.pad(padding, PadMode::Constant(f32::NEG_INFINITY)),
+        kernel_size, stride, 0, dilation, ceil_mode,
+    );
+    (values, unpad_pool_indices(indices, [length], padding))
+}
+
+/// Maximum pooling with asymmetric spatial padding and original `h * W + w` indices.
+///
+/// Indices exclude materialized padding, using `-1` for padding selections.
+pub fn max_pool2d_with_indices_padded<B: Backend>(
+    input: Tensor<B, 4>,
+    kernel_size: [usize; 2],
+    stride: [usize; 2],
+    padding: [(usize, usize); 2],
+    dilation: [usize; 2],
+    ceil_mode: bool,
+) -> (Tensor<B, 4>, Tensor<B, 4, Int>) {
+    if padding.iter().all(|(start, end)| start == end) {
+        return max_pool2d_with_indices(input, kernel_size, stride,
+            padding.map(|(start, _)| start), dilation, ceil_mode);
+    }
+    let [_, _, height, width] = input.dims();
+    let (values, indices) = max_pool2d_with_indices(
+        input.pad(padding, PadMode::Constant(f32::NEG_INFINITY)),
+        kernel_size, stride, [0; 2], dilation, ceil_mode,
+    );
+    (values, unpad_pool_indices(indices, [height, width], padding))
+}
+
+/// Maximum volume pooling with asymmetric padding and original flattened positions.
+///
+/// Returned I64 indices address the unpadded depth/height/width volume. Invalid
+/// native indices and selected materialized padding are `-1`.
+pub fn max_pool3d_with_indices_padded<B: Backend>(
+    input: Tensor<B, 5>,
+    kernel_size: [usize; 3],
+    stride: [usize; 3],
+    padding: [(usize, usize); 3],
+    dilation: [usize; 3],
+    ceil_mode: bool,
+) -> (Tensor<B, 5>, Tensor<B, 5, Int>) {
+    if padding.iter().all(|(start, end)| start == end) {
+        return max_pool3d_with_indices(input, kernel_size, stride,
+            padding.map(|(start, _)| start), dilation, ceil_mode);
+    }
+    let [_, _, depth, height, width] = input.dims();
+    let (values, indices) = max_pool3d_with_indices(
+        input.pad(padding, PadMode::Constant(f32::NEG_INFINITY)),
+        kernel_size, stride, [0; 3], dilation, ceil_mode,
+    );
+    (values, unpad_pool_indices(indices, [depth, height, width], padding))
+}

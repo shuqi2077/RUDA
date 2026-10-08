@@ -3,9 +3,9 @@ use crate::{PaddingConfig1d, padding::dilated_kernel_size};
 use ruda_model::config::Config;
 use ruda_model::module::Module;
 use ruda_model::module::{Content, DisplaySettings, ModuleDisplay};
-use ruda_model::tensor::Tensor;
+use ruda_model::tensor::{Int, Tensor};
 use ruda_model::tensor::backend::Backend;
-use ruda_model::tensor::module::max_pool1d_padded;
+use ruda_model::tensor::module::{max_pool1d_padded, max_pool1d_with_indices_padded};
 
 /// Configuration to create a [1D max pooling](MaxPool1d) layer using the [init function](MaxPool1dConfig::init).
 #[derive(Config, Debug)]
@@ -79,6 +79,16 @@ impl MaxPool1dConfig {
 }
 
 impl MaxPool1d {
+    /// Pool activations and return positions in the original unpadded sequence.
+    pub fn forward_with_indices<B: Backend>(&self, input: Tensor<B, 3>)
+        -> (Tensor<B, 3>, Tensor<B, 3, Int>) {
+        let [_, _, length] = input.dims();
+        let padding = self.padding.calculate_padding_1d_pair(length,
+            dilated_kernel_size(self.kernel_size, self.dilation), self.stride);
+        max_pool1d_with_indices_padded(input, self.kernel_size, self.stride, [padding],
+            self.dilation, self.ceil_mode)
+    }
+
     /// Applies the forward pass on the input tensor.
     ///
     /// See [max_pool1d](ruda_tensor::api::module::max_pool1d) for more information.

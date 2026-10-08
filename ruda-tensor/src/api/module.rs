@@ -15,6 +15,8 @@ pub use super::spatial_interpolate::{interpolate1d, interpolate3d};
 pub use super::spatial_pool::{
     avg_pool1d_padded, avg_pool2d_padded, avg_pool3d_padded,
     max_pool1d_padded, max_pool2d_padded, max_pool3d_padded,
+    max_pool1d_with_indices_padded, max_pool2d_with_indices_padded,
+    max_pool3d_with_indices_padded,
 };
 
 /// Computes the [CTC loss](crate::api::ops::ModuleOps::ctc_loss).

@@ -2,7 +2,8 @@ use crate::{PaddingConfig3d, padding::dilated_kernel_size};
 use ruda_model::{
     config::Config,
     module::{Content, DisplaySettings, Module, ModuleDisplay},
-    tensor::{Tensor, backend::Backend, module::max_pool3d_padded},
+    tensor::{Int, Tensor, backend::Backend,
+        module::{max_pool3d_padded, max_pool3d_with_indices_padded}},
 };
 
 /// Configuration for maximum pooling over depth, height and width.
@@ -54,6 +55,20 @@ impl MaxPool3dConfig {
 }
 
 impl MaxPool3d {
+    /// Pool activations and return flattened positions in the unpadded input volume.
+    pub fn forward_with_indices<B: Backend>(&self, input: Tensor<B, 5>)
+        -> (Tensor<B, 5>, Tensor<B, 5, Int>) {
+        let [_, _, depth, height, width] = input.dims();
+        let effective = core::array::from_fn(|axis| {
+            dilated_kernel_size(self.kernel_size[axis], self.dilation[axis])
+        });
+        let padding = self.padding.calculate_padding_3d_pairs(
+            &[depth, height, width], &effective, &self.stride,
+        );
+        max_pool3d_with_indices_padded(input, self.kernel_size, self.stride, padding,
+            self.dilation, self.ceil_mode)
+    }
+
     /// Reduce a volume using the configured native pooling operations.
     pub fn forward<B: Backend>(&self, input: Tensor<B, 5>) -> Tensor<B, 5> {
         let [_, _, depth, height, width] = input.dims();

@@ -3,9 +3,9 @@ use crate::{PaddingConfig2d, padding::dilated_kernel_size};
 use ruda_model::config::Config;
 use ruda_model::module::Module;
 use ruda_model::module::{Content, DisplaySettings, ModuleDisplay};
-use ruda_model::tensor::Tensor;
+use ruda_model::tensor::{Int, Tensor};
 use ruda_model::tensor::backend::Backend;
-use ruda_model::tensor::module::max_pool2d_padded;
+use ruda_model::tensor::module::{max_pool2d_padded, max_pool2d_with_indices_padded};
 
 /// Configuration to create a [2D max pooling](MaxPool2d) layer using the [init function](MaxPool2dConfig::init).
 #[derive(Debug, Config)]
@@ -79,6 +79,20 @@ impl MaxPool2dConfig {
 }
 
 impl MaxPool2d {
+    /// Pool activations and return flattened positions in the unpadded input plane.
+    pub fn forward_with_indices<B: Backend>(&self, input: Tensor<B, 4>)
+        -> (Tensor<B, 4>, Tensor<B, 4, Int>) {
+        let [_, _, height, width] = input.dims();
+        let effective = core::array::from_fn(|axis| {
+            dilated_kernel_size(self.kernel_size[axis], self.dilation[axis])
+        });
+        let (height_padding, width_padding) = self.padding.calculate_padding_2d_pairs(
+            height, width, &effective, &self.stride,
+        );
+        max_pool2d_with_indices_padded(input, self.kernel_size, self.stride,
+            [height_padding, width_padding], self.dilation, self.ceil_mode)
+    }
+
     /// Applies the forward pass on the input tensor.
     ///
     /// See [max_pool2d](ruda_tensor::api::module::max_pool2d) for more information.
