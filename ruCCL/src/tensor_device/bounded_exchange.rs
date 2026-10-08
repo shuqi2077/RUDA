@@ -74,7 +74,7 @@ impl<B: Backend> RankCommunicator<TensorDevice<B>> {
         }
         let rows = rows.expect("collectively validated row axis");
         let element_type = native_element_type(dtype)?;
-        let tail = Shape::new(shape[1..].to_vec());
+        let tail = Shape::from(shape[1..].to_vec());
         self.native_chunk_agreement(&tail, element_type, 0x300, max_chunk_bytes)?;
         let row_elements = tail.iter().try_fold(1usize, |count, dimension| count.checked_mul(*dimension))
             .filter(|count| *count != 0).ok_or(TensorDeviceError::InvalidBuffer("variable-row trailing axes are zero or overflowed"))?;
