@@ -1,7 +1,7 @@
 [package]
 edition = "2024"
 name = "ruda-optim"
-version = "0.21.49"
+version = "0.21.50"
 authors = [ "nathanielsimard <nathaniel.simard.42@gmail.com>",]
 build = false
 autolib = false
@@ -54,13 +54,13 @@ required-features = ["std", "collective"]
 [dependencies.ruccl]
 package = "ruCCL"
 path = "../ruCCL"
-version = "0.21.39"
+version = "0.21.40"
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-remote]
 path = "../ruda-tensor-remote"
-version = "0.21.35"
+version = "0.21.36"
 optional = true
 default-features = false
 
@@ -72,13 +72,13 @@ default-features = false
 
 [dependencies.ruda-tensor-router]
 path = "../ruda-tensor-router"
-version = "0.21.36"
+version = "0.21.37"
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-tch]
 path = "../ruda-tensor-tch"
-version = "0.21.47"
+version = "0.21.48"
 features = [ "default",]
 optional = true
 default-features = false
@@ -115,7 +115,7 @@ default-features = false
 [dependencies.ruda-model]
 default-features = false
 path = "../ruda-model"
-version = "0.21.43"
+version = "0.21.44"
 
 [dependencies.ruda-tensor-device]
 optional = true
