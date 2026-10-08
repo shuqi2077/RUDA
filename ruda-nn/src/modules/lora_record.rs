@@ -4,7 +4,7 @@ use ruda_model::{
     record::{PrecisionSettings,Record,Recorder,RecorderError},
     tensor::{DType,backend::Backend},
 };
-use crate::{Linear,LoRALinear};
+use crate::{Linear,LoRALinear,QuantizedLoRALinear};
 
 /// Caller-identified frozen base and the actual adapter continuation contract.
 #[derive(Clone,Debug,PartialEq)]
@@ -122,6 +122,23 @@ impl LoRAAdapterSchema {
 }
 
 impl<B: Backend> LoRAAdapterRecord<B> {
+    /// Capture actual A/B leaves over a generic packed base; full QuantScheme is retained in dtype metadata.
+    pub fn capture_quantized(layer:&QuantizedLoRALinear<B>,base_id:&str) -> Result<Self,RecorderError> {
+        let schema = LoRAAdapterSchema::capture_quantized(layer,base_id)?;
+        Self::capture_adapters(schema,&layer.adapter_a,&layer.adapter_b)
+    }
+
+    /// Restore only actual adapters; the original packed codes/scales and base IDs are unchanged.
+    pub fn restore_into_quantized(self,layer:QuantizedLoRALinear<B>,base_id:&str) -> Result<QuantizedLoRALinear<B>,RecorderError> {
+        self.schema.validate_quantized(&layer,base_id)?;
+        let schema = self.schema.clone();
+        let device = layer.base.weight.val().device();
+        let (a,b) = self.restore_adapters(layer.adapter_a,layer.adapter_b,&device)?;
+        let layer = QuantizedLoRALinear {base:layer.base,adapter_a:a,adapter_b:b,dropout:layer.dropout,scale:layer.scale};
+        schema.validate_quantized(&layer,base_id)?;
+        Ok(layer)
+    }
+
     /// Pin only actual A/B values and per-parameter dtypes at a caller-owned boundary.
     /// Frozen base handles/values are never retained in this record.
     pub fn capture(layer: &LoRALinear<B>,base_id: &str) -> Result<Self,RecorderError> {
@@ -162,6 +179,50 @@ impl<B: Backend> LoRAAdapterRecord<B> {
         let b = adapter_b.load_record(self.adapter_b).fork(device);
         let (a,b) = self.dtypes.apply((a,b))?;
         Ok((a,b))
+    }
+}
+
+impl LoRAAdapterSchema {
+    /// Original packed-base and A/B continuation contract without downloading or decoding the base.
+    pub fn capture_quantized<B:Backend>(layer:&QuantizedLoRALinear<B>,base_id:&str) -> Result<Self,RecorderError> {
+        if base_id.is_empty() {return Err(invalid("nonempty exact frozen base identity required"));}
+        let base = layer.base.weight.val();
+        let [output,input] = base.dims();
+        if input == 0 || output == 0 || !matches!(base.dtype(),DType::QFloat(_)) || base.is_require_grad() {
+            return Err(invalid("generic packed base geometry/storage/frozen setting differs"));
+        }
+        let bias_dtype = if let Some(bias) = &layer.base.bias {
+            let bias = bias.val();
+            if bias.dims() != [output] || bias.device() != base.device() || bias.is_require_grad()
+                || !matches!(bias.dtype(),DType::F16|DType::BF16|DType::F32) {
+                return Err(invalid("packed base bias geometry/device/frozen storage differs"));
+            }
+            Some(bias.dtype())
+        } else {None};
+        let a = layer.adapter_a.weight.val(); let b = layer.adapter_b.weight.val();
+        let [a_input,rank] = a.dims();
+        if rank == 0 || a_input != input || b.dims() != [rank,output] || a.device() != base.device() || b.device() != base.device()
+            || layer.adapter_a.bias.is_some() || layer.adapter_b.bias.is_some()
+            || !matches!(a.dtype(),DType::F16|DType::BF16|DType::F32) || !matches!(b.dtype(),DType::F16|DType::BF16|DType::F32) {
+            return Err(invalid("packed adapter A/B geometry/device/storage differs"));
+        }
+        if !layer.scale.is_finite() || !layer.dropout.prob.is_finite() || !(0.0..1.0).contains(&layer.dropout.prob) {
+            return Err(invalid("invalid packed adapter multiplier/dropout"));
+        }
+        Ok(Self {version:1,base_id:base_id.into(),base_shape:[input,output],base_dtype:base.dtype(),base_bias_dtype:bias_dtype,
+            rank,scale:layer.scale,dropout:layer.dropout.prob,trainable:[a.is_require_grad(),b.is_require_grad()]})
+    }
+
+    /// Check exact packed format/block/scale metadata and actual continuation semantics before replacing A/B.
+    pub fn validate_quantized<B:Backend>(&self,layer:&QuantizedLoRALinear<B>,base_id:&str) -> Result<(),RecorderError> {
+        let actual = Self::capture_quantized(layer,base_id)?;
+        if self.version != 1 || self.base_id != actual.base_id || self.base_shape != actual.base_shape
+            || self.base_dtype != actual.base_dtype || self.base_bias_dtype != actual.base_bias_dtype
+            || self.rank != actual.rank || self.trainable != actual.trainable
+            || self.scale.to_bits() != actual.scale.to_bits() || self.dropout.to_bits() != actual.dropout.to_bits() {
+            return Err(invalid("packed base, format, geometry or adapter continuation configuration differs"));
+        }
+        Ok(())
     }
 }
 

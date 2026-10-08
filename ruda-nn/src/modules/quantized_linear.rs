@@ -141,6 +141,18 @@ impl LoRALinearConfig {
 }
 
 impl<B: Backend> QuantizedLoRALinear<B> {
+    /// Convert only A/B storage, retaining parameter IDs, trainability and the entire packed base.
+    pub fn with_adapter_dtype(mut self, dtype: FloatDType) -> Self {
+        assert!(matches!(dtype, FloatDType::F16 | FloatDType::BF16 | FloatDType::F32), "adapter precision requires FP16/BF16/FP32");
+        self.adapter_a.weight = self.adapter_a.weight.map(|value| {
+            let trainable = value.is_require_grad(); value.cast(dtype).detach().set_require_grad(trainable)
+        });
+        self.adapter_b.weight = self.adapter_b.weight.map(|value| {
+            let trainable = value.is_require_grad(); value.cast(dtype).detach().set_require_grad(trainable)
+        });
+        self
+    }
+
     /// Packed base output plus actual mixed-storage adapter update; output retains base activation storage.
     pub fn forward<const D: usize>(&self, input: Tensor<B, D>) -> Tensor<B, D> {
         let adapted = self.dropout.forward(input.clone().cast(self.adapter_a.weight.val().dtype()));
@@ -149,5 +161,15 @@ impl<B: Backend> QuantizedLoRALinear<B> {
         let base = self.base.forward(input);
         let dtype = base.dtype();
         base + update.cast(dtype)
+    }
+
+    /// Explicit base activation arithmetic; adapter storage and packed metadata are unchanged.
+    pub fn forward_with_dtype<const D: usize>(&self, input: Tensor<B, D>, dtype: FloatDType) -> Tensor<B, D> {
+        self.forward(input.cast(dtype))
+    }
+
+    /// A/B-only continuation record; frozen INT2/4/8 or FP4/FP8 payload is not copied.
+    pub fn adapter_record(&self, base_id: &str) -> Result<crate::LoRAAdapterRecord<B>, ruda_model::record::RecorderError> {
+        crate::LoRAAdapterRecord::capture_quantized(self, base_id)
     }
 }

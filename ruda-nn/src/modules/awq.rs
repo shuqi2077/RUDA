@@ -71,6 +71,12 @@ impl<B: Backend> FrozenAwqLinear<B> {
 }
 
 impl<B: FrozenAwqOps> FrozenAwqLinear<B> {
+    /// Select FP16/BF16/FP32 activation computation without converting original AWQ scales or words.
+    pub fn forward_with_dtype<const D: usize>(&self, input: Tensor<B, D>, dtype: ruda_model::tensor::FloatDType)
+        -> Result<Tensor<B, D>, B::AwqError> {
+        self.forward(input.cast(dtype))
+    }
+
     /// Packed projection for arbitrary supported leading axes. Output retains
     /// activation storage and autograd reaches earlier trainable layers.
     pub fn forward<const D: usize>(&self, input: Tensor<B, D>) -> Result<Tensor<B, D>, B::AwqError> {
@@ -141,6 +147,12 @@ impl LoRALinearConfig {
 }
 
 impl<B: FrozenAwqOps> AwqLoRALinear<B> {
+    /// Explicit base activation storage; A/B and original quantization metadata retain their dtypes.
+    pub fn forward_with_dtype<const D: usize>(&self, input: Tensor<B, D>, dtype: ruda_model::tensor::FloatDType)
+        -> Result<Tensor<B, D>, B::AwqError> {
+        self.forward(input.cast(dtype))
+    }
+
     /// Original packed base plus scaled floating low-rank residual. Both paths
     /// retain their input derivatives, including through multiple adapted layers.
     pub fn forward<const D: usize>(&self, input: Tensor<B, D>) -> Result<Tensor<B, D>, B::AwqError> {

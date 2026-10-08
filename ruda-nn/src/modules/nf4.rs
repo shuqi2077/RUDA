@@ -114,6 +114,10 @@ impl<B:Backend> FrozenNf4Linear<B> {
     }
 }
 impl<B:FrozenNf4Ops> FrozenNf4Linear<B> {
+    /// Select FP16/BF16/FP32 activation arithmetic; original NF4 bytes/scales/codebook are not cast.
+    pub fn forward_with_dtype<const D:usize>(&self,input:Tensor<B,D>,dtype:ruda_model::tensor::FloatDType)
+        -> Result<Tensor<B,D>,B::Nf4Error> {self.forward(input.cast(dtype))}
+
     /// Original packed native projection, retaining all actual leading activation axes.
     pub fn forward<const D:usize>(&self,input:Tensor<B,D>) -> Result<Tensor<B,D>,B::Nf4Error> {
         self.validate();B::frozen_nf4_forward(input.into_primitive().tensor(),self.packed.val().into_primitive(),self.scales.val().into_primitive().tensor(),
@@ -163,6 +167,10 @@ impl LoRALinearConfig {
     }
 }
 impl<B:FrozenNf4Ops> Nf4LoRALinear<B> {
+    /// Explicit base activation precision, independent of A/B storage and packed NF4 metadata.
+    pub fn forward_with_dtype<const D:usize>(&self,input:Tensor<B,D>,dtype:ruda_model::tensor::FloatDType)
+        -> Result<Tensor<B,D>,B::Nf4Error> {self.forward(input.cast(dtype))}
+
     /// Original packed base and scaled native low-rank residual, with real first-order derivatives to input/A/B.
     pub fn forward<const D:usize>(&self,input:Tensor<B,D>) -> Result<Tensor<B,D>,B::Nf4Error> {
         let base=self.base.forward(input.clone())?;
