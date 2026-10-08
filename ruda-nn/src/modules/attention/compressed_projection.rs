@@ -97,7 +97,7 @@ impl<B: Backend> CompressedAttentionProjection<B> for AdaptedProjection<B> {
 
 impl<B: Backend, P: CompressedAttentionProjection<B>> LearnedKVCompressor<B, P> {
     /// Visit real value/gate modules, without accessing activation or parameter values on the host.
-    pub fn visit_projections(&self, mut visitor: impl FnMut(KVCompressionProjectionRole, &P)) {
+    pub fn visit_projections<'a>(&'a self, mut visitor: impl FnMut(KVCompressionProjectionRole, &'a P)) {
         visitor(KVCompressionProjectionRole::Value, &self.value);
         visitor(KVCompressionProjectionRole::Gate, &self.gate);
     }
@@ -111,7 +111,7 @@ impl<B: Backend, P: CompressedAttentionProjection<B>> LearnedKVCompressor<B, P> 
 }
 
 impl<B: Backend, P: CompressedAttentionProjection<B>> LightningIndexer<B, P> {
-    pub fn visit_projections(&self, mut visitor: impl FnMut(IndexerProjectionRole, &P)) {
+    pub fn visit_projections<'a>(&'a self, mut visitor: impl FnMut(IndexerProjectionRole, &'a P)) {
         visitor(IndexerProjectionRole::Query, &self.query);
         visitor(IndexerProjectionRole::HeadWeight, &self.head_weight);
         if let Some(key) = &self.key { visitor(IndexerProjectionRole::Key, key); }
@@ -130,7 +130,7 @@ impl<B: Backend, P: CompressedAttentionProjection<B>> LightningIndexer<B, P> {
 
 impl<B: Backend, P: CompressedAttentionProjection<B>> CompressedAttention<B, P> {
     /// Traverse only roles that actually exist in this CSA/HCA layer.
-    pub fn visit_projections(&self, mut visitor: impl FnMut(CompressedAttentionProjectionRole, &P)) {
+    pub fn visit_projections<'a>(&'a self, mut visitor: impl FnMut(CompressedAttentionProjectionRole, &'a P)) {
         use CompressedAttentionProjectionRole as Role;
         visitor(Role::QueryDown, &self.parts.query_down);
         visitor(Role::QueryUp, &self.parts.query_up);

@@ -2,7 +2,8 @@ use alloc::vec::Vec;
 use ruda_model::{config::Config, module::{Initializer, Module, Param},
     tensor::{Bool, DType, FloatDType, Int, Tensor, backend::Backend}};
 use crate::{Embedding, EmbeddingConfig, Linear, LinearConfig, Mhc, MhcConfig,
-    attention::{CompressedAttention, CompressedAttentionConfig, CompressedAttentionOutput, CompressedAttentionSession}};
+    attention::{CompressedAttention, CompressedAttentionConfig, CompressedAttentionOutput, CompressedAttentionSession, CompressedAttentionProjection}};
+use super::HybridTiedEmbeddingAdapter;
 
 fn normalized<B: Backend>(input: Tensor<B, 3>, weight: &Param<Tensor<B, 1>>, epsilon: f64) -> Tensor<B, 3> {
     let storage = input.dtype();
@@ -35,15 +36,15 @@ pub struct MhcTransformerBlockConfig {
 
 /// mHC attention and gated SiLU FFN, retaining stream state across both sublayers.
 #[derive(Module, Debug)]
-pub struct MhcTransformerBlock<B: Backend> {
+pub struct MhcTransformerBlock<B: Backend, P: Module<B> = Linear<B>> {
     pub attention_connection: Mhc<B>,
     pub ffn_connection: Mhc<B>,
-    pub attention: CompressedAttention<B>,
+    pub attention: CompressedAttention<B, P>,
     pub attention_norm: Param<Tensor<B, 1>>,
     pub ffn_norm: Param<Tensor<B, 1>>,
-    pub gate: Linear<B>,
-    pub up: Linear<B>,
-    pub down: Linear<B>,
+    pub gate: P,
+    pub up: P,
+    pub down: P,
     pub epsilon: f64,
 }
 
@@ -68,26 +69,26 @@ impl MhcTransformerBlockConfig {
     }
 }
 
-impl<B: Backend> MhcTransformerBlock<B> {
+impl<B: Backend, P: CompressedAttentionProjection<B>> MhcTransformerBlock<B, P> {
     /// Connect original loaded branches and two independent residual mappings without reinitialization.
-    pub fn from_parts(attention_connection: Mhc<B>, ffn_connection: Mhc<B>, attention: CompressedAttention<B>,
-        attention_norm: Param<Tensor<B, 1>>, ffn_norm: Param<Tensor<B, 1>>, gate: Linear<B>, up: Linear<B>,
-        down: Linear<B>, epsilon: f64) -> Self {
+    pub fn from_parts(attention_connection: Mhc<B>, ffn_connection: Mhc<B>, attention: CompressedAttention<B, P>,
+        attention_norm: Param<Tensor<B, 1>>, ffn_norm: Param<Tensor<B, 1>>, gate: P, up: P,
+        down: P, epsilon: f64) -> Self {
         let width = attention.width;
         assert!(epsilon.is_finite() && epsilon > 0.0, "invalid hybrid block epsilon");
         assert_eq!((attention_connection.width, ffn_connection.width), (width, width), "hybrid connection widths differ");
         assert_eq!(attention_connection.streams, ffn_connection.streams, "hybrid residual stream counts differ");
         assert_eq!(attention_norm.val().dims(), [width], "hybrid attention normalization width differs");
         assert_eq!(ffn_norm.val().dims(), [width], "hybrid FFN normalization width differs");
-        let [up_input, hidden] = up.weight.val().dims();
+        let [up_input, hidden] = up.dimensions();
         assert!(hidden > 0, "hybrid FFN intermediate width must be positive");
         assert_eq!(up_input, width, "hybrid FFN input width differs");
-        assert_eq!(gate.weight.val().dims(), [width, hidden], "hybrid gate/value geometry differs");
-        assert_eq!(down.weight.val().dims(), [hidden, width], "hybrid FFN output geometry differs");
-        let device = attention.parts.query_down.weight.val().device();
+        assert_eq!(gate.dimensions(), [width, hidden], "hybrid gate/value geometry differs");
+        assert_eq!(down.dimensions(), [hidden, width], "hybrid FFN output geometry differs");
+        let device = attention.parts.query_down.device();
         for projection in [&gate, &up, &down] {
-            assert!(projection.bias.is_none(), "hybrid gated FFN projections must be bias-free");
-            assert_eq!(projection.weight.val().device(), device, "hybrid FFN device differs");
+            assert!(!projection.has_bias(), "hybrid gated FFN projections must be bias-free");
+            assert_eq!(projection.device(), device, "hybrid FFN device differs");
         }
         assert!(attention_norm.val().device() == device && ffn_norm.val().device() == device
             && attention_connection.mapping.val().device() == device && ffn_connection.mapping.val().device() == device,
@@ -124,19 +125,19 @@ impl<B: Backend> MhcTransformerBlock<B> {
         MhcTransformerOutput { state: self.finish(state, attention.output, mappings, valid), indexer_loss: attention.indexer_loss }
     }
 
-    pub fn inference_session(&self) -> MhcTransformerSession<'_, B> {
+    pub fn inference_session(&self) -> MhcTransformerSession<'_, B, P> {
         MhcTransformerSession { block: self, attention: self.attention.inference_session() }
     }
 }
 
 /// Incremental state bound to the unchanged attention, mHC and FFN parameters.
 #[derive(Debug)]
-pub struct MhcTransformerSession<'a, B: Backend> {
-    block: &'a MhcTransformerBlock<B>,
-    attention: CompressedAttentionSession<'a, B>,
+pub struct MhcTransformerSession<'a, B: Backend, P: Module<B> = Linear<B>> {
+    block: &'a MhcTransformerBlock<B, P>,
+    attention: CompressedAttentionSession<'a, B, P>,
 }
 
-impl<'a, B: Backend> MhcTransformerSession<'a, B> {
+impl<'a, B: Backend, P: CompressedAttentionProjection<B>> MhcTransformerSession<'a, B, P> {
     pub fn position(&self) -> usize { self.attention.position() }
     pub fn clear(&mut self) { self.attention.clear(); }
     pub fn reorder(&mut self, parents: Tensor<B, 1, Int>) { self.attention.reorder(parents); }
@@ -172,9 +173,9 @@ pub struct HybridAttentionBackboneConfig {
 
 /// Trainable embedding, explicit heterogeneous compressed/mHC blocks and final RMS weight.
 #[derive(Module, Debug)]
-pub struct HybridAttentionBackbone<B: Backend> {
+pub struct HybridAttentionBackbone<B: Backend, P: Module<B> = Linear<B>> {
     pub embedding: Embedding<B>,
-    pub layers: Vec<MhcTransformerBlock<B>>,
+    pub layers: Vec<MhcTransformerBlock<B, P>>,
     pub final_norm: Param<Tensor<B, 1>>,
     pub epsilon: f64,
 }
@@ -188,8 +189,8 @@ impl HybridAttentionBackboneConfig {
     }
 }
 
-impl<B: Backend> HybridAttentionBackbone<B> {
-    pub fn from_parts(embedding: Embedding<B>, layers: Vec<MhcTransformerBlock<B>>, final_norm: Param<Tensor<B, 1>>, epsilon: f64) -> Self {
+impl<B: Backend, P: CompressedAttentionProjection<B>> HybridAttentionBackbone<B, P> {
+    pub fn from_parts(embedding: Embedding<B>, layers: Vec<MhcTransformerBlock<B, P>>, final_norm: Param<Tensor<B, 1>>, epsilon: f64) -> Self {
         let [vocab, width] = embedding.weight.val().dims();
         assert!(vocab > 0 && width > 0 && !layers.is_empty() && epsilon.is_finite() && epsilon > 0.0,
             "invalid loaded hybrid backbone geometry/epsilon");
@@ -200,7 +201,7 @@ impl<B: Backend> HybridAttentionBackbone<B> {
         for layer in &layers {
             assert_eq!((layer.attention.width, layer.attention_connection.streams, layer.ffn_connection.streams),
                 (width, streams, streams), "hybrid layer width/stream geometry differs");
-            assert_eq!(layer.attention.parts.query_down.weight.val().device(), device, "hybrid layer device differs");
+            assert_eq!(layer.attention.parts.query_down.device(), device, "hybrid layer device differs");
         }
         Self { embedding, layers, final_norm, epsilon }
     }
@@ -240,19 +241,19 @@ impl<B: Backend> HybridAttentionBackbone<B> {
         }
     }
 
-    pub fn inference_session(&self) -> HybridAttentionBackboneSession<'_, B> {
+    pub fn inference_session(&self) -> HybridAttentionBackboneSession<'_, B, P> {
         HybridAttentionBackboneSession { backbone: self, layers: self.layers.iter().map(MhcTransformerBlock::inference_session).collect() }
     }
 }
 
 /// Exact same borrowed layer set for arbitrary-size prefill/decode chunks.
 #[derive(Debug)]
-pub struct HybridAttentionBackboneSession<'a, B: Backend> {
-    backbone: &'a HybridAttentionBackbone<B>,
-    layers: Vec<MhcTransformerSession<'a, B>>,
+pub struct HybridAttentionBackboneSession<'a, B: Backend, P: Module<B> = Linear<B>> {
+    backbone: &'a HybridAttentionBackbone<B, P>,
+    layers: Vec<MhcTransformerSession<'a, B, P>>,
 }
 
-impl<'a, B: Backend> HybridAttentionBackboneSession<'a, B> {
+impl<'a, B: Backend, P: CompressedAttentionProjection<B>> HybridAttentionBackboneSession<'a, B, P> {
     pub fn position(&self) -> usize {
         let position = self.layers[0].position();
         assert!(self.layers.iter().all(|layer| layer.position() == position), "hybrid layer cache positions differ");
@@ -294,38 +295,41 @@ impl<'a, B: Backend> HybridAttentionBackboneSession<'a, B> {
 
 /// Actual untied linear output or a view of the existing embedding leaf.
 #[derive(Module, Debug)]
-pub enum HybridAttentionHead<B: Backend> {
-    Linear(Linear<B>),
+pub enum HybridAttentionHead<B: Backend, P: Module<B> = Linear<B>> {
+    Linear(P),
     TiedEmbedding(core::marker::PhantomData<B>),
+    TiedEmbeddingLoRA(HybridTiedEmbeddingAdapter<B>),
 }
 
-impl<B: Backend> HybridAttentionHead<B> {
+impl<B: Backend, P: CompressedAttentionProjection<B>> HybridAttentionHead<B, P> {
     pub(super) fn forward(&self, hidden: Tensor<B, 3>, embedding: &Embedding<B>) -> Tensor<B, 3> {
         match self {
             Self::Linear(head) => head.forward(hidden),
             Self::TiedEmbedding(_) => hidden.matmul(embedding.weight.val().transpose().unsqueeze::<3>()),
+            Self::TiedEmbeddingLoRA(adapter) => adapter.forward(hidden, embedding),
         }
     }
 }
 
 /// Complete native generic compressed/mHC language model with optional true embedding tie.
 #[derive(Module, Debug)]
-pub struct HybridAttentionLanguageModel<B: Backend> {
-    pub backbone: HybridAttentionBackbone<B>,
-    pub head: HybridAttentionHead<B>,
+pub struct HybridAttentionLanguageModel<B: Backend, P: Module<B> = Linear<B>> {
+    pub backbone: HybridAttentionBackbone<B, P>,
+    pub head: HybridAttentionHead<B, P>,
 }
 
-impl<B: Backend> HybridAttentionLanguageModel<B> {
-    pub fn from_parts(backbone: HybridAttentionBackbone<B>, head: HybridAttentionHead<B>) -> Self {
+impl<B: Backend, P: CompressedAttentionProjection<B>> HybridAttentionLanguageModel<B, P> {
+    pub fn from_parts(backbone: HybridAttentionBackbone<B, P>, head: HybridAttentionHead<B, P>) -> Self {
         if let HybridAttentionHead::Linear(head) = &head {
             let [vocab, width] = backbone.embedding.weight.val().dims();
-            assert_eq!(head.weight.val().dims(), [width, vocab], "hybrid language head geometry differs");
-            assert_eq!(head.weight.val().device(), backbone.embedding.weight.val().device(), "hybrid language head device differs");
+            assert_eq!(head.dimensions(), [width, vocab], "hybrid language head geometry differs");
+            assert_eq!(head.device(), backbone.embedding.weight.val().device(), "hybrid language head device differs");
         }
+        if let HybridAttentionHead::TiedEmbeddingLoRA(adapter) = &head { adapter.validate(&backbone.embedding); }
         Self { backbone, head }
     }
 
-    pub fn with_tied_embeddings(backbone: HybridAttentionBackbone<B>) -> Self {
+    pub fn with_tied_embeddings(backbone: HybridAttentionBackbone<B, P>) -> Self {
         Self::from_parts(backbone, HybridAttentionHead::TiedEmbedding(core::marker::PhantomData))
     }
 
@@ -339,18 +343,18 @@ impl<B: Backend> HybridAttentionLanguageModel<B> {
         CompressedAttentionOutput { output: self.head.forward(result.output, &self.backbone.embedding), indexer_loss: result.indexer_loss }
     }
 
-    pub fn inference_session(&self) -> HybridAttentionLanguageSession<'_, B> {
+    pub fn inference_session(&self) -> HybridAttentionLanguageSession<'_, B, P> {
         HybridAttentionLanguageSession { model: self, backbone: self.backbone.inference_session() }
     }
 }
 
 #[derive(Debug)]
-pub struct HybridAttentionLanguageSession<'a, B: Backend> {
-    model: &'a HybridAttentionLanguageModel<B>,
-    backbone: HybridAttentionBackboneSession<'a, B>,
+pub struct HybridAttentionLanguageSession<'a, B: Backend, P: Module<B> = Linear<B>> {
+    model: &'a HybridAttentionLanguageModel<B, P>,
+    backbone: HybridAttentionBackboneSession<'a, B, P>,
 }
 
-impl<'a, B: Backend> HybridAttentionLanguageSession<'a, B> {
+impl<'a, B: Backend, P: CompressedAttentionProjection<B>> HybridAttentionLanguageSession<'a, B, P> {
     pub fn position(&self) -> usize { self.backbone.position() }
     pub fn clear(&mut self) { self.backbone.clear(); }
     pub fn reorder(&mut self, parents: Tensor<B, 1, Int>) { self.backbone.reorder(parents); }

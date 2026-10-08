@@ -1,5 +1,5 @@
 use ruda_model::tensor::{Bool, Int, Tensor, backend::Backend};
-use crate::{attention::PackedSequenceLayout, loss::{CausalLanguageModel, PackedCausalLanguageModel, CausalCrossEntropyConfig, CausalLoss}};
+use crate::{attention::{PackedSequenceLayout, CompressedAttentionProjection}, loss::{CausalLanguageModel, PackedCausalLanguageModel, CausalCrossEntropyConfig, CausalLoss}};
 use super::HybridAttentionLanguageModel;
 
 /// Unnormalized supervised loss/token count plus the independent layer-summed indexer KL.
@@ -17,7 +17,7 @@ pub struct HybridPackedLanguageTrainingOutput<B: Backend> {
     pub document_indexer_losses: Tensor<B, 1>,
 }
 
-impl<B: Backend> CausalLanguageModel<B> for HybridAttentionLanguageModel<B> {
+impl<B: Backend, P: CompressedAttentionProjection<B>> CausalLanguageModel<B> for HybridAttentionLanguageModel<B, P> {
     fn forward_hidden(&self, tokens: Tensor<B, 2, Int>) -> Tensor<B, 3> {
         self.backbone.forward(tokens, None)
     }
@@ -25,7 +25,7 @@ impl<B: Backend> CausalLanguageModel<B> for HybridAttentionLanguageModel<B> {
     fn project(&self, hidden: Tensor<B, 2>) -> Tensor<B, 2> { self.project_tokens(hidden) }
 }
 
-impl<B: Backend> PackedCausalLanguageModel<B> for HybridAttentionLanguageModel<B> {
+impl<B: Backend, P: CompressedAttentionProjection<B>> PackedCausalLanguageModel<B> for HybridAttentionLanguageModel<B, P> {
     fn forward_packed_hidden(&self, tokens: Tensor<B, 1, Int>, layout: &PackedSequenceLayout) -> Tensor<B, 2> {
         self.backbone.forward_packed(tokens, layout, None)
     }
@@ -33,7 +33,7 @@ impl<B: Backend> PackedCausalLanguageModel<B> for HybridAttentionLanguageModel<B
     fn project(&self, hidden: Tensor<B, 2>) -> Tensor<B, 2> { self.project_tokens(hidden) }
 }
 
-impl<B: Backend> HybridAttentionLanguageModel<B> {
+impl<B: Backend, P: CompressedAttentionProjection<B>> HybridAttentionLanguageModel<B, P> {
     /// Reuse the exact existing shifted/ignored-label and bounded-token full-vocabulary
     /// cross entropy. Attention visibility is supplied separately, never inferred from labels.
     pub fn causal_loss(&self, tokens: Tensor<B, 2, Int>, labels: Tensor<B, 2, Int>,

@@ -1,9 +1,9 @@
 use alloc::vec::Vec;
 use ruda_model::tensor::{Bool, DType, Int, Tensor, backend::Backend};
-use crate::attention::{PackedSequenceLayout, PackedCompressedAttentionOutput};
+use crate::attention::{PackedSequenceLayout, PackedCompressedAttentionOutput, CompressedAttentionProjection};
 use super::{HybridAttentionBackbone, HybridAttentionLanguageModel};
 
-impl<B: Backend> HybridAttentionBackbone<B> {
+impl<B: Backend, P: CompressedAttentionProjection<B>> HybridAttentionBackbone<B, P> {
     /// Native full backbone over actual packed documents with no synthetic separator,
     /// no inter-document compression/window visibility and no global token-square mask.
     pub fn forward_packed(&self, tokens: Tensor<B, 1, Int>, layout: &PackedSequenceLayout,
@@ -60,7 +60,7 @@ impl<B: Backend> HybridAttentionBackbone<B> {
     }
 }
 
-impl<B: Backend> HybridAttentionLanguageModel<B> {
+impl<B: Backend, P: CompressedAttentionProjection<B>> HybridAttentionLanguageModel<B, P> {
     pub fn forward_packed(&self, tokens: Tensor<B, 1, Int>, layout: &PackedSequenceLayout,
         valid: Option<Tensor<B, 1, Bool>>) -> Tensor<B, 2> {
         self.project_tokens(self.backbone.forward_packed(tokens, layout, valid))
