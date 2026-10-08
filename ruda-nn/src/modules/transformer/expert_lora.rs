@@ -1,7 +1,8 @@
 use alloc::{collections::BTreeMap,vec::Vec};
 use ruda_model::{module::ParamId,tensor::{DType,MoeExpertStrategy,backend::Backend}};
 use crate::{LoRALinearConfig,ExpertAdapterTarget,FrozenPackedSwiGluExperts,AdaptedPackedSwiGluExperts,SelectablePackedExperts,
-    SelectablePackedMoeTransformerModel,Nf4MoeLayer,AdaptedFloatingSwiGluExperts,AdaptedFloatingMoeTransformerModel};
+    SelectablePackedMoeTransformerModel,Nf4MoeLayer,AdaptedFloatingSwiGluExperts,AdaptedFloatingMoeTransformerModel,
+    PackedExpertAdapterSource,MixedAdaptedExperts,MixedAdaptedMoeTransformerModel,FrozenExpertGeometry};
 use super::{TransformerProjectionShape,Nf4MoeTransformerModel,Nf4MoeTransformerLayer,Nf4MoeTransformerBlock,
     NativeMoeTransformerModel,NativeMoeTransformerStack,NativeMoeTransformerLayer,NativeMoeTransformerBlock,NativeMoeFeedForward};
 
@@ -25,6 +26,8 @@ pub struct PackedExpertLayerAdapterConfig {
 }
 /// Floating expert layer selection using the same explicit A/B configuration as packed expert layers.
 pub type FloatingExpertLayerAdapterConfig = PackedExpertLayerAdapterConfig;
+/// Explicit layer/role choices shared by mixed original floating/NF4/AWQ expert models.
+pub type ExpertLayerAdapterConfig = PackedExpertLayerAdapterConfig;
 impl<B:Backend,P:TransformerProjectionShape<B>> Nf4MoeTransformerModel<B,P,FrozenPackedSwiGluExperts<B>> {
     /// Validate all actual layer/role configurations before allocation, then attach only selected expert A/B.
     /// Original dense/floating layers, unselected packed execution, source payloads and all original IDs remain intact.
@@ -107,5 +110,59 @@ impl<B:Backend,P:TransformerProjectionShape<B>> AdaptedFloatingMoeTransformerMod
                 attention_norm:block.attention_norm,feed_forward_norm:block.feed_forward_norm,residual_dropout:block.residual_dropout,norm_first:block.norm_first}),
         }).collect();
         NativeMoeTransformerModel::from_parts(self.embeddings,NativeMoeTransformerStack {layers},self.normalization,self.head)
+    }
+}
+
+impl<B:Backend,P:TransformerProjectionShape<B>,E:PackedExpertAdapterSource<B>> Nf4MoeTransformerModel<B,P,E> {
+    /// Adapt actual floating and packed expert layers in one original mixed stack, without guessing model-family targets.
+    /// All selections are validated before A/B allocation; every unselected layer retains its original whole-expert path.
+    pub fn with_mixed_expert_adapters(self,targets:&[ExpertLayerAdapterConfig]) -> MixedAdaptedMoeTransformerModel<B,P,E> {
+        let mut selected=BTreeMap::new();
+        for config in targets {
+            assert!(config.layer<self.layers.len(),"mixed expert adapter layer index exceeds original loaded model");
+            assert!(selected.insert(config.layer,config).is_none(),"duplicate original mixed expert adapter layer index");
+            match &self.layers[config.layer] {
+                Nf4MoeTransformerLayer::Dense(_)=>panic!("selected mixed expert adapters require an actual routed layer"),
+                Nf4MoeTransformerLayer::Floating(block)=>{
+                    let routed=&block.feed_forward.routed;routed.validate();
+                    AdaptedFloatingSwiGluExperts::from_native(routed.experts.clone(),routed.options.forward,routed.options.backward)
+                        .validate_adapter_targets(&config.adapter,&config.targets,config.adapter_dtype);
+                },
+                Nf4MoeTransformerLayer::Packed(block)=>{
+                    block.routed.validate();AdaptedPackedSwiGluExperts::from_frozen(block.routed.experts.clone().into_packed_expert_source())
+                        .validate_adapter_targets(&config.adapter,&config.targets,config.adapter_dtype);
+                },
+            }
+        }
+        let layers=self.layers.into_iter().enumerate().map(|(index,layer)|match layer {
+            Nf4MoeTransformerLayer::Dense(block)=>Nf4MoeTransformerLayer::Dense(block),
+            Nf4MoeTransformerLayer::Floating(block)=>{
+                if let Some(config)=selected.get(&index) {
+                    let routed=block.feed_forward.routed.with_expert_adapters(&config.adapter,&config.targets,config.adapter_dtype,
+                        config.use_rslora,config.forward,config.backward);
+                    Nf4MoeTransformerLayer::Packed(Nf4MoeTransformerBlock {attention:block.attention,routed:Nf4MoeLayer {
+                        router:routed.router,experts:MixedAdaptedExperts::Floating(routed.experts),correction_bias:routed.correction_bias,
+                        routing:routed.routing,router_input_dtype:routed.router_input_dtype},shared:block.feed_forward.shared,
+                        attention_norm:block.attention_norm,feed_forward_norm:block.feed_forward_norm,residual_dropout:block.residual_dropout,norm_first:block.norm_first})
+                } else {Nf4MoeTransformerLayer::Floating(block)}
+            },
+            Nf4MoeTransformerLayer::Packed(block)=>{
+                let routed=block.routed;let experts=if let Some(config)=selected.get(&index) {
+                    MixedAdaptedExperts::Packed(AdaptedPackedSwiGluExperts::from_frozen(routed.experts.into_packed_expert_source())
+                        .with_adapters(&config.adapter,&config.targets,config.adapter_dtype,config.use_rslora,config.forward,config.backward))
+                } else {MixedAdaptedExperts::Original(routed.experts)};
+                Nf4MoeTransformerLayer::Packed(Nf4MoeTransformerBlock {attention:block.attention,routed:Nf4MoeLayer {
+                    router:routed.router,experts,correction_bias:routed.correction_bias,routing:routed.routing,router_input_dtype:routed.router_input_dtype},
+                    shared:block.shared,attention_norm:block.attention_norm,feed_forward_norm:block.feed_forward_norm,residual_dropout:block.residual_dropout,norm_first:block.norm_first})
+            },
+        }).collect();
+        Nf4MoeTransformerModel::from_parts(self.embeddings,layers,self.normalization,self.head)
+    }
+}
+impl<B:Backend,P:TransformerProjectionShape<B>,E:FrozenExpertGeometry<B>> MixedAdaptedMoeTransformerModel<B,P,E> {
+    /// Canonical actual selected expert A/B identities across floating/NF4/AWQ layers.
+    pub fn expert_adapter_parameter_ids(&self) -> Vec<ParamId> {
+        let mut ids=Vec::new();for layer in &self.layers {if let Nf4MoeTransformerLayer::Packed(block)=layer {
+            for id in block.routed.experts.adapter_parameter_ids() {if !ids.contains(&id) {ids.push(id);}}}}ids
     }
 }
