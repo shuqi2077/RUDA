@@ -24,6 +24,11 @@ impl core::error::Error for OptimizerStatePlacementError {}
 pub(super) fn record_devices<B,M,O>(module:&M,records:&HashMap<ParamId,AdaptorRecord<O,B>>)
     -> Result<BTreeMap<ParamId,B::Device>,OptimizerStatePlacementError>
 where B:AutodiffBackend,M:AutodiffModule<B>,O:SimpleOptimizer<B::InnerBackend> {
+    parameter_devices::<B,M,_>(module,records.iter().map(|(id,record)|(*id,record.parameter_rank())))
+}
+
+pub(crate) fn parameter_devices<B,M,I>(module:&M,parameters:I) -> Result<BTreeMap<ParamId,B::Device>,OptimizerStatePlacementError>
+where B:AutodiffBackend,M:AutodiffModule<B>,I:IntoIterator<Item=(ParamId,usize)> {
     struct Placement<B:AutodiffBackend> {
         requested:BTreeSet<ParamId>,found:BTreeMap<ParamId,(Vec<usize>,B::Device)>,error:Option<OptimizerStatePlacementError>,
     }
@@ -36,13 +41,14 @@ where B:AutodiffBackend,M:AutodiffModule<B>,O:SimpleOptimizer<B::InnerBackend> {
             }
         }
     }
-    let mut placement=Placement::<B> {requested:records.keys().copied().collect(),found:BTreeMap::new(),error:None};
+    let ranks=parameters.into_iter().collect::<BTreeMap<_,_>>();
+    let mut placement=Placement::<B> {requested:ranks.keys().copied().collect(),found:BTreeMap::new(),error:None};
     module.visit(&mut placement);
     if let Some(error)=placement.error {return Err(error);}
-    for (id,record) in records {
-        let (shape,_)=placement.found.get(id).ok_or(OptimizerStatePlacementError::UnknownParameter(id.val()))?;
-        if shape.len()!=record.parameter_rank() {
-            return Err(OptimizerStatePlacementError::ParameterRank {parameter:id.val(),recorded:record.parameter_rank(),actual:shape.len()});
+    for (id,rank) in ranks {
+        let (shape,_)=placement.found.get(&id).ok_or(OptimizerStatePlacementError::UnknownParameter(id.val()))?;
+        if shape.len()!=rank {
+            return Err(OptimizerStatePlacementError::ParameterRank {parameter:id.val(),recorded:rank,actual:shape.len()});
         }
     }
     Ok(placement.found.into_iter().map(|(id,(_,device))|(id,device)).collect())

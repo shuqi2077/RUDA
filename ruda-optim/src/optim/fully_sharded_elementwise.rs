@@ -14,6 +14,7 @@ mod migration;
 pub use migration::*;
 mod recovery;
 pub use recovery::*;
+mod placement;
 
 /// Actual native transport, local-parameter/state geometry or source-optimizer argument failure.
 #[derive(Debug)]

@@ -140,4 +140,20 @@ impl<M,B,C> FullyShardedMuonAdamW<M,B,C>
         }
         self.states=record.states;Ok(self)
     }
+    /// Restore the original full-logical Muon/AdamW histories and authoritative
+    /// local masters directly onto their actual native parameter devices. Exact
+    /// configuration, role, shape and clock checks remain the original loader's.
+    /// No matrix update, gradient reduction or first-step state migration occurs.
+    pub fn try_load_record_for_model(self,module:&M,record:FullyShardedMuonAdamWRecord<B>) -> Result<Self,MuonError> {
+        let inspected=snapshot::<B,M,C>(module,&self.bindings,&self.indices,&self.muon,self.master.is_some(),None,0.0)
+            .map_err(|error|match error {MuonShardedError::Muon(error)=>error,MuonShardedError::Collective(_)=>MuonError::IncompatibleRecord})?;
+        if inspected.manifest!=self.manifest {return Err(MuonError::ModelChanged);}
+        let mut restored=self.try_load_record(record)?;
+        let devices=crate::adaptor::placement::parameter_devices::<B,M,_>(module,restored.states.keys().map(|id|(*id,1)))
+            .map_err(|_|MuonError::IncompatibleRecord)?;
+        restored.states=restored.states.into_iter().map(|(id,state)| {
+            let device=devices.get(&id).expect("validated original native Muon/AdamW history placement");(id,state.to_device(device))
+        }).collect();
+        Ok(restored)
+    }
 }

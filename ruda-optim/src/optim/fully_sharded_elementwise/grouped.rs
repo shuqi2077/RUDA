@@ -112,6 +112,14 @@ impl<O,M,B,C> FullyShardedGroupedElementwiseOptimizer<O,M,B,C>
         }
         self.inner.states=record.inner.states;Ok(self)
     }
+    /// Eager original history placement after exact per-group route/options and
+    /// logical ownership validation. Work/master buffers retain original dtype,
+    /// counters and optional branches; unrelated parameter devices are preserved.
+    pub fn try_load_record_for_model(self,module:&M,record:FullyShardedGroupedElementwiseRecord<B,O>)
+        -> Result<Self,FullyShardedElementwiseError<C::Error>> {
+        inspect::<B,M>(module,&self.inner.placement,true).map_err(FullyShardedElementwiseError::Arguments)?;
+        let mut restored=self.try_load_record(record)?;restored.inner.place_histories_on_model(module)?;Ok(restored)
+    }
 }
 impl<O,M,B,C> Optimizer<M,B> for FullyShardedGroupedElementwiseOptimizer<O,M,B,C>
     where B:AutodiffBackend,M:AutodiffModule<B>,O:ElementwiseShardOptimizer<B::InnerBackend>,C:BroadcastTensorCollective<B::InnerBackend>,
