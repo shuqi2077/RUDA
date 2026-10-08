@@ -1,7 +1,7 @@
 [package]
 name = "ruda-kernel-macros"
 readme = "README.md"
-version = "0.1.6"
+version = "0.1.7"
 edition.workspace = true
 description = "Compile-time bridge from Rust kernel functions to Ruda IR."
 license-file = "../LICENSE"
@@ -48,7 +48,7 @@ optional = true
 
 [dependencies.ruda-core]
 path = "../ruda-core"
-version = "0.1.5"
+version = "0.1.6"
 default-features = false
 optional = true
 

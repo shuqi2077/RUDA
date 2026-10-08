@@ -12,7 +12,7 @@
 [package]
 edition = "2024"
 name = "ruda-fusion"
-version = "0.21.35"
+version = "0.21.36"
 authors = ["nathanielsimard <nathaniel.simard.42@gmail.com>"]
 build = false
 autolib = false
@@ -76,19 +76,19 @@ path = "src/lib.rs"
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
-version = "0.21.37"
+version = "0.21.38"
 features = ["std", "graph"]
 default-features = false
 
 [dependencies.ruda-tensor-config]
 path = "../ruda-tensor-config"
-version = "0.21.3"
+version = "0.21.4"
 features = ["std"]
 default-features = false
 
 [dependencies.ruda-core]
 path = "../ruda-core"
-version = "0.1.5"
+version = "0.1.6"
 features = ["std", "communication"]
 default-features = false
 
@@ -140,14 +140,14 @@ invalid_html_tags = "deny"
 
 [dependencies.ruda-kernel]
 path = "../ruda-kernel"
-version = "0.1.12"
+version = "0.1.13"
 default-features = false
 optional = true
 features = ["kernel-ir", "quantization-kernels"]
 
 [dependencies.rublas]
 path = "../ruBLAS"
-version = "0.1.50"
+version = "0.1.56"
 default-features = false
 optional = true
 features = ["kernel-ir", "std"]
@@ -155,14 +155,14 @@ features = ["kernel-ir", "std"]
 [dependencies.ruprim]
 package = "ruPRIM"
 path = "../ruPRIM"
-version = "0.1.44"
+version = "0.1.56"
 default-features = false
 optional = true
 features = ["kernel-ir", "std", "elementwise"]
 
 [dependencies.ruda]
 path = "../ruda"
-version = "0.1.13"
+version = "0.1.14"
 default-features = false
 optional = true
 features = ["runtime"]

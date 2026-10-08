@@ -87,11 +87,11 @@ default-features = false
 
 [dependencies.ruda-core]
 path = "../ruda-core"
-version = "0.1.5"
+version = "0.1.6"
 default-features = false
 
 [dependencies.ruda-kernel]
 path = "../ruda-kernel"
-version = "0.1.12"
+version = "0.1.13"
 default-features = false
 features = ["frontend", "library"]

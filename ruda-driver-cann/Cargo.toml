@@ -18,14 +18,14 @@ sha2 = "=0.10.9"
 
 [dependencies.ruda-compiler]
 path = "../ruda-compiler"
-version = "0.1.9"
+version = "0.1.10"
 default-features = false
 features = ["ascend"]
 optional = true
 
 [dependencies.ruda-core]
 path = "../ruda-core"
-version = "0.1.5"
+version = "0.1.6"
 default-features = false
 features = ["compiler-std"]
 optional = true
