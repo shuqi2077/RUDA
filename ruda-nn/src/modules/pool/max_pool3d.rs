@@ -2,7 +2,7 @@ use crate::{PaddingConfig3d, padding::dilated_kernel_size};
 use ruda_model::{
     config::Config,
     module::{Content, DisplaySettings, Module, ModuleDisplay},
-    tensor::{Tensor, backend::Backend, module::max_pool3d, ops::PadMode},
+    tensor::{Tensor, backend::Backend, module::max_pool3d_padded},
 };
 
 /// Configuration for maximum pooling over depth, height and width.
@@ -63,12 +63,7 @@ impl MaxPool3d {
         let pairs = self.padding.calculate_padding_3d_pairs(
             &[depth, height, width], &effective, &self.stride,
         );
-        let (input, padding) = if pairs.iter().any(|(start, end)| start != end) {
-            (input.pad(pairs, PadMode::Constant(f32::NEG_INFINITY)), [0; 3])
-        } else {
-            (input, pairs.map(|(start, _)| start))
-        };
-        max_pool3d(input, self.kernel_size, self.stride, padding, self.dilation, self.ceil_mode)
+        max_pool3d_padded(input, self.kernel_size, self.stride, pairs, self.dilation, self.ceil_mode)
     }
 }
 

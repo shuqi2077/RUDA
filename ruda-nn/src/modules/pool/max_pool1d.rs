@@ -1,13 +1,11 @@
 
-use crate::PaddingConfig1d;
+use crate::{PaddingConfig1d, padding::dilated_kernel_size};
 use ruda_model::config::Config;
 use ruda_model::module::Module;
 use ruda_model::module::{Content, DisplaySettings, ModuleDisplay};
 use ruda_model::tensor::Tensor;
 use ruda_model::tensor::backend::Backend;
-use ruda_model::tensor::ops::PadMode;
-
-use ruda_model::tensor::module::max_pool1d;
+use ruda_model::tensor::module::max_pool1d_padded;
 
 /// Configuration to create a [1D max pooling](MaxPool1d) layer using the [init function](MaxPool1dConfig::init).
 #[derive(Config, Debug)]
@@ -95,36 +93,11 @@ impl MaxPool1d {
         // Calculate padding as pair - handles Same, Valid, and Explicit uniformly
         let (left, right) =
             self.padding
-                .calculate_padding_1d_pair(length, self.kernel_size, self.stride);
+                .calculate_padding_1d_pair(length,
+                    dilated_kernel_size(self.kernel_size, self.dilation), self.stride);
 
-        // TODO: Move asymmetric padding to functional level via PoolOptions
-        // See: https://github.com/shuqi2077/RUDA/blob/main/THIRD_PARTY_NOTICES.md
-        // Handle asymmetric padding by applying explicit pad operation first
-        if left != right {
-            // For 1D (NCL format), pad the length dimension with (left, right)
-            // and no padding for channel dimension (top=0, bottom=0)
-            // Use -inf for max pooling so padded values don't affect the max
-            let padded = input.pad((left, right, 0, 0), PadMode::Constant(f32::NEG_INFINITY));
-            // Use zero padding for the pool operation since we already padded
-            max_pool1d(
-                padded,
-                self.kernel_size,
-                self.stride,
-                0,
-                self.dilation,
-                self.ceil_mode,
-            )
-        } else {
-            // Symmetric padding
-            max_pool1d(
-                input,
-                self.kernel_size,
-                self.stride,
-                left,
-                self.dilation,
-                self.ceil_mode,
-            )
-        }
+        max_pool1d_padded(input, self.kernel_size, self.stride, [(left, right)],
+            self.dilation, self.ceil_mode)
     }
 }
 

@@ -11,6 +11,10 @@ use crate::api::{
 
 use super::ops::DeformConvOptions;
 pub use super::spatial_pool::{adaptive_avg_pool3d, avg_pool3d, max_pool3d, max_pool3d_with_indices};
+pub use super::spatial_pool::{
+    avg_pool1d_padded, avg_pool2d_padded, avg_pool3d_padded,
+    max_pool1d_padded, max_pool2d_padded, max_pool3d_padded,
+};
 
 /// Computes the [CTC loss](crate::api::ops::ModuleOps::ctc_loss).
 ///

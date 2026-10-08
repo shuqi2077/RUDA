@@ -5,9 +5,7 @@ use ruda_model::module::Module;
 use ruda_model::module::{Content, DisplaySettings, ModuleDisplay};
 use ruda_model::tensor::Tensor;
 use ruda_model::tensor::backend::Backend;
-use ruda_model::tensor::ops::PadMode;
-
-use ruda_model::tensor::module::avg_pool2d;
+use ruda_model::tensor::module::avg_pool2d_padded;
 
 /// Configuration to create a [2D avg pooling](AvgPool2d) layer using the [init function](AvgPool2dConfig::init).
 #[derive(Config, Debug)]
@@ -108,32 +106,8 @@ impl AvgPool2d {
             &self.stride,
         );
 
-        // TODO: Move asymmetric padding to functional level via PoolOptions
-        // See: https://github.com/shuqi2077/RUDA/blob/main/THIRD_PARTY_NOTICES.md
-        // Handle asymmetric padding by applying explicit pad operation first
-        if top != bottom || left != right {
-            // Ruda's pad takes (left, right, top, bottom) for the last two dimensions
-            let padded = input.pad((left, right, top, bottom), PadMode::Constant(0.0));
-            // Use zero padding for the pool operation since we already padded
-            avg_pool2d(
-                padded,
-                self.kernel_size,
-                self.stride,
-                [0, 0],
-                self.count_include_pad,
-                self.ceil_mode,
-            )
-        } else {
-            // Symmetric padding
-            avg_pool2d(
-                input,
-                self.kernel_size,
-                self.stride,
-                [top, left],
-                self.count_include_pad,
-                self.ceil_mode,
-            )
-        }
+        avg_pool2d_padded(input, self.kernel_size, self.stride, [(top, bottom), (left, right)],
+            self.count_include_pad, self.ceil_mode)
     }
 }
 

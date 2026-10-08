@@ -1,13 +1,11 @@
 
-use crate::PaddingConfig2d;
+use crate::{PaddingConfig2d, padding::dilated_kernel_size};
 use ruda_model::config::Config;
 use ruda_model::module::Module;
 use ruda_model::module::{Content, DisplaySettings, ModuleDisplay};
 use ruda_model::tensor::Tensor;
 use ruda_model::tensor::backend::Backend;
-use ruda_model::tensor::ops::PadMode;
-
-use ruda_model::tensor::module::max_pool2d;
+use ruda_model::tensor::module::max_pool2d_padded;
 
 /// Configuration to create a [2D max pooling](MaxPool2d) layer using the [init function](MaxPool2dConfig::init).
 #[derive(Debug, Config)]
@@ -91,45 +89,20 @@ impl MaxPool2d {
     /// - output: `[batch_size, channels, height_out, width_out]`
     pub fn forward<B: Backend>(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
         let [_batch_size, _channels_in, height_in, width_in] = input.dims();
+        let effective = core::array::from_fn(|axis| {
+            dilated_kernel_size(self.kernel_size[axis], self.dilation[axis])
+        });
 
         // Calculate padding as pairs - handles Same, Valid, and Explicit uniformly
         let ((top, bottom), (left, right)) = self.padding.calculate_padding_2d_pairs(
             height_in,
             width_in,
-            &self.kernel_size,
+            &effective,
             &self.stride,
         );
 
-        // TODO: Move asymmetric padding to functional level via PoolOptions
-        // See: https://github.com/shuqi2077/RUDA/blob/main/THIRD_PARTY_NOTICES.md
-        // Handle asymmetric padding by applying explicit pad operation first
-        if top != bottom || left != right {
-            // Ruda's pad takes (left, right, top, bottom) for the last two dimensions
-            // Use -inf for max pooling so padded values don't affect the max
-            let padded = input.pad(
-                (left, right, top, bottom),
-                PadMode::Constant(f32::NEG_INFINITY),
-            );
-            // Use zero padding for the pool operation since we already padded
-            max_pool2d(
-                padded,
-                self.kernel_size,
-                self.stride,
-                [0, 0],
-                self.dilation,
-                self.ceil_mode,
-            )
-        } else {
-            // Symmetric padding
-            max_pool2d(
-                input,
-                self.kernel_size,
-                self.stride,
-                [top, left],
-                self.dilation,
-                self.ceil_mode,
-            )
-        }
+        max_pool2d_padded(input, self.kernel_size, self.stride, [(top, bottom), (left, right)],
+            self.dilation, self.ceil_mode)
     }
 }
 

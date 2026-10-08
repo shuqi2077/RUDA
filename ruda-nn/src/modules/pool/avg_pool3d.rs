@@ -2,7 +2,7 @@ use crate::PaddingConfig3d;
 use ruda_model::{
     config::Config,
     module::{Content, DisplaySettings, Module, ModuleDisplay},
-    tensor::{DType, Tensor, backend::Backend, module::avg_pool3d, ops::PadMode},
+    tensor::{Tensor, backend::Backend, module::avg_pool3d_padded},
 };
 
 /// Configuration for average pooling over depth, height and width.
@@ -60,22 +60,8 @@ impl AvgPool3d {
         let pairs = self.padding.calculate_padding_3d_pairs(
             &[depth, height, width], &self.kernel_size, &self.stride,
         );
-        if pairs.iter().all(|(start, end)| start == end) {
-            return avg_pool3d(input, self.kernel_size, self.stride,
-                pairs.map(|(start, _)| start), self.count_include_pad, self.ceil_mode);
-        }
-        if self.count_include_pad {
-            return avg_pool3d(input.pad(pairs, PadMode::Constant(0.0)), self.kernel_size,
-                self.stride, [0; 3], true, self.ceil_mode);
-        }
-        let storage = input.dtype();
-        let compute = if storage == DType::F64 { DType::F64 } else { DType::F32 };
-        let valid = Tensor::<B, 5>::ones([1, 1, depth, height, width], (&input.device(), compute))
-            .pad(pairs, PadMode::Constant(0.0));
-        let pooled = avg_pool3d(input.cast(compute).pad(pairs, PadMode::Constant(0.0)),
-            self.kernel_size, self.stride, [0; 3], true, self.ceil_mode);
-        let coverage = avg_pool3d(valid, self.kernel_size, self.stride, [0; 3], true, self.ceil_mode);
-        (pooled / coverage).cast(storage)
+        avg_pool3d_padded(input, self.kernel_size, self.stride, pairs,
+            self.count_include_pad, self.ceil_mode)
     }
 }
 
