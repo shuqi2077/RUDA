@@ -1,5 +1,5 @@
 use core::ops::Range;
-use ruda_model::{module::Module, tensor::{DType, Tensor, backend::Backend}};
+use ruda_model::{module::{Module, ModuleDisplay}, tensor::{DType, Tensor, backend::Backend}};
 use crate::{Linear, LoRALinear, transformer::AdaptedProjection};
 use super::{LearnedKVCompressor, LightningIndexer, CompressedAttention, CompressedAttentionParts};
 
@@ -20,7 +20,7 @@ pub enum CompressedAttentionProjectionRole {
 /// The ordinary path retains the original implementation and storage policy;
 /// the compute path promotes each actual base/A/B leaf independently without
 /// merging weights, replacing IDs, or retaining selection-only parameter graphs.
-pub trait CompressedAttentionProjection<B: Backend>: Module<B> {
+pub trait CompressedAttentionProjection<B: Backend>: Module<B> + ModuleDisplay {
     fn dimensions(&self) -> [usize; 2];
     fn device(&self) -> B::Device;
     fn has_bias(&self) -> bool;
