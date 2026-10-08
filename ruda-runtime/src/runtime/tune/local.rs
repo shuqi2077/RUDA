@@ -8,14 +8,17 @@ use core::{
     hash::Hash,
 };
 use hashbrown::HashMap;
-use spin::Mutex;
+use spin::{Mutex, RwLock};
+
+type Sets = RwLock<Option<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>>;
 
 /// A local tuner allows to create a tuner for a specific key that can be different from the server
 /// key.
 pub struct LocalTuner<AK: AutotuneKey, ID> {
     state: Mutex<Option<HashMap<ID, Arc<Tuner<AK>>>>>,
     name: &'static str,
-    sets: spin::RwLock<Option<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>>,
+    sets: Sets,
+    device_sets: Mutex<Option<HashMap<ID, Arc<Sets>>>>,
 }
 
 /// Create a local tuner with the provided name.
@@ -41,7 +44,8 @@ where
         Self {
             state: Mutex::new(None),
             name,
-            sets: spin::RwLock::new(None),
+            sets: RwLock::new(None),
+            device_sets: Mutex::new(None),
         }
     }
 
@@ -55,23 +59,55 @@ where
         I: TuneInputs,
         Out: AutotuneOutput,
     {
-        let sets = self.sets.read();
-        let type_id = TypeId::of::<F>();
+        Self::init_set(&self.sets, init_set)
+    }
+
+    /// Cache a candidate set per device and initializer, including device-dependent choices.
+    pub fn init_for_device<I, Out, F>(&self, id: &ID, init_set: F) -> Arc<TunableSet<AK, I, Out>>
+    where
+        F: Fn() -> TunableSet<AK, I, Out> + 'static + Send + Sync,
+        I: TuneInputs,
+        Out: AutotuneOutput,
+    {
+        let sets = {
+            let mut devices = self.device_sets.lock();
+            let devices = devices.get_or_insert_with(HashMap::new);
+            match devices.get(id) {
+                Some(sets) => sets.clone(),
+                None => devices.entry(id.clone())
+                    .or_insert_with(|| Arc::new(RwLock::new(None)))
+                    .clone(),
+            }
+        };
+        Self::init_set(&sets, init_set)
+    }
+
+    fn init_set<I, Out, F>(
+        sets: &Sets,
+        init_set: F,
+    ) -> Arc<TunableSet<AK, I, Out>>
+    where
+        F: Fn() -> TunableSet<AK, I, Out> + 'static + Send + Sync,
+        I: TuneInputs,
+        Out: AutotuneOutput,
+    {
+        let key = TypeId::of::<F>();
+        let read = sets.read();
 
         static DOWNCAST_ERROR: &str = "Local tuner only support one set of tunable that must work on the same input and output declared with the init function.";
 
-        if let Some(sets) = sets.as_ref()
-            && let Some(set) = sets.get(&type_id)
+        if let Some(sets) = read.as_ref()
+            && let Some(set) = sets.get(&key)
         {
             return set.clone().downcast().expect(DOWNCAST_ERROR);
         };
 
-        core::mem::drop(sets);
+        core::mem::drop(read);
 
-        let mut sets = self.sets.write();
+        let mut sets = sets.write();
 
         if let Some(sets) = sets.as_ref()
-            && let Some(set) = sets.get(&type_id)
+            && let Some(set) = sets.get(&key)
         {
             return set.clone().downcast().expect(DOWNCAST_ERROR);
         };
@@ -79,10 +115,10 @@ where
         let content = Arc::new(init_set());
 
         if let Some(sets) = sets.as_mut() {
-            sets.insert(type_id, content.clone());
+            sets.insert(key, content.clone());
         } else {
             let mut map = HashMap::<TypeId, Arc<dyn Any + Send + Sync>>::new();
-            map.insert(type_id, content.clone());
+            map.insert(key, content.clone());
             *sets = Some(map);
         };
 
@@ -137,15 +173,17 @@ where
         let key = operations.generate_key(&inputs);
 
         let tuner = {
-            let mut state_lock = self.state.lock();
-            let state_map = state_lock.get_or_insert_with(|| HashMap::new());
-            state_map
-                .entry(id.clone())
-                .or_insert_with(move || {
-                    let name = self.name.replace("::", "-");
-                    Arc::new(Tuner::new(&name, &id.to_string()))
-                })
-                .clone()
+            let mut state = self.state.lock();
+            let state = state.get_or_insert_with(HashMap::new);
+            match state.get(id) {
+                Some(tuner) => tuner.clone(),
+                None => state.entry(id.clone())
+                    .or_insert_with(|| {
+                        let name = self.name.replace("::", "-");
+                        Arc::new(Tuner::new(&name, &id.to_string()))
+                    })
+                    .clone(),
+            }
         };
 
         // First, check for a cache hit under a read lock.

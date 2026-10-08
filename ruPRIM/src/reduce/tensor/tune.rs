@@ -28,7 +28,8 @@ pub fn autotune_reduce<R: Runtime>(
 
     static TUNER: LocalTuner<ReduceAutotuneKey, TuneId> = LocalTuner::new("ruda_tensor_device::kernel::reduce::tune-reduce-dim");
 
-    let tunables = TUNER.init(|| {
+    let tune_id = TuneId::new(&input.client, &input.device);
+    let tunables = TUNER.init_for_device(&tune_id, || {
         const PRIORITY_MAX: i8 = 2;
         const PRIORITY_MIN: i8 = 1;
         const PRIORITY_SKIP: i8 = -1;
@@ -161,7 +162,7 @@ pub fn autotune_reduce<R: Runtime>(
     });
 
     TUNER.execute(
-        &TuneId::new(&input.client, &input.device),
+        &tune_id,
         client,
         tunables,
         (input, output, axis, config, dtypes),
@@ -233,7 +234,8 @@ pub fn autotune_sum<R: Runtime>(
 
     static TUNER: LocalTuner<SumTuneKey, TuneId> = LocalTuner::new("ruda_tensor_device::kernel::reduce::tune-autotune-sum");
 
-    let tunables = TUNER.init(|| {
+    let tune_id = TuneId::new(&input.client, &input.device);
+    let tunables = TUNER.init_for_device(&tune_id, || {
         TunableSet::new(create_key_sum::<R>, sum_input_gen::<R>)
             .with_stack_tuning(0, "sum-whole-operator-v1", |input| input.autotune_signature())
             .with(Tunable::new("sum_chained", sum_chained::<R>))
@@ -247,7 +249,7 @@ pub fn autotune_sum<R: Runtime>(
     });
 
     TUNER.execute(
-        &TuneId::new(&input.client, &input.device),
+        &tune_id,
         client,
         tunables,
         input,

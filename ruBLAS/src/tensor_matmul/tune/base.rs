@@ -59,7 +59,8 @@ pub fn matmul_autotune_with_precision<R: Runtime>(
         F32MathMode::AllowTf32 => &TF32_TUNER,
     };
 
-    let tunables = tuner.init(move || {
+    let tune_id = RudaTuneId::new(&lhs.client, &lhs.device);
+    let tunables = tuner.init_for_device(&tune_id, move || {
         const PRIORITY_MAX: i8 = 3;
         const PRIORITY_HIGH: i8 = 2;
         const PRIORITY_MEDIUM: i8 = 1;
@@ -469,7 +470,7 @@ pub fn matmul_autotune_with_precision<R: Runtime>(
     });
 
     tuner.execute(
-        &RudaTuneId::new(&lhs.client, &lhs.device),
+        &tune_id,
         &client,
         tunables,
         (lhs, rhs, output.clone()),

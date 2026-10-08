@@ -16,7 +16,8 @@ pub fn wgrad_autotune<R: Runtime, const N: usize>(
 
     static TUNER: LocalTuner<ConvTuneKey, RudaTuneId> = LocalTuner::new("ruda_tensor_device::kernel::conv::backward_weight::tune::strict_f32_v1");
 
-    let tunables = TUNER.init(|| {
+    let tune_id = RudaTuneId::new(&input.client, &input.device);
+    let tunables = TUNER.init_for_device(&tune_id, || {
         TunableSet::new(create_key::<R, N>, create_wgrad_input::<R, N>)
             .with(Tunable::new(
                 "wgrad_fallback",
@@ -63,7 +64,7 @@ pub fn wgrad_autotune<R: Runtime, const N: usize>(
     });
 
     TUNER.execute(
-        &RudaTuneId::new(&input.client, &input.device),
+        &tune_id,
         &client,
         tunables,
         (input, out_grad, weight_shape, options),

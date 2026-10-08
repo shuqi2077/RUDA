@@ -39,7 +39,8 @@ pub fn attention_autotune<R: Runtime>(
 
     static TUNER: LocalTuner<AttentionAutotuneKey, RudaTuneId> = LocalTuner::new("ruda_tensor_device::kernel::attention::tune");
 
-    let tunables = TUNER.init(|| {
+    let tune_id = RudaTuneId::new(&client, &query.device);
+    let tunables = TUNER.init_for_device(&tune_id, || {
         const PRIORITY_MAX: i8 = 3;
         const PRIORITY_MIN: i8 = 0;
 
@@ -132,7 +133,7 @@ pub fn attention_autotune<R: Runtime>(
     });
 
     TUNER.execute(
-        &RudaTuneId::new(&client, &query.device),
+        &tune_id,
         &client,
         tunables,
         (query, key, value, mask, attn_bias, options),

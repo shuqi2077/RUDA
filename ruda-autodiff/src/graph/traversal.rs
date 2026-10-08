@@ -15,6 +15,9 @@ pub trait TraversalItem {
     fn parent_nodes(&self) -> Vec<NodeId> {
         self.parents().iter().map(|p| p.id).collect()
     }
+    fn extend_parent_nodes(&self, nodes: &mut Vec<NodeId>) {
+        nodes.extend(self.parent_nodes());
+    }
 }
 
 impl BreadthFirstSearch {
@@ -31,9 +34,10 @@ impl BreadthFirstSearch {
     {
         let mut visited = HashSet::new();
         let mut parents = Vec::new();
+        let mut step_parents = Vec::new();
 
         visited.insert(root_id);
-        parents.append(&mut root_step.parent_nodes());
+        root_step.extend_parent_nodes(&mut parents);
 
         callback(root_id, root_step);
 
@@ -44,17 +48,16 @@ impl BreadthFirstSearch {
             };
 
             let step_node = step.id();
-            let step_parents = step.parent_nodes();
-
             if visited.contains(&step_node) {
                 continue;
             }
 
             visited.insert(step_node);
+            step.extend_parent_nodes(&mut step_parents);
 
-            for id in step_parents.iter() {
-                if !visited.contains(id) {
-                    parents.push(*id);
+            for id in step_parents.drain(..) {
+                if !visited.contains(&id) {
+                    parents.push(id);
                 }
             }
 
@@ -70,5 +73,9 @@ impl TraversalItem for StepBoxed {
 
     fn parents(&self) -> &[Parent] {
         Step::parents(self.as_ref())
+    }
+
+    fn extend_parent_nodes(&self, nodes: &mut Vec<NodeId>) {
+        nodes.extend(self.parents().iter().map(|parent| parent.id));
     }
 }

@@ -33,7 +33,8 @@ pub fn fused_matmul_autotune<R: Runtime>(
 ) {
     static TUNER: LocalTuner<FusedMatmulAutotuneKey, RudaTuneId> = LocalTuner::new("ruda_fusion::optim::matmul::tune::strict_f32_v1");
 
-    let tunables = TUNER.init(|| {
+    let tune_id = RudaTuneId::new(&optimization.info.client, &optimization.info.device);
+    let tunables = TUNER.init_for_device(&tune_id, || {
         const PRIORITY_MAX: i8 = 3;
         const PRIORITY_HIGH: i8 = 2;
         const PRIORITY_MEDIUM: i8 = 1;
@@ -238,7 +239,7 @@ pub fn fused_matmul_autotune<R: Runtime>(
     });
 
     TUNER.execute(
-        &RudaTuneId::new(&optimization.info.client, &optimization.info.device),
+        &tune_id,
         &optimization.info.client.clone(),
         tunables,
         TuneInput::new(context, optimization),

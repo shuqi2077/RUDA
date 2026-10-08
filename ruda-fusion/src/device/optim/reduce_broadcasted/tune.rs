@@ -42,7 +42,8 @@ pub fn fused_broadcasted_reduce_autotune<R: Runtime>(
 ) {
     static TUNER: LocalTuner<FusedBroadcastedReduceAutotuneKey, RudaTuneId> = LocalTuner::new("ruda_fusion::optim::reduce_broadcasted::tune");
 
-    let tunables = TUNER.init(|| {
+    let tune_id = RudaTuneId::new(&arg.client, &arg.device);
+    let tunables = TUNER.init_for_device(&tune_id, || {
         const PRIORITY_MAX: i8 = 2;
         let mut set = TunableSet::new(create_key::<R>, FusionInputGen);
 
@@ -72,7 +73,7 @@ pub fn fused_broadcasted_reduce_autotune<R: Runtime>(
     });
 
     TUNER.execute(
-        &RudaTuneId::new(&arg.client, &arg.device),
+        &tune_id,
         &arg.client.clone(),
         tunables,
         TuneInput::new(context, arg),

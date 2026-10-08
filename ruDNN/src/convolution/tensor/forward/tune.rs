@@ -15,7 +15,8 @@ pub fn conv_autotune<R: Runtime, const N: usize>(
 
     static TUNER: LocalTuner<ConvTuneKey, RudaTuneId> = LocalTuner::new("ruda_tensor_device::kernel::conv::forward::tune::strict_f32_v1");
 
-    let tunables = TUNER.init(|| {
+    let tune_id = RudaTuneId::new(&input.client, &input.device);
+    let tunables = TUNER.init_for_device(&tune_id, || {
         TunableSet::new(create_key::<R, N>, create_conv_input::<R, N>)
             .with_stack_tuning(0, "convolution-whole-operator-v1", |(input, weight, bias, options)| {
                 format!("input={};weight={};bias={:?};options={:?}",
@@ -71,7 +72,7 @@ pub fn conv_autotune<R: Runtime, const N: usize>(
     });
 
     TUNER.execute(
-        &RudaTuneId::new(&input.client, &input.device),
+        &tune_id,
         &client,
         tunables,
         (input, weight, bias, options),

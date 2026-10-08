@@ -240,37 +240,16 @@ impl MemoryPage {
         reserved_size_previous: u64,
         new_slice: Slice,
     ) {
-        self.slices_tmp.clear();
+        self.slices[index_previous].storage.utilization.size = reserved_size_previous;
+        let index_new = index_previous + 1;
+        let mut location = self.location_base;
+        location.slice = index_new as u32;
+        new_slice.descriptor().update_location(location);
+        self.slices.insert(index_new, new_slice);
 
-        let mut new_slice = Some(new_slice);
-
-        let mut index_current = 0;
-        for mut slice in self.slices.drain(..) {
-            if index_current == index_previous {
-                let slice_pos_updated = self.slices_tmp.len() as u32;
-                slice.storage.utilization.size = reserved_size_previous;
-                slice.handle.descriptor().update_slice(slice_pos_updated);
-                self.slices_tmp.push(slice);
-                index_current += 1;
-
-                // New slice
-                let slice_pos_updated = self.slices_tmp.len() as u32;
-                let new_slice = new_slice.take().unwrap();
-                let mut location = self.location_base;
-                location.slice = slice_pos_updated;
-                new_slice.descriptor().update_location(location);
-
-                self.slices_tmp.push(new_slice);
-                index_current += 1;
-            } else {
-                let slice_pos_updated = self.slices_tmp.len() as u32;
-                slice.handle.descriptor().update_slice(slice_pos_updated);
-                self.slices_tmp.push(slice);
-                index_current += 1;
-            }
+        for (index, slice) in self.slices.iter().enumerate().skip(index_new + 1) {
+            slice.handle.descriptor().update_slice(index as u32);
         }
-
-        core::mem::swap(&mut self.slices, &mut self.slices_tmp);
     }
 
     fn memory_job(&self) -> MemoryJob {

@@ -19,7 +19,8 @@ pub fn dgrad_autotune<R: Runtime, const N: usize>(
     // Note: TMA isn't currently implemented properly, and will always error.
     // It's kept here so it gets automatically enabled as soon as the convolution kernels update.
     // No CMMA for TMA because swizzling will be mandatory for good performance on dgrad.
-    let tunables = TUNER.init(|| {
+    let tune_id = RudaTuneId::new(&out_grad.client, &out_grad.device);
+    let tunables = TUNER.init_for_device(&tune_id, || {
         TunableSet::new(create_key::<R, N>, create_wgrad_input::<R, N>)
             .with(Tunable::new(
                 "wgrad_fallback",
@@ -60,7 +61,7 @@ pub fn dgrad_autotune<R: Runtime, const N: usize>(
     });
 
     TUNER.execute(
-        &RudaTuneId::new(&out_grad.client, &out_grad.device),
+        &tune_id,
         &client,
         tunables,
         (out_grad, weights, input_shape, options),

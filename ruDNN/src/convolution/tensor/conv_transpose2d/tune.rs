@@ -14,7 +14,8 @@ pub fn conv_transpose2d_autotune<R: Runtime>(
 
     static TUNER: LocalTuner<ConvTransposeTuneKey, RudaTuneId> = LocalTuner::new("ruda_tensor_device::kernel::conv::conv_transpose2d::tune::strict_f32_v1");
 
-    let tune_set = TUNER.init(|| {
+    let tune_id = RudaTuneId::new(&input.client, &input.device);
+    let tune_set = TUNER.init_for_device(&tune_id, || {
         TunableSet::new(create_key::<R>, create_transpose2d_input::<R>)
             .with(Tunable::new(
                 "conv_transpose2d_direct",
@@ -31,7 +32,7 @@ pub fn conv_transpose2d_autotune<R: Runtime>(
     });
 
     TUNER.execute(
-        &RudaTuneId::new(&input.client, &input.device),
+        &tune_id,
         &client,
         tune_set,
         (input, weights, bias, options),
