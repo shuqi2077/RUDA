@@ -155,7 +155,7 @@ features = [ "api",]
 
 [dependencies.ruda-model-macros]
 path = "../ruda-model-macros"
-version = "0.21.0"
+version = "0.21.1"
 default-features = false
 
 [dependencies.ruda-kernel]
