@@ -1198,6 +1198,24 @@ impl DequantizeOpIr {
 
 // Operations with multiple outputs
 
+impl PreluOpIr {
+    pub fn create(x: TensorIr, alpha: TensorIr, new_id: impl FnOnce() -> TensorId) -> Self {
+        crate::ops::prelu_training::geometry(&x.shape, &alpha.shape);
+        let out = TensorIr::uninit(new_id(), x.shape.clone(), x.dtype);
+        Self { x, alpha, out }
+    }
+}
+
+impl PreluBackwardSelectOpIr {
+    pub fn create(x: TensorIr, alpha: TensorIr, grad: TensorIr, mask: [bool; 2], mut new_id: impl FnMut() -> TensorId) -> Self {
+        crate::ops::prelu_training::geometry(&x.shape, &alpha.shape);
+        assert_eq!(x.shape, grad.shape, "PReLU gradient shape differs");
+        let input_grad = mask[0].then(|| TensorIr::uninit(new_id(), x.shape.clone(), x.dtype));
+        let weight_grad = mask[1].then(|| TensorIr::uninit(new_id(), alpha.shape.clone(), alpha.dtype));
+        Self { x, alpha, grad, input_grad, weight_grad }
+    }
+}
+
 impl GroupNormOpIr {
     pub fn create(x: TensorIr, gamma: Option<TensorIr>, beta: Option<TensorIr>, groups: usize, epsilon: f64,
         mut new_id: impl FnMut() -> TensorId) -> Self {

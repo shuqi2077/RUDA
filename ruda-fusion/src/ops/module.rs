@@ -32,6 +32,39 @@ macro_rules! make_ops {
 }
 
 impl<B: FusionBackend> ModuleOps<Fusion<B>> for Fusion<B> {
+    fn prelu_native(x: FloatTensor<Self>, alpha: FloatTensor<Self>) -> FloatTensor<Self> {
+        make_ops!(PreluNativeOps, PreluOpIr, |desc: &PreluOpIr, handles: &mut HandleContainer<B::Handle>| {
+            let x = handles.get_float_tensor::<B>(&desc.x);
+            let alpha = handles.get_float_tensor::<B>(&desc.alpha);
+            handles.register_float_tensor::<B>(&desc.out.id, B::prelu_native(x, alpha));
+        });
+        let streams = OperationStreams::with_inputs([&x, &alpha]);
+        let client = x.client.clone();
+        let desc = PreluOpIr::create(x.into_ir(), alpha.into_ir(), || client.create_empty_handle());
+        client.register(streams, OperationIr::Module(ModuleOperationIr::PreluNative(desc.clone())), PreluNativeOps::<B>::new(desc)).output()
+    }
+
+    fn prelu_native_backward_select(x: FloatTensor<Self>, alpha: FloatTensor<Self>, grad: FloatTensor<Self>,
+        mask: [bool; 2]) -> [Option<FloatTensor<Self>>; 2] {
+        if mask == [false; 2] { return [None, None]; }
+        make_ops!(PreluNativeBackwardSelectOps, PreluBackwardSelectOpIr,
+            |desc: &PreluBackwardSelectOpIr, handles: &mut HandleContainer<B::Handle>| {
+                let x = handles.get_float_tensor::<B>(&desc.x);
+                let alpha = handles.get_float_tensor::<B>(&desc.alpha);
+                let grad = handles.get_float_tensor::<B>(&desc.grad);
+                let output = B::prelu_native_backward_select(x, alpha, grad, [desc.input_grad.is_some(), desc.weight_grad.is_some()]);
+                for (target, value) in [desc.input_grad.as_ref(), desc.weight_grad.as_ref()].into_iter().zip(output) {
+                    if let Some(target) = target { handles.register_float_tensor::<B>(&target.id, value.expect("requested PReLU gradient")); }
+                }
+            });
+        let streams = OperationStreams::with_inputs([&x, &alpha, &grad]);
+        let client = x.client.clone();
+        let desc = PreluBackwardSelectOpIr::create(x.into_ir(), alpha.into_ir(), grad.into_ir(), mask, || client.create_empty_handle());
+        let mut outputs = client.register(streams, OperationIr::Module(ModuleOperationIr::PreluNativeBackwardSelect(desc.clone())),
+            PreluNativeBackwardSelectOps::<B>::new(desc)).into_iter();
+        core::array::from_fn(|index| mask[index].then(|| outputs.next().expect("registered PReLU gradient")))
+    }
+
     fn group_norm_with_stats(x: FloatTensor<Self>, gamma: Option<FloatTensor<Self>>, beta: Option<FloatTensor<Self>>,
         groups: usize, epsilon: f64) -> ruda_tensor::ops::LayerNormOutput<Self> {
         make_ops!(GroupNormOps, GroupNormOpIr, |desc: &GroupNormOpIr, handles: &mut HandleContainer<B::Handle>| {

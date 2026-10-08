@@ -30,6 +30,8 @@ pub mod softmax;
 
 /// Working-storage activation forward and first-order training operations.
 pub mod activation_training;
+/// Shared/channel-wise PReLU forward and independently selected training derivatives.
+pub mod prelu_training;
 
 /// Module for grid_sample operations
 pub mod grid_sample;

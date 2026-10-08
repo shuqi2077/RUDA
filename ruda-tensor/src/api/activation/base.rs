@@ -2,6 +2,12 @@ use crate::api::backend::Backend;
 use crate::api::check::TensorCheck;
 use crate::api::{Tensor, TensorPrimitive, check, s};
 
+/// Working-storage PReLU with shared or channel-wise slope, using independently selected native training derivatives.
+pub fn prelu_native<const D: usize, B: Backend>(tensor: Tensor<B, D>, alpha: Tensor<B, 1>) -> Tensor<B, D> {
+    check!(TensorCheck::check_prelu_shape::<D>(&tensor.shape(), &alpha.shape()));
+    Tensor::from_primitive(TensorPrimitive::Float(B::prelu_native(tensor.into_primitive().tensor(), alpha.into_primitive().tensor())))
+}
+
 /// Original native storage-rounded SwiGLU on actual equal-shaped gate and up values.
 /// Gate/up use identical F32/F16/BF16 storage; no implicit storage promotion is performed.
 /// First-order autodiff requests only the tracked inputs' derivatives; native errors propagate.

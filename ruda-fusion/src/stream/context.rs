@@ -610,6 +610,14 @@ impl RelativeOps for ModuleOperationIr {
                 x: desc.x.to_relative(converter), grad: desc.grad.to_relative(converter),
                 approximate: desc.approximate, out: desc.out.to_relative(converter),
             }),
+            ModuleOperationIr::PreluNative(desc) => ModuleOperationIr::PreluNative(PreluOpIr {
+                x: desc.x.to_relative(converter), alpha: desc.alpha.to_relative(converter), out: desc.out.to_relative(converter),
+            }),
+            ModuleOperationIr::PreluNativeBackwardSelect(desc) => ModuleOperationIr::PreluNativeBackwardSelect(PreluBackwardSelectOpIr {
+                x: desc.x.to_relative(converter), alpha: desc.alpha.to_relative(converter), grad: desc.grad.to_relative(converter),
+                input_grad: desc.input_grad.as_ref().map(|value| value.to_relative(converter)),
+                weight_grad: desc.weight_grad.as_ref().map(|value| value.to_relative(converter)),
+            }),
             ModuleOperationIr::GroupNorm(desc) => ModuleOperationIr::GroupNorm(GroupNormOpIr {
                 x: desc.x.to_relative(converter), gamma: desc.gamma.as_ref().map(|value| value.to_relative(converter)),
                 beta: desc.beta.as_ref().map(|value| value.to_relative(converter)), groups: desc.groups,

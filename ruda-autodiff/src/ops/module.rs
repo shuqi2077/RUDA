@@ -66,6 +66,33 @@ fn causal_attention_probabilities<B: Backend>(
 }
 
 impl<B: Backend, C: CheckpointStrategy> ModuleOps<Autodiff<B, C>> for Autodiff<B, C> {
+    fn prelu_native(tensor: AutodiffTensor<B>, alpha: AutodiffTensor<B>) -> AutodiffTensor<B> {
+        #[derive(Debug)]
+        struct Prelu;
+        impl<B: Backend> Backward<B, 2> for Prelu {
+            type State = (NodeId, NodeId);
+            fn backward(self, ops: Ops<Self::State, 2>, grads: &mut Gradients, checkpointer: &mut Checkpointer) {
+                let (input, alpha) = ops.state;
+                let input = checkpointer.retrieve_node_output(input);
+                let alpha = checkpointer.retrieve_node_output(alpha);
+                let grad = grads.consume::<B>(&ops.node);
+                let mask = ops.parents.each_ref().map(Option::is_some);
+                let output = B::prelu_native_backward_select(input, alpha, grad, mask);
+                for (parent, value) in ops.parents.into_iter().zip(output) {
+                    if let Some(parent) = parent { grads.register::<B>(parent.id, value.expect("requested PReLU gradient")); }
+                }
+            }
+        }
+        match Prelu.prepare::<C>([tensor.node.clone(), alpha.node.clone()]).compute_bound().stateful() {
+            OpsKind::Tracked(mut prep) => {
+                let input = prep.checkpoint(&tensor);
+                let weight = prep.checkpoint(&alpha);
+                prep.finish((input, weight), B::prelu_native(tensor.primitive, alpha.primitive))
+            }
+            OpsKind::UnTracked(prep) => prep.finish(B::prelu_native(tensor.primitive, alpha.primitive)),
+        }
+    }
+
     fn group_norm(tensor: AutodiffTensor<B>, gamma: Option<AutodiffTensor<B>>, beta: Option<AutodiffTensor<B>>,
         groups: usize, epsilon: f64) -> AutodiffTensor<B> {
         #[derive(Debug)]

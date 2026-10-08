@@ -81,6 +81,24 @@ where
     I: IntElement,
     BT: BoolElement,
 {
+    fn prelu_native(tensor: FloatTensor<Self>, alpha: FloatTensor<Self>) -> FloatTensor<Self> {
+        let info = ruda_tensor::ops::prelu_training::geometry(tensor.meta.shape(), alpha.meta.shape());
+        if group_storage_supported(&tensor) && group_storage_supported(&alpha) && info.elements <= u32::MAX as usize
+            && info.parameters <= u32::MAX as usize && info.channels <= u32::MAX as usize && info.spatial <= u32::MAX as usize {
+            ruprim::elementwise::unary::prelu::launch(tensor, alpha)
+        } else { ruda_tensor::ops::prelu_training::prelu_native::<Self>(tensor, alpha) }
+    }
+
+    fn prelu_native_backward_select(tensor: FloatTensor<Self>, alpha: FloatTensor<Self>, grad: FloatTensor<Self>,
+        mask: [bool; 2]) -> [Option<FloatTensor<Self>>; 2] {
+        if mask == [false; 2] { return [None, None]; }
+        let info = ruda_tensor::ops::prelu_training::geometry(tensor.meta.shape(), alpha.meta.shape());
+        if [&tensor, &alpha, &grad].into_iter().all(group_storage_supported) && info.elements <= u32::MAX as usize
+            && info.parameters <= u32::MAX as usize && info.channels <= u32::MAX as usize && info.spatial <= u32::MAX as usize {
+            ruprim::elementwise::unary::prelu::launch_backward_select(tensor, alpha, grad, mask)
+        } else { ruda_tensor::ops::prelu_training::prelu_native_backward_select::<Self>(tensor, alpha, grad, mask) }
+    }
+
     fn group_norm_with_stats(tensor: FloatTensor<Self>, gamma: Option<FloatTensor<Self>>,
         beta: Option<FloatTensor<Self>>, groups: usize, epsilon: f64) -> ruda_tensor::ops::LayerNormOutput<Self> {
         if native_group_supported(&tensor, groups) && gamma.iter().chain(beta.iter()).all(group_storage_supported) {

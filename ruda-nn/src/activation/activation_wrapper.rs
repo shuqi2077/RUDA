@@ -380,6 +380,7 @@ impl<B: ruda_model::tensor::NativeSwiGluOps> Activation<B> {
         match self {
             Self::Silu(layer) => Ok(layer.forward_native(input)),
             Self::Gelu(layer) => Ok(layer.forward_native(input)),
+            Self::PRelu(layer) => Ok(layer.forward_native(input)),
             Self::SwiGlu(layer) => layer.try_forward_native(input),
             _ => Ok(self.forward(input)),
         }

@@ -208,6 +208,17 @@ pub use ruda_core::tensor::spatial::AttentionModuleOptions;
 
 /// Module operations trait.
 pub trait ModuleOps<B: Backend> {
+    /// Working-storage PReLU with the original shared or per-channel slope vector.
+    fn prelu_native(tensor: FloatTensor<B>, alpha: FloatTensor<B>) -> FloatTensor<B> {
+        super::prelu_training::prelu_native::<B>(tensor, alpha)
+    }
+
+    /// Independently requested original-input and slope derivatives.
+    fn prelu_native_backward_select(tensor: FloatTensor<B>, alpha: FloatTensor<B>, grad: FloatTensor<B>,
+        mask: [bool; 2]) -> [Option<FloatTensor<B>>; 2] {
+        super::prelu_training::prelu_native_backward_select::<B>(tensor, alpha, grad, mask)
+    }
+
     /// Native GroupNorm on actual channel groups with independently optional affine leaves.
     fn group_norm(tensor: FloatTensor<B>, gamma: Option<FloatTensor<B>>, beta: Option<FloatTensor<B>>,
         groups: usize, epsilon: f64) -> FloatTensor<B> {

@@ -2,6 +2,24 @@ use super::*;
 
 #[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
 #[allow(missing_docs)]
+pub struct PreluOpIr {
+    pub x: TensorIr,
+    pub alpha: TensorIr,
+    pub out: TensorIr,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
+pub struct PreluBackwardSelectOpIr {
+    pub x: TensorIr,
+    pub alpha: TensorIr,
+    pub grad: TensorIr,
+    pub input_grad: Option<TensorIr>,
+    pub weight_grad: Option<TensorIr>,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
 pub struct GroupNormOpIr {
     pub x: TensorIr,
     pub gamma: Option<TensorIr>,

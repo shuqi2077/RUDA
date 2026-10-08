@@ -4,7 +4,7 @@ use ruda_kernel::dsl::prelude::*;
 #[ruda(launch)]
 pub(super) fn statistics<F: Float>(input: &Array<F>, mean: &mut Array<f32>, rstd: &mut Array<f32>,
     width: u32, epsilon: f32, #[comptime] _source: String, #[define(F)] _storage: StorageType) {
-    let (mu, inverse) = super::kernel::row_statistics(input, width, epsilon);
+    let (mu, inverse) = crate::normalization::kernel::row_statistics(input, width, epsilon);
     if UNIT_POS == 0 { mean[RUDA_POS_X as usize] = mu; rstd[RUDA_POS_X as usize] = inverse; }
 }
 
@@ -66,7 +66,7 @@ pub(super) fn input_plain<F: Float, G: Float>(input: &Array<F>, grad: &Array<G>,
         if width as usize - column <= RUDA_DIM as usize { break; }
         column += RUDA_DIM as usize;
     }
-    let (first, second) = super::kernel::block_sum_pair(first, second);
+    let (first, second) = crate::normalization::kernel::block_sum_pair(first, second);
     let inverse = rstd[RUDA_POS_X as usize];
     column = UNIT_POS as usize;
     while column < width as usize {
@@ -94,7 +94,7 @@ pub(super) fn input_weighted<F: Float, W: Float, G: Float>(input: &Array<F>, gam
         if width as usize - column <= RUDA_DIM as usize { break; }
         column += RUDA_DIM as usize;
     }
-    let (first, second) = super::kernel::block_sum_pair(first, second);
+    let (first, second) = crate::normalization::kernel::block_sum_pair(first, second);
     let inverse = rstd[RUDA_POS_X as usize];
     column = UNIT_POS as usize;
     while column < width as usize {

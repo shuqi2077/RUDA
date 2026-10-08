@@ -1,6 +1,22 @@
 use super::*;
 
 impl<B: BackendIr> Runner<B> {
+    pub(super) fn apply_prelu_native(&self, handles: &mut HandleContainer<B::Handle>, desc: &PreluOpIr) {
+        let x = handles.get_float_tensor::<B>(&desc.x);
+        let alpha = handles.get_float_tensor::<B>(&desc.alpha);
+        handles.register_float_tensor::<B>(&desc.out.id, B::prelu_native(x, alpha));
+    }
+
+    pub(super) fn apply_prelu_native_backward_select(&self, handles: &mut HandleContainer<B::Handle>, desc: &PreluBackwardSelectOpIr) {
+        let x = handles.get_float_tensor::<B>(&desc.x);
+        let alpha = handles.get_float_tensor::<B>(&desc.alpha);
+        let grad = handles.get_float_tensor::<B>(&desc.grad);
+        let output = B::prelu_native_backward_select(x, alpha, grad, [desc.input_grad.is_some(), desc.weight_grad.is_some()]);
+        for (target, value) in [desc.input_grad.as_ref(), desc.weight_grad.as_ref()].into_iter().zip(output) {
+            if let Some(target) = target { handles.register_float_tensor::<B>(&target.id, value.expect("requested PReLU gradient")); }
+        }
+    }
+
     pub(super) fn apply_group_norm(&self, handles: &mut HandleContainer<B::Handle>, desc: &GroupNormOpIr) {
         let x = handles.get_float_tensor::<B>(&desc.x);
         let gamma = desc.gamma.as_ref().map(|value| handles.get_float_tensor::<B>(value));

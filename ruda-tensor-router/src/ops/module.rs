@@ -12,6 +12,21 @@ use ruda_tensor::graph::*;
 use crate::{BackendRouter, RunnerChannel, RunnerClient};
 
 impl<R: RunnerChannel> ModuleOps<Self> for BackendRouter<R> {
+    fn prelu_native(x: FloatTensor<Self>, alpha: FloatTensor<Self>) -> FloatTensor<Self> {
+        let client = x.client.clone();
+        let desc = PreluOpIr::create(x.into_ir(), alpha.into_ir(), || client.create_empty_handle());
+        client.register(OperationIr::Module(ModuleOperationIr::PreluNative(desc))).output()
+    }
+
+    fn prelu_native_backward_select(x: FloatTensor<Self>, alpha: FloatTensor<Self>, grad: FloatTensor<Self>,
+        mask: [bool; 2]) -> [Option<FloatTensor<Self>>; 2] {
+        if mask == [false; 2] { return [None, None]; }
+        let client = x.client.clone();
+        let desc = PreluBackwardSelectOpIr::create(x.into_ir(), alpha.into_ir(), grad.into_ir(), mask, || client.create_empty_handle());
+        let mut outputs = client.register(OperationIr::Module(ModuleOperationIr::PreluNativeBackwardSelect(desc))).into_iter();
+        core::array::from_fn(|index| mask[index].then(|| outputs.next().expect("registered PReLU gradient")))
+    }
+
     fn group_norm_with_stats(x: FloatTensor<Self>, gamma: Option<FloatTensor<Self>>, beta: Option<FloatTensor<Self>>,
         groups: usize, epsilon: f64) -> ruda_tensor::ops::LayerNormOutput<Self> {
         let client = x.client.clone();

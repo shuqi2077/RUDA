@@ -56,6 +56,11 @@ impl PReluConfig {
 }
 
 impl<B: Backend> PRelu<B> {
+    /// Native working-storage forward and selected input/slope derivatives; default forward is unchanged.
+    pub fn forward_native<const D: usize>(&self, input: Tensor<B, D>) -> Tensor<B, D> {
+        ruda_model::tensor::activation::prelu_native(input, self.alpha.val())
+    }
+
     /// Applies the forward pass on the input tensor.
     ///
     /// # Shapes

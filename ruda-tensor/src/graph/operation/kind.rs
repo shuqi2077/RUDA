@@ -267,6 +267,10 @@ pub enum ModuleOperationIr {
     GroupNorm(GroupNormOpIr),
     /// GroupNorm derivatives restricted to actual requested leaves.
     GroupNormBackwardSelect(GroupNormBackwardSelectOpIr),
+    /// Working-storage PReLU with an actual shared/channel-wise slope vector.
+    PreluNative(PreluOpIr),
+    /// PReLU derivatives restricted to requested input/slope leaves.
+    PreluNativeBackwardSelect(PreluBackwardSelectOpIr),
 }
 
 /// Basic operations that can be done on any tensor type.
