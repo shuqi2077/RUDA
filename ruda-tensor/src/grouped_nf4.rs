@@ -29,7 +29,7 @@ pub trait FrozenNf4GroupedOps:Backend {
     /// Native projection/routing failure or unsupported derivative contract.
     type Nf4GroupedError:fmt::Debug;
     /// Validated original row permutation and actual frozen packed operands.
-    type Nf4GroupedState:Clone+Send+fmt::Debug;
+    type Nf4GroupedState:Clone+Send+fmt::Debug+'static;
     /// Execute one actual assigned expert per incoming row and preserve original row order.
     fn frozen_nf4_grouped_forward(input:FloatTensor<Self>,global_ids:IntTensor<Self>,payload:Nf4ExpertPayload<Self>)
         -> Result<(FloatTensor<Self>,Self::Nf4GroupedState),Self::Nf4GroupedError>;
@@ -39,7 +39,7 @@ pub trait FrozenNf4GroupedOps:Backend {
 /// Selected original NF4 gate/up/down plus source-native storage-rounded SwiGLU.
 pub trait FrozenNf4SwiGluOps:FrozenNf4GroupedOps {
     /// Original native row mapping and optional actual input VJP intermediates.
-    type Nf4SwiGluState:Clone+Send+fmt::Debug;
+    type Nf4SwiGluState:Clone+Send+fmt::Debug+'static;
     /// Execute the original selected frozen expert chain. AD always retains the
     /// cache required by actual tracked input, independently of `retain_input`.
     fn frozen_nf4_swiglu_forward(input:FloatTensor<Self>,global_ids:IntTensor<Self>,gate:Nf4ExpertPayload<Self>,up:Nf4ExpertPayload<Self>,down:Nf4ExpertPayload<Self>,retain_input:bool)
