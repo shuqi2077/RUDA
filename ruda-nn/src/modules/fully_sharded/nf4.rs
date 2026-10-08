@@ -1,6 +1,8 @@
 use super::*;
 use ruda_model::tensor::{FrozenNf4Ops,IntegerTensorCollective,Nf4ProjectionOptions};
 use core::fmt;
+use crate::{loss::{CausalCrossEntropyConfig,CausalLoss},attention::PackedSequenceLayout};
+use ruda_autodiff::collective::{CollectiveScope,ScopedCollectiveError};
 
 /// Actual fully data-sharded native NF4: packed bytes, FP32 metadata and bias
 /// persist only as local slices. Forward/input backward retain packed payload,
@@ -155,3 +157,68 @@ macro_rules! nf4_forward {
 }
 nf4_forward!(FullyShardedNf4Linear);
 nf4_forward!(FullyShardedNf4LoRALinear);
+
+macro_rules! nf4_causal_loss {
+    ($module:ident,$backend:ty,[$($generics:tt)*],$gather:ident,$causal:ident,$packed:ident) => {
+        impl<$($generics)*> $module<$backend> {
+            /// Gather actual packed/floating head values once for every original full-vocabulary token chunk.
+            pub fn $causal<C:IntegerTensorCollective<B>>(&self,hidden:Tensor<$backend,3>,labels:Tensor<$backend,2,Int>,
+                criterion:&CausalCrossEntropyConfig,label_smoothing:f64,communicator:C)
+                -> Result<CausalLoss<$backend>,FullyShardedNf4Error<C::Error,<$backend as FrozenNf4Ops>::Nf4Error>> {
+                let head=self.$gather(communicator).map_err(FullyShardedNf4Error::Collective)?;
+                criterion.try_forward_hidden_with_smoothing(hidden,labels,|rows|head.forward(rows),label_smoothing).map_err(FullyShardedNf4Error::Projection)
+            }
+            /// Original flat-document label boundaries/ignore rules/smoothing, without full token-wide logits.
+            pub fn $packed<C:IntegerTensorCollective<B>>(&self,hidden:Tensor<$backend,2>,labels:Tensor<$backend,1,Int>,layout:&PackedSequenceLayout,
+                criterion:&CausalCrossEntropyConfig,label_smoothing:f64,communicator:C)
+                -> Result<CausalLoss<$backend>,FullyShardedNf4Error<C::Error,<$backend as FrozenNf4Ops>::Nf4Error>> {
+                let head=self.$gather(communicator).map_err(FullyShardedNf4Error::Collective)?;
+                criterion.try_forward_packed_hidden_with_smoothing(hidden,labels,layout,|rows|head.forward(rows),label_smoothing).map_err(FullyShardedNf4Error::Projection)
+            }
+        }
+    };
+}
+nf4_causal_loss!(FullyShardedNf4Linear,B,[B:FrozenNf4Ops],gather_inference,forward_causal_loss_inference,forward_packed_causal_loss_inference);
+nf4_causal_loss!(FullyShardedNf4LoRALinear,B,[B:FrozenNf4Ops],gather_inference,forward_causal_loss_inference,forward_packed_causal_loss_inference);
+nf4_causal_loss!(FullyShardedNf4Linear,Autodiff<B,S>,[B:FrozenNf4Ops,S:CheckpointStrategy],gather,forward_causal_loss,forward_packed_causal_loss);
+nf4_causal_loss!(FullyShardedNf4LoRALinear,Autodiff<B,S>,[B:FrozenNf4Ops,S:CheckpointStrategy],gather,forward_causal_loss,forward_packed_causal_loss);
+
+/// Actual NF4 projection/transport or native distributed loss-completion error.
+#[derive(Debug)]
+pub enum FullyShardedNf4TrainingError<C:fmt::Debug,Q:fmt::Debug> {
+    /// Original actual packed projection/data-gather failure.
+    Projection(FullyShardedNf4Error<C,Q>),
+    /// Original actual loss scope/count/transport failure.
+    Loss(ScopedCollectiveError<C>),
+}
+impl<C:fmt::Debug,Q:fmt::Debug> fmt::Display for FullyShardedNf4TrainingError<C,Q> {
+    fn fmt(&self,f:&mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {Self::Projection(error)=>write!(f,"NF4 training projection: {error}"),Self::Loss(error)=>write!(f,"NF4 training loss: {error}")}
+    }
+}
+impl<C:fmt::Debug,Q:fmt::Debug> core::error::Error for FullyShardedNf4TrainingError<C,Q> {}
+
+macro_rules! nf4_distributed_loss {
+    ($module:ident) => {
+        impl<B:FrozenNf4Ops,S:CheckpointStrategy> $module<Autodiff<B,S>> {
+            /// Complete a real caller-owned native sharded loss window. Run the backbone
+            /// with this same scope's bound transport before passing its hidden states.
+            /// Existing scope coordination keeps empty ranks participating; no second gradient SUM.
+            pub fn forward_distributed_causal_loss<C:IntegerTensorCollective<B>>(&self,hidden:Tensor<Autodiff<B,S>,3>,labels:Tensor<Autodiff<B,S>,2,Int>,
+                criterion:&CausalCrossEntropyConfig,label_smoothing:f64,scope:&CollectiveScope<B,S>,communicator:C)
+                -> Result<FullyShardedLoss<B,S>,FullyShardedNf4TrainingError<C::Error,<Autodiff<B,S> as FrozenNf4Ops>::Nf4Error>> {
+                let loss=self.forward_causal_loss(hidden,labels,criterion,label_smoothing,scope.bind(communicator.clone())).map_err(FullyShardedNf4TrainingError::Projection)?;
+                complete_fully_sharded_loss(scope,loss.loss_sum,loss.valid_tokens,communicator).map_err(FullyShardedNf4TrainingError::Loss)
+            }
+            /// Original packed shifted loss and exact global token count with actual backbone graph scope.
+            pub fn forward_distributed_packed_causal_loss<C:IntegerTensorCollective<B>>(&self,hidden:Tensor<Autodiff<B,S>,2>,labels:Tensor<Autodiff<B,S>,1,Int>,
+                layout:&PackedSequenceLayout,criterion:&CausalCrossEntropyConfig,label_smoothing:f64,scope:&CollectiveScope<B,S>,communicator:C)
+                -> Result<FullyShardedLoss<B,S>,FullyShardedNf4TrainingError<C::Error,<Autodiff<B,S> as FrozenNf4Ops>::Nf4Error>> {
+                let loss=self.forward_packed_causal_loss(hidden,labels,layout,criterion,label_smoothing,scope.bind(communicator.clone())).map_err(FullyShardedNf4TrainingError::Projection)?;
+                complete_fully_sharded_loss(scope,loss.loss_sum,loss.valid_tokens,communicator).map_err(FullyShardedNf4TrainingError::Loss)
+            }
+        }
+    };
+}
+nf4_distributed_loss!(FullyShardedNf4Linear);
+nf4_distributed_loss!(FullyShardedNf4LoRALinear);
