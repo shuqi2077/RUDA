@@ -115,7 +115,7 @@ default-features = false
 [dependencies.ruda-model]
 default-features = false
 path = "../ruda-model"
-version = "0.21.43"
+version = "0.21.44"
 
 [dependencies.ruda-tensor-device]
 optional = true
