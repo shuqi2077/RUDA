@@ -44,6 +44,10 @@ mod mhc_expert_parallel;
 #[cfg(feature="tensor-parallel")]
 mod mhc_expert_partition;
 #[cfg(feature="tensor-parallel")]
+mod mhc_distributed_objectives;
+#[cfg(feature="tensor-parallel")]
+mod mhc_expert_state;
+#[cfg(feature="tensor-parallel")]
 mod expert_parallel_adapters;
 #[cfg(feature="tensor-parallel")]
 mod awq_expert_parallel;
@@ -96,6 +100,8 @@ pub use expert_parallel::*;
 pub use mhc_expert_parallel::*;
 #[cfg(feature="tensor-parallel")]
 pub use mhc_expert_partition::*;
+#[cfg(feature="tensor-parallel")]
+pub use mhc_distributed_objectives::*;
 #[cfg(feature="tensor-parallel")]
 pub use expert_parallel_adapters::*;
 #[cfg(feature="tensor-parallel")]

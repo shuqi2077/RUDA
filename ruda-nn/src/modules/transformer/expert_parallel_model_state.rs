@@ -118,15 +118,24 @@ impl<B:Backend> ModuleVisitor<B> for Capture<B> {
         self.values.push(StoredValue::Boolean(parameter.transform_for_save().val().into_primitive()));
     }
 }
-fn ownership<B:Backend,P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>>(model:&ExpertParallelTransformerModel<B,P,E>) -> Vec<ExpertAdapterOwnershipEntry> {
-    let mut result=Vec::new();for (index,layer) in model.layers.iter().enumerate() {if let ExpertParallelTransformerLayer::Parallel(block)=layer {
-        result.push(ExpertAdapterOwnershipEntry {layer:index,prefix:block.routed.experts.ownership().prefix().to_vec(),rank:block.routed.experts.rank()});
-    }}result
+/// Actual owned-layer topology for native model-state capture, independent of attention architecture.
+pub trait ExpertOwnedModelGeometry<B:Backend>:Module<B> {
+    fn expert_model_layers(&self) -> usize;
+    fn expert_model_ownership(&self) -> Vec<ExpertAdapterOwnershipEntry>;
 }
-fn validate_metadata<B:Backend,P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>>(version:u32,saved_contract:&str,layers:usize,
+impl<B:Backend,P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>> ExpertOwnedModelGeometry<B> for ExpertParallelTransformerModel<B,P,E> {
+    fn expert_model_layers(&self) -> usize {self.layers.len()}
+    fn expert_model_ownership(&self) -> Vec<ExpertAdapterOwnershipEntry> {
+        let mut result=Vec::new();for (index,layer) in self.layers.iter().enumerate() {if let ExpertParallelTransformerLayer::Parallel(block)=layer {
+            result.push(ExpertAdapterOwnershipEntry {layer:index,prefix:block.routed.experts.ownership().prefix().to_vec(),rank:block.routed.experts.rank()});
+        }}result
+    }
+}
+fn validate_metadata<B:Backend,M:ExpertOwnedModelGeometry<B>>(version:u32,saved_contract:&str,layers:usize,
     owners:&[ExpertAdapterOwnershipEntry],bindings:&[ExpertModelParameterBinding],values:usize,
-    model:&ExpertParallelTransformerModel<B,P,E>,contract_id:&str) -> Result<(),RecorderError> {
-    if version!=1 || contract_id.is_empty() || saved_contract!=contract_id || layers!=model.layers.len() || owners!=ownership(model) || bindings.len()!=values {
+    model:&M,contract_id:&str) -> Result<(),RecorderError> {
+    if version!=1 || contract_id.is_empty() || saved_contract!=contract_id || layers!=model.expert_model_layers()
+        || owners!=model.expert_model_ownership() || bindings.len()!=values {
         return Err(invalid("version, architecture contract, model layers or original expert ownership differs"));}
     let mut validation=Validate::<B>::new(bindings)?;model.visit(&mut validation);if let Some(error)=validation.error {return Err(error);}
     if validation.seen.len()!=validation.expected.len() {return Err(invalid("actual parameter path set differs"));}Ok(())
@@ -162,13 +171,22 @@ impl ExpertParallelModelSnapshot {
     /// Validate original topology and prepared lazy parameter/alias metadata without uploading archived payloads.
     /// Lazy initializer storage is unknown here; restored native dtype is checked after its original load mapper.
     pub fn validate_for<B:Backend,P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>>(&self,model:&ExpertParallelTransformerModel<B,P,E>,contract_id:&str) -> Result<(),RecorderError> {
+        self.validate_module(model,contract_id)
+    }
+    /// Validate native parameter paths/storage/ties and actual expert ownership for an explicitly supported architecture.
+    pub fn validate_module<B:Backend,M:ExpertOwnedModelGeometry<B>>(&self,model:&M,contract_id:&str) -> Result<(),RecorderError> {
         validate_metadata(self.version,&self.contract_id,self.layers,&self.ownership,&self.bindings,self.values.len(),model,contract_id)
     }
     /// Validate first, then upload each actual parameter payload only when its original load mapper is reached.
     /// Does not pre-upload a second complete rank-local model; per-alias load mappers remain independent.
     pub fn restore_into<B:Backend,P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>>(self,model:ExpertParallelTransformerModel<B,P,E>,contract_id:&str,device:&B::Device)
         -> Result<ExpertParallelTransformerModel<B,P,E>,RecorderError> {
-        self.validate_for(&model,contract_id)?;
+        self.restore_module(model,contract_id,device)
+    }
+    /// Restore validated archived native values without decoding packed experts or allocating a second complete model.
+    pub fn restore_module<B:Backend,M:ExpertOwnedModelGeometry<B>>(self,model:M,contract_id:&str,device:&B::Device)
+        -> Result<M,RecorderError> {
+        self.validate_module(&model,contract_id)?;
         let values=self.values.into_iter().map(|(kind,data)|StoredValue::Archived(kind,data)).collect();
         restore_values(model,self.bindings,values,Some(device.clone()))
     }
@@ -194,9 +212,13 @@ impl<B:Backend> ExpertParallelModelStateRecord<B> {
     /// Capture and serialize at one common completed boundary, without concurrent parameter updates.
     /// Does not gather global expert cubes, decode quantized bases or capture activation/collective history.
     pub fn capture<P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>>(model:&ExpertParallelTransformerModel<B,P,E>,contract_id:&str) -> Result<Self,RecorderError> {
+        Self::capture_module(model,contract_id)
+    }
+    /// Capture any supported original owned-expert model with the same exact native payload and alias contract.
+    pub fn capture_module<M:ExpertOwnedModelGeometry<B>>(model:&M,contract_id:&str) -> Result<Self,RecorderError> {
         if contract_id.is_empty() {return Err(invalid("exact prepared architecture/operator contract ID is required"));}
         let mut capture=Capture::new();model.visit(&mut capture);if let Some(error)=capture.error {return Err(error);}
-        Ok(Self {version:1,contract_id:contract_id.into(),layers:model.layers.len(),ownership:ownership(model),bindings:capture.bindings,values:capture.values})
+        Ok(Self {version:1,contract_id:contract_id.into(),layers:model.expert_model_layers(),ownership:model.expert_model_ownership(),bindings:capture.bindings,values:capture.values})
     }
     /// Actual original complete expert-world prefix/rank for every owned layer.
     pub fn ownership(&self) -> &[ExpertAdapterOwnershipEntry] {&self.ownership}
@@ -215,6 +237,9 @@ impl<B:Backend> ExpertParallelModelStateRecord<B> {
     /// Validate original complete topology and actual prepared parameter/alias contracts before replacing any values.
     /// Fresh prepared IDs may differ; saved IDs become authoritative only when restoration succeeds.
     pub fn validate_for<P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>>(&self,model:&ExpertParallelTransformerModel<B,P,E>,contract_id:&str) -> Result<(),RecorderError> {
+        self.validate_module(model,contract_id)
+    }
+    pub fn validate_module<M:ExpertOwnedModelGeometry<B>>(&self,model:&M,contract_id:&str) -> Result<(),RecorderError> {
         validate_metadata(self.version,&self.contract_id,self.layers,&self.ownership,&self.bindings,self.values.len(),model,contract_id)
     }
     /// Save original native payload storage with an existing recorder, without widening packed bytes or narrowing floating values.
@@ -225,12 +250,15 @@ impl<B:Backend> ExpertParallelModelStateRecord<B> {
     /// Can serve as the model state of ruda-optim's ModelStateTrainingRecord without an additional dependency.
     pub fn restore_into<P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>>(self,model:ExpertParallelTransformerModel<B,P,E>,contract_id:&str)
         -> Result<ExpertParallelTransformerModel<B,P,E>,RecorderError> {
-        self.validate_for(&model,contract_id)?;
+        self.restore_module(model,contract_id)
+    }
+    pub fn restore_module<M:ExpertOwnedModelGeometry<B>>(self,model:M,contract_id:&str) -> Result<M,RecorderError> {
+        self.validate_module(&model,contract_id)?;
         restore_values(model,self.bindings,self.values,None)
     }
 }
-fn restore_values<B:Backend,P:TransformerProjectionShape<B>,E:ExpertParallelGeometry<B>>(model:ExpertParallelTransformerModel<B,P,E>,
-    bindings:Vec<ExpertModelParameterBinding>,values:Vec<StoredValue<B>>,upload_device:Option<B::Device>) -> Result<ExpertParallelTransformerModel<B,P,E>,RecorderError> {
+fn restore_values<B:Backend,M:Module<B>>(model:M,
+    bindings:Vec<ExpertModelParameterBinding>,values:Vec<StoredValue<B>>,upload_device:Option<B::Device>) -> Result<M,RecorderError> {
     let entries=bindings.into_iter().zip(values).map(|(binding,value)|(binding.path.clone(),(binding,value))).collect();
     let mut restore=Restore {path:Vec::new(),entries,canonical:BTreeMap::new(),error:None,seen:BTreeSet::new(),upload_device};let model=model.map(&mut restore);
     if let Some(error)=restore.error {return Err(error);}
