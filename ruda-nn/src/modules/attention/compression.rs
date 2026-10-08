@@ -65,7 +65,7 @@ impl<B: Backend> CompressionState<B> {
 impl LearnedKVCompressorConfig {
     pub fn init<B: Backend>(&self, device: &B::Device) -> LearnedKVCompressor<B> {
         assert!(self.width > 0 && self.head_dim > 0 && self.ratio > 0
-            && self.epsilon.is_finite() && self.epsilon > 0, "invalid compression configuration");
+            && self.epsilon.is_finite() && self.epsilon > 0.0, "invalid compression configuration");
         let output = self.head_dim.checked_mul(if self.overlap { 2 } else { 1 }).expect("compression width overflow");
         LearnedKVCompressor::from_parts(
             LinearConfig::new(self.width, output).with_bias(false).init(device),
@@ -82,7 +82,7 @@ impl<B: Backend> LearnedKVCompressor<B> {
         let [width, output] = value.weight.val().dims();
         let [ratio, bias_output] = position_bias.val().dims();
         let [head_dim] = norm_weight.val().dims();
-        assert!(width > 0 && ratio > 0 && head_dim > 0 && epsilon.is_finite() && epsilon > 0,
+        assert!(width > 0 && ratio > 0 && head_dim > 0 && epsilon.is_finite() && epsilon > 0.0,
             "invalid loaded compression geometry/epsilon");
         assert_eq!(output, head_dim.checked_mul(if overlap { 2 } else { 1 }).expect("compression width overflow"));
         assert_eq!(gate.weight.val().dims(), [width, output], "compression value/gate layouts differ");

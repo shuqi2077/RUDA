@@ -172,7 +172,7 @@ pub fn indexer_kl_loss<B: Backend>(scores: Tensor<B, 3>, teacher: Tensor<B, 3>,
 }
 
 /// Interleaved base RoPE applied to the trailing channels, independently of model family.
-#[derive(Module, Debug)]
+#[derive(Module, Debug, Clone)]
 pub struct SparseRotaryEmbedding {
     /// Nonnegative even count of rotated trailing channels.
     pub rope_dim: usize,
@@ -182,7 +182,7 @@ pub struct SparseRotaryEmbedding {
 
 impl SparseRotaryEmbedding {
     pub fn new(rope_dim: usize, base: f64) -> Self {
-        assert!(rope_dim.is_multiple_of(2) && base.is_finite() && base > 0, "invalid rotary geometry/base");
+        assert!(rope_dim.is_multiple_of(2) && base.is_finite() && base > 0.0, "invalid rotary geometry/base");
         Self { rope_dim, base }
     }
 
@@ -190,7 +190,7 @@ impl SparseRotaryEmbedding {
     pub fn forward<B: Backend>(&self, input: Tensor<B, 4>, pos: Tensor<B, 1, Int>, inverse: bool) -> Tensor<B, 4> {
         let [batch, tokens, heads, width] = input.dims();
         assert!(self.rope_dim <= width && self.rope_dim.is_multiple_of(2)
-            && self.base.is_finite() && self.base > 0, "invalid rotary channel geometry");
+            && self.base.is_finite() && self.base > 0.0, "invalid rotary channel geometry");
         assert_eq!(pos.dims(), [tokens], "rotary position count differs");
         assert_eq!(pos.device(), input.device(), "rotary positions must share the input device");
         assert_eq!(pos.dtype(), DType::I64, "rotary positions require I64");
