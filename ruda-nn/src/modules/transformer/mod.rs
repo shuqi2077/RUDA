@@ -42,6 +42,8 @@ mod expert_parallel_adapter_record;
 mod mixed_expert_parallel;
 #[cfg(feature="tensor-parallel")]
 mod expert_parallel_objectives;
+#[cfg(feature="tensor-parallel")]
+mod expert_parallel_model_state;
 
 pub use decoder::*;
 pub use encoder::*;
@@ -82,3 +84,5 @@ pub use expert_parallel_adapter_record::*;
 pub use mixed_expert_parallel::*;
 #[cfg(feature="tensor-parallel")]
 pub use expert_parallel_objectives::*;
+#[cfg(feature="tensor-parallel")]
+pub use expert_parallel_model_state::*;
