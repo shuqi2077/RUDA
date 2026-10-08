@@ -36,7 +36,7 @@ pub(super) fn embed_packed_projected<B:Backend>(embeddings:&TransformerEmbedding
 fn norm<B:Backend,const D:usize>(hidden:Tensor<B,D>,normalization:&Option<DenseTransformerNorm<B>>) -> Tensor<B,D> {
     if let Some(normalization)=normalization {normalization.forward(hidden)} else {hidden}
 }
-fn check_block<B:Backend,P:TransformerProjectionShape<B>>(block:&ProjectedTransformerBlock<B,P>,width:usize) {
+pub(super) fn check_block<B:Backend,P:TransformerProjectionShape<B>>(block:&ProjectedTransformerBlock<B,P>,width:usize) {
     for projection in [&block.attention.query,&block.attention.key,&block.attention.value] {assert_eq!(projection.dimensions()[0],width,"original self-attention input width differs");}
     assert_eq!(block.attention.output.dimensions()[1],width,"original attention residual width differs");
     assert_eq!((block.feed_forward.up.dimensions()[0],block.feed_forward.down.dimensions()[1]),(width,width),"original FFN residual width differs");
