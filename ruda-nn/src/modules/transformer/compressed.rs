@@ -142,6 +142,14 @@ impl<'a, B: Backend> MhcTransformerSession<'a, B> {
     pub fn reorder(&mut self, parents: Tensor<B, 1, Int>) { self.attention.reorder(parents); }
     pub fn compressed_blocks(&self) -> usize { self.attention.compressed_blocks() }
     pub fn retained_raw_tokens(&self) -> usize { self.attention.retained_raw_tokens() }
+    pub fn tensor_bytes(&self) -> usize { self.attention.tensor_bytes() }
+
+    pub fn fork(&self) -> Self { Self { block: self.block, attention: self.attention.fork() } }
+
+    pub fn restore(&mut self, snapshot: Self) {
+        assert!(core::ptr::eq(self.block, snapshot.block), "hybrid block snapshot belongs to another module");
+        self.attention.restore(snapshot.attention);
+    }
 
     pub fn forward(&mut self, state: Tensor<B, 4>, valid: Option<Tensor<B, 2, Bool>>) -> Tensor<B, 4> {
         let (query, mappings) = self.block.attention_connection.pre(state.clone());
@@ -259,6 +267,19 @@ impl<'a, B: Backend> HybridAttentionBackboneSession<'a, B> {
 
     pub fn compressed_blocks(&self) -> Vec<usize> { self.layers.iter().map(MhcTransformerSession::compressed_blocks).collect() }
     pub fn retained_raw_tokens(&self) -> Vec<usize> { self.layers.iter().map(MhcTransformerSession::retained_raw_tokens).collect() }
+    pub fn tensor_bytes(&self) -> usize { self.layers.iter().map(MhcTransformerSession::tensor_bytes).sum() }
+
+    /// Retain every actual layer's local/compressed/raw-tail state as one native snapshot.
+    pub fn fork(&self) -> Self {
+        self.position();
+        Self { backbone: self.backbone, layers: self.layers.iter().map(MhcTransformerSession::fork).collect() }
+    }
+
+    pub fn restore(&mut self, snapshot: Self) {
+        assert!(core::ptr::eq(self.backbone, snapshot.backbone), "hybrid backbone snapshot belongs to another module");
+        snapshot.position();
+        for (layer, saved) in self.layers.iter_mut().zip(snapshot.layers) { layer.restore(saved); }
+    }
 
     pub fn forward(&mut self, tokens: Tensor<B, 2, Int>, valid: Option<Tensor<B, 2, Bool>>) -> Tensor<B, 3> {
         let start = self.position();
@@ -275,14 +296,14 @@ impl<'a, B: Backend> HybridAttentionBackboneSession<'a, B> {
 #[derive(Module, Debug)]
 pub enum HybridAttentionHead<B: Backend> {
     Linear(Linear<B>),
-    TiedEmbedding,
+    TiedEmbedding(core::marker::PhantomData<B>),
 }
 
 impl<B: Backend> HybridAttentionHead<B> {
     fn forward(&self, hidden: Tensor<B, 3>, embedding: &Embedding<B>) -> Tensor<B, 3> {
         match self {
             Self::Linear(head) => head.forward(hidden),
-            Self::TiedEmbedding => hidden.matmul(embedding.weight.val().transpose().unsqueeze::<3>()),
+            Self::TiedEmbedding(_) => hidden.matmul(embedding.weight.val().transpose().unsqueeze::<3>()),
         }
     }
 }
@@ -305,7 +326,7 @@ impl<B: Backend> HybridAttentionLanguageModel<B> {
     }
 
     pub fn with_tied_embeddings(backbone: HybridAttentionBackbone<B>) -> Self {
-        Self::from_parts(backbone, HybridAttentionHead::TiedEmbedding)
+        Self::from_parts(backbone, HybridAttentionHead::TiedEmbedding(core::marker::PhantomData))
     }
 
     pub fn forward(&self, tokens: Tensor<B, 2, Int>, valid: Option<Tensor<B, 2, Bool>>) -> Tensor<B, 3> {
@@ -333,6 +354,16 @@ impl<'a, B: Backend> HybridAttentionLanguageSession<'a, B> {
     pub fn position(&self) -> usize { self.backbone.position() }
     pub fn clear(&mut self) { self.backbone.clear(); }
     pub fn reorder(&mut self, parents: Tensor<B, 1, Int>) { self.backbone.reorder(parents); }
+    pub fn compressed_blocks(&self) -> Vec<usize> { self.backbone.compressed_blocks() }
+    pub fn retained_raw_tokens(&self) -> Vec<usize> { self.backbone.retained_raw_tokens() }
+    pub fn tensor_bytes(&self) -> usize { self.backbone.tensor_bytes() }
+
+    pub fn fork(&self) -> Self { Self { model: self.model, backbone: self.backbone.fork() } }
+
+    pub fn restore(&mut self, snapshot: Self) {
+        assert!(core::ptr::eq(self.model, snapshot.model), "hybrid language snapshot belongs to another module/head");
+        self.backbone.restore(snapshot.backbone);
+    }
 
     pub fn forward_hidden(&mut self, tokens: Tensor<B, 2, Int>, valid: Option<Tensor<B, 2, Bool>>) -> Tensor<B, 3> {
         self.backbone.forward(tokens, valid)

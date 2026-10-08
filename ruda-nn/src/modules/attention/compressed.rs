@@ -377,6 +377,33 @@ impl<'a, B: Backend> CompressedAttentionSession<'a, B> {
 
     pub fn clear(&mut self) { self.cache = None; }
 
+    /// Snapshot actual native histories for independent continuations or rollback.
+    /// Tensor handles are shared immutably until subsequent functional operations;
+    /// no host payload readback or prompt recomputation is involved.
+    pub fn fork(&self) -> Self { Self { module: self.module, cache: self.cache.clone() } }
+
+    /// Restore an actual snapshot from this exact still-borrowed module revision.
+    /// Both sessions keep the module immutable throughout the snapshot lifetime.
+    pub fn restore(&mut self, snapshot: Self) {
+        assert!(core::ptr::eq(self.module, snapshot.module), "compressed snapshot belongs to another module");
+        self.cache = snapshot.cache;
+    }
+
+    /// Logical retained native payload bytes, excluding allocator reserve/workspace.
+    pub fn tensor_bytes(&self) -> usize {
+        fn bytes<B: Backend, const D: usize, K: ruda_model::tensor::TensorKind<B> + ruda_model::tensor::BasicOps<B>>(
+            tensor: &Tensor<B, D, K>) -> usize {
+            tensor.dims().into_iter().try_fold(tensor.dtype().size(), |total, dimension| total.checked_mul(dimension))
+                .expect("compressed cache logical byte count overflow")
+        }
+        fn compression_bytes<B: Backend>(state: &CompressionState<B>) -> usize {
+            bytes(&state.tail) + bytes(&state.tail_valid) + bytes(&state.previous) + bytes(&state.previous_valid)
+        }
+        self.cache.as_ref().map_or(0, |cache| bytes(&cache.compressed) + bytes(&cache.compressed_valid)
+            + cache.index_keys.as_ref().map_or(0, bytes) + bytes(&cache.local) + bytes(&cache.local_valid)
+            + compression_bytes(&cache.compression) + cache.index_compression.as_ref().map_or(0, compression_bytes))
+    }
+
     /// Reorder/duplicate every retained batch payload together for beam decoding.
     pub fn reorder(&mut self, parents: Tensor<B, 1, Int>) {
         if let Some(cache) = &mut self.cache {
