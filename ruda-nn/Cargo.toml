@@ -5,7 +5,7 @@ path = "tests/quantize.rs"
 [package]
 edition = "2024"
 name = "ruda-nn"
-version = "0.21.45"
+version = "0.21.46"
 authors = [ "nathanielsimard <nathaniel.simard.42@gmail.com>",]
 build = false
 autolib = false
@@ -44,32 +44,32 @@ path = "src/lib.rs"
 
 [dependencies.ruda-tensor-remote]
 path = "../ruda-tensor-remote"
-version = "0.21.30"
+version = "0.21.31"
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-rocm]
 path = "../ruda-tensor-rocm"
-version = "0.21.30"
+version = "0.21.31"
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-router]
 path = "../ruda-tensor-router"
-version = "0.21.31"
+version = "0.21.32"
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-tch]
 path = "../ruda-tensor-tch"
-version = "0.21.43"
+version = "0.21.44"
 features = [ "default",]
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-wgpu]
 path = "../ruda-tensor-wgpu"
-version = "0.21.30"
+version = "0.21.31"
 optional = true
 default-features = false
 
@@ -81,11 +81,11 @@ default-features = false
 [dependencies.ruda-model]
 default-features = false
 path = "../ruda-model"
-version = "0.21.38"
+version = "0.21.39"
 
 [dependencies.ruda-autodiff]
 path = "../ruda-autodiff"
-version = "0.21.34"
+version = "0.21.35"
 default-features = false
 optional = true
 
@@ -93,7 +93,7 @@ optional = true
 optional = true
 default-features = false
 path = "../ruda-tensor-device"
-version = "0.21.31"
+version = "0.21.32"
 features = [ "cuda",]
 
 [dependencies.ruda-fusion]
@@ -101,7 +101,7 @@ features = [ "std", "tracing",]
 optional = true
 default-features = false
 path = "../ruda-fusion"
-version = "0.21.30"
+version = "0.21.31"
 
 [dependencies.ruda-kernel]
 path = "../ruda-kernel"
