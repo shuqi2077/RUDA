@@ -66,6 +66,12 @@ mod hybrid_compressed;
 pub use hybrid_compressed::*;
 mod hybrid_training;
 pub use hybrid_training::*;
+mod owned_experts;
+pub use owned_experts::*;
+mod expert_parallel;
+pub use expert_parallel::*;
+mod mhc_expert_parallel;
+pub use mhc_expert_parallel::*;
 
 /// Explicit construction context preserving one local autograd leaf per source ID.
 /// Reuse a context for all tied layers, then drop it after model construction. It
