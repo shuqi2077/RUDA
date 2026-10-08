@@ -73,3 +73,8 @@ jobs:
           cargo check --locked -p ruda-model --features dataset,record-item-custom-serde --lib
       - name: Compile native generation continuation
         run: cargo check --locked -p ruda-llm --lib
+      - name: Compile standalone native spatial features
+        run: |
+          for feature in pooling interpolation grid-sample; do
+            cargo check --locked -p ruDNN --no-default-features --features "$feature" --lib
+          done
