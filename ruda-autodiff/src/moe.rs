@@ -54,9 +54,12 @@ impl<B:MoeOps,S:CheckpointStrategy> MoeOps for Autodiff<B,S> {
     fn moe_forward(input:FloatTensor<Self>,logits:FloatTensor<Self>,correction_bias:Option<FloatTensor<Self>>,
         gate:FloatTensor<Self>,up:FloatTensor<Self>,down:FloatTensor<Self>,options:MoeOptions) -> Result<(FloatTensor<Self>,Self::MoeState),Self::MoeError> {
         let tracked_primals=input.is_tracked() || logits.is_tracked() || gate.is_tracked() || up.is_tracked() || down.is_tracked();
+        let selection=MoeGradientSelection {input:input.is_tracked(),logits:logits.is_tracked(),gate:gate.is_tracked(),up:up.is_tracked(),down:down.is_tracked()};
         let dtypes=[input.primitive.dtype().into(),logits.primitive.dtype().into(),gate.primitive.dtype().into(),up.primitive.dtype().into(),down.primitive.dtype().into()];
-        let (output,state)=B::moe_forward(input.primitive,logits.primitive,correction_bias.map(|bias|bias.primitive),gate.primitive,up.primitive,down.primitive,options)
-            .map_err(MoeAutodiffError::Native)?;
+        let correction_bias=correction_bias.map(|bias|bias.primitive);
+        let (output,state)=if tracked_primals {
+            B::moe_forward_selected(input.primitive,logits.primitive,correction_bias,gate.primitive,up.primitive,down.primitive,options,selection)
+        } else {B::moe_forward(input.primitive,logits.primitive,correction_bias,gate.primitive,up.primitive,down.primitive,options)}.map_err(MoeAutodiffError::Native)?;
         let output=match RoutedExperts::<B>(PhantomData).prepare::<S>([input.node,logits.node,gate.node,up.node,down.node]).compute_bound().stateful() {
             OpsKind::Tracked(prep)=>prep.finish((state.clone(),dtypes),output),OpsKind::UnTracked(prep)=>prep.finish(output),
         };Ok((output,MoeAutodiffState {native:state,tracked_primals}))

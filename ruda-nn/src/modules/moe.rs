@@ -43,6 +43,15 @@ impl<B:MoeOps> NativeSwiGluExperts<B> {
             self.gate.val().into_primitive().tensor(),self.up.val().into_primitive().tensor(),self.down.val().into_primitive().tensor(),options)?;
         Ok((Tensor::from_primitive(TensorPrimitive::Float(output)),state))
     }
+    /// Native forward with explicit derivative requirements. Router-only training
+    /// can retain original expert outputs without retaining expert activation VJP caches.
+    /// Ordinary taped AD always preserves the derivatives required by its tracked parents.
+    pub fn forward_selected_with_state(&self,input:Tensor<B,2>,logits:Tensor<B,2>,correction_bias:Option<Tensor<B,1>>,options:MoeOptions,selection:MoeGradientSelection)
+        -> Result<(Tensor<B,2>,B::MoeState),B::MoeError> {
+        self.validate();let (output,state)=B::moe_forward_selected(input.into_primitive().tensor(),logits.into_primitive().tensor(),correction_bias.map(|bias|bias.into_primitive().tensor()),
+            self.gate.val().into_primitive().tensor(),self.up.val().into_primitive().tensor(),self.down.val().into_primitive().tensor(),options,selection)?;
+        Ok((Tensor::from_primitive(TensorPrimitive::Float(output)),state))
+    }
     /// Actual discrete original U32 expert selections, usable with explicit native continuous-weight objectives.
     pub fn routing_indices(&self,state:&B::MoeState) -> Tensor<B,2,Int> {Tensor::from_primitive(B::moe_route_indices(state))}
     /// Original native first-order derivatives, including FP32 expert weight gradients.

@@ -9,7 +9,7 @@ use ruda_kernel::tensor::{RudaTensor,contiguous::into_contiguous};
 pub struct NativeMoeState<R:DeviceRuntime> {
     router:RouterTrainingPlan<R>,
     dispatched:DispatchedTokens<R>,
-    experts:ExpertTrainingCache<R>,
+    experts:Option<ExpertTrainingCache<R>>,
     expert_output:RudaTensor<R>,
     options:MoeOptions,
 }
@@ -57,7 +57,18 @@ impl<R,F,I,BT> MoeOps for DeviceBackend<R,F,I,BT>
         let (experts,dispatched,routing)=prepare(input,logits,correction_bias,gate,up,down,options)?;
         let trained=experts.forward_dispatched_training(&dispatched,expert_strategy(options.forward))?;
         let output=dispatched.combine(trained.output.clone())?;
-        Ok((output,NativeMoeState {router:routing,dispatched,experts:trained.cache,expert_output:trained.output,options}))
+        Ok((output,NativeMoeState {router:routing,dispatched,experts:Some(trained.cache),expert_output:trained.output,options}))
+    }
+    fn moe_forward_selected(input:FloatTensor<Self>,logits:FloatTensor<Self>,correction_bias:Option<FloatTensor<Self>>,
+        gate:FloatTensor<Self>,up:FloatTensor<Self>,down:FloatTensor<Self>,options:MoeOptions,selection:MoeGradientSelection)
+        -> Result<(FloatTensor<Self>,Self::MoeState),Self::MoeError> {
+        if selection.input || selection.gate || selection.up || selection.down {
+            return Self::moe_forward(input,logits,correction_bias,gate,up,down,options);
+        }
+        let (experts,dispatched,routing)=prepare(input,logits,correction_bias,gate,up,down,options)?;
+        let expert_output=experts.forward_dispatched_with_strategy(&dispatched,expert_strategy(options.forward))?;
+        let output=dispatched.combine(expert_output.clone())?;
+        Ok((output,NativeMoeState {router:routing,dispatched,experts:None,expert_output,options}))
     }
     fn moe_inference(input:FloatTensor<Self>,logits:FloatTensor<Self>,correction_bias:Option<FloatTensor<Self>>,
         gate:FloatTensor<Self>,up:FloatTensor<Self>,down:FloatTensor<Self>,options:MoeOptions) -> Result<FloatTensor<Self>,Self::MoeError> {
@@ -67,20 +78,24 @@ impl<R,F,I,BT> MoeOps for DeviceBackend<R,F,I,BT>
     }
     fn moe_route_indices(state:&Self::MoeState) -> IntTensor<Self> {state.router.routing().expert_indices().clone()}
     fn moe_backward(state:Self::MoeState,gradient:FloatTensor<Self>) -> Result<MoeBackward<Self>,Self::MoeError> {
+        let cache=state.experts.ok_or(MoeError("selected forward did not retain an expert-input/weight VJP cache"))?;
         let combine=state.dispatched.combine_backward_with_strategy(&state.expert_output,gradient,
             match state.options.combine_backward {MoeCombineGradientStrategy::Serial=>moe::CombineGradientStrategy::Serial,MoeCombineGradientStrategy::Plane=>moe::CombineGradientStrategy::Plane})?;
         let logits=state.router.backward(&combine.dweights)?;
-        let experts=state.experts.backward_with_strategy(combine.dexpert,expert_strategy(state.options.backward))?;
+        let experts=cache.backward_with_strategy(combine.dexpert,expert_strategy(state.options.backward))?;
         let input=state.dispatched.dispatch_backward(experts.dinput)?;
         Ok(MoeBackward {input,logits,gate:experts.dgate,up:experts.dup,down:experts.ddown})
     }
     fn moe_backward_selected(state:Self::MoeState,gradient:FloatTensor<Self>,selection:MoeGradientSelection)
         -> Result<MoeBackwardSelected<Self>,Self::MoeError> {
+        if (selection.input || selection.gate || selection.up || selection.down) && state.experts.is_none() {
+            return Err(MoeError("selected forward did not retain the requested expert-input/weight VJP cache"));
+        }
         let combine=state.dispatched.combine_backward_selected(&state.expert_output,gradient,
             match state.options.combine_backward {MoeCombineGradientStrategy::Serial=>moe::CombineGradientStrategy::Serial,MoeCombineGradientStrategy::Plane=>moe::CombineGradientStrategy::Plane},
             moe::CombineGradientSelection {experts:selection.input || selection.gate || selection.up || selection.down,weights:selection.logits})?;
         let logits=combine.dweights.map(|gradient|state.router.backward(&gradient)).transpose()?;
-        let experts=combine.dexpert.map(|gradient|state.experts.backward_selected(gradient,expert_strategy(state.options.backward),
+        let experts=combine.dexpert.map(|gradient|state.experts.expect("validated native expert cache").backward_selected(gradient,expert_strategy(state.options.backward),
             moe::ExpertGradientSelection {input:selection.input,gate:selection.gate,up:selection.up,down:selection.down})).transpose()?;
         let (input,gate,up,down)=if let Some(experts)=experts {
             (experts.dinput.map(|gradient|state.dispatched.dispatch_backward(gradient)).transpose()?,experts.dgate,experts.dup,experts.ddown)

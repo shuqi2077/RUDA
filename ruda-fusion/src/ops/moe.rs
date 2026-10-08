@@ -21,6 +21,12 @@ impl<B:FusionBackend+MoeOps> MoeOps for Fusion<B> {
         let (output,state)=B::moe_forward(resolve::<B>(input),resolve::<B>(logits),correction_bias.map(resolve::<B>),resolve::<B>(gate),resolve::<B>(up),resolve::<B>(down),options)?;
         Ok((register_output::<B>(output),state))
     }
+    fn moe_forward_selected(input:FloatTensor<Self>,logits:FloatTensor<Self>,correction_bias:Option<FloatTensor<Self>>,
+        gate:FloatTensor<Self>,up:FloatTensor<Self>,down:FloatTensor<Self>,options:MoeOptions,selection:MoeGradientSelection)
+        -> Result<(FloatTensor<Self>,Self::MoeState),Self::MoeError> {
+        let (output,state)=B::moe_forward_selected(resolve::<B>(input),resolve::<B>(logits),correction_bias.map(resolve::<B>),
+            resolve::<B>(gate),resolve::<B>(up),resolve::<B>(down),options,selection)?;Ok((register_output::<B>(output),state))
+    }
     fn moe_inference(input:FloatTensor<Self>,logits:FloatTensor<Self>,correction_bias:Option<FloatTensor<Self>>,
         gate:FloatTensor<Self>,up:FloatTensor<Self>,down:FloatTensor<Self>,options:MoeOptions) -> Result<FloatTensor<Self>,Self::MoeError> {
         B::moe_inference(resolve::<B>(input),resolve::<B>(logits),correction_bias.map(resolve::<B>),resolve::<B>(gate),resolve::<B>(up),resolve::<B>(down),options).map(register_output::<B>)

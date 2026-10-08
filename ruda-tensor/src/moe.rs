@@ -151,6 +151,15 @@ pub trait MoeOps:Backend {
     /// -> original SwiGLU experts -> ordered combine. No tokens are capacity-dropped.
     fn moe_forward(input:FloatTensor<Self>,logits:FloatTensor<Self>,correction_bias:Option<FloatTensor<Self>>,
         gate:FloatTensor<Self>,up:FloatTensor<Self>,down:FloatTensor<Self>,options:MoeOptions) -> Result<(FloatTensor<Self>,Self::MoeState),Self::MoeError>;
+    /// Same original forward with an explicit backward-output requirement. A native
+    /// implementation may omit expert activation caches when no expert/input VJP is
+    /// required. Requesting an unavailable expert VJP from that state must error.
+    /// The compatibility default retains the original complete forward state.
+    fn moe_forward_selected(input:FloatTensor<Self>,logits:FloatTensor<Self>,correction_bias:Option<FloatTensor<Self>>,
+        gate:FloatTensor<Self>,up:FloatTensor<Self>,down:FloatTensor<Self>,options:MoeOptions,selection:MoeGradientSelection)
+        -> Result<(FloatTensor<Self>,Self::MoeState),Self::MoeError> {
+        let _=selection;Self::moe_forward(input,logits,correction_bias,gate,up,down,options)
+    }
     /// Same original continuous weight policy and native expert output, without retained backward caches.
     fn moe_inference(input:FloatTensor<Self>,logits:FloatTensor<Self>,correction_bias:Option<FloatTensor<Self>>,
         gate:FloatTensor<Self>,up:FloatTensor<Self>,down:FloatTensor<Self>,options:MoeOptions) -> Result<FloatTensor<Self>,Self::MoeError>;
