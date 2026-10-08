@@ -28,6 +28,13 @@ where B:AutodiffBackend,O:SimpleOptimizer<B::InnerBackend> {
     routes:Vec<(u64,usize)>,
     records:Vec<HashMap<ParamId,AdaptorRecord<O,B>>>,
 }
+impl<O,B> GroupedOptimizerAdaptorRecord<O,B>
+where B:AutodiffBackend,O:SimpleOptimizer<B::InnerBackend> {
+    /// Original saved routing, including selected leaves whose history is absent.
+    pub fn routes(&self) -> &[(u64,usize)] {&self.routes}
+    /// Original native per-group histories, without precision conversion or readback.
+    pub fn group_records(&self) -> &[HashMap<ParamId,AdaptorRecord<O,B>>] {&self.records}
+}
 impl<O,B> Record<B> for GroupedOptimizerAdaptorRecord<O,B>
 where B:AutodiffBackend,O:SimpleOptimizer<B::InnerBackend> {
     type Item<P:PrecisionSettings>=(u32,Vec<(u64,usize)>,Vec<<HashMap<ParamId,AdaptorRecord<O,B>> as Record<B>>::Item<P>>);

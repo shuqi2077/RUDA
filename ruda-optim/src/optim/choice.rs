@@ -3,6 +3,7 @@ use serde::{Serialize,Deserialize};
 use super::{SimpleOptimizer,ElementwiseShardOptimizer,OptimizerCheckpointBuffers,OptimizerCheckpointScalars,
     FlatOptimizerCheckpointState,FlatOptimizerTensorShard,OptimizerShardError,FullyShardedElementwiseError,FullyShardedOptimizerParameter};
 use crate::LearningRate;
+mod native_records;
 
 /// An explicit choice between two ORIGINAL native optimizer implementations.
 /// Different parameter groups can use different algorithms/master wrappers while
