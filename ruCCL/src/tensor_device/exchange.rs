@@ -59,8 +59,8 @@ impl<B:Backend> RankCommunicator<TensorDevice<B>> {
         let buffer=execution.import_float::<T>(B::float_reshape(value,Shape::new([plan.input_elements])))?;
         // Reuse the original configured direct/pairwise transport. It is host-staged, not peer-memory GPU communication.
         let (received,_)=self.tensor_collective::<T>().all_to_all_v(&buffer,&plan.send_elements)?;
-        let (shape,receive_counts,total)=plan.receive(received.counts,self.world_size())?;storage::checked_length::<T>(total)?;
-        let value=match received.buffer {Some(buffer)=>buffer.float_tensor()?,None if total==0=>execution.allocate::<T>(0)?.float_tensor()?,
+        let (shape,receive_counts,total)=plan.receive(received.counts().to_vec(),self.world_size())?;storage::checked_length::<T>(total)?;
+        let value=match received.buffer() {Some(buffer)=>buffer.float_tensor()?,None if total==0=>execution.allocate::<T>(0)?.float_tensor()?,
             None=>return Err(TensorDeviceError::InvalidBuffer("nonempty floating row exchange lacks its native output buffer"))};
         if value.shape()!=Shape::new([total]) {return Err(TensorDeviceError::InvalidBuffer("floating row exchange output length differs from actual receive counts"));}
         Ok(VariableTensorExchange {value:B::float_reshape(value,shape),receive_counts})
@@ -72,8 +72,8 @@ impl<B:Backend> RankCommunicator<TensorDevice<B>> {
         let plan=RowExchangePlan::new(value.shape(),counts,self.world_size())?;storage::checked_length::<T>(plan.input_elements)?;
         let buffer=execution.import_int::<T>(B::int_reshape(value,Shape::new([plan.input_elements])))?;
         let (received,_)=self.tensor_collective::<T>().all_to_all_v(&buffer,&plan.send_elements)?;
-        let (shape,receive_counts,total)=plan.receive(received.counts,self.world_size())?;storage::checked_length::<T>(total)?;
-        let value=match received.buffer {Some(buffer)=>buffer.int_tensor()?,None if total==0=>execution.allocate::<T>(0)?.int_tensor()?,
+        let (shape,receive_counts,total)=plan.receive(received.counts().to_vec(),self.world_size())?;storage::checked_length::<T>(total)?;
+        let value=match received.buffer() {Some(buffer)=>buffer.int_tensor()?,None if total==0=>execution.allocate::<T>(0)?.int_tensor()?,
             None=>return Err(TensorDeviceError::InvalidBuffer("nonempty integer row exchange lacks its native output buffer"))};
         if value.shape()!=Shape::new([total]) {return Err(TensorDeviceError::InvalidBuffer("integer row exchange output length differs from actual receive counts"));}
         Ok(VariableTensorExchange {value:B::int_reshape(value,shape),receive_counts})
