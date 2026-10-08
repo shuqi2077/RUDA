@@ -4,6 +4,8 @@ use crate::transformer::{TransformerProjection,ProjectedCrossAttentionBlock,Proj
 use crate::attention::{DenseAttentionMask,DenseAttentionOptions,PackedSequenceLayout,PackedAttentionOptions,PackedDocumentAttentionMask};
 use crate::loss::CausalCrossEntropyConfig;
 use ruda_model::tensor::IntegerTensorCollective;
+use ruda_model::tensor::Bool;
+use crate::cache::{EncoderDecoderKvCache,TransformerKvCache,ProjectedKvCache};
 use ruda_autodiff::collective::{CollectiveScope,ScopedTensorCollective};
 
 /// Actual native encoder-memory stage with only local persistent projection/norm leaves.
@@ -121,6 +123,52 @@ macro_rules! projected_decoder_execution {
 }
 projected_decoder_execution!(B,[B:Backend],gather_inference,forward_inference,forward_packed_inference);
 projected_decoder_execution!(Autodiff<B,S>,[B:Backend,S:CheckpointStrategy],gather,forward,forward_packed);
+
+impl<B:Backend,P:GatherTransformerProjection<B,B>> FullyShardedProjectedDecoderLayer<B,P>
+    where P::Gathered:TransformerProjection<B> {
+    /// Actual only-new-row native self/cross/FFN inference against prepared original encoder memory.
+    pub fn forward_cached_inference<C,F,G>(&self,input:Tensor<B,3>,new_visible:Option<Tensor<B,2,Bool>>,cache:&mut ProjectedKvCache<B>,memory:&ProjectedKvCache<B>,
+        self_masks:DenseAttentionMask<B>,self_options:DenseAttentionOptions,cross_masks:DenseAttentionMask<B>,cross_options:DenseAttentionOptions,
+        communicator:C,self_positions:F,cross_positions:G) -> Result<Tensor<B,3>,FullyShardedProjectedError<C::Error,<P::Gathered as TransformerProjection<B>>::Error>>
+        where C:IntegerTensorCollective<B>,F:FnOnce(Tensor<B,4>,Tensor<B,4>,usize)->(Tensor<B,4>,Tensor<B,4>),G:FnOnce(Tensor<B,4>,usize)->Tensor<B,4> {
+        self.gather_inference(communicator).map_err(FullyShardedProjectedError::Collective)?.forward_cached_with_positions(input,new_visible,cache,memory,
+            self_masks,self_options,cross_masks,cross_options,self_positions,cross_positions).map_err(FullyShardedProjectedError::Projection)
+    }
+}
+impl<B:Backend,P:GatherTransformerProjection<B,B>> FullyShardedProjectedEncoderDecoderModel<B,P>
+    where P::Gathered:TransformerProjection<B> {
+    /// Prepare actual paired per-layer native caches from caller-provided encoded source memory.
+    /// The original cache record/reorder APIs remain reusable, without a dense quantized-base shadow.
+    pub fn prepare_kv_cache<C,F>(&self,memory:Tensor<B,3>,visible:Option<Tensor<B,2,Bool>>,start_position:usize,initial_capacity:usize,communicator:C,mut positions:F)
+        -> Result<EncoderDecoderKvCache<B>,FullyShardedProjectedError<C::Error,<P::Gathered as TransformerProjection<B>>::Error>>
+        where C:IntegerTensorCollective<B>,F:FnMut(usize,Tensor<B,4>,usize)->Tensor<B,4> {
+        assert_eq!(memory.dims()[2],self.source_embeddings.hidden_width(),"prepared source memory width differs");
+        let mut memories=Vec::with_capacity(self.decoder.layers.len());
+        for (index,layer) in self.decoder.layers.iter().enumerate() {
+            let cross=layer.cross_attention.gather_inference(communicator.clone()).map_err(FullyShardedProjectedError::Collective)?;
+            memories.push(cross.prepare_cached_memory(memory.clone(),visible.clone(),start_position,|key,position|positions(index,key,position))
+                .map_err(FullyShardedProjectedError::Projection)?);
+        }
+        Ok(EncoderDecoderKvCache::new(TransformerKvCache::new(self.decoder.layers.len(),initial_capacity),memories))
+    }
+    /// Native actual new-target-row logits, gathering only the current decoder layer.
+    /// Partial projection failures preserve the original requirement to restore the actual cache record.
+    pub fn decode_cached_inference_with<C,F>(&self,input:FullyShardedTransformerInput<B>,cache:&mut EncoderDecoderKvCache<B>,communicator:C,mut decoder:F)
+        -> Result<Tensor<B,3>,FullyShardedProjectedError<C::Error,<P::Gathered as TransformerProjection<B>>::Error>>
+        where C:IntegerTensorCollective<B>,F:FnMut(usize,&FullyShardedProjectedDecoderLayer<B,P>,Tensor<B,3>,&mut ProjectedKvCache<B>,&ProjectedKvCache<B>)
+            ->Result<Tensor<B,3>,FullyShardedProjectedError<C::Error,<P::Gathered as TransformerProjection<B>>::Error>> {
+        let mut hidden=self.target_embeddings.forward_inference(input,communicator.clone()).map_err(FullyShardedProjectedError::Collective)?;
+        let (history,memory)=cache.parts_mut();history.validate_layers(self.decoder.layers.len());assert_eq!(memory.len(),self.decoder.layers.len(),"cached paired layer counts differ");
+        let rows=(hidden.dims()[0],hidden.dims()[1]);let next=history.position().checked_add(rows.1).expect("cached paired position overflows");
+        for (index,layer) in self.decoder.layers.iter().enumerate() {
+            hidden=decoder(index,layer,hidden,&mut history.layers_mut()[index],&memory[index])?;
+            assert_eq!((hidden.dims()[0],hidden.dims()[1]),rows,"cached decoder changed actual target rows");
+        }
+        history.finish_chunk(next);
+        if let Some(norm)=&self.decoder_normalization {hidden=norm.gather_inference(communicator.clone()).map_err(FullyShardedProjectedError::Collective)?.forward(hidden);}
+        self.head.forward_inference(hidden,communicator)
+    }
+}
 
 macro_rules! projected_paired_hidden {
     ($backend:ty,[$($generics:tt)*],$gather:ident,$embed:ident,$hidden:ident,$packed:ident,$forward:ident,$packed_logits:ident) => {

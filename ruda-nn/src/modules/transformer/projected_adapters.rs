@@ -4,7 +4,9 @@ use crate::{Linear,attention::GroupedQueryAttention};
 use super::{TransformerAdapterConfig,LayerAdapterConfig,AttentionAdapterTarget,FeedForwardAdapterTarget,
     TransformerProjectionShape,AwqTransformerProjection,Nf4TransformerProjection,MixedTransformerProjection,
     AwqGroupedQueryAttention,AwqFeedForward,AwqTransformerBlock,AwqTransformerStack,AwqTransformerModel,
-    DenseFeedForward,DenseTransformerBlock,DenseTransformerStack,TransformerEmbeddings,TransformerHead,DenseTransformerNorm};
+    DenseFeedForward,DenseTransformerBlock,DenseTransformerStack,TransformerEmbeddings,TransformerHead,DenseTransformerNorm,
+    ProjectedCrossAttentionBlock,ProjectedEncoderDecoderLayer,ProjectedEncoderDecoderStack,ProjectedEncoderDecoderModel,
+    DenseCrossAttentionBlock,DenseEncoderDecoderLayer,DenseEncoderDecoderStack,DecoderLayerAdapterConfig};
 
 /// Add adapters to an explicitly selected original projection without changing its base format.
 pub trait AdaptTransformerProjection<B:Backend>:TransformerProjectionShape<B> {
@@ -66,7 +68,7 @@ impl<B:Backend,P:TransformerProjectionShape<B>+From<Linear<B>>> AwqGroupedQueryA
     }
 }
 impl<B:Backend,P:AdaptTransformerProjection<B>> AwqGroupedQueryAttention<B,P> {
-    fn validate_adapters(&self,config:&TransformerAdapterConfig,targets:&[AttentionAdapterTarget]) {
+    pub(super) fn validate_adapters(&self,config:&TransformerAdapterConfig,targets:&[AttentionAdapterTarget]) {
         unique(targets);
         for target in targets {
             match target {AttentionAdapterTarget::Query=>self.query.validate_adapter(config),AttentionAdapterTarget::Key=>self.key.validate_adapter(config),
@@ -114,7 +116,7 @@ impl<B:Backend,P:TransformerProjectionShape<B>+From<Linear<B>>> AwqTransformerBl
     }
 }
 impl<B:Backend,P:AdaptTransformerProjection<B>> AwqTransformerBlock<B,P> {
-    fn validate_adapters(&self,config:&TransformerAdapterConfig,attention:&[AttentionAdapterTarget],feed_forward:&[FeedForwardAdapterTarget]) {
+    pub(super) fn validate_adapters(&self,config:&TransformerAdapterConfig,attention:&[AttentionAdapterTarget],feed_forward:&[FeedForwardAdapterTarget]) {
         assert!(!attention.is_empty() || !feed_forward.is_empty(),"selected native block requires an actual adapter target");
         self.attention.validate_adapters(config,attention);self.feed_forward.validate_adapters(config,feed_forward);
     }
@@ -129,7 +131,7 @@ impl<B:Backend,P:TransformerProjectionShape<B>+From<Linear<B>>> AwqTransformerSt
     pub fn from_dense(stack:DenseTransformerStack<B>) -> Self {Self {blocks:stack.blocks.into_iter().map(AwqTransformerBlock::from_dense).collect()}}
 }
 impl<B:Backend,P:AdaptTransformerProjection<B>> AwqTransformerStack<B,P> {
-    fn selected_adapters<'a>(&self,targets:&'a [LayerAdapterConfig]) -> BTreeMap<usize,&'a LayerAdapterConfig> {
+    pub(super) fn selected_adapters<'a>(&self,targets:&'a [LayerAdapterConfig]) -> BTreeMap<usize,&'a LayerAdapterConfig> {
         let mut selected=BTreeMap::new();
         for target in targets {
             assert!(target.layer<self.blocks.len(),"native adapter layer index is outside the original stack");
@@ -163,6 +165,83 @@ impl<B:Backend,P:AdaptTransformerProjection<B>> AwqTransformerModel<B,P> {
         let _=self.backbone.selected_adapters(targets);
         if let Some(config)=head {self.head.projection.validate_adapter(config);}
         self.backbone=self.backbone.with_adapters(targets);
+        if let Some(config)=head {self.head.projection=self.head.projection.with_adapter(config);}
+        self
+    }
+}
+
+impl<B:Backend,P:TransformerProjectionShape<B>+From<Linear<B>>> ProjectedCrossAttentionBlock<B,P> {
+    /// Consume actual original cross-attention leaves without guessing source/target dimensions.
+    pub fn from_dense(cross:DenseCrossAttentionBlock<B>) -> Self {
+        Self::from_parts(AwqGroupedQueryAttention::from_dense(cross.attention),cross.query_norm,cross.memory_norm,cross.residual_dropout,cross.norm_first)
+    }
+}
+impl<B:Backend,P:AdaptTransformerProjection<B>> ProjectedCrossAttentionBlock<B,P> {
+    /// Attach adapters only to the explicitly selected real query/memory/output roles.
+    pub fn with_adapters(mut self,config:&TransformerAdapterConfig,targets:&[AttentionAdapterTarget]) -> Self {
+        self.attention=self.attention.with_adapters(config,targets);self
+    }
+}
+impl<B:Backend,P:TransformerProjectionShape<B>+From<Linear<B>>> ProjectedEncoderDecoderLayer<B,P> {
+    /// Preserve actual original self-attention, memory attention and FFN leaves and identities.
+    pub fn from_dense(layer:DenseEncoderDecoderLayer<B>) -> Self {
+        Self::from_parts(AwqTransformerBlock::from_dense(layer.backbone),ProjectedCrossAttentionBlock::from_dense(layer.cross_attention))
+    }
+}
+impl<B:Backend,P:AdaptTransformerProjection<B>> ProjectedEncoderDecoderLayer<B,P> {
+    fn validate_adapters(&self,config:&DecoderLayerAdapterConfig) {
+        assert!(config.backbone.is_some() || config.cross_attention.is_some(),"selected paired layer requires an actual adapter stage");
+        if let Some(config)=&config.backbone {self.backbone.validate_adapters(&config.adapter,&config.attention,&config.feed_forward);}
+        if let Some(config)=&config.cross_attention {
+            assert!(!config.attention.is_empty(),"selected cross stage requires an actual projection target");
+            self.cross_attention.attention.validate_adapters(&config.adapter,&config.attention);
+        }
+    }
+    /// Independently select self/FFN and memory-attention adapter roles without altering stage order.
+    pub fn with_adapters(mut self,config:&DecoderLayerAdapterConfig) -> Self {
+        self.validate_adapters(config);
+        if let Some(config)=&config.backbone {self.backbone=self.backbone.with_adapters(&config.adapter,&config.attention,&config.feed_forward);}
+        if let Some(config)=&config.cross_attention {self.cross_attention=self.cross_attention.with_adapters(&config.adapter,&config.attention);}
+        self
+    }
+}
+impl<B:Backend,P:TransformerProjectionShape<B>+From<Linear<B>>> ProjectedEncoderDecoderStack<B,P> {
+    /// Connect every original dense paired layer, in original order, with no new projection values.
+    pub fn from_dense(stack:DenseEncoderDecoderStack<B>) -> Self {Self {layers:stack.layers.into_iter().map(ProjectedEncoderDecoderLayer::from_dense).collect()}}
+}
+impl<B:Backend,P:AdaptTransformerProjection<B>> ProjectedEncoderDecoderStack<B,P> {
+    fn selected_adapters<'a>(&self,targets:&'a [DecoderLayerAdapterConfig]) -> BTreeMap<usize,&'a DecoderLayerAdapterConfig> {
+        let mut selected=BTreeMap::new();
+        for target in targets {
+            assert!(target.layer<self.layers.len(),"paired adapter layer is outside the original decoder stack");
+            assert!(selected.insert(target.layer,target).is_none(),"duplicate paired adapter layer index");self.layers[target.layer].validate_adapters(target);
+        }
+        selected
+    }
+    /// Validate all original decoder selections first, then allocate only explicitly selected A/B leaves.
+    pub fn with_adapters(self,targets:&[DecoderLayerAdapterConfig]) -> Self {
+        let selected=self.selected_adapters(targets);
+        let layers=self.layers.into_iter().enumerate().map(|(index,layer)| {
+            if let Some(config)=selected.get(&index) {layer.with_adapters(config)} else {layer}
+        }).collect();Self {layers}
+    }
+}
+impl<B:Backend,P:TransformerProjectionShape<B>+From<Linear<B>>> ProjectedEncoderDecoderModel<B,P> {
+    /// Consume original actual independent source/target dense components without initialization or quantization.
+    pub fn from_dense_parts(source_embeddings:TransformerEmbeddings<B>,encoder:DenseTransformerStack<B>,encoder_normalization:Option<DenseTransformerNorm<B>>,
+        target_embeddings:TransformerEmbeddings<B>,decoder:DenseEncoderDecoderStack<B>,decoder_normalization:Option<DenseTransformerNorm<B>>,head:TransformerHead<B>) -> Self {
+        let head=super::AwqTransformerHead::from_projection(head.projection.into(),head.normalization,head.dropout);
+        Self::from_parts(source_embeddings,AwqTransformerStack::from_dense(encoder),encoder_normalization,target_embeddings,
+            ProjectedEncoderDecoderStack::from_dense(decoder),decoder_normalization,head)
+    }
+}
+impl<B:Backend,P:AdaptTransformerProjection<B>> ProjectedEncoderDecoderModel<B,P> {
+    /// Apply independent source, target-self/FFN, target-memory and output-head adapter selections.
+    /// All selections are checked before any allocation; untouched original values and flags remain intact.
+    pub fn with_adapters(mut self,encoder:&[LayerAdapterConfig],decoder:&[DecoderLayerAdapterConfig],head:Option<&TransformerAdapterConfig>) -> Self {
+        let _=self.encoder.selected_adapters(encoder);let _=self.decoder.selected_adapters(decoder);
+        if let Some(config)=head {self.head.projection.validate_adapter(config);}
+        self.encoder=self.encoder.with_adapters(encoder);self.decoder=self.decoder.with_adapters(decoder);
         if let Some(config)=head {self.head.projection=self.head.projection.with_adapter(config);}
         self
     }
