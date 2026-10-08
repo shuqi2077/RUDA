@@ -354,6 +354,24 @@ where
         rudnn::pooling::adaptive_avg_pool3d(x, output_size)
     }
 
+    fn max_pool3d(x: FloatTensor<Self>, kernel: [usize; 3], stride: [usize; 3],
+        padding: [usize; 3], dilation: [usize; 3], ceil: bool) -> FloatTensor<Self> {
+        rudnn::pooling::max_pool3d(x, kernel, stride, padding, dilation, ceil)
+    }
+
+    fn max_pool3d_with_indices(x: FloatTensor<Self>, kernel: [usize; 3], stride: [usize; 3],
+        padding: [usize; 3], dilation: [usize; 3], ceil: bool) -> ruda_tensor::ops::MaxPool3dWithIndices<Self> {
+        let (output, indices) = rudnn::pooling::max_pool3d_with_indices(x, kernel, stride, padding, dilation, ceil);
+        ruda_tensor::ops::MaxPool3dWithIndices::new(output, indices)
+    }
+
+    fn max_pool3d_with_indices_backward(x: FloatTensor<Self>, grad: FloatTensor<Self>, indices: IntTensor<Self>,
+        kernel: [usize; 3], stride: [usize; 3], padding: [usize; 3], dilation: [usize; 3],
+        ceil: bool) -> ruda_tensor::ops::MaxPool3dBackward<Self> {
+        ruda_tensor::ops::MaxPool3dBackward::new(rudnn::pooling::max_pool3d_with_indices_backward(
+            x, grad, indices, kernel, stride, padding, dilation, ceil))
+    }
+
     fn avg_pool3d(x: FloatTensor<Self>, kernel: [usize; 3], stride: [usize; 3],
         padding: [usize; 3], include_pad: bool, ceil: bool) -> FloatTensor<Self> {
         rudnn::pooling::avg_pool3d(x, kernel, stride, padding, include_pad, ceil)

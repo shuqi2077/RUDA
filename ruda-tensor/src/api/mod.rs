@@ -20,6 +20,7 @@ mod options;
 mod orderable;
 mod pad;
 mod spatial_pool;
+pub(crate) use spatial_pool::{max_pool3d_composed, max_pool3d_with_indices_composed};
 mod spatial_interpolate;
 pub use pad::IntoPadding;
 mod take;

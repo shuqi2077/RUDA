@@ -103,6 +103,22 @@ pub struct MaxPool2dWithIndices<B: Backend> {
     pub indices: IntTensor<B>,
 }
 
+/// Native volume maxima and flattened I64 input positions.
+#[derive(new)]
+pub struct MaxPool3dWithIndices<B: Backend> {
+    /// Output `[batch, channels, depth, height, width]` activations.
+    pub output: FloatTensor<B>,
+    /// Original input positions per batch/channel, or `-1` for empty selections.
+    pub indices: IntTensor<B>,
+}
+
+/// Native volume maximum-pooling input gradients.
+#[derive(new)]
+pub struct MaxPool3dBackward<B: Backend> {
+    /// Gradient in the original input geometry and storage.
+    pub x_grad: FloatTensor<B>,
+}
+
 pub use ruda_core::tensor::spatial::{ConvOptions, PaddedConvOptions, DeformConvOptions, ConvTransposeOptions, UnfoldOptions};
 
 pub use ruda_core::tensor::spatial::{InterpolateMode, InterpolateOptions};
@@ -619,6 +635,22 @@ pub trait ModuleOps<B: Backend> {
     /// Input gradients for native three dimensional adaptive average pooling.
     fn adaptive_avg_pool3d_backward(x: FloatTensor<B>, grad: FloatTensor<B>) -> FloatTensor<B> {
         pool::adaptive_avg_pool3d_backward_from_2d::<B>(x, grad)
+    }
+    /// Three dimensional maximum pooling with native padding, stride and dilation.
+    fn max_pool3d(x: FloatTensor<B>, kernel: [usize; 3], stride: [usize; 3], padding: [usize; 3],
+        dilation: [usize; 3], ceil: bool) -> FloatTensor<B> {
+        pool::max_pool3d_from_2d::<B>(x, kernel, stride, padding, dilation, ceil)
+    }
+    /// Volume maxima and original input positions.
+    fn max_pool3d_with_indices(x: FloatTensor<B>, kernel: [usize; 3], stride: [usize; 3],
+        padding: [usize; 3], dilation: [usize; 3], ceil: bool) -> MaxPool3dWithIndices<B> {
+        pool::max_pool3d_with_indices_from_2d::<B>(x, kernel, stride, padding, dilation, ceil)
+    }
+    /// Accumulate volume gradients through the saved maximum positions.
+    fn max_pool3d_with_indices_backward(x: FloatTensor<B>, grad: FloatTensor<B>, indices: IntTensor<B>,
+        _kernel: [usize; 3], _stride: [usize; 3], _padding: [usize; 3], _dilation: [usize; 3],
+        _ceil: bool) -> MaxPool3dBackward<B> {
+        MaxPool3dBackward::new(pool::max_pool3d_backward_from_indices::<B>(x, grad, indices))
     }
     /// One dimensional adaptive avg pooling.
     ///

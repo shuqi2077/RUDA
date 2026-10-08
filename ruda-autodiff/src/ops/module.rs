@@ -1765,6 +1765,52 @@ impl<B: Backend, C: CheckpointStrategy> ModuleOps<Autodiff<B, C>> for Autodiff<B
         }
     }
 
+    fn max_pool3d(
+        x: AutodiffTensor<B>, kernel_size: [usize; 3], stride: [usize; 3],
+        padding: [usize; 3], dilation: [usize; 3], ceil_mode: bool,
+    ) -> AutodiffTensor<B> {
+        match MaxPool3D.prepare::<C>([x.node.clone()]).compute_bound().stateful() {
+            OpsKind::Tracked(mut prep) => {
+                let x_state = prep.checkpoint(&x);
+                let output = B::max_pool3d_with_indices(
+                    x.primitive, kernel_size, stride, padding, dilation, ceil_mode,
+                );
+                prep.finish(
+                    (x_state, output.indices, kernel_size, stride, padding, dilation, ceil_mode),
+                    output.output,
+                )
+            }
+            OpsKind::UnTracked(prep) => prep.finish(B::max_pool3d(
+                x.primitive, kernel_size, stride, padding, dilation, ceil_mode,
+            )),
+        }
+    }
+
+    fn max_pool3d_with_indices(
+        x: AutodiffTensor<B>, kernel_size: [usize; 3], stride: [usize; 3],
+        padding: [usize; 3], dilation: [usize; 3], ceil_mode: bool,
+    ) -> MaxPool3dWithIndices<Self> {
+        match MaxPool3D.prepare::<C>([x.node.clone()]).compute_bound().stateful() {
+            OpsKind::Tracked(mut prep) => {
+                let x_state = prep.checkpoint(&x);
+                let output = B::max_pool3d_with_indices(
+                    x.primitive, kernel_size, stride, padding, dilation, ceil_mode,
+                );
+                let tensor = prep.finish(
+                    (x_state, output.indices.clone(), kernel_size, stride, padding, dilation, ceil_mode),
+                    output.output,
+                );
+                MaxPool3dWithIndices::new(tensor, output.indices)
+            }
+            OpsKind::UnTracked(prep) => {
+                let output = B::max_pool3d_with_indices(
+                    x.primitive, kernel_size, stride, padding, dilation, ceil_mode,
+                );
+                MaxPool3dWithIndices::new(prep.finish(output.output), output.indices)
+            }
+        }
+    }
+
     fn max_pool2d_with_indices_backward(
         x: AutodiffTensor<B>,
         kernel_size: [usize; 2],
@@ -2289,6 +2335,27 @@ impl<B: Backend> Backward<B, 1> for MaxPool2D {
             );
 
             grads.register::<B>(node.id, grad.x_grad);
+        }
+    }
+}
+
+#[derive(Debug)]
+struct MaxPool3D;
+
+impl<B: Backend> Backward<B, 1> for MaxPool3D {
+    type State = (NodeId, IntTensor<B>, [usize; 3], [usize; 3], [usize; 3], [usize; 3], bool);
+
+    fn backward(self, ops: Ops<Self::State, 1>, grads: &mut Gradients,
+        checkpointer: &mut Checkpointer) {
+        let [parent] = ops.parents;
+        let grad = grads.consume::<B>(&ops.node);
+        let (x_state, indices, kernel, stride, padding, dilation, ceil) = ops.state;
+        if let Some(parent) = parent {
+            let x = checkpointer.retrieve_node_output(x_state);
+            let result = B::max_pool3d_with_indices_backward(
+                x, grad, indices, kernel, stride, padding, dilation, ceil,
+            );
+            grads.register::<B>(parent.id, result.x_grad);
         }
     }
 }

@@ -41,7 +41,7 @@ pub(super) fn depth_lines_volume<B: Backend, K: BasicOps<B>>(
 /// Executes the existing spatial and depth pooling kernels on the tensor's
 /// backend. Padding, dilation and ceil mode are applied independently per axis.
 /// Layout transformations and both pooling stages remain differentiable.
-pub fn max_pool3d<B: Backend>(
+pub(crate) fn max_pool3d_composed<B: Backend>(
     input: Tensor<B, 5>,
     kernel_size: [usize; 3],
     stride: [usize; 3],
@@ -72,7 +72,7 @@ pub fn max_pool3d<B: Backend>(
 /// for every batch/channel. Tie selection follows the
 /// underlying spatial kernel followed by the depth kernel. Invalid backend
 /// indices become `-1`; they are never used as out-of-bounds gather addresses.
-pub fn max_pool3d_with_indices<B: Backend>(
+pub(crate) fn max_pool3d_with_indices_composed<B: Backend>(
     input: Tensor<B, 5>,
     kernel_size: [usize; 3],
     stride: [usize; 3],
@@ -113,6 +113,28 @@ pub fn max_pool3d_with_indices<B: Backend>(
         depth_lines_volume(lines, batch, channels, height, width),
         depth_lines_volume(indices, batch, channels, height, width),
     )
+}
+
+/// Maximum-pool native volumes using the backend's volume operation.
+pub fn max_pool3d<B: Backend>(input: Tensor<B, 5>, kernel_size: [usize; 3], stride: [usize; 3],
+    padding: [usize; 3], dilation: [usize; 3], ceil_mode: bool) -> Tensor<B, 5> {
+    Tensor::new(TensorPrimitive::Float(B::max_pool3d(input.primitive.tensor(),
+        kernel_size, stride, padding, dilation, ceil_mode)))
+}
+
+/// Native volume maxima and flattened I64 positions in the original input.
+/// Empty selections are `-1`; tie/NaN selection retains spatial-then-depth order.
+pub fn max_pool3d_with_indices<B: Backend>(input: Tensor<B, 5>, kernel_size: [usize; 3],
+    stride: [usize; 3], padding: [usize; 3], dilation: [usize; 3], ceil_mode: bool)
+    -> (Tensor<B, 5>, Tensor<B, 5, Int>) {
+    let [_, _, depth, height, width] = input.dims();
+    assert!(depth > 0 && height > 0 && width > 0, "volume pooling indices require non-empty spatial axes");
+    let volume = depth.checked_mul(height).and_then(|size| size.checked_mul(width))
+        .expect("pooling volume size overflow");
+    assert!(volume <= i64::MAX as usize, "volume pooling positions exceed I64");
+    let output = B::max_pool3d_with_indices(input.primitive.tensor(), kernel_size, stride,
+        padding, dilation, ceil_mode);
+    (Tensor::new(TensorPrimitive::Float(output.output)), Tensor::new(output.indices))
 }
 
 /// Average-pool native `[batch, channels, depth, height, width]` activations.

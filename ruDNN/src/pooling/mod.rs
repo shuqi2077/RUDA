@@ -7,6 +7,7 @@ mod avg_pool3d;
 mod max_pool2d;
 mod max_pool2d_aten;
 mod max_pool2d_backward;
+mod max_pool3d;
 
 pub mod pool2d;
 
@@ -19,3 +20,4 @@ pub use avg_pool3d::*;
 pub use max_pool2d::*;
 pub use max_pool2d_aten::*;
 pub use max_pool2d_backward::*;
+pub use max_pool3d::*;
