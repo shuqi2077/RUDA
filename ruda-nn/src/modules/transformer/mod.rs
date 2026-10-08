@@ -13,6 +13,7 @@ mod mhc_residual_model;
 mod mhc_residual_context;
 mod mhc_residual_adapters;
 mod mhc_branch_projections;
+mod mhc_residual_adapter_record;
 mod heads;
 mod adapted_head;
 mod embeddings;

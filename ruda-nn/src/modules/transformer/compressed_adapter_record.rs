@@ -11,7 +11,7 @@ pub struct HybridAttentionAdapterRecord<B: Backend> {
     version: u32,
     base_id: String,
     scope: String,
-    entries: Vec<(String, LoRAAdapterRecord<B>)>,
+    pub(super) entries: Vec<(String, LoRAAdapterRecord<B>)>,
 }
 
 impl<B: Backend> Record<B> for HybridAttentionAdapterRecord<B> {
@@ -27,7 +27,7 @@ impl<B: Backend> Record<B> for HybridAttentionAdapterRecord<B> {
 
 fn invalid(reason: &str) -> RecorderError { RecorderError::Unknown(format!("Invalid native hybrid adapter record: {reason}")) }
 
-fn block_path(role: MhcTransformerProjectionRole) -> String {
+pub(super) fn block_path(role: MhcTransformerProjectionRole) -> String {
     match role {
         MhcTransformerProjectionRole::Gate => "gate".into(),
         MhcTransformerProjectionRole::Up => "up".into(),
@@ -126,7 +126,7 @@ impl<B: Backend> HybridTiedEmbeddingAdapter<B> {
 }
 
 impl<B: Backend> HybridAttentionAdapterRecord<B> {
-    fn capture<M: Module<B>>(module: &M, base_id: &str, scope: &str, candidates: Candidates<'_, B>, tied: Tied<'_, B>) -> Result<Self, RecorderError> {
+    pub(super) fn capture<M: Module<B>>(module: &M, base_id: &str, scope: &str, candidates: Candidates<'_, B>, tied: Tied<'_, B>) -> Result<Self, RecorderError> {
         if base_id.is_empty() { return Err(invalid("complete frozen base identity is required")); }
         adapter_only(module, &candidates, tied)?;
         let mut entries = Vec::new();
@@ -136,7 +136,7 @@ impl<B: Backend> HybridAttentionAdapterRecord<B> {
         Ok(Self { version: 1, base_id: base_id.into(), scope: scope.into(), entries })
     }
 
-    fn validate<M: Module<B>>(&self, module: &M, base_id: &str, scope: &str, candidates: Candidates<'_, B>, tied: Tied<'_, B>) -> Result<(), RecorderError> {
+    pub(super) fn validate<M: Module<B>>(&self, module: &M, base_id: &str, scope: &str, candidates: Candidates<'_, B>, tied: Tied<'_, B>) -> Result<(), RecorderError> {
         if self.version != 1 || self.base_id != base_id || base_id.is_empty() || self.scope != scope {
             return Err(invalid("version, complete frozen base identity or module scope differs"));
         }
@@ -227,7 +227,7 @@ impl<B: Backend> HybridAttentionAdapterRecord<B> {
     }
 }
 
-fn restore_projection<B: Backend>(projection: AdaptedProjection<B>, path: &str,
+pub(super) fn restore_projection<B: Backend>(projection: AdaptedProjection<B>, path: &str,
     entries: &mut BTreeMap<String, LoRAAdapterRecord<B>>, base_id: &str) -> Result<AdaptedProjection<B>, RecorderError> {
     match projection {
         AdaptedProjection::Dense(layer) => Ok(AdaptedProjection::Dense(layer)),
