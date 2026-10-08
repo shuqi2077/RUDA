@@ -7,6 +7,7 @@ use crate::{Linear,LoRALinear,FrozenAwqLinear,AwqLoRALinear,Dropout,activation::
 use super::DenseTransformerNorm;
 use super::{TransformerProjectionShape,TransformerProjection,BackendProjection};
 use super::dense::try_residual_branch;
+use super::native_attention::{attention_branch,packed_attention_branch,cached_attention_branch};
 
 /// Explicit per-projection dense, dense-LoRA, original packed AWQ or AWQ-LoRA
 /// selection. No source weights are quantized or adapter roles inferred here.
@@ -198,12 +199,7 @@ impl<B:Backend,P:TransformerProjection<B>> AwqTransformerBlock<B,P> {
     /// Actual original attention/residual/norm stage, before inserting encoder-memory attention.
     pub fn forward_attention_with_positions<F>(&self,input:Tensor<B,3>,masks:DenseAttentionMask<B>,options:DenseAttentionOptions,positions:F)
         -> Result<Tensor<B,3>,P::Error> where F:FnOnce(Tensor<B,4>,Tensor<B,4>)->(Tensor<B,4>,Tensor<B,4>) {
-        try_residual_branch(input,&self.attention_norm,&self.residual_dropout,self.norm_first,|source| {
-            let (query,key,value)=self.attention.project(source.clone(),source.clone(),source)?;
-            let shape=(query.dims(),key.dims());let (query,key)=positions(query,key);
-            assert_eq!((query.dims(),key.dims()),shape,"positions changed head geometry");
-            self.attention.forward_projected(query,key,value,masks,options)
-        })
+        attention_branch(&self.attention,&self.attention_norm,&self.residual_dropout,self.norm_first,input,masks,options,positions)
     }
     /// Actual original FFN/residual/norm stage, retaining dense or flat-document axes.
     pub fn forward_feed_forward<const D:usize>(&self,hidden:Tensor<B,D>) -> Result<Tensor<B,D>,P::Error> {
@@ -223,14 +219,7 @@ impl<B:Backend,P:TransformerProjection<B>> AwqTransformerBlock<B,P> {
     pub fn forward_packed_attention_with_positions<F>(&self,input:Tensor<B,2>,layout:&PackedSequenceLayout,
         masks:Option<&[PackedDocumentAttentionMask<B>]>,options:PackedAttentionOptions,positions:F)
         -> Result<Tensor<B,2>,P::Error> where F:FnOnce(Tensor<B,3>,Tensor<B,3>)->(Tensor<B,3>,Tensor<B,3>) {
-        assert_eq!(input.dims()[0],layout.tokens(),"packed document boundaries differ from actual rows");
-        try_residual_branch(input,&self.attention_norm,&self.residual_dropout,self.norm_first,|source| {
-            let (query,key,value)=self.attention.project_packed(source.clone(),source.clone(),source)?;
-            let geometry=(query.dims(),key.dims());let (query,key)=positions(query,key);
-            assert_eq!((query.dims(),key.dims()),geometry,"packed positions changed geometry");
-            if let Some(masks)=masks {self.attention.forward_packed_masked_projected(query,key,value,layout,layout,masks,options)}
-            else {self.attention.forward_packed_projected(query,key,value,layout,layout,options)}
-        })
+        packed_attention_branch(&self.attention,&self.attention_norm,&self.residual_dropout,self.norm_first,input,layout,masks,options,positions)
     }
     /// Actual new-token cached attention and FFN, reusing the existing cache semantics.
     pub fn forward_cached_with_positions<F>(&self,input:Tensor<B,3>,new_visible:Option<Tensor<B,2,Bool>>,cache:&mut ProjectedKvCache<B>,
@@ -242,8 +231,7 @@ impl<B:Backend,P:TransformerProjection<B>> AwqTransformerBlock<B,P> {
     pub fn forward_cached_attention_with_positions<F>(&self,input:Tensor<B,3>,new_visible:Option<Tensor<B,2,Bool>>,cache:&mut ProjectedKvCache<B>,
         masks:DenseAttentionMask<B>,options:DenseAttentionOptions,positions:F) -> Result<Tensor<B,3>,P::Error>
         where F:FnOnce(Tensor<B,4>,Tensor<B,4>,usize)->(Tensor<B,4>,Tensor<B,4>) {
-        try_residual_branch(input,&self.attention_norm,&self.residual_dropout,self.norm_first,|source|
-            self.attention.forward_cached_with_positions(source,new_visible,cache,masks,options,positions))
+        cached_attention_branch(&self.attention,&self.attention_norm,&self.residual_dropout,self.norm_first,input,new_visible,cache,masks,options,positions)
     }
 }
 

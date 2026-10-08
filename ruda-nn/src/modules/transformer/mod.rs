@@ -20,6 +20,8 @@ mod projection;
 mod projected_adapters;
 mod projected_decoder;
 mod projected_paired_model;
+mod native_attention;
+mod moe;
 
 pub use decoder::*;
 pub use encoder::*;
@@ -39,3 +41,4 @@ pub use projection::*;
 pub use projected_adapters::*;
 pub use projected_decoder::*;
 pub use projected_paired_model::*;
+pub use moe::*;
