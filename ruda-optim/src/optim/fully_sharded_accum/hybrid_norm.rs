@@ -127,8 +127,7 @@ where B:AutodiffBackend,M:AutodiffModule<B>,C:BroadcastTensorCollective<B::Inner
     }
     let mut declared=Vec::with_capacity(parameters.len());let mut copies=BTreeMap::new();
     for parameter in parameters {
-        if parameter.replicas==0 || parameter.replicas>world
-            || copies.insert(parameter.parameter,parameter.replicas).is_some() {
+        if parameter.replicas==0 || copies.insert(parameter.parameter,parameter.replicas).is_some() {
             return Err(FullyShardedGradientNormError::Protocol("invalid replica multiplicity or duplicate local binding"));
         }
         declared.push((parameter.parameter.val(),parameter.logical_shape.clone(),parameter.shard_rank,
