@@ -6190,7 +6190,7 @@ dependencies = [
 
 [[package]]
 name = "ruda-tensor-rocm"
-version = "0.21.35"
+version = "0.21.36"
 dependencies = [
  "ruda-core",
  "ruda-driver-hip",
