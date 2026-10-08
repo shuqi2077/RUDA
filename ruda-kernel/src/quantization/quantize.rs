@@ -19,7 +19,13 @@ fn quantize_symmetric<F: Float, N: Size, FS: RudaPrimitive>(
     range_max: F,
     #[comptime] quant: QuantValue,
 ) -> Vector<F, N> {
-    let scaled = value / Vector::cast_from(scale);
+    let mut scaled = value / Vector::cast_from(scale);
+    if F::cast_from(scale) == F::new(0.0) {
+        #[unroll]
+        for lane in 0..N::value() {
+            if value[lane] == F::new(0.0) { scaled[lane] = value[lane]; }
+        }
+    }
     let rounded = match quant {
         QuantValue::E4M3 | QuantValue::E5M2 | QuantValue::E2M1 => scaled,
         _ => Vector::round(scaled),

@@ -144,6 +144,14 @@ def _bytes(value):
     return 0
 
 
+def _pending_gradients(trainer):
+    model = trainer.model if hasattr(trainer, 'model') else trainer.stage.module
+    parameters = list(model.parameters())
+    if trainer.optimizer is not None:
+        parameters += [value for options in trainer.optimizer.param_groups for value in options['params']]
+    return any(value.grad is not None for value in parameters)
+
+
 class _UpdateState:
     def __init__(self, trainer):
         self.trainer = trainer
@@ -373,7 +381,7 @@ class TrainingAutotuner:
         error = None
         try:
             trainer._batch_counts(batches)
-            if any(parameter.grad is not None for parameter in trainer.model.parameters()):
+            if _pending_gradients(trainer):
                 raise ValueError('training autotune starts only at a cleared optimizer-step boundary')
             if not batches and trainer.replica_group is None:
                 raise ValueError('training autotune needs an actual nonempty local window')
@@ -467,7 +475,7 @@ class TrainingAutotuner:
         finally:
             state.restore(original)
             self._publish(stage='restored', completed_updates=completed,
-                          elapsed_seconds=time.monotonic() - started, checkpoint_age_seconds=0.,
+                          elapsed_seconds=time.monotonic() - started, checkpoint_age_seconds=time.monotonic() - started,
                           remaining_seconds_range=(0., 0.))
         self._publish(stage='selected', plan=winner, median_update_seconds=None if math.isinf(fastest) else fastest)
         return winner
@@ -524,7 +532,7 @@ class PipelineAutotuner(TrainingAutotuner):
         contracts = (self.repeats, self.max_seconds, self.rtol, self.atol, self.max_snapshot_bytes)
         if any(value != contracts for value in self._gather(trainer, contracts)):
             raise ValueError('all pipeline ranks must use the same tuning policy')
-        if any(self._gather(trainer, any(value.grad is not None for value in trainer.stage.module.parameters()))):
+        if any(self._gather(trainer, _pending_gradients(trainer))):
             raise ValueError('pipeline autotune starts at a cleared optimizer-step boundary')
         state = _UpdateState(trainer)
         estimate = state.estimate_bytes()
@@ -592,7 +600,7 @@ class PipelineAutotuner(TrainingAutotuner):
         finally:
             state.restore(original)
             self._publish(stage='restored', elapsed_seconds=time.monotonic() - started,
-                          checkpoint_age_seconds=0., remaining_seconds_range=(0., 0.))
+                          checkpoint_age_seconds=time.monotonic() - started, remaining_seconds_range=(0., 0.))
         self._publish(stage='selected', schedule=winner,
                       median_update_seconds=None if math.isinf(fastest) else fastest)
         return winner
