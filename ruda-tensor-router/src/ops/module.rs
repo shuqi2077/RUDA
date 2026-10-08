@@ -12,6 +12,25 @@ use ruda_tensor::graph::*;
 use crate::{BackendRouter, RunnerChannel, RunnerClient};
 
 impl<R: RunnerChannel> ModuleOps<Self> for BackendRouter<R> {
+    fn group_norm_with_stats(x: FloatTensor<Self>, gamma: Option<FloatTensor<Self>>, beta: Option<FloatTensor<Self>>,
+        groups: usize, epsilon: f64) -> ruda_tensor::ops::LayerNormOutput<Self> {
+        let client = x.client.clone();
+        let desc = GroupNormOpIr::create(x.into_ir(), gamma.map(|value| value.into_ir()), beta.map(|value| value.into_ir()),
+            groups, epsilon, || client.create_empty_handle());
+        let [output, mean, rstd] = client.register(OperationIr::Module(ModuleOperationIr::GroupNorm(desc))).outputs();
+        ruda_tensor::ops::LayerNormOutput { output, mean, rstd }
+    }
+
+    fn group_norm_backward_select(x: FloatTensor<Self>, gamma: Option<FloatTensor<Self>>, grad: FloatTensor<Self>,
+        mean: FloatTensor<Self>, rstd: FloatTensor<Self>, groups: usize, mask: [bool; 3]) -> [Option<FloatTensor<Self>>; 3] {
+        if mask == [false; 3] { return [None, None, None]; }
+        let client = x.client.clone();
+        let desc = GroupNormBackwardSelectOpIr::create(x.into_ir(), gamma.map(|value| value.into_ir()), grad.into_ir(), mean.into_ir(),
+            rstd.into_ir(), groups, mask, || client.create_empty_handle());
+        let mut outputs = client.register(OperationIr::Module(ModuleOperationIr::GroupNormBackwardSelect(desc))).into_iter();
+        core::array::from_fn(|index| mask[index].then(|| outputs.next().expect("registered GroupNorm gradient")))
+    }
+
     fn gelu_native(x: FloatTensor<Self>, approximate: bool) -> FloatTensor<Self> {
         let client = x.client.clone();
         let desc = GeluOpIr::create(x.into_ir(), approximate, || client.create_empty_handle());

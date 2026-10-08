@@ -208,6 +208,24 @@ pub use ruda_core::tensor::spatial::AttentionModuleOptions;
 
 /// Module operations trait.
 pub trait ModuleOps<B: Backend> {
+    /// Native GroupNorm on actual channel groups with independently optional affine leaves.
+    fn group_norm(tensor: FloatTensor<B>, gamma: Option<FloatTensor<B>>, beta: Option<FloatTensor<B>>,
+        groups: usize, epsilon: f64) -> FloatTensor<B> {
+        Self::group_norm_with_stats(tensor, gamma, beta, groups, epsilon).output
+    }
+
+    /// GroupNorm output and FP32/FP64 saved `[batch, groups]` mean/reciprocal deviation.
+    fn group_norm_with_stats(tensor: FloatTensor<B>, gamma: Option<FloatTensor<B>>, beta: Option<FloatTensor<B>>,
+        groups: usize, epsilon: f64) -> LayerNormOutput<B> {
+        super::group_normalization::group_norm_with_stats::<B>(tensor, gamma, beta, groups, epsilon)
+    }
+
+    /// Only requested original input, actual weight and bias derivatives, in that order.
+    fn group_norm_backward_select(tensor: FloatTensor<B>, gamma: Option<FloatTensor<B>>, grad: FloatTensor<B>,
+        mean: FloatTensor<B>, rstd: FloatTensor<B>, groups: usize, mask: [bool; 3]) -> [Option<FloatTensor<B>>; 3] {
+        super::group_normalization::group_norm_backward_select::<B>(tensor, gamma, grad, mean, rstd, groups, mask)
+    }
+
     /// Explicit native GELU preserving the caller's original erf/tanh approximation choice.
     fn gelu_native(tensor: FloatTensor<B>, approximate: bool) -> FloatTensor<B> {
         super::activation_training::gelu_native::<B>(tensor, approximate)

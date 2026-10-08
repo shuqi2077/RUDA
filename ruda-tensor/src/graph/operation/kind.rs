@@ -263,6 +263,10 @@ pub enum ModuleOperationIr {
     GeluNative(GeluOpIr),
     /// Original selected erf/tanh mode's independent first-order GELU VJP.
     GeluNativeBackward(GeluBackwardOpIr),
+    /// Channel GroupNorm with actual optional affine leaves and saved group statistics.
+    GroupNorm(GroupNormOpIr),
+    /// GroupNorm derivatives restricted to actual requested leaves.
+    GroupNormBackwardSelect(GroupNormBackwardSelectOpIr),
 }
 
 /// Basic operations that can be done on any tensor type.

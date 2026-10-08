@@ -29,7 +29,7 @@ fn combine(left: Moments, right: Moments) -> Moments {
 }
 
 #[ruda]
-fn row_statistics<F: Float>(
+pub(super) fn row_statistics<F: Float>(
     input: &Array<F>,
     width: u32,
     epsilon: f32,
@@ -165,7 +165,7 @@ pub(crate) fn layer_norm_training<F: Float, W: Float, B: Float>(
 }
 
 #[ruda]
-fn block_sum_pair(first: f32, second: f32) -> (f32, f32) {
+pub(super) fn block_sum_pair(first: f32, second: f32) -> (f32, f32) {
     let mut first_parts = SharedMemory::<f32>::new(4usize);
     let mut second_parts = SharedMemory::<f32>::new(4usize);
     let first = plane_sum(first);

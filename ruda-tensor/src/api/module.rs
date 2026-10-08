@@ -27,6 +27,14 @@ pub fn rms_norm<B: Backend, const D: usize>(input: Tensor<B, D>, gamma: Tensor<B
     )))
 }
 
+/// Channel GroupNorm on `[batch, channels, ...]`, with independently optional affine leaves.
+/// Uses biased variance and saved FP32 statistics for low-precision training; F64 retains FP64.
+pub fn group_norm<B: Backend, const D: usize>(input: Tensor<B, D>, gamma: Option<Tensor<B, 1>>, beta: Option<Tensor<B, 1>>,
+    groups: usize, epsilon: f64) -> Tensor<B, D> {
+    Tensor::new(TensorPrimitive::Float(B::group_norm(input.into_primitive().tensor(),
+        gamma.map(|value| value.into_primitive().tensor()), beta.map(|value| value.into_primitive().tensor()), groups, epsilon)))
+}
+
 /// Computes the [CTC loss](crate::api::ops::ModuleOps::ctc_loss).
 ///
 /// # Arguments

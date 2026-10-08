@@ -56,6 +56,24 @@ fn native_softmax_supported<R: DeviceRuntime>(tensor: &crate::RudaTensor<R>) -> 
         && tensor.client.properties().hardware.plane_size_min == tensor.client.properties().hardware.plane_size_max
 }
 
+fn group_storage_supported<R: DeviceRuntime>(tensor: &crate::RudaTensor<R>) -> bool {
+    tensor.qparams.is_none() && matches!(tensor.dtype,
+        ruda_core::tensor::DType::F32 | ruda_core::tensor::DType::F16 | ruda_core::tensor::DType::BF16)
+}
+
+fn native_group_supported<R: DeviceRuntime>(tensor: &crate::RudaTensor<R>, groups: usize) -> bool {
+    let info = ruda_tensor::ops::group_normalization::geometry(tensor.meta.shape(), groups);
+    let properties = tensor.client.properties();
+    let hardware = &properties.hardware;
+    let plane = hardware.plane_size_max;
+    group_storage_supported(tensor) && tensor.meta.num_elements() <= u32::MAX as usize
+        && info.channels <= u32::MAX as usize && info.width <= u32::MAX as usize
+        && plane.is_power_of_two() && plane == hardware.plane_size_min
+        && properties.features.plane.contains(ruda_core::ir::features::Plane::Ops)
+        && plane <= hardware.max_ruda_dim.0 && hardware.max_ruda_dim.1 >= 4
+        && plane <= hardware.max_units_per_ruda / 4 && info.rows <= hardware.max_ruda_count.0 as usize
+}
+
 impl<R, F, I, BT> ModuleOps<Self> for DeviceBackend<R, F, I, BT>
 where
     R: DeviceRuntime,
@@ -63,6 +81,25 @@ where
     I: IntElement,
     BT: BoolElement,
 {
+    fn group_norm_with_stats(tensor: FloatTensor<Self>, gamma: Option<FloatTensor<Self>>,
+        beta: Option<FloatTensor<Self>>, groups: usize, epsilon: f64) -> ruda_tensor::ops::LayerNormOutput<Self> {
+        if native_group_supported(&tensor, groups) && gamma.iter().chain(beta.iter()).all(group_storage_supported) {
+            let [output, mean, rstd] = rudnn::normalization::group_norm_with_stats(tensor, gamma, beta, groups, epsilon as f32)
+                .expect("invalid native GroupNorm bindings");
+            ruda_tensor::ops::LayerNormOutput { output, mean, rstd }
+        } else { ruda_tensor::ops::group_normalization::group_norm_with_stats::<Self>(tensor, gamma, beta, groups, epsilon) }
+    }
+
+    fn group_norm_backward_select(tensor: FloatTensor<Self>, gamma: Option<FloatTensor<Self>>, grad: FloatTensor<Self>,
+        mean: FloatTensor<Self>, rstd: FloatTensor<Self>, groups: usize, mask: [bool; 3]) -> [Option<FloatTensor<Self>>; 3] {
+        if mask == [false; 3] { return [None, None, None]; }
+        if native_group_supported(&tensor, groups) && group_storage_supported(&grad) && gamma.iter().all(group_storage_supported)
+            && mean.dtype == ruda_core::tensor::DType::F32 && rstd.dtype == ruda_core::tensor::DType::F32 {
+            rudnn::normalization::group_norm_backward_select(tensor, gamma, grad, mean, rstd, groups, mask)
+                .expect("invalid native GroupNorm backward bindings")
+        } else { ruda_tensor::ops::group_normalization::group_norm_backward_select::<Self>(tensor, gamma, grad, mean, rstd, groups, mask) }
+    }
+
     fn gelu_native(tensor: FloatTensor<Self>, approximate: bool) -> FloatTensor<Self> {
         if matches!(tensor.dtype, ruda_core::tensor::DType::F32 | ruda_core::tensor::DType::F16 | ruda_core::tensor::DType::BF16)
             && tensor.qparams.is_none() {

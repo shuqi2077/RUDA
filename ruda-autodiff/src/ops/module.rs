@@ -66,6 +66,53 @@ fn causal_attention_probabilities<B: Backend>(
 }
 
 impl<B: Backend, C: CheckpointStrategy> ModuleOps<Autodiff<B, C>> for Autodiff<B, C> {
+    fn group_norm(tensor: AutodiffTensor<B>, gamma: Option<AutodiffTensor<B>>, beta: Option<AutodiffTensor<B>>,
+        groups: usize, epsilon: f64) -> AutodiffTensor<B> {
+        #[derive(Debug)]
+        struct GroupNorm;
+        impl<B: Backend, const N: usize> Backward<B, N> for GroupNorm {
+            type State = (NodeId, Option<NodeId>, B::FloatTensorPrimitive, B::FloatTensorPrimitive,
+                usize, [Option<usize>; 2], Option<FloatDType>);
+            fn backward(self, ops: Ops<Self::State, N>, grads: &mut Gradients, checkpointer: &mut Checkpointer) {
+                let (input, weight, mean, rstd, groups, slots, bias_dtype) = ops.state;
+                let input = checkpointer.retrieve_node_output(input);
+                let weight = weight.map(|id| checkpointer.retrieve_node_output(id));
+                let mask = [ops.parents[0].is_some(), slots[0].is_some_and(|slot| ops.parents[slot].is_some()),
+                    slots[1].is_some_and(|slot| ops.parents[slot].is_some())];
+                let grad = grads.consume::<B>(&ops.node);
+                let mut output = B::group_norm_backward_select(input, weight, grad, mean, rstd, groups, mask);
+                if let Some(dtype) = bias_dtype { output[2] = output[2].take().map(|value| B::float_cast(value, dtype)); }
+                for (slot, value) in [Some(0), slots[0], slots[1]].into_iter().zip(output) {
+                    if let Some(parent) = slot.and_then(|slot| ops.parents[slot].as_ref()) {
+                        grads.register::<B>(parent.id, value.expect("requested GroupNorm gradient"));
+                    }
+                }
+            }
+        }
+        fn execute<B: Backend, C: CheckpointStrategy, const N: usize>(parents: [AutodiffTensor<B>; N],
+            slots: [Option<usize>; 2], groups: usize, epsilon: f64) -> AutodiffTensor<B> {
+            let input = parents[0].primitive.clone();
+            let weight = slots[0].map(|slot| parents[slot].primitive.clone());
+            let bias = slots[1].map(|slot| parents[slot].primitive.clone());
+            let bias_dtype = bias.as_ref().map(|value| value.dtype().into());
+            match GroupNorm.prepare::<C>(parents.each_ref().map(|value| value.node.clone())).compute_bound().stateful() {
+                OpsKind::Tracked(mut prep) => {
+                    let input_id = prep.checkpoint(&parents[0]);
+                    let weight_id = slots[0].map(|slot| prep.checkpoint(&parents[slot]));
+                    let out = B::group_norm_with_stats(input, weight, bias, groups, epsilon);
+                    prep.finish((input_id, weight_id, out.mean, out.rstd, groups, slots, bias_dtype), out.output)
+                }
+                OpsKind::UnTracked(prep) => prep.finish(B::group_norm(input, weight, bias, groups, epsilon)),
+            }
+        }
+        match (gamma, beta) {
+            (None, None) => execute::<B, C, 1>([tensor], [None, None], groups, epsilon),
+            (Some(weight), None) => execute::<B, C, 2>([tensor, weight], [Some(1), None], groups, epsilon),
+            (None, Some(bias)) => execute::<B, C, 2>([tensor, bias], [None, Some(1)], groups, epsilon),
+            (Some(weight), Some(bias)) => execute::<B, C, 3>([tensor, weight, bias], [Some(1), Some(2)], groups, epsilon),
+        }
+    }
+
     fn gelu_native(tensor: AutodiffTensor<B>, approximate: bool) -> AutodiffTensor<B> {
         #[derive(Debug)]
         struct Gelu;

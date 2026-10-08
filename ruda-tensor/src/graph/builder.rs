@@ -1198,6 +1198,43 @@ impl DequantizeOpIr {
 
 // Operations with multiple outputs
 
+impl GroupNormOpIr {
+    pub fn create(x: TensorIr, gamma: Option<TensorIr>, beta: Option<TensorIr>, groups: usize, epsilon: f64,
+        mut new_id: impl FnMut() -> TensorId) -> Self {
+        let info = crate::ops::group_normalization::geometry(&x.shape, groups);
+        for value in gamma.iter().chain(beta.iter()) {
+            assert_eq!(value.shape, Shape::new([info.channels]), "GroupNorm affine shape differs");
+        }
+        let dtype = if x.dtype == DType::F64 { DType::F64 } else { DType::F32 };
+        let out = TensorIr::uninit(new_id(), x.shape.clone(), x.dtype);
+        let mean = TensorIr::uninit(new_id(), Shape::new([info.batch, groups]), dtype);
+        let rstd = TensorIr::uninit(new_id(), mean.shape.clone(), dtype);
+        Self { x, gamma, beta, groups, epsilon: ScalarIr::Float(epsilon), out, mean, rstd }
+    }
+}
+
+impl GroupNormBackwardSelectOpIr {
+    pub fn create(x: TensorIr, gamma: Option<TensorIr>, grad: TensorIr, mean: TensorIr, rstd: TensorIr,
+        groups: usize, mask: [bool; 3], mut new_id: impl FnMut() -> TensorId) -> Self {
+        let info = crate::ops::group_normalization::geometry(&x.shape, groups);
+        if let Some(gamma) = &gamma { assert_eq!(gamma.shape, Shape::new([info.channels]), "GroupNorm weight shape differs"); }
+        assert!(!mask[1] || gamma.is_some(), "GroupNorm weight gradient requires an actual weight");
+        assert_eq!(grad.shape, x.shape, "GroupNorm gradient shape differs");
+        assert_eq!(mean.shape, Shape::new([info.batch, groups]), "GroupNorm mean shape differs");
+        assert_eq!(rstd.shape, mean.shape, "GroupNorm reciprocal deviation shape differs");
+        let input_grad = mask[0].then(|| TensorIr::uninit(new_id(), x.shape.clone(), x.dtype));
+        let weight_grad = mask[1].then(|| {
+            let gamma = gamma.as_ref().expect("requested GroupNorm weight");
+            TensorIr::uninit(new_id(), gamma.shape.clone(), gamma.dtype)
+        });
+        let bias_dtype = if [&x, &grad, &mean, &rstd].into_iter().chain(gamma.iter()).any(|value| value.dtype == DType::F64) {
+            DType::F64
+        } else { DType::F32 };
+        let bias_grad = mask[2].then(|| TensorIr::uninit(new_id(), Shape::new([info.channels]), bias_dtype));
+        Self { x, gamma, grad, mean, rstd, groups, input_grad, weight_grad, bias_grad }
+    }
+}
+
 impl GeluOpIr {
     pub fn create(x: TensorIr, approximate: bool, new_id: impl FnOnce() -> TensorId) -> Self {
         let out = TensorIr::uninit(new_id(), x.shape.clone(), x.dtype);

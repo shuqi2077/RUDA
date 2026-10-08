@@ -78,6 +78,18 @@ impl InstanceNormConfig {
 }
 
 impl<B: Backend> InstanceNorm<B> {
+    /// Working-storage native instance normalization, with one actual channel per group.
+    /// Uses saved group statistics and selected derivatives without changing default forward.
+    pub fn forward_native<const D: usize>(&self, input: Tensor<B, D>) -> Tensor<B, D> {
+        assert!(D >= 2, "InstanceNorm requires batch and channel axes");
+        assert_eq!(input.shape()[1], self.num_channels, "InstanceNorm input channels differ");
+        let (gamma, beta) = if self.affine {
+            (Some(self.gamma.as_ref().expect("affine InstanceNorm weight").val()),
+             Some(self.beta.as_ref().expect("affine InstanceNorm bias").val()))
+        } else { (None, None) };
+        ruda_model::tensor::module::group_norm(input, gamma, beta, self.num_channels, self.epsilon)
+    }
+
     /// Applies the forward pass on the input tensor.
     ///
     /// See also [InstanceNormConfig](InstanceNormConfig) for more information.

@@ -1101,6 +1101,10 @@ impl ModuleOperationIr {
             ModuleOperationIr::SiluNative(repr) => Box::new([&repr.input].into_iter()),
             ModuleOperationIr::GeluNative(repr) => Box::new([&repr.x].into_iter()),
             ModuleOperationIr::GeluNativeBackward(repr) => Box::new([&repr.x, &repr.grad].into_iter()),
+            ModuleOperationIr::GroupNorm(repr) => Box::new([&repr.x].into_iter().chain(repr.gamma.iter()).chain(repr.beta.iter())),
+            ModuleOperationIr::GroupNormBackwardSelect(repr) => {
+                Box::new([&repr.x, &repr.grad, &repr.mean, &repr.rstd].into_iter().chain(repr.gamma.iter()))
+            }
             ModuleOperationIr::SiluNativeBackward(repr) => Box::new([&repr.x, &repr.grad].into_iter()),
             ModuleOperationIr::SoftmaxBackward(repr) => Box::new([&repr.working, &repr.grad].into_iter()),
             ModuleOperationIr::RmsNormBackward(repr) => Box::new([&repr.x, &repr.gamma, &repr.grad, &repr.rstd].into_iter()),
@@ -1253,6 +1257,10 @@ impl ModuleOperationIr {
             ModuleOperationIr::SiluNative(repr) => Box::new([&repr.out].into_iter()),
             ModuleOperationIr::GeluNative(repr) => Box::new([&repr.out].into_iter()),
             ModuleOperationIr::GeluNativeBackward(repr) => Box::new([&repr.out].into_iter()),
+            ModuleOperationIr::GroupNorm(repr) => Box::new([&repr.out, &repr.mean, &repr.rstd].into_iter()),
+            ModuleOperationIr::GroupNormBackwardSelect(repr) => {
+                Box::new(repr.input_grad.iter().chain(repr.weight_grad.iter()).chain(repr.bias_grad.iter()))
+            }
             ModuleOperationIr::SiluNativeBackward(repr) => Box::new([&repr.out].into_iter()),
             ModuleOperationIr::SoftmaxBackward(repr) => Box::new([&repr.out].into_iter()),
             ModuleOperationIr::RmsNormBackward(repr) => Box::new([&repr.input_grad, &repr.weight_grad].into_iter()),
@@ -1540,6 +1548,17 @@ impl ModuleOperationIr {
             ModuleOperationIr::GeluNativeBackward(repr) => {
                 repr.x.mark_read_only(nodes, &mut output);
                 repr.grad.mark_read_only(nodes, &mut output);
+            }
+            ModuleOperationIr::GroupNorm(repr) => {
+                repr.x.mark_read_only(nodes, &mut output);
+                for value in repr.gamma.iter_mut().chain(repr.beta.iter_mut()) { value.mark_read_only(nodes, &mut output); }
+            }
+            ModuleOperationIr::GroupNormBackwardSelect(repr) => {
+                repr.x.mark_read_only(nodes, &mut output);
+                repr.grad.mark_read_only(nodes, &mut output);
+                repr.mean.mark_read_only(nodes, &mut output);
+                repr.rstd.mark_read_only(nodes, &mut output);
+                if let Some(gamma) = &mut repr.gamma { gamma.mark_read_only(nodes, &mut output); }
             }
             ModuleOperationIr::SiluNativeBackward(repr) => {
                 repr.x.mark_read_only(nodes, &mut output);

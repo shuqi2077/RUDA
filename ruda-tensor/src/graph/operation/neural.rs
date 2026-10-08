@@ -2,6 +2,33 @@ use super::*;
 
 #[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
 #[allow(missing_docs)]
+pub struct GroupNormOpIr {
+    pub x: TensorIr,
+    pub gamma: Option<TensorIr>,
+    pub beta: Option<TensorIr>,
+    pub groups: usize,
+    pub epsilon: ScalarIr,
+    pub out: TensorIr,
+    pub mean: TensorIr,
+    pub rstd: TensorIr,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
+pub struct GroupNormBackwardSelectOpIr {
+    pub x: TensorIr,
+    pub gamma: Option<TensorIr>,
+    pub grad: TensorIr,
+    pub mean: TensorIr,
+    pub rstd: TensorIr,
+    pub groups: usize,
+    pub input_grad: Option<TensorIr>,
+    pub weight_grad: Option<TensorIr>,
+    pub bias_grad: Option<TensorIr>,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
 pub struct GeluOpIr {
     pub x: TensorIr,
     pub approximate: bool,

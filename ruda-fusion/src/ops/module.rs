@@ -32,6 +32,53 @@ macro_rules! make_ops {
 }
 
 impl<B: FusionBackend> ModuleOps<Fusion<B>> for Fusion<B> {
+    fn group_norm_with_stats(x: FloatTensor<Self>, gamma: Option<FloatTensor<Self>>, beta: Option<FloatTensor<Self>>,
+        groups: usize, epsilon: f64) -> ruda_tensor::ops::LayerNormOutput<Self> {
+        make_ops!(GroupNormOps, GroupNormOpIr, |desc: &GroupNormOpIr, handles: &mut HandleContainer<B::Handle>| {
+            let x = handles.get_float_tensor::<B>(&desc.x);
+            let gamma = desc.gamma.as_ref().map(|value| handles.get_float_tensor::<B>(value));
+            let beta = desc.beta.as_ref().map(|value| handles.get_float_tensor::<B>(value));
+            let out = B::group_norm_with_stats(x, gamma, beta, desc.groups, desc.epsilon.elem());
+            handles.register_float_tensor::<B>(&desc.out.id, out.output);
+            handles.register_float_tensor::<B>(&desc.mean.id, out.mean);
+            handles.register_float_tensor::<B>(&desc.rstd.id, out.rstd);
+        });
+        let mut streams = OperationStreams::with_inputs([&x]);
+        for value in gamma.iter().chain(beta.iter()) { streams.tensor(value); }
+        let client = x.client.clone();
+        let desc = GroupNormOpIr::create(x.into_ir(), gamma.map(|value| value.into_ir()), beta.map(|value| value.into_ir()),
+            groups, epsilon, || client.create_empty_handle());
+        let [output, mean, rstd] = client.register(streams, OperationIr::Module(ModuleOperationIr::GroupNorm(desc.clone())),
+            GroupNormOps::<B>::new(desc)).outputs();
+        ruda_tensor::ops::LayerNormOutput { output, mean, rstd }
+    }
+
+    fn group_norm_backward_select(x: FloatTensor<Self>, gamma: Option<FloatTensor<Self>>, grad: FloatTensor<Self>,
+        mean: FloatTensor<Self>, rstd: FloatTensor<Self>, groups: usize, mask: [bool; 3]) -> [Option<FloatTensor<Self>>; 3] {
+        if mask == [false; 3] { return [None, None, None]; }
+        make_ops!(GroupNormBackwardSelectOps, GroupNormBackwardSelectOpIr,
+            |desc: &GroupNormBackwardSelectOpIr, handles: &mut HandleContainer<B::Handle>| {
+                let x = handles.get_float_tensor::<B>(&desc.x);
+                let gamma = desc.gamma.as_ref().map(|value| handles.get_float_tensor::<B>(value));
+                let grad = handles.get_float_tensor::<B>(&desc.grad);
+                let mean = handles.get_float_tensor::<B>(&desc.mean);
+                let rstd = handles.get_float_tensor::<B>(&desc.rstd);
+                let out = B::group_norm_backward_select(x, gamma, grad, mean, rstd, desc.groups,
+                    [desc.input_grad.is_some(), desc.weight_grad.is_some(), desc.bias_grad.is_some()]);
+                for (target, value) in [desc.input_grad.as_ref(), desc.weight_grad.as_ref(), desc.bias_grad.as_ref()].into_iter().zip(out) {
+                    if let Some(target) = target { handles.register_float_tensor::<B>(&target.id, value.expect("requested GroupNorm gradient")); }
+                }
+            });
+        let mut streams = OperationStreams::with_inputs([&x, &grad, &mean, &rstd]);
+        if let Some(gamma) = &gamma { streams.tensor(gamma); }
+        let client = x.client.clone();
+        let desc = GroupNormBackwardSelectOpIr::create(x.into_ir(), gamma.map(|value| value.into_ir()), grad.into_ir(), mean.into_ir(),
+            rstd.into_ir(), groups, mask, || client.create_empty_handle());
+        let mut outputs = client.register(streams, OperationIr::Module(ModuleOperationIr::GroupNormBackwardSelect(desc.clone())),
+            GroupNormBackwardSelectOps::<B>::new(desc)).into_iter();
+        core::array::from_fn(|index| mask[index].then(|| outputs.next().expect("registered GroupNorm gradient")))
+    }
+
     fn gelu_native(x: FloatTensor<Self>, approximate: bool) -> FloatTensor<Self> {
         make_ops!(GeluNativeOps, GeluOpIr, |desc: &GeluOpIr, handles: &mut HandleContainer<B::Handle>| {
             let input = handles.get_float_tensor::<B>(&desc.x);

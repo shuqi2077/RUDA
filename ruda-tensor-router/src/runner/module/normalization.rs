@@ -1,6 +1,29 @@
 use super::*;
 
 impl<B: BackendIr> Runner<B> {
+    pub(super) fn apply_group_norm(&self, handles: &mut HandleContainer<B::Handle>, desc: &GroupNormOpIr) {
+        let x = handles.get_float_tensor::<B>(&desc.x);
+        let gamma = desc.gamma.as_ref().map(|value| handles.get_float_tensor::<B>(value));
+        let beta = desc.beta.as_ref().map(|value| handles.get_float_tensor::<B>(value));
+        let out = B::group_norm_with_stats(x, gamma, beta, desc.groups, desc.epsilon.elem());
+        handles.register_float_tensor::<B>(&desc.out.id, out.output);
+        handles.register_float_tensor::<B>(&desc.mean.id, out.mean);
+        handles.register_float_tensor::<B>(&desc.rstd.id, out.rstd);
+    }
+
+    pub(super) fn apply_group_norm_backward_select(&self, handles: &mut HandleContainer<B::Handle>, desc: &GroupNormBackwardSelectOpIr) {
+        let x = handles.get_float_tensor::<B>(&desc.x);
+        let gamma = desc.gamma.as_ref().map(|value| handles.get_float_tensor::<B>(value));
+        let grad = handles.get_float_tensor::<B>(&desc.grad);
+        let mean = handles.get_float_tensor::<B>(&desc.mean);
+        let rstd = handles.get_float_tensor::<B>(&desc.rstd);
+        let out = B::group_norm_backward_select(x, gamma, grad, mean, rstd, desc.groups,
+            [desc.input_grad.is_some(), desc.weight_grad.is_some(), desc.bias_grad.is_some()]);
+        for (target, value) in [desc.input_grad.as_ref(), desc.weight_grad.as_ref(), desc.bias_grad.as_ref()].into_iter().zip(out) {
+            if let Some(target) = target { handles.register_float_tensor::<B>(&target.id, value.expect("requested GroupNorm gradient")); }
+        }
+    }
+
     pub(super) fn apply_gelu_native(&self, handles: &mut HandleContainer<B::Handle>, desc: &GeluOpIr) {
         let input = handles.get_float_tensor::<B>(&desc.x);
         handles.register_float_tensor::<B>(&desc.out.id, B::gelu_native(input, desc.approximate));

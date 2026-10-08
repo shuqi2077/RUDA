@@ -4,9 +4,12 @@ mod rms;
 mod training;
 mod rms_training;
 mod softmax_training;
+mod group;
+mod group_kernel;
 
 pub use softmax::softmax_last_axis;
 pub use softmax_training::{softmax_last_axis_backward, softmax_last_axis_working};
+pub use group::{group_norm_backward_select, group_norm_with_stats};
 pub use rms::rms_norm;
 pub use training::{layer_norm_backward, layer_norm_backward_select, layer_norm_with_stats};
 pub use rms_training::{rms_norm_backward, rms_norm_backward_select, rms_norm_with_stats};

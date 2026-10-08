@@ -15,6 +15,8 @@ impl<B: BackendIr> Runner<B> {
         op: &ModuleOperationIr,
     ) {
         match op {
+            ModuleOperationIr::GroupNorm(desc) => self.apply_group_norm(handles, desc),
+            ModuleOperationIr::GroupNormBackwardSelect(desc) => self.apply_group_norm_backward_select(handles, desc),
             ModuleOperationIr::GeluNative(desc) => self.apply_gelu_native(handles, desc),
             ModuleOperationIr::GeluNativeBackward(desc) => self.apply_gelu_native_backward(handles, desc),
             ModuleOperationIr::SiluNative(desc) => self.apply_silu_native(handles, desc),

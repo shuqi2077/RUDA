@@ -22,6 +22,8 @@ pub mod interpolation;
 
 /// Saved-statistics normalization and complete first-order gradients.
 pub mod normalization;
+/// Actual channel-group normalization and selected first-order derivatives.
+pub mod group_normalization;
 
 /// Saved-working-output softmax and log-softmax training on the current backend.
 pub mod softmax;
