@@ -55,3 +55,19 @@ pub(crate) fn add<F: Float>(a: &Array<F>, b: &Array<F>, out: &mut Array<F>, #[de
     let i = ABSOLUTE_POS;
     if i < out.len() { out[i] = F::cast_from(f32::cast_from(a[i]) + f32::cast_from(b[i])); }
 }
+
+/// Original gate VJP only, preserving the same intermediate storage rounding.
+#[ruda(launch)]
+pub(crate) fn swiglu_backward_gate<F:Float>(gate:&Array<F>,up:&Array<F>,grad:&Array<F>,dgate:&mut Array<F>,#[define(F)] _dtype:StorageType) {
+    let i=ABSOLUTE_POS;if i>=grad.len() {terminate!();}
+    let g=f32::cast_from(gate[i]);let u=f32::cast_from(up[i]);let dy=f32::cast_from(grad[i]);
+    let sigmoid=1.0f32/(1.0f32+f32::exp(-g));let intermediate=F::cast_from(dy*u);
+    dgate[i]=F::cast_from(f32::cast_from(intermediate)*sigmoid*(1.0f32+g*(1.0f32-sigmoid)));
+}
+/// Original up VJP only, retaining forward's actual stored SiLU.
+#[ruda(launch)]
+pub(crate) fn swiglu_backward_up<F:Float>(gate:&Array<F>,grad:&Array<F>,dup:&mut Array<F>,#[define(F)] _dtype:StorageType) {
+    let i=ABSOLUTE_POS;if i>=grad.len() {terminate!();}
+    let g=f32::cast_from(gate[i]);let dy=f32::cast_from(grad[i]);let silu=F::cast_from(g/(1.0f32+f32::exp(-g)));
+    dup[i]=F::cast_from(dy*f32::cast_from(silu));
+}

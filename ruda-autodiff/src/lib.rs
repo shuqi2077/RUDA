@@ -24,6 +24,7 @@ mod frozen_awq;
 mod frozen_nf4;
 mod grouped_nf4;
 mod packed_experts;
+mod expert_projection;
 mod moe;
 mod moe_exchange;
 #[cfg(feature = "distributed")]

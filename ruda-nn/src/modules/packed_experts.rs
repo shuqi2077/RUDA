@@ -3,7 +3,7 @@ use ruda_model::{module::{Module,ModuleDisplay,Param},tensor::{Tensor,Int,DType,
     AwqExpertOptions,AwqExpertPayload,PackedExpertPayload,backend::Backend}};
 use core::fmt;
 
-/// Geometry/storage of actual frozen selected experts, independent of their packed representation.
+/// Geometry/storage of selected experts with original frozen packed bases, independent of representation.
 pub trait FrozenExpertGeometry<B:Backend>:Module<B>+ModuleDisplay {
     /// Original `[experts,hidden,intermediate]` logical dimensions.
     fn dimensions(&self) -> [usize;3];

@@ -30,6 +30,8 @@ pub mod frozen_nf4;
 pub mod grouped_nf4;
 /// Original independently selected AWQ/NF4 expert payloads and native derivatives.
 pub mod packed_experts;
+/// Original native trainable floating expert projections and source SwiGLU derivatives.
+pub mod expert_projection;
 /// Native selected router weights and complete local MoE training operations.
 pub mod moe;
 /// Original native expert-parallel dispatch/receive/combine contracts.

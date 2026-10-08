@@ -43,6 +43,8 @@ pub use crate::frozen_awq::{FrozenAwqOps, FrozenAwqError};
 pub use crate::frozen_nf4::{FrozenNf4Ops,FrozenNf4Error,Nf4ProjectionOptions};
 pub use crate::grouped_nf4::{Nf4GroupedOptions,Nf4ExpertPayload,FrozenNf4GroupedOps,FrozenNf4SwiGluOps};
 pub use crate::packed_experts::{AwqExpertOptions,AwqExpertPayload,PackedExpertPayload,PackedExpertAutodiffError,FrozenPackedExpertOps};
+pub use crate::expert_projection::{ExpertProjectionOptions,ExpertProjectionSelection,ExpertProjectionBackward,ExpertProjectionOps,
+    NativeSwiGluSelection,NativeSwiGluBackward,NativeSwiGluOps};
 pub use crate::moe::{MoeOps,MoeOptions,MoeSelectionOptions,MoeRouterScoring,MoeRouterWeightOptions,
     MoeExpertStrategy,MoeCombineGradientStrategy,MoeBackward,MoeGradientSelection,MoeBackwardSelected,MoeAutodiffError};
 pub use crate::moe_exchange::{MoeDispatched,MoeDispatchOps,MoeCombineSelection,MoeCombineBackward,

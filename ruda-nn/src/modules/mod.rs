@@ -25,6 +25,7 @@ mod awq;
 mod nf4;
 mod nf4_experts;
 mod packed_experts;
+mod expert_lora;
 mod moe;
 /// Explicit tensor-parallel linear projections for replicated-loss model partitions.
 #[cfg(feature = "tensor-parallel")]
@@ -60,6 +61,7 @@ pub use awq::*;
 pub use nf4::*;
 pub use nf4_experts::*;
 pub use packed_experts::*;
+pub use expert_lora::*;
 pub use moe::*;
 pub use mhc::*;
 #[cfg(feature = "sparse")]
