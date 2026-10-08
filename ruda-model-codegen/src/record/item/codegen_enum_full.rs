@@ -21,8 +21,9 @@ pub(super) fn contains_self(ty: &Type, name: &Ident) -> bool {
         Type::Group(ty) => contains_self(&ty.elem, name),
         Type::Tuple(ty) => ty.elems.iter().any(|ty| contains_self(ty, name)),
         Type::Path(ty) => ty.qself.as_ref().is_some_and(|q| contains_self(&q.ty, name)) ||
+            (ty.path.leading_colon.is_none() && ty.path.segments.len() == 1 &&
+                (ty.path.segments[0].ident == *name || ty.path.segments[0].ident == "Self")) ||
             ty.path.segments.iter().any(|segment| {
-                if segment.ident == *name || segment.ident == "Self" { return true; }
                 match &segment.arguments {
                     syn::PathArguments::AngleBracketed(args) => args.args.iter().any(|arg| match arg {
                         syn::GenericArgument::Type(ty) => contains_self(ty, name),
