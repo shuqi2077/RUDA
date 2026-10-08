@@ -217,6 +217,10 @@ pub enum ModuleOperationIr {
     /// Operation corresponding to
     /// [ctc_loss_backward](crate::ops::ModuleOps::ctc_loss_backward).
     CtcLossBackward(CtcLossBackwardOpIr),
+    /// Operation corresponding to [adaptive volume pooling](crate::ops::ModuleOps::adaptive_avg_pool3d).
+    AdaptiveAvgPool3d(AdaptiveAvgPool3dOpIr),
+    /// Operation corresponding to [adaptive volume gradients](crate::ops::ModuleOps::adaptive_avg_pool3d_backward).
+    AdaptiveAvgPool3dBackward(AdaptiveAvgPool3dBackwardOpIr),
 }
 
 /// Basic operations that can be done on any tensor type.

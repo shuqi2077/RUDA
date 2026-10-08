@@ -85,6 +85,22 @@ pub struct AdaptiveAvgPool2dBackwardOpIr {
 
 #[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
 #[allow(missing_docs)]
+pub struct AdaptiveAvgPool3dOpIr {
+    pub x: TensorIr,
+    pub output_size: [usize; 3],
+    pub out: TensorIr,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
+pub struct AdaptiveAvgPool3dBackwardOpIr {
+    pub x: TensorIr,
+    pub grad: TensorIr,
+    pub out: TensorIr,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
 pub struct MaxPool1dOpIr {
     pub x: TensorIr,
     pub kernel_size: usize,

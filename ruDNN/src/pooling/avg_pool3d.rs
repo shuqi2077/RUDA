@@ -6,7 +6,7 @@ use ruda_kernel::tensor::{
     layout::{address_type, decompose_linear, max_vector_size, shape_divmod},
     permutation::{permute_nchw_to_nhwc, permute_nhwc_to_nchw},
 };
-use ruda_core::{ir::AddressType, tensor::Shape};
+use ruda_core::{ir::AddressType, tensor::{DType, Shape}};
 use super::adaptive_avg_pool3d::accumulation_dtype;
 
 #[derive(RudaLaunch, RudaType)]
@@ -78,11 +78,12 @@ fn average_volume<E: Numeric, A: Float, N: Size>(
 }
 
 #[ruda(launch, address_type = "dynamic")]
-fn average_volume_backward<E: Numeric, A: Float, N: Size>(
-    grad: &Tensor<Vector<E, N>>, output: &mut Tensor<Vector<E, N>>,
+fn average_volume_backward<E: Numeric, G: Numeric, A: Float, N: Size>(
+    grad: &Tensor<Vector<G, N>>, output: &mut Tensor<Vector<E, N>>,
     output_shape: Sequence<FastDivmod<usize>>, working_units: usize,
     args: &AverageVolumeArgs, #[comptime] include_pad: bool,
-    #[define(E)] _storage: StorageType, #[define(A)] _compute: StorageType,
+    #[define(E)] _storage: StorageType, #[define(G)] _gradient_storage: StorageType,
+    #[define(A)] _compute: StorageType,
 ) {
     if ABSOLUTE_POS >= working_units { terminate!(); }
     let (_, position) = decompose_linear(ABSOLUTE_POS * output.vector_size(), &output_shape);
@@ -182,7 +183,6 @@ pub fn avg_pool3d_backward<R: Runtime>(input: RudaTensor<R>, grad: RudaTensor<R>
     let outputs = output_size(sizes, kernel, stride, padding, ceil);
     assert_eq!(grad.meta.shape().dims::<5>(), [batch, channels, outputs[0], outputs[1], outputs[2]],
         "average pooling gradient shape differs from the forward output");
-    assert_eq!(input.dtype, grad.dtype, "average pooling gradient storage differs from input");
     let grad = into_contiguous_aligned(permute_nchw_to_nhwc(grad));
     let output = empty_device_dtype(input.client.clone(), input.device.clone(),
         Shape::new([batch, depth, height, width, channels]), input.dtype);
@@ -192,10 +192,12 @@ pub fn avg_pool3d_backward<R: Runtime>(input: RudaTensor<R>, grad: RudaTensor<R>
     if working_units == 0 { return permute_nhwc_to_nchw(output); }
     let dim = RudaDim::new(input.client.properties(), working_units);
     let count = calculate_ruda_count_elemwise(&input.client, working_units, dim);
+    let gradient_storage = grad.dtype;
+    let compute = if gradient_storage == DType::F64 { DType::F64 } else { accumulation_dtype(output.dtype) };
     average_volume_backward::launch(&output.client, count, dim, address, vector_size,
         grad.into_tensor_arg(), output.clone().into_tensor_arg(), shape_divmod(&output), working_units,
         AverageVolumeArgsLaunch::new(kernel[0], kernel[1], kernel[2], stride[0], stride[1], stride[2],
             padding[0], padding[1], padding[2]),
-        include_pad, output.dtype.into(), accumulation_dtype(output.dtype).into());
+        include_pad, output.dtype.into(), gradient_storage.into(), compute.into());
     permute_nhwc_to_nchw(output)
 }

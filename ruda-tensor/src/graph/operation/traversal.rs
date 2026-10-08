@@ -1060,6 +1060,10 @@ impl ModuleOperationIr {
             }
             ModuleOperationIr::AdaptiveAvgPool1d(repr) => Box::new([&repr.x].into_iter()),
             ModuleOperationIr::AdaptiveAvgPool2d(repr) => Box::new([&repr.x].into_iter()),
+            ModuleOperationIr::AdaptiveAvgPool3d(repr) => Box::new([&repr.x].into_iter()),
+            ModuleOperationIr::AdaptiveAvgPool3dBackward(repr) => {
+                Box::new([&repr.x, &repr.grad].into_iter())
+            }
             ModuleOperationIr::AdaptiveAvgPool1dBackward(repr) => {
                 Box::new([&repr.x, &repr.grad].into_iter())
             }
@@ -1183,6 +1187,8 @@ impl ModuleOperationIr {
             ModuleOperationIr::AvgPool2dBackward(repr) => Box::new([&repr.out].into_iter()),
             ModuleOperationIr::AdaptiveAvgPool1d(repr) => Box::new([&repr.out].into_iter()),
             ModuleOperationIr::AdaptiveAvgPool2d(repr) => Box::new([&repr.out].into_iter()),
+            ModuleOperationIr::AdaptiveAvgPool3d(repr) => Box::new([&repr.out].into_iter()),
+            ModuleOperationIr::AdaptiveAvgPool3dBackward(repr) => Box::new([&repr.out].into_iter()),
             ModuleOperationIr::AdaptiveAvgPool1dBackward(repr) => Box::new([&repr.out].into_iter()),
             ModuleOperationIr::AdaptiveAvgPool2dBackward(repr) => Box::new([&repr.out].into_iter()),
             ModuleOperationIr::MaxPool1d(repr) => Box::new([&repr.out].into_iter()),
@@ -1385,6 +1391,13 @@ impl ModuleOperationIr {
             }
             ModuleOperationIr::AdaptiveAvgPool2d(repr) => {
                 repr.x.mark_read_only(nodes, &mut output);
+            }
+            ModuleOperationIr::AdaptiveAvgPool3d(repr) => {
+                repr.x.mark_read_only(nodes, &mut output);
+            }
+            ModuleOperationIr::AdaptiveAvgPool3dBackward(repr) => {
+                repr.x.mark_read_only(nodes, &mut output);
+                repr.grad.mark_read_only(nodes, &mut output);
             }
             ModuleOperationIr::AdaptiveAvgPool1dBackward(repr) => {
                 repr.x.mark_read_only(nodes, &mut output);

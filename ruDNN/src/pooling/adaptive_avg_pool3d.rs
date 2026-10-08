@@ -96,13 +96,14 @@ fn adaptive_average_volume<E: Numeric, A: Float, N: Size>(
 }
 
 #[ruda(launch, address_type = "dynamic")]
-fn adaptive_average_volume_backward<E: Numeric, A: Float, N: Size>(
-    grad: &Tensor<Vector<E, N>>,
+fn adaptive_average_volume_backward<E: Numeric, G: Numeric, A: Float, N: Size>(
+    grad: &Tensor<Vector<G, N>>,
     output: &mut Tensor<Vector<E, N>>,
     output_shape: Sequence<FastDivmod<usize>>,
     working_units: usize,
     #[comptime] max_value: usize,
     #[define(E)] _storage: StorageType,
+    #[define(G)] _gradient_storage: StorageType,
     #[define(A)] _compute: StorageType,
 ) {
     if ABSOLUTE_POS >= working_units {
@@ -187,7 +188,6 @@ pub fn adaptive_avg_pool3d_backward<R: Runtime>(input: RudaTensor<R>, grad: Ruda
     let [batch, channels, depth, height, width] = input.meta.shape().dims();
     let [grad_batch, grad_channels, _, _, _] = grad.meta.shape().dims();
     assert_eq!([grad_batch, grad_channels], [batch, channels], "adaptive pooling gradient batch/channels differ");
-    assert_eq!(input.dtype, grad.dtype, "adaptive pooling gradient storage differs from input");
     let grad = into_contiguous_aligned(permute_nchw_to_nhwc(grad));
     let output = empty_device_dtype(input.client.clone(), input.device.clone(),
         Shape::new([batch, depth, height, width, channels]), input.dtype);
@@ -200,8 +200,10 @@ pub fn adaptive_avg_pool3d_backward<R: Runtime>(input: RudaTensor<R>, grad: Ruda
     let count = calculate_ruda_count_elemwise(&input.client, working_units, dim);
     let address = bin_address_type(&grad, &output);
     let max_value = if address == AddressType::U64 { usize::MAX } else { u32::MAX as usize };
+    let gradient_storage = grad.dtype;
+    let compute = if gradient_storage == DType::F64 { DType::F64 } else { accumulation_dtype(output.dtype) };
     adaptive_average_volume_backward::launch(&output.client, count, dim, address,
         vector_size, grad.into_tensor_arg(), output.clone().into_tensor_arg(), shape_divmod(&output),
-        working_units, max_value, output.dtype.into(), accumulation_dtype(output.dtype).into());
+        working_units, max_value, output.dtype.into(), gradient_storage.into(), compute.into());
     permute_nhwc_to_nchw(output)
 }
