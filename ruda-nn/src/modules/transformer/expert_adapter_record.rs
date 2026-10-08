@@ -2,7 +2,7 @@ use alloc::{collections::{BTreeMap,BTreeSet},format,string::String,vec::Vec};
 use ruda_model::{module::{Module,ModuleVisitor,Param},record::{Record,PrecisionSettings,Recorder,RecorderError},
     serde::{Serialize,Deserialize},tensor::{Tensor,DType,backend::Backend}};
 use crate::{ExpertAdapterTarget,ExpertAdapterProjections,ExpertAdapterMapper,ExpertAdapterRecordBase,
-    ExpertLoRAAdapterSchema,PackedExpertLoRA};
+    ExpertLoRAAdapterSchema,PackedExpertLoRA,ExpertAdapterProjectionRef};
 use super::{TransformerProjectionShape,Nf4MoeTransformerModel,Nf4MoeTransformerLayer};
 
 type ParameterKey=(u64,bool);
@@ -78,23 +78,31 @@ impl<B:Backend> ModuleVisitor<B> for ParameterOccurrences {
         let key=(parameter.id.val(),parameter.val().is_require_grad());*self.0.entry(key).or_default()+=1;
     }
 }
-fn check_isolated<B:Backend,P:TransformerProjectionShape<B>,E:ExpertAdapterProjections<B>>(
-    model:&Nf4MoeTransformerModel<B,P,E>,expected:&BTreeMap<ParameterKey,usize>) -> Result<(),RecorderError> {
+fn check_isolated<B:Backend,M:Module<B>>(model:&M,expected:&BTreeMap<ParameterKey,usize>) -> Result<(),RecorderError> {
     let mut actual=ParameterOccurrences(BTreeMap::new());model.visit(&mut actual);
     for (key,count) in expected {if actual.0.get(key)!=Some(count) {
         return Err(invalid("expert A/B is tied to an omitted non-expert parameter; use a full model record"));}}
     Ok(())
+}
+fn local_sources<B:Backend,P:TransformerProjectionShape<B>,E:ExpertAdapterProjections<B>>(model:&Nf4MoeTransformerModel<B,P,E>)
+    -> Vec<(ExpertAdapterPath,ExpertAdapterProjectionRef<'_,B>)> {
+    let mut sources=Vec::new();for (index,layer) in model.layers.iter().enumerate() {if let Nf4MoeTransformerLayer::Packed(block)=layer {
+        for (role,projection) in block.routed.experts.expert_adapter_projections() {sources.push((ExpertAdapterPath {layer:index,role},projection));}
+    }}sources
 }
 impl<B:Backend> ExpertTransformerAdapterRecord<B> {
     /// Capture all actual expert adapters, retaining source paths/tying without downloading base values.
     /// Full-precision recorder settings are required for exact saved A/B values.
     pub fn capture<P:TransformerProjectionShape<B>,E:ExpertAdapterProjections<B>>(model:&Nf4MoeTransformerModel<B,P,E>,base_id:&str)
         -> Result<Self,RecorderError> {
+        Self::capture_sources(model,base_id,model.layers.len(),local_sources(model))
+    }
+    pub(super) fn capture_sources<M:Module<B>>(model:&M,base_id:&str,layers:usize,
+        sources:Vec<(ExpertAdapterPath,ExpertAdapterProjectionRef<'_,B>)>) -> Result<Self,RecorderError> {
         if base_id.is_empty() {return Err(invalid("complete original base identity must be supplied"));}
         let mut projections=Vec::new();let mut parameters=BTreeMap::<ParameterKey,ParameterEntry<B>>::new();
         let mut occurrences=BTreeMap::new();let mut devices=BTreeMap::new();
-        for (index,layer) in model.layers.iter().enumerate() {if let Nf4MoeTransformerLayer::Packed(block)=layer {
-            for (role,projection) in block.routed.experts.expert_adapter_projections() {
+        for (path,projection) in sources {
                 let schema=projection.schema(base_id)?;let leaves=projection.parameters();let bindings=[key(leaves[0]),key(leaves[1])];
                 for parameter in leaves {
                     let binding=key(parameter);let value=parameter.val();*occurrences.entry(binding).or_default()+=1;
@@ -103,12 +111,11 @@ impl<B:Backend> ExpertTransformerAdapterRecord<B> {
                             return Err(invalid("shared expert A/B has inconsistent shape, dtype or device"));}
                     } else {devices.insert(binding,value.device());parameters.insert(binding,ParameterEntry::capture(parameter));}
                 }
-                projections.push(ExpertAdapterProjectionEntry {path:ExpertAdapterPath {layer:index,role},schema,parameters:bindings});
-            }
-        }}
+                projections.push(ExpertAdapterProjectionEntry {path,schema,parameters:bindings});
+        }
         if projections.is_empty() {return Err(invalid("model has no actual expert adapters"));}
-        check_isolated(model,&occurrences)?;
-        Ok(Self {version:1,base_id:base_id.into(),layers:model.layers.len(),projections,parameters:parameters.into_values().collect()})
+        check_isolated::<B,_>(model,&occurrences)?;
+        Ok(Self {version:1,base_id:base_id.into(),layers,projections,parameters:parameters.into_values().collect()})
     }
     /// Actual stored layer/role paths and their original projection contracts.
     pub fn targets(&self) -> impl Iterator<Item=(&ExpertAdapterPath,&ExpertLoRAAdapterSchema)> {
@@ -119,7 +126,11 @@ impl<B:Backend> ExpertTransformerAdapterRecord<B> {
     /// Validate every target and saved shared-parameter contract before replacing any adapter values.
     pub fn validate_for<P:TransformerProjectionShape<B>,E:ExpertAdapterProjections<B>>(&self,model:&Nf4MoeTransformerModel<B,P,E>,base_id:&str)
         -> Result<(),RecorderError> {
-        if self.version!=1 || base_id.is_empty() || self.base_id!=base_id || self.layers!=model.layers.len() || self.projections.is_empty() {
+        self.validate_sources(model,base_id,model.layers.len(),local_sources(model))
+    }
+    pub(super) fn validate_sources<M:Module<B>>(&self,model:&M,base_id:&str,layers:usize,
+        sources:Vec<(ExpertAdapterPath,ExpertAdapterProjectionRef<'_,B>)>) -> Result<(),RecorderError> {
+        if self.version!=1 || base_id.is_empty() || self.base_id!=base_id || self.layers!=layers || self.projections.is_empty() {
             return Err(invalid("version, complete original base identity or layer topology differs"));}
         let mut entries=BTreeMap::new();for entry in &self.projections {
             if entries.insert(entry.path,entry).is_some() {return Err(invalid("duplicate original expert projection path"));}}
@@ -127,9 +138,8 @@ impl<B:Backend> ExpertTransformerAdapterRecord<B> {
             if entry.key.0!=entry.record.id.val() || !matches!(entry.dtype,DType::F16|DType::BF16|DType::F32)
                 || parameters.insert(entry.key,entry).is_some() {return Err(invalid("invalid or duplicate canonical A/B parameter"));}}
         let mut occurrences=BTreeMap::new();let mut used=BTreeSet::new();let mut count=0;
-        for (index,layer) in model.layers.iter().enumerate() {if let Nf4MoeTransformerLayer::Packed(block)=layer {
-            for (role,projection) in block.routed.experts.expert_adapter_projections() {
-                count+=1;let path=ExpertAdapterPath {layer:index,role};let entry=entries.get(&path).ok_or_else(||invalid("missing original expert projection path"))?;
+        for (path,projection) in sources {
+                count+=1;let entry=entries.get(&path).ok_or_else(||invalid("missing original expert projection path"))?;
                 projection.validate_schema(&entry.schema,base_id)?;
                 for (leaf,binding) in projection.parameters().into_iter().zip(entry.parameters) {
                     let value=leaf.val();let old=key(leaf);let saved=parameters.get(&binding).ok_or_else(||invalid("expert A/B references an absent parameter"))?;
@@ -137,10 +147,9 @@ impl<B:Backend> ExpertTransformerAdapterRecord<B> {
                         return Err(invalid("canonical expert A/B geometry/storage/flags differ"));}
                     *occurrences.entry(old).or_default()+=1;used.insert(binding);
                 }
-            }
-        }}
+        }
         if count!=entries.len() || used.len()!=parameters.len() {return Err(invalid("unexpected expert target or unused A/B parameter"));}
-        check_isolated(model,&occurrences)?;
+        check_isolated::<B,_>(model,&occurrences)?;
         let mut actual=ParameterOccurrences(BTreeMap::new());model.visit(&mut actual);
         for binding in used {if actual.0.get(&binding).copied().unwrap_or(0)!=occurrences.get(&binding).copied().unwrap_or(0) {
             return Err(invalid("saved expert A/B ID collides with an unchanged non-expert parameter"));}}
@@ -155,8 +164,7 @@ impl<B:Backend> ExpertTransformerAdapterRecord<B> {
     pub fn restore_into<P:TransformerProjectionShape<B>,E:ExpertAdapterProjections<B>>(self,mut model:Nf4MoeTransformerModel<B,P,E>,base_id:&str)
         -> Result<Nf4MoeTransformerModel<B,P,E>,RecorderError> {
         self.validate_for(&model,base_id)?;
-        let entries=self.projections.into_iter().map(|entry|(entry.path,entry)).collect();
-        let mut mapper=Restore {layer:0,entries,parameters:self.parameters.into_iter().map(|entry|(entry.key,entry)).collect(),leaves:BTreeMap::new()};
+        let mut mapper=self.into_mapper();
         model.layers=model.layers.into_iter().enumerate().map(|(index,layer)| {
             mapper.layer=index;match layer {
                 Nf4MoeTransformerLayer::Packed(mut block)=>{block.routed.experts=block.routed.experts.map_expert_adapters(&mut mapper)?;Ok(Nf4MoeTransformerLayer::Packed(block))},
@@ -164,9 +172,13 @@ impl<B:Backend> ExpertTransformerAdapterRecord<B> {
             }
         }).collect::<Result<_,RecorderError>>()?;Ok(model)
     }
+    pub(super) fn into_mapper(self) -> Restore<B> {
+        Restore {layer:0,entries:self.projections.into_iter().map(|entry|(entry.path,entry)).collect(),
+            parameters:self.parameters.into_iter().map(|entry|(entry.key,entry)).collect(),leaves:BTreeMap::new()}
+    }
 }
-struct Restore<B:Backend> {
-    layer:usize,
+pub(super) struct Restore<B:Backend> {
+    pub(super) layer:usize,
     entries:BTreeMap<ExpertAdapterPath,ExpertAdapterProjectionEntry>,
     parameters:BTreeMap<ParameterKey,ParameterEntry<B>>,
     leaves:BTreeMap<ParameterKey,Tensor<B,3>>,
