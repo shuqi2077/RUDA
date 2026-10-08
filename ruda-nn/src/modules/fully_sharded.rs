@@ -36,6 +36,8 @@ mod awq_model;
 pub use awq_model::*;
 mod nf4;
 pub use nf4::*;
+mod projected;
+pub use projected::*;
 
 /// Explicit construction context preserving one local autograd leaf per source ID.
 /// Reuse a context for all tied layers, then drop it after model construction. It

@@ -1,5 +1,5 @@
 use super::*;
-use ruda_model::{module::{ModuleMapper,ModuleVisitor},record::{Record,PrecisionSettings}};
+use ruda_model::{module::{ModuleMapper,ModuleVisitor,ModuleDisplay},record::{Record,PrecisionSettings}};
 use alloc::collections::BTreeSet;
 use crate::hybrid_sharded::{FullyShardedColumnParallelLinear,FullyShardedRowParallelLinear,FullyShardedColumnParallelLoRA,
     FullyShardedRowParallelLoRA,FullyShardedTensorParallelGatedMlp,FullyShardedVocabParallelEmbedding,FullyShardedVocabParallelProjection};
@@ -216,12 +216,20 @@ visit_fields!(FullyShardedVocabParallelEmbedding,weight);
 visit_fields!(FullyShardedVocabParallelProjection,weight,bias);
 visit_fields!(FullyShardedAwqLinear,qweight,qzeros,scales,bias);
 visit_fields!(FullyShardedAwqLoRALinear,base,adapter_a,adapter_b);
-visit_fields!(FullyShardedAwqAttention,query,key,value,output);
-visit_fields!(FullyShardedAwqFeedForward,up,gate,down,activation);
-visit_fields!(FullyShardedAwqTransformerBlock,attention,feed_forward,attention_norm,feed_forward_norm);
-visit_fields!(FullyShardedAwqTransformerStack,blocks);
-visit_fields!(FullyShardedAwqTransformerHead,projection,normalization);
-visit_fields!(FullyShardedAwqTransformerModel,embeddings,backbone,normalization,head);
+macro_rules! visit_projected_fields {
+    ($module:ident,$($field:ident),+ $(,)?) => {
+        impl<B:Backend,P:FullyShardedModule<B>+ModuleDisplay> FullyShardedModule<B> for $module<B,P> {
+            fn visit_shards<F:FnMut(&ShardedParameter<B>)>(&self,visitor:&mut F) {$(self.$field.visit_shards(visitor);)+}
+            fn visit_packed_shards<F:FnMut(&ShardedPackedParameter<B>)>(&self,visitor:&mut F) {$(self.$field.visit_packed_shards(visitor);)+}
+        }
+    };
+}
+visit_projected_fields!(FullyShardedAwqAttention,query,key,value,output);
+visit_projected_fields!(FullyShardedAwqFeedForward,up,gate,down,activation);
+visit_projected_fields!(FullyShardedAwqTransformerBlock,attention,feed_forward,attention_norm,feed_forward_norm);
+visit_projected_fields!(FullyShardedAwqTransformerStack,blocks);
+visit_projected_fields!(FullyShardedAwqTransformerHead,projection,normalization);
+visit_projected_fields!(FullyShardedAwqTransformerModel,embeddings,backbone,normalization,head);
 visit_fields!(FullyShardedNf4Linear,packed,scales,codebook,bias);
 visit_fields!(FullyShardedNf4LoRALinear,base,adapter_a,adapter_b);
 impl<B:Backend> FullyShardedModule<B> for ShardedPackedParameter<B> {
@@ -239,6 +247,8 @@ macro_rules! visit_variants {
 }
 visit_variants!(FullyShardedAdaptedProjection,Dense,LoRA);
 visit_variants!(FullyShardedAwqProjection,Dense,LoRA,Awq,AwqLoRA);
+visit_variants!(FullyShardedNf4Projection,Dense,LoRA,Nf4,Nf4LoRA);
+visit_variants!(FullyShardedMixedProjection,Dense,LoRA,Awq,AwqLoRA,Nf4,Nf4LoRA);
 visit_variants!(FullyShardedTransformerNorm,Layer,Rms);
 visit_variants!(FullyShardedHeadProjection,Column,RowMajor);
 impl<B:Backend> FullyShardedModule<B> for FullyShardedActivation<B> {
