@@ -39,6 +39,12 @@ impl Gelu {
             ruda_model::tensor::activation::gelu(input)
         }
     }
+
+    /// Explicit native training while retaining this module's original erf/tanh mode.
+    pub fn forward_native<B: Backend, const D: usize>(&self, input: Tensor<B, D>) -> Tensor<B, D> {
+        if self.approximate { ruda_model::tensor::activation::gelu_approximate_native(input) }
+        else { ruda_model::tensor::activation::gelu_native(input) }
+    }
 }
 
 #[cfg(test)]

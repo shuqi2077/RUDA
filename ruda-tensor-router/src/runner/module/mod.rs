@@ -15,6 +15,8 @@ impl<B: BackendIr> Runner<B> {
         op: &ModuleOperationIr,
     ) {
         match op {
+            ModuleOperationIr::GeluNative(desc) => self.apply_gelu_native(handles, desc),
+            ModuleOperationIr::GeluNativeBackward(desc) => self.apply_gelu_native_backward(handles, desc),
             ModuleOperationIr::SiluNative(desc) => self.apply_silu_native(handles, desc),
             ModuleOperationIr::SiluNativeBackward(desc) => self.apply_silu_native_backward(handles, desc),
             ModuleOperationIr::Softmax(desc) => self.apply_softmax(handles, desc),

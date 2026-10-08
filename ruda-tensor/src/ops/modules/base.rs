@@ -208,6 +208,16 @@ pub use ruda_core::tensor::spatial::AttentionModuleOptions;
 
 /// Module operations trait.
 pub trait ModuleOps<B: Backend> {
+    /// Explicit native GELU preserving the caller's original erf/tanh approximation choice.
+    fn gelu_native(tensor: FloatTensor<B>, approximate: bool) -> FloatTensor<B> {
+        super::activation_training::gelu_native::<B>(tensor, approximate)
+    }
+
+    /// Independent first-order GELU VJP in the same selected erf/tanh mode.
+    fn gelu_native_backward(input: FloatTensor<B>, grad: FloatTensor<B>, approximate: bool) -> FloatTensor<B> {
+        super::activation_training::gelu_native_backward::<B>(input, grad, approximate)
+    }
+
     /// Explicit native SiLU training path, using FP32 for half activation arithmetic.
     fn silu_native(tensor: FloatTensor<B>) -> FloatTensor<B> {
         super::activation_training::silu_native::<B>(tensor)

@@ -12,6 +12,18 @@ use ruda_tensor::graph::*;
 use crate::{BackendRouter, RunnerChannel, RunnerClient};
 
 impl<R: RunnerChannel> ModuleOps<Self> for BackendRouter<R> {
+    fn gelu_native(x: FloatTensor<Self>, approximate: bool) -> FloatTensor<Self> {
+        let client = x.client.clone();
+        let desc = GeluOpIr::create(x.into_ir(), approximate, || client.create_empty_handle());
+        client.register(OperationIr::Module(ModuleOperationIr::GeluNative(desc))).output()
+    }
+
+    fn gelu_native_backward(x: FloatTensor<Self>, grad: FloatTensor<Self>, approximate: bool) -> FloatTensor<Self> {
+        let client = x.client.clone();
+        let desc = GeluBackwardOpIr::create(x.into_ir(), grad.into_ir(), approximate, || client.create_empty_handle());
+        client.register(OperationIr::Module(ModuleOperationIr::GeluNativeBackward(desc))).output()
+    }
+
     fn silu_native(x: FloatTensor<Self>) -> FloatTensor<Self> {
         let client = x.client.clone();
         let desc = UnaryOpIr::create(x.into_ir(), || client.create_empty_handle());

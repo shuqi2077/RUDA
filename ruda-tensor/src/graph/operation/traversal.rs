@@ -1099,6 +1099,8 @@ impl ModuleOperationIr {
             ModuleOperationIr::RmsNorm(repr) => Box::new([&repr.x, &repr.gamma].into_iter()),
             ModuleOperationIr::Softmax(repr) => Box::new([&repr.x].into_iter()),
             ModuleOperationIr::SiluNative(repr) => Box::new([&repr.input].into_iter()),
+            ModuleOperationIr::GeluNative(repr) => Box::new([&repr.x].into_iter()),
+            ModuleOperationIr::GeluNativeBackward(repr) => Box::new([&repr.x, &repr.grad].into_iter()),
             ModuleOperationIr::SiluNativeBackward(repr) => Box::new([&repr.x, &repr.grad].into_iter()),
             ModuleOperationIr::SoftmaxBackward(repr) => Box::new([&repr.working, &repr.grad].into_iter()),
             ModuleOperationIr::RmsNormBackward(repr) => Box::new([&repr.x, &repr.gamma, &repr.grad, &repr.rstd].into_iter()),
@@ -1249,6 +1251,8 @@ impl ModuleOperationIr {
             ModuleOperationIr::RmsNorm(repr) => Box::new([&repr.out, &repr.rstd].into_iter()),
             ModuleOperationIr::Softmax(repr) => Box::new([&repr.out, &repr.working].into_iter()),
             ModuleOperationIr::SiluNative(repr) => Box::new([&repr.out].into_iter()),
+            ModuleOperationIr::GeluNative(repr) => Box::new([&repr.out].into_iter()),
+            ModuleOperationIr::GeluNativeBackward(repr) => Box::new([&repr.out].into_iter()),
             ModuleOperationIr::SiluNativeBackward(repr) => Box::new([&repr.out].into_iter()),
             ModuleOperationIr::SoftmaxBackward(repr) => Box::new([&repr.out].into_iter()),
             ModuleOperationIr::RmsNormBackward(repr) => Box::new([&repr.input_grad, &repr.weight_grad].into_iter()),
@@ -1529,6 +1533,13 @@ impl ModuleOperationIr {
             }
             ModuleOperationIr::SiluNative(repr) => {
                 repr.input.mark_read_only(nodes, &mut output);
+            }
+            ModuleOperationIr::GeluNative(repr) => {
+                repr.x.mark_read_only(nodes, &mut output);
+            }
+            ModuleOperationIr::GeluNativeBackward(repr) => {
+                repr.x.mark_read_only(nodes, &mut output);
+                repr.grad.mark_read_only(nodes, &mut output);
             }
             ModuleOperationIr::SiluNativeBackward(repr) => {
                 repr.x.mark_read_only(nodes, &mut output);

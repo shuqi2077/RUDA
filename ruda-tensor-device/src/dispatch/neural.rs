@@ -63,6 +63,20 @@ where
     I: IntElement,
     BT: BoolElement,
 {
+    fn gelu_native(tensor: FloatTensor<Self>, approximate: bool) -> FloatTensor<Self> {
+        if matches!(tensor.dtype, ruda_core::tensor::DType::F32 | ruda_core::tensor::DType::F16 | ruda_core::tensor::DType::BF16)
+            && tensor.qparams.is_none() {
+            ruprim::elementwise::unary::gelu::launch(tensor, approximate)
+        } else { ruda_tensor::ops::activation_training::gelu_native::<Self>(tensor, approximate) }
+    }
+
+    fn gelu_native_backward(input: FloatTensor<Self>, grad: FloatTensor<Self>, approximate: bool) -> FloatTensor<Self> {
+        if [&input, &grad].iter().all(|value| value.qparams.is_none()
+            && matches!(value.dtype, ruda_core::tensor::DType::F32 | ruda_core::tensor::DType::F16 | ruda_core::tensor::DType::BF16)) {
+            ruprim::elementwise::unary::gelu::launch_backward(input, grad, approximate)
+        } else { ruda_tensor::ops::activation_training::gelu_native_backward::<Self>(input, grad, approximate) }
+    }
+
     fn silu_native(tensor: FloatTensor<Self>) -> FloatTensor<Self> {
         if matches!(tensor.dtype, ruda_core::tensor::DType::F32 | ruda_core::tensor::DType::F16 | ruda_core::tensor::DType::BF16)
             && tensor.qparams.is_none() {

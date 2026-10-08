@@ -1198,6 +1198,21 @@ impl DequantizeOpIr {
 
 // Operations with multiple outputs
 
+impl GeluOpIr {
+    pub fn create(x: TensorIr, approximate: bool, new_id: impl FnOnce() -> TensorId) -> Self {
+        let out = TensorIr::uninit(new_id(), x.shape.clone(), x.dtype);
+        Self { x, approximate, out }
+    }
+}
+
+impl GeluBackwardOpIr {
+    pub fn create(x: TensorIr, grad: TensorIr, approximate: bool, new_id: impl FnOnce() -> TensorId) -> Self {
+        assert_eq!(x.shape, grad.shape, "GELU gradient shape differs");
+        let out = TensorIr::uninit(new_id(), x.shape.clone(), x.dtype);
+        Self { x, grad, approximate, out }
+    }
+}
+
 impl SiluBackwardOpIr {
     pub fn create(x: TensorIr, grad: TensorIr, new_id: impl FnOnce() -> TensorId) -> Self {
         assert_eq!(x.shape, grad.shape, "SiLU gradient shape differs");

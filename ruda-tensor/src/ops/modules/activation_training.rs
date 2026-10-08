@@ -20,3 +20,42 @@ pub fn silu_native_backward<B: Backend>(input: FloatTensor<B>, grad: FloatTensor
     let correction = B::float_add_scalar(B::float_mul(input, B::float_add_scalar(B::float_neg(sigmoid.clone()), 1f32.into())), 1f32.into());
     B::float_cast(B::float_mul(B::float_mul(grad, sigmoid), correction), storage)
 }
+
+const SQRT_2_OVER_PI: f64 = core::f64::consts::FRAC_2_SQRT_PI * core::f64::consts::FRAC_1_SQRT_2;
+
+fn gelu_tanh<B: Backend>(input: FloatTensor<B>) -> FloatTensor<B> {
+    let cubic = B::float_mul_scalar(B::float_powf_scalar(input.clone(), 3f32.into()), 0.044715f64.into());
+    B::float_tanh(B::float_mul_scalar(B::float_add(input, cubic), SQRT_2_OVER_PI.into()))
+}
+
+/// Explicit FP32/FP64 GELU, retaining the original selected erf or tanh mathematical mode.
+pub fn gelu_native<B: Backend>(input: FloatTensor<B>, approximate: bool) -> FloatTensor<B> {
+    let storage: FloatDType = input.dtype().into();
+    let compute = if input.dtype() == DType::F64 { FloatDType::F64 } else { FloatDType::F32 };
+    let input = B::float_cast(input, compute);
+    let output = if approximate {
+        let value = gelu_tanh::<B>(input.clone());
+        B::float_mul_scalar(B::float_mul(input, B::float_add_scalar(value, 1f32.into())), 0.5f32.into())
+    } else { B::gelu(input) };
+    B::float_cast(output, storage)
+}
+
+/// Original selected GELU mode's independent first-order VJP in working storage.
+pub fn gelu_native_backward<B: Backend>(input: FloatTensor<B>, grad: FloatTensor<B>, approximate: bool) -> FloatTensor<B> {
+    assert_eq!(input.shape(), grad.shape(), "GELU gradient shape differs");
+    let storage: FloatDType = input.dtype().into();
+    let compute = if input.dtype() == DType::F64 || grad.dtype() == DType::F64 { FloatDType::F64 } else { FloatDType::F32 };
+    if input.shape().num_elements() == 0 { return input; }
+    let input = B::float_cast(input, compute);
+    let grad = B::float_cast(grad, compute);
+    let output = if approximate {
+        let value = gelu_tanh::<B>(input.clone());
+        let inner_grad = B::float_add_scalar(B::float_mul_scalar(B::float_mul(input.clone(), input.clone()), (3.0 * 0.044715).into()), 1f32.into());
+        let inner_grad = B::float_mul_scalar(inner_grad, SQRT_2_OVER_PI.into());
+        let tanh_grad = B::float_add_scalar(B::float_neg(B::float_mul(value.clone(), value.clone())), 1f32.into());
+        let correction = B::float_mul_scalar(B::float_mul(B::float_mul(input, tanh_grad), inner_grad), 0.5f32.into());
+        let direct = B::float_mul_scalar(B::float_add_scalar(value, 1f32.into()), 0.5f32.into());
+        B::float_mul(B::float_add(direct, correction), grad)
+    } else { crate::ops::gelu_backward_exact::<B>(input, grad) };
+    B::float_cast(output, storage)
+}

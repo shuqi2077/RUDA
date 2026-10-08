@@ -2,6 +2,23 @@ use super::*;
 
 #[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
 #[allow(missing_docs)]
+pub struct GeluOpIr {
+    pub x: TensorIr,
+    pub approximate: bool,
+    pub out: TensorIr,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
+pub struct GeluBackwardOpIr {
+    pub x: TensorIr,
+    pub grad: TensorIr,
+    pub approximate: bool,
+    pub out: TensorIr,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
+#[allow(missing_docs)]
 pub struct SiluBackwardOpIr {
     pub x: TensorIr,
     pub grad: TensorIr,

@@ -107,6 +107,16 @@ pub fn gelu_approximate<const D: usize, B: Backend>(tensor: Tensor<B, D>) -> Ten
     (x.clone() * (inner.tanh() + 1)) * 0.5
 }
 
+/// Explicit native erf-mode GELU with FP32 half-storage forward and first-order backward arithmetic.
+pub fn gelu_native<const D: usize, B: Backend>(tensor: Tensor<B, D>) -> Tensor<B, D> {
+    Tensor::from_primitive(TensorPrimitive::Float(B::gelu_native(tensor.primitive.tensor(), false)))
+}
+
+/// Explicit native original tanh-mode GELU, without replacing it by erf-mode GELU.
+pub fn gelu_approximate_native<const D: usize, B: Backend>(tensor: Tensor<B, D>) -> Tensor<B, D> {
+    Tensor::from_primitive(TensorPrimitive::Float(B::gelu_native(tensor.primitive.tensor(), true)))
+}
+
 /// Applies Parametric ReLu activation function as described in the paper
 /// [Delving Deep into Rectifiers: Surpassing Human-Level Performance on ImageNet Classification](https://arxiv.org/pdf/1502.01852).
 ///

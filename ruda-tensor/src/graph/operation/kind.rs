@@ -259,6 +259,10 @@ pub enum ModuleOperationIr {
     SiluNative(UnaryOpIr),
     /// Independent working-storage SiLU VJP from the original input.
     SiluNativeBackward(SiluBackwardOpIr),
+    /// Explicit working-storage erf/tanh GELU forward.
+    GeluNative(GeluOpIr),
+    /// Original selected erf/tanh mode's independent first-order GELU VJP.
+    GeluNativeBackward(GeluBackwardOpIr),
 }
 
 /// Basic operations that can be done on any tensor type.

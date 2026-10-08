@@ -32,6 +32,32 @@ macro_rules! make_ops {
 }
 
 impl<B: FusionBackend> ModuleOps<Fusion<B>> for Fusion<B> {
+    fn gelu_native(x: FloatTensor<Self>, approximate: bool) -> FloatTensor<Self> {
+        make_ops!(GeluNativeOps, GeluOpIr, |desc: &GeluOpIr, handles: &mut HandleContainer<B::Handle>| {
+            let input = handles.get_float_tensor::<B>(&desc.x);
+            handles.register_float_tensor::<B>(&desc.out.id, B::gelu_native(input, desc.approximate));
+        });
+        let streams = OperationStreams::with_inputs([&x]);
+        let client = x.client.clone();
+        let desc = GeluOpIr::create(x.into_ir(), approximate, || client.create_empty_handle());
+        client.register(streams, OperationIr::Module(ModuleOperationIr::GeluNative(desc.clone())),
+            GeluNativeOps::<B>::new(desc)).output()
+    }
+
+    fn gelu_native_backward(x: FloatTensor<Self>, grad: FloatTensor<Self>, approximate: bool) -> FloatTensor<Self> {
+        make_ops!(GeluNativeBackwardOps, GeluBackwardOpIr,
+            |desc: &GeluBackwardOpIr, handles: &mut HandleContainer<B::Handle>| {
+                let input = handles.get_float_tensor::<B>(&desc.x);
+                let grad = handles.get_float_tensor::<B>(&desc.grad);
+                handles.register_float_tensor::<B>(&desc.out.id, B::gelu_native_backward(input, grad, desc.approximate));
+            });
+        let streams = OperationStreams::with_inputs([&x, &grad]);
+        let client = x.client.clone();
+        let desc = GeluBackwardOpIr::create(x.into_ir(), grad.into_ir(), approximate, || client.create_empty_handle());
+        client.register(streams, OperationIr::Module(ModuleOperationIr::GeluNativeBackward(desc.clone())),
+            GeluNativeBackwardOps::<B>::new(desc)).output()
+    }
+
     fn silu_native(x: FloatTensor<Self>) -> FloatTensor<Self> {
         make_ops!(SiluNativeOps, UnaryOpIr, |desc: &UnaryOpIr, handles: &mut HandleContainer<B::Handle>| {
             let input = handles.get_float_tensor::<B>(&desc.input);

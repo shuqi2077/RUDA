@@ -66,6 +66,35 @@ fn causal_attention_probabilities<B: Backend>(
 }
 
 impl<B: Backend, C: CheckpointStrategy> ModuleOps<Autodiff<B, C>> for Autodiff<B, C> {
+    fn gelu_native(tensor: AutodiffTensor<B>, approximate: bool) -> AutodiffTensor<B> {
+        #[derive(Debug)]
+        struct Gelu;
+        #[derive(new, Debug, Clone)]
+        struct RetroNativeGelu<B: Backend> { input_id: NodeId, approximate: bool, _backend: PhantomData<B> }
+        impl<B: Backend> RetroForward for RetroNativeGelu<B> {
+            fn forward(&self, states: &mut BackwardStates, out_node: NodeId) {
+                let input = states.get_state::<B::FloatTensorPrimitive>(&self.input_id);
+                states.save(out_node, B::gelu_native(input, self.approximate));
+            }
+        }
+        impl<B: Backend> Backward<B, 1> for Gelu {
+            type State = (NodeId, bool);
+            fn backward(self, ops: Ops<Self::State, 1>, grads: &mut Gradients, checkpointer: &mut Checkpointer) {
+                let (input, approximate) = ops.state;
+                let input = checkpointer.retrieve_node_output::<B::FloatTensorPrimitive>(input);
+                unary::<B, _>(ops.parents, ops.node, grads, |grad| B::gelu_native_backward(input, grad, approximate));
+            }
+        }
+        match Gelu.prepare::<C>([tensor.node.clone()]).memory_bound()
+            .retro_forward(RetroNativeGelu::<B>::new(tensor.node.id, approximate)).parents([&tensor]).stateful() {
+            OpsKind::Tracked(mut prep) => {
+                let state = prep.checkpoint(&tensor);
+                prep.finish((state, approximate), B::gelu_native(tensor.primitive, approximate))
+            }
+            OpsKind::UnTracked(prep) => prep.finish(B::gelu_native(tensor.primitive, approximate)),
+        }
+    }
+
     fn silu_native(tensor: AutodiffTensor<B>) -> AutodiffTensor<B> {
         #[derive(Debug)]
         struct Silu;

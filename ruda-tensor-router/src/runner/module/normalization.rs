@@ -1,6 +1,17 @@
 use super::*;
 
 impl<B: BackendIr> Runner<B> {
+    pub(super) fn apply_gelu_native(&self, handles: &mut HandleContainer<B::Handle>, desc: &GeluOpIr) {
+        let input = handles.get_float_tensor::<B>(&desc.x);
+        handles.register_float_tensor::<B>(&desc.out.id, B::gelu_native(input, desc.approximate));
+    }
+
+    pub(super) fn apply_gelu_native_backward(&self, handles: &mut HandleContainer<B::Handle>, desc: &GeluBackwardOpIr) {
+        let input = handles.get_float_tensor::<B>(&desc.x);
+        let grad = handles.get_float_tensor::<B>(&desc.grad);
+        handles.register_float_tensor::<B>(&desc.out.id, B::gelu_native_backward(input, grad, desc.approximate));
+    }
+
     pub(super) fn apply_silu_native(&self, handles: &mut HandleContainer<B::Handle>, desc: &UnaryOpIr) {
         let input = handles.get_float_tensor::<B>(&desc.input);
         handles.register_float_tensor::<B>(&desc.out.id, B::silu_native(input));

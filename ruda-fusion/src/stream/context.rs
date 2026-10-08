@@ -603,6 +603,13 @@ impl RelativeOps for ModuleOperationIr {
             ModuleOperationIr::SiluNative(desc) => ModuleOperationIr::SiluNative(UnaryOpIr {
                 input: desc.input.to_relative(converter), out: desc.out.to_relative(converter),
             }),
+            ModuleOperationIr::GeluNative(desc) => ModuleOperationIr::GeluNative(GeluOpIr {
+                x: desc.x.to_relative(converter), approximate: desc.approximate, out: desc.out.to_relative(converter),
+            }),
+            ModuleOperationIr::GeluNativeBackward(desc) => ModuleOperationIr::GeluNativeBackward(GeluBackwardOpIr {
+                x: desc.x.to_relative(converter), grad: desc.grad.to_relative(converter),
+                approximate: desc.approximate, out: desc.out.to_relative(converter),
+            }),
             ModuleOperationIr::SiluNativeBackward(desc) => ModuleOperationIr::SiluNativeBackward(SiluBackwardOpIr {
                 x: desc.x.to_relative(converter), grad: desc.grad.to_relative(converter), out: desc.out.to_relative(converter),
             }),
