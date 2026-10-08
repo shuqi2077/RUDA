@@ -4,6 +4,7 @@ use crate::{PackedExpertPartitionContext,MixedExpertParallelSource,MixedOwnedExp
     FrozenExpertGeometry,Nf4MoeRouting,expert_parallel::{ExpertOwnership,ExpertParallelMoeLayer}};
 use super::{TransformerProjectionShape,Nf4MoeTransformerModel,Nf4MoeTransformerLayer,NativeMoeTransformerLayer,
     ExpertParallelTransformerModel,ExpertParallelTransformerLayer,ExpertParallelTransformerBlock,PackedExpertLayerAdapterConfig};
+use super::super::mixed_expert_parallel::validate_ownership_aliases;
 
 /// Actual source layer ownership and optional new expert A/B, independent of floating/NF4/AWQ storage.
 #[derive(Clone,Debug)]
@@ -30,7 +31,7 @@ impl<B:Backend,P:TransformerProjectionShape<B>,E:FrozenExpertGeometry<B>+Into<Mi
     /// Packed layers require ownership entries; unselected original floating and dense layers remain local and unchanged.
     /// Floating base policies and every quantized projection's original execution policy remain independent of adapter policies.
     pub fn into_mixed_expert_parallel(self,targets:&[MixedExpertParallelLayerConfig],rank:usize) -> MixedExpertParallelTransformerModel<B,P> {
-        let mut selected=BTreeMap::new();
+        let mut selected=BTreeMap::new();let mut sources=Vec::new();
         for config in targets {
             assert!(config.layer<self.layers.len(),"mixed owned-expert layer index exceeds actual loaded model");
             assert!(selected.insert(config.layer,config).is_none(),"duplicate actual mixed owned-expert layer index");
@@ -42,9 +43,11 @@ impl<B:Backend,P:TransformerProjectionShape<B>,E:FrozenExpertGeometry<B>+Into<Mi
             source.validate();assert_eq!(source.dimensions()[0],config.ownership.experts(),"actual source expert count differs from declared mixed ownership");config.ownership.range(rank);
             if let Some(adapters)=&config.adapters {assert_eq!(adapters.layer,config.layer,"mixed adapter and ownership layer indices differ");
                 source.validate_adapter_targets(&adapters.adapter,&adapters.targets,adapters.adapter_dtype,options);}
+            sources.push(source);
         }
         for (index,layer) in self.layers.iter().enumerate() {if matches!(layer,Nf4MoeTransformerLayer::Packed(_)) {
             assert!(selected.contains_key(&index),"every actual packed expert layer requires explicit ownership before mixed distributed conversion");}}
+        validate_ownership_aliases(&self,sources);
         let mut context=PackedExpertPartitionContext::new();
         let layers=self.layers.into_iter().enumerate().map(|(index,layer)|match layer {
             Nf4MoeTransformerLayer::Dense(block)=>ExpertParallelTransformerLayer::Local(NativeMoeTransformerLayer::Dense(block)),

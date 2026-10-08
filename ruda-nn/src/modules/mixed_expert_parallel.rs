@@ -1,11 +1,12 @@
-use alloc::vec::Vec;
+use alloc::{collections::BTreeMap,vec::Vec};
 use core::fmt;
-use ruda_model::{module::{Module,ParamId},record::RecorderError,tensor::{Tensor,Int,DType,MoeOptions,MoeExpertStrategy,
+use ruda_model::{module::{Module,ModuleVisitor,Param,ParamId},record::RecorderError,tensor::{Tensor,Int,DType,MoeOptions,MoeExpertStrategy,
     MoeReceivedOps,FrozenPackedExpertOps,ExpertProjectionOps,NativeSwiGluOps,backend::Backend}};
 use super::{NativeSwiGluExperts,AdaptedFloatingSwiGluExperts,SelectableOwnedExperts,OwnedFloatingExpertAdapters,
     SelectablePackedExperts,OwnedPackedExperts,FrozenPackedSwiGluExperts,FrozenNf4SwiGluExperts,AdaptedPackedSwiGluExperts,
     MixedAdaptedExperts,LoRALinearConfig,ExpertAdapterTarget,FrozenExpertGeometry,FrozenSelectedExperts,
-    ExpertAdapterProjections,ExpertAdapterProjectionRef,ExpertAdapterMapper,AdaptedExpertError,FloatingExpertError};
+    ExpertAdapterProjections,ExpertAdapterProjectionRef,ExpertAdapterMapper,AdaptedExpertError,FloatingExpertError,
+    FrozenPackedExpertProjection,AdaptedExpertProjection};
 use super::expert_parallel::{ExpertOwnership,ExpertParallelGeometry,ExpertParallelReceived,ExpertParallelMoeLayer};
 
 /// Actual complete loaded source representation, moved into owned execution without numerical conversion.
@@ -45,6 +46,43 @@ impl<B:Backend> MixedExpertParallelSource<B> {
             Self::Packed(SelectablePackedExperts::Adapted(value))=>value.validate_adapter_targets(config,targets,dtype),
         }
     }
+}
+#[derive(Default)]
+struct PartitionOccurrences {floating:BTreeMap<(ParamId,bool),usize>,integer:BTreeMap<ParamId,usize>}
+impl<B:Backend> ModuleVisitor<B> for PartitionOccurrences {
+    fn visit_float<const D:usize>(&mut self,parameter:&Param<Tensor<B,D>>) {
+        *self.floating.entry((parameter.id,parameter.val().is_require_grad())).or_default()+=1;
+    }
+    fn visit_int<const D:usize>(&mut self,parameter:&Param<Tensor<B,D,Int>>) {*self.integer.entry(parameter.id).or_default()+=1;}
+}
+impl PartitionOccurrences {
+    fn unchanged_book<B:Backend>(&mut self,base:&FrozenPackedExpertProjection<B>) {
+        let parameter=match base {FrozenPackedExpertProjection::Nf4(value)=>&value.payload.codebook,
+            FrozenPackedExpertProjection::Nf4Window(value)=>&value.codebook,FrozenPackedExpertProjection::Awq(_)=>return};
+        let key=(parameter.id,parameter.val().is_require_grad());let count=self.floating.get_mut(&key).expect("actual visited original NF4 codebook");
+        *count-=1;if *count==0 {self.floating.remove(&key);}
+    }
+}
+pub(super) fn validate_ownership_aliases<B:Backend,M:Module<B>>(model:&M,sources:Vec<MixedExpertParallelSource<B>>) {
+    let mut all=PartitionOccurrences::default();model.visit(&mut all);let mut owned=PartitionOccurrences::default();
+    for source in sources {
+        match source {
+            MixedExpertParallelSource::Native(value)=>value.visit(&mut owned),
+            MixedExpertParallelSource::Floating(value)=>value.visit(&mut owned),
+            MixedExpertParallelSource::Packed(value)=>{
+                let mut selected=PartitionOccurrences::default();value.visit(&mut selected);
+                match value {
+                    SelectablePackedExperts::Original(value)=>{for base in [&value.gate,&value.up,&value.down] {selected.unchanged_book(base);}},
+                    SelectablePackedExperts::Adapted(value)=>{for projection in [&value.gate,&value.up,&value.down] {
+                        selected.unchanged_book(match projection {AdaptedExpertProjection::Frozen(base)=>base,AdaptedExpertProjection::LoRA(layer)=>&layer.base});}},
+                }
+                for (key,count) in selected.floating {*owned.floating.entry(key).or_default()+=count;}
+                for (key,count) in selected.integer {*owned.integer.entry(key).or_default()+=count;}
+            },
+        }
+    }
+    for (key,count) in owned.floating {assert_eq!(all.floating.get(&key),Some(&count),"an owned expert parameter is tied to an unchanged local/non-expert parameter; its alias cannot be split");}
+    for (key,count) in owned.integer {assert_eq!(all.integer.get(&key),Some(&count),"owned packed expert words are tied to unchanged non-expert storage; its alias cannot be split");}
 }
 /// Actual rank-owned expert chain selected independently for every original loaded layer.
 #[derive(Module,Debug)]

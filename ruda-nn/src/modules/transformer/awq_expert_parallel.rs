@@ -5,6 +5,7 @@ use crate::{AwqExpertPartitionContext,OwnedAwqExperts,AwqExpertParallelTransform
     expert_parallel::{ExpertOwnership,ExpertParallelMoeLayer}};
 use super::{TransformerProjectionShape,Nf4MoeTransformerModel,Nf4MoeTransformerLayer,NativeMoeTransformerLayer,
     ExpertParallelTransformerModel,ExpertParallelTransformerLayer,ExpertParallelTransformerBlock,PackedExpertLayerAdapterConfig};
+use super::super::mixed_expert_parallel::{MixedExpertParallelSource,validate_ownership_aliases};
 
 /// Actual loaded AWQ expert layer and explicitly declared expert-world ownership.
 #[derive(Clone,Debug)]
@@ -20,7 +21,7 @@ impl<B:Backend,P:TransformerProjectionShape<B>> Nf4MoeTransformerModel<B,P,Froze
     /// Copy only explicit rank-owned AWQ payloads, retaining the original complete model and native expert transport graph.
     /// Every packed layer needs an explicit ownership entry; original dense/floating layers remain local and unchanged.
     pub fn into_awq_expert_parallel(self,targets:&[AwqExpertParallelLayerConfig],rank:usize) -> AwqExpertParallelTransformerModel<B,P> {
-        let mut selected=BTreeMap::new();
+        let mut selected=BTreeMap::new();let mut sources=Vec::new();
         for config in targets {
             assert!(config.layer<self.layers.len(),"AWQ expert-owned layer index exceeds original loaded model");
             assert!(selected.insert(config.layer,config).is_none(),"duplicate original AWQ expert-owned layer index");
@@ -35,9 +36,11 @@ impl<B:Backend,P:TransformerProjectionShape<B>> Nf4MoeTransformerModel<B,P,Froze
                 AdaptedPackedSwiGluExperts::from_frozen(block.routed.experts.clone())
                     .validate_adapter_targets(&adapters.adapter,&adapters.targets,adapters.adapter_dtype);
             }
+            sources.push(MixedExpertParallelSource::Packed(SelectablePackedExperts::Original(block.routed.experts.clone())));
         }
         for (index,layer) in self.layers.iter().enumerate() {if matches!(layer,Nf4MoeTransformerLayer::Packed(_)) {
             assert!(selected.contains_key(&index),"every original packed expert layer requires explicit AWQ ownership before distributed conversion");}}
+        validate_ownership_aliases(&self,sources);
         let mut context=AwqExpertPartitionContext::new();
         let layers=self.layers.into_iter().enumerate().map(|(index,layer)|match layer {
             Nf4MoeTransformerLayer::Dense(block)=>ExpertParallelTransformerLayer::Local(NativeMoeTransformerLayer::Dense(block)),

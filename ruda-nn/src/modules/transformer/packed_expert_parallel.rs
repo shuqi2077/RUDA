@@ -4,6 +4,7 @@ use crate::{PackedExpertPartitionContext,OwnedPackedExperts,PackedExpertParallel
     AdaptedPackedSwiGluExperts,FrozenExpertGeometry,expert_parallel::{ExpertOwnership,ExpertParallelMoeLayer}};
 use super::{TransformerProjectionShape,Nf4MoeTransformerModel,Nf4MoeTransformerLayer,NativeMoeTransformerLayer,
     ExpertParallelTransformerModel,ExpertParallelTransformerLayer,ExpertParallelTransformerBlock,PackedExpertLayerAdapterConfig};
+use super::super::mixed_expert_parallel::{MixedExpertParallelSource,validate_ownership_aliases};
 
 /// Actual loaded packed expert layer and complete original explicit expert-world ownership.
 #[derive(Clone,Debug)]
@@ -20,7 +21,7 @@ impl<B:Backend,P:TransformerProjectionShape<B>,E:FrozenExpertGeometry<B>+Into<Se
     /// NF4 retains original intersecting scale blocks and the first coefficient's in-block offset.
     /// Every packed layer requires explicit ownership; original dense/floating layers remain local and unchanged.
     pub fn into_packed_expert_parallel(self,targets:&[PackedExpertParallelLayerConfig],rank:usize) -> PackedExpertParallelTransformerModel<B,P> {
-        let mut selected=BTreeMap::new();
+        let mut selected=BTreeMap::new();let mut sources=Vec::new();
         for config in targets {
             assert!(config.layer<self.layers.len(),"packed expert-owned layer index exceeds actual loaded model");
             assert!(selected.insert(config.layer,config).is_none(),"duplicate actual packed expert-owned layer index");
@@ -33,9 +34,11 @@ impl<B:Backend,P:TransformerProjectionShape<B>,E:FrozenExpertGeometry<B>+Into<Se
                 let adapted=match source {SelectablePackedExperts::Original(value)=>AdaptedPackedSwiGluExperts::from_frozen(value),SelectablePackedExperts::Adapted(value)=>value};
                 adapted.validate_adapter_targets(&adapters.adapter,&adapters.targets,adapters.adapter_dtype);
             }
+            sources.push(MixedExpertParallelSource::Packed(block.routed.experts.clone().into()));
         }
         for (index,layer) in self.layers.iter().enumerate() {if matches!(layer,Nf4MoeTransformerLayer::Packed(_)) {
             assert!(selected.contains_key(&index),"every actual packed expert layer needs explicit ownership before distributed conversion");}}
+        validate_ownership_aliases(&self,sources);
         let mut context=PackedExpertPartitionContext::new();
         let layers=self.layers.into_iter().enumerate().map(|(index,layer)|match layer {
             Nf4MoeTransformerLayer::Dense(block)=>ExpertParallelTransformerLayer::Local(NativeMoeTransformerLayer::Dense(block)),
