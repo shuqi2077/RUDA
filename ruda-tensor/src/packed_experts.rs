@@ -37,10 +37,14 @@ pub enum PackedExpertPayload<B:Backend> {
     Nf4(Nf4ExpertPayload<B>),
     /// Original AWQ per-input-group permuted eight-code I32 words.
     Awq(AwqExpertPayload<B>),
+    /// Actual owned NF4 bytes beginning at the first original scale-block boundary.
+    /// The first owned logical coefficient can start within that retained block.
+    Nf4Window {payload:Nf4ExpertPayload<B>,element_offset:usize},
 }
 impl<B:Backend> PackedExpertPayload<B> {
     /// Actual resident expert count and explicitly declared first global expert ID.
     pub fn expert_range(&self) -> (usize,usize) {match self {Self::Nf4(value)=>(value.options.experts,value.options.expert_start),
+        Self::Nf4Window {payload,..}=>(payload.options.experts,payload.options.expert_start),
         Self::Awq(value)=>(value.options.experts,value.options.expert_start)}}
 }
 /// Original native failure or unsupported differentiation of frozen packed metadata/VJPs.

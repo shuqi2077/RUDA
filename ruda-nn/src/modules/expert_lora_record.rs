@@ -21,6 +21,8 @@ pub enum ExpertAdapterBaseSchema {
     Nf4 {block_size:usize,tile_rows:usize,use_tensor_core:bool},
     /// Actual original AWQ groups and independently stored scales/optional bias; words/zeros stay outside the record.
     Awq {group_size:usize,scale_dtype:DType,bias_dtype:Option<DType>},
+    /// Exact original NF4 owned-window offset; source bytes/scales remain outside the adapter record.
+    Nf4Window {block_size:usize,element_offset:usize,tile_rows:usize,use_tensor_core:bool},
 }
 /// Actual source-base metadata needed by an expert A/B-only record.
 pub trait ExpertAdapterRecordBase<B:Backend>:ExpertLoRABase<B> {
@@ -49,6 +51,12 @@ impl<B:Backend> ExpertAdapterRecordBase<B> for FrozenPackedExpertProjection<B> {
                     return Err(invalid("original AWQ scale/bias is not frozen"));}
                 value.validate();Ok(ExpertAdapterBaseSchema::Awq {group_size:value.group_size,scale_dtype:value.scales.val().dtype(),
                     bias_dtype:value.bias.as_ref().map(|bias|bias.val().dtype())})
+            },
+            Self::Nf4Window(value)=>{
+                if value.scales.val().is_require_grad() || value.codebook.val().is_require_grad() {
+                    return Err(invalid("original NF4 window scale/codebook is not frozen"));}
+                value.validate();Ok(ExpertAdapterBaseSchema::Nf4Window {block_size:value.block_size,element_offset:value.element_offset,
+                    tile_rows:value.tile_rows,use_tensor_core:value.use_tensor_core})
             },
         }
     }

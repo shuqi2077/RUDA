@@ -5,7 +5,7 @@ use ruda_kernel::dsl::prelude::*;
 #[ruda(launch)]
 pub(super) fn segmented<F:Float+RudaElement,O:Float+RudaElement>(
     input:&Tensor<F>,packed:&Tensor<u8>,scales:&Tensor<f32>,table:&Tensor<f32>,
-    offsets:&Tensor<u32>,output:&mut Tensor<O>,columns:u32,width:u32,block:u32,#[comptime] backward:bool,
+    offsets:&Tensor<u32>,output:&mut Tensor<O>,columns:u32,width:u32,block:u32,element_offset:u32,#[comptime] backward:bool,
 ) {
     let expert=RUDA_POS_Y as usize;let column_base=RUDA_POS_X as usize*16;
     let begin=offsets[expert] as usize;let end=offsets[expert+1] as usize;let lane=UNIT_POS as usize;
@@ -29,7 +29,7 @@ pub(super) fn segmented<F:Float+RudaElement,O:Float+RudaElement>(
                 if comptime!(backward) {wr=base+tr;wc=column_base+tc;}
                 let mut value=F::cast_from(0.0f32);
                 if wr<n && wc<k {
-                    let index=(expert*n+wr)*k+wc;
+                    let index=element_offset as usize+(expert*n+wr)*k+wc;
                     let byte=u32::cast_from(packed[index/2]);let mut code=byte & 15;
                     if index%2==0 {code=byte>>4;}
                     value=F::cast_from(table[code as usize]*scales[index/block as usize]);

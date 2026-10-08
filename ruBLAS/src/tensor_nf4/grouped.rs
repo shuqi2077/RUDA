@@ -17,9 +17,17 @@ impl<R:Runtime> Nf4GroupedGemm<R> {
     pub fn new(packed:RudaTensor<R>,scales:RudaTensor<R>,codebook:RudaTensor<R>,experts:usize,layout:Nf4Layout) -> Result<Self,Nf4Error> {
         let layout=Nf4Layout::new(layout.input_features,layout.output_features,layout.block_size)?;
         if experts==0 || experts>=u32::MAX as usize {return Err(Nf4Error::Layout("grouped NF4 requires a positive expert count and U32 exclusive prefix"));}
+        Self::from_window(packed,scales,codebook,experts,layout,0)
+    }
+    /// Connect an original flat-block-aligned packed window without reblocking or nibble conversion.
+    /// `element_offset` is the first owned coefficient's offset within the first stored original block.
+    /// Empty owners require empty bytes/scales and offset zero, but retain the actual original codebook.
+    pub fn from_window(packed:RudaTensor<R>,scales:RudaTensor<R>,codebook:RudaTensor<R>,experts:usize,layout:Nf4Layout,element_offset:usize) -> Result<Self,Nf4Error> {
+        let layout=Nf4Layout::new(layout.input_features,layout.output_features,layout.block_size)?;
+        if experts>=u32::MAX as usize {return Err(Nf4Error::Layout("grouped NF4 window expert count exceeds U32 prefix"));}
         let columns=experts.checked_mul(layout.output_features).ok_or(Nf4Error::Layout("grouped NF4 expert geometry overflows"))?;
-        let full=Nf4Layout::new(layout.input_features,columns,layout.block_size)?;
-        Ok(Self {weights:Nf4Gemm::new(packed,scales,codebook,None,full)?,experts,columns:layout.output_features})
+        let full=Nf4Layout {input_features:layout.input_features,output_features:columns,block_size:layout.block_size};
+        Ok(Self {weights:Nf4Gemm::from_window(packed,scales,codebook,None,full,element_offset)?,experts,columns:layout.output_features})
     }
     /// Actual expert count and per-expert original projection geometry.
     pub fn layout(&self) -> (usize,Nf4Layout) {
@@ -59,6 +67,7 @@ impl<R:Runtime> Nf4GroupedGemm<R> {
             }
         }
         let rows=input.meta.shape()[0];
+        if self.experts==0 && rows!=0 {return Err(Nf4Error::Layout("an empty NF4 owner cannot receive nonempty rows"));}
         if rows.checked_mul(source).is_none_or(|size|size>u32::MAX as usize) || rows.checked_mul(target).is_none_or(|size|size>u32::MAX as usize) {
             return Err(Nf4Error::Layout("grouped NF4 activation geometry exceeds U32 indexing"));
         }
@@ -80,7 +89,7 @@ impl<R:Runtime> Nf4GroupedGemm<R> {
         macro_rules! run {($f:ty,$o:ty)=>{unsafe {grouped_kernel::segmented::launch::<$f,$o,R>(&input.client,grid,RudaDim::new_1d(32),
             input.clone().into_tensor_arg(),self.weights.packed.clone().into_tensor_arg(),self.weights.scales.clone().into_tensor_arg(),
             self.weights.codebook.clone().into_tensor_arg(),offsets.clone().into_tensor_arg(),output.clone().into_tensor_arg(),
-            self.columns as u32,self.weights.layout.input_features as u32,self.weights.layout.block_size as u32,backward)}};}
+            self.columns as u32,self.weights.layout.input_features as u32,self.weights.layout.block_size as u32,self.weights.element_offset as u32,backward)}};}
         match (input.dtype,backward) {(DType::F16,false)=>run!(f16,f16),(DType::BF16,false)=>run!(bf16,bf16),
             (DType::F16,true)=>run!(f16,f32),(DType::BF16,true)=>run!(bf16,f32),_=>unreachable!()}
         Ok(())

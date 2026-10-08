@@ -1,4 +1,4 @@
-use super::{FrozenNf4ExpertProjection,FrozenNf4SwiGluExperts,Nf4MoeLayer};
+use super::{FrozenNf4ExpertProjection,FrozenNf4ExpertWindow,FrozenNf4SwiGluExperts,Nf4MoeLayer};
 use ruda_model::{module::{Module,ModuleDisplay,Param},tensor::{Tensor,Int,DType,TensorPrimitive,FrozenNf4SwiGluOps,FrozenPackedExpertOps,
     AwqExpertOptions,AwqExpertPayload,PackedExpertPayload,backend::Backend}};
 use core::fmt;
@@ -79,18 +79,21 @@ pub enum FrozenPackedExpertProjection<B:Backend> {
     Nf4(FrozenNf4ExpertProjection<B>),
     /// Original input-group AWQ I32 words/zero points with independent scale storage.
     Awq(FrozenAwqExpertProjection<B>),
+    /// Original expert-owned NF4 bytes/scales with an exact partial first-block offset.
+    Nf4Window(FrozenNf4ExpertWindow<B>),
 }
 impl<B:Backend> From<FrozenNf4ExpertProjection<B>> for FrozenPackedExpertProjection<B> {fn from(value:FrozenNf4ExpertProjection<B>) -> Self {Self::Nf4(value)}}
+impl<B:Backend> From<FrozenNf4ExpertWindow<B>> for FrozenPackedExpertProjection<B> {fn from(value:FrozenNf4ExpertWindow<B>) -> Self {Self::Nf4Window(value)}}
 impl<B:Backend> From<FrozenAwqExpertProjection<B>> for FrozenPackedExpertProjection<B> {fn from(value:FrozenAwqExpertProjection<B>) -> Self {Self::Awq(value)}}
 impl<B:Backend> FrozenPackedExpertProjection<B> {
     /// Actual original `[experts,input,output]` dimensions, without decoding.
-    pub fn dimensions(&self) -> [usize;3] {match self {Self::Nf4(value)=>[value.experts,value.payload.input_features,value.output_features],Self::Awq(value)=>value.dimensions()}}
+    pub fn dimensions(&self) -> [usize;3] {match self {Self::Nf4(value)=>[value.experts,value.payload.input_features,value.output_features],Self::Nf4Window(value)=>value.dimensions(),Self::Awq(value)=>value.dimensions()}}
     /// Validate original immutable source geometry/storage for only the actual selected representation.
-    pub fn validate(&self) {match self {Self::Nf4(value)=>value.validate(),Self::Awq(value)=>value.validate()}}
+    pub fn validate(&self) {match self {Self::Nf4(value)=>value.validate(),Self::Nf4Window(value)=>value.validate(),Self::Awq(value)=>value.validate()}}
     /// Original actual packed payload device.
-    pub fn device(&self) -> B::Device {match self {Self::Nf4(value)=>value.payload.packed.val().device(),Self::Awq(value)=>value.qweight.val().device()}}
+    pub fn device(&self) -> B::Device {match self {Self::Nf4(value)=>value.payload.packed.val().device(),Self::Nf4Window(value)=>value.packed.val().device(),Self::Awq(value)=>value.qweight.val().device()}}
     /// Actual native operands for the explicitly declared global expert range.
-    pub fn primitives(&self,expert_start:usize) -> PackedExpertPayload<B> {match self {Self::Nf4(value)=>PackedExpertPayload::Nf4(value.primitives(expert_start)),Self::Awq(value)=>PackedExpertPayload::Awq(value.primitives(expert_start))}}
+    pub fn primitives(&self,expert_start:usize) -> PackedExpertPayload<B> {match self {Self::Nf4(value)=>PackedExpertPayload::Nf4(value.primitives(expert_start)),Self::Nf4Window(value)=>value.primitives(expert_start),Self::Awq(value)=>PackedExpertPayload::Awq(value.primitives(expert_start))}}
 }
 impl<B:FrozenPackedExpertOps> FrozenPackedExpertProjection<B> {
     /// Native selected original packed projection, preserving activation storage and row order.

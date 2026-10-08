@@ -21,6 +21,10 @@ impl<R:Runtime> Nf4ExpertProjection<R> {
     pub fn new(packed:RudaTensor<R>,scales:RudaTensor<R>,codebook:RudaTensor<R>,experts:usize,layout:Nf4Layout) -> Result<Self,Nf4ExpertError> {
         Ok(Self {weights:Nf4GroupedGemm::new(packed,scales,codebook,experts,layout)?})
     }
+    /// Connect only actual owned original bytes/scales with their first-block offset, including empty owners.
+    pub fn from_window(packed:RudaTensor<R>,scales:RudaTensor<R>,codebook:RudaTensor<R>,experts:usize,layout:Nf4Layout,element_offset:usize) -> Result<Self,Nf4ExpertError> {
+        Ok(Self {weights:Nf4GroupedGemm::from_window(packed,scales,codebook,experts,layout,element_offset)?})
+    }
     /// Actual expert count and per-expert projection geometry.
     pub fn layout(&self) -> (usize,Nf4Layout) {self.weights.layout()}
     /// Resident original byte/scale/book payload size, not peak device memory.

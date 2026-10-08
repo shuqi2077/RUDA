@@ -19,6 +19,11 @@ fn frozen_payload<B:FrozenPackedExpertOps,S:CheckpointStrategy>(payload:PackedEx
             PackedExpertPayload::Awq(AwqExpertPayload {qweight:value.qweight,qzeros:value.qzeros,scales:value.scales.primitive,
                 bias:value.bias.map(|value|value.primitive),options:value.options})
         },
+        PackedExpertPayload::Nf4Window {payload:value,element_offset}=>{
+            if value.scales.is_tracked() || value.codebook.is_tracked() {return Err(PackedExpertAutodiffError::TrainableMetadata);}
+            PackedExpertPayload::Nf4Window {payload:Nf4ExpertPayload {packed:value.packed,scales:value.scales.primitive,
+                codebook:value.codebook.primitive,options:value.options},element_offset}
+        },
     })
 }
 #[derive(Debug)]

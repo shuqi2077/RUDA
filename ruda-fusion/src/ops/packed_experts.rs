@@ -9,6 +9,9 @@ fn resolve_payload<B:FusionBackend>(payload:PackedExpertPayload<Fusion<B>>) -> P
         PackedExpertPayload::Awq(value)=>PackedExpertPayload::Awq(AwqExpertPayload {qweight:value.qweight.client.clone().resolve_tensor_int::<B>(value.qweight),
             qzeros:value.qzeros.client.clone().resolve_tensor_int::<B>(value.qzeros),scales:value.scales.client.clone().resolve_tensor_float::<B>(value.scales),
             bias:value.bias.map(|value|value.client.clone().resolve_tensor_float::<B>(value)),options:value.options}),
+        PackedExpertPayload::Nf4Window {payload:value,element_offset}=>PackedExpertPayload::Nf4Window {
+            payload:Nf4ExpertPayload {packed:value.packed.client.clone().resolve_tensor_int::<B>(value.packed),
+                scales:value.scales.client.clone().resolve_tensor_float::<B>(value.scales),codebook:value.codebook.client.clone().resolve_tensor_float::<B>(value.codebook),options:value.options},element_offset},
     }
 }
 impl<B:FusionBackend+FrozenPackedExpertOps> FrozenPackedExpertOps for Fusion<B> {

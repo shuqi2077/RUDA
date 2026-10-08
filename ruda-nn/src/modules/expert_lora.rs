@@ -283,6 +283,17 @@ pub enum SelectablePackedExperts<B:Backend> {
     /// Actual explicitly selected expert adapters and their source-native first-order graph.
     Adapted(AdaptedPackedSwiGluExperts<B>),
 }
+impl<B:Backend> From<FrozenPackedSwiGluExperts<B>> for SelectablePackedExperts<B> {
+    fn from(value:FrozenPackedSwiGluExperts<B>) -> Self {Self::Original(value)}
+}
+impl<B:Backend> From<AdaptedPackedSwiGluExperts<B>> for SelectablePackedExperts<B> {
+    fn from(value:AdaptedPackedSwiGluExperts<B>) -> Self {Self::Adapted(value)}
+}
+impl<B:Backend> From<super::FrozenNf4SwiGluExperts<B>> for SelectablePackedExperts<B> {
+    fn from(value:super::FrozenNf4SwiGluExperts<B>) -> Self {
+        Self::Original(FrozenPackedSwiGluExperts::from_parts(value.gate.into(),value.up.into(),value.down.into()))
+    }
+}
 impl<B:Backend> SelectablePackedExperts<B> {
     /// Actual explicitly present expert adapter IDs; original frozen chains contain none.
     pub fn adapter_parameter_ids(&self) -> Vec<ruda_model::module::ParamId> {match self {Self::Original(_)=>Vec::new(),Self::Adapted(value)=>value.adapter_parameter_ids()}}

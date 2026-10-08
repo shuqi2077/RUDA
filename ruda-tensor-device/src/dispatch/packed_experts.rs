@@ -25,6 +25,12 @@ fn projection<R,F,I,BT>(payload:PackedExpertPayload<DeviceBackend<R,F,I,BT>>) ->
                 return Err(MoeError("AWQ expert options differ from original source packed cube geometry").into());}
             PackedExpertProjection::Awq(projection)
         },
+        PackedExpertPayload::Nf4Window {payload:value,element_offset}=>{
+            let o=value.options.projection;if o.tile_rows==0 {return Err(MoeError("packed NF4 window tile rows must be positive").into());}
+            let layout=Nf4Layout::new(o.input_features,o.output_features,o.block_size).map_err(rudnn::moe::Nf4ExpertError::from)?;
+            PackedExpertProjection::Nf4 {projection:Nf4ExpertProjection::from_window(value.packed,value.scales,value.codebook,value.options.experts,layout,element_offset)?,
+                execution:Nf4ExpertExecution {tile_rows:o.tile_rows,use_tensor_core:o.use_tensor_core}}
+        },
     })
 }
 impl<R,F,I,BT> FrozenPackedExpertOps for DeviceBackend<R,F,I,BT> where R:DeviceRuntime,F:FloatElement,I:IntElement,BT:BoolElement {

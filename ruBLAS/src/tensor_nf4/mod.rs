@@ -66,13 +66,22 @@ pub struct Nf4Gemm<R:Runtime> {
     codebook:RudaTensor<R>,
     bias:Option<RudaTensor<R>>,
     layout:Nf4Layout,
+    element_offset:usize,
 }
 impl<R:Runtime> Nf4Gemm<R> {
     /// Connect actual native packed payload. No weight quantization or format conversion occurs.
     pub fn new(packed:RudaTensor<R>,scales:RudaTensor<R>,codebook:RudaTensor<R>,bias:Option<RudaTensor<R>>,layout:Nf4Layout)
         -> Result<Self,Nf4Error> {
         let layout=Nf4Layout::new(layout.input_features,layout.output_features,layout.block_size)?;
-        let size=layout.input_features*layout.output_features;
+        Self::from_window(packed,scales,codebook,bias,layout,0)
+    }
+    pub(super) fn from_window(packed:RudaTensor<R>,scales:RudaTensor<R>,codebook:RudaTensor<R>,bias:Option<RudaTensor<R>>,
+        layout:Nf4Layout,element_offset:usize) -> Result<Self,Nf4Error> {
+        if layout.input_features==0 || layout.block_size==0 || layout.block_size%2!=0 || layout.block_size>u32::MAX as usize
+            || element_offset>=layout.block_size || (layout.output_features==0 && element_offset!=0) {
+            return Err(Nf4Error::Layout("NF4 window requires native widths, even blocks and an in-block source offset"));}
+        let size=layout.input_features.checked_mul(layout.output_features).and_then(|size|size.checked_add(element_offset))
+            .filter(|&size|size<=u32::MAX as usize).ok_or(Nf4Error::Layout("NF4 window exceeds U32 indexing"))?;
         if packed.dtype!=DType::U8 || packed.meta.shape()!=&Shape::from([size.div_ceil(2)])
             || scales.dtype!=DType::F32 || scales.meta.shape()!=&Shape::from([size.div_ceil(layout.block_size)])
             || codebook.dtype!=DType::F32 || codebook.meta.shape()!=&Shape::from([16]) {
@@ -88,13 +97,14 @@ impl<R:Runtime> Nf4Gemm<R> {
                 return Err(Nf4Error::Layout("NF4 bias must be a floating output-feature vector"));
             }
         }
-        Ok(Self {packed:into_contiguous(packed),scales:into_contiguous(scales),codebook:into_contiguous(codebook),bias:bias.map(into_contiguous),layout})
+        Ok(Self {packed:into_contiguous(packed),scales:into_contiguous(scales),codebook:into_contiguous(codebook),bias:bias.map(into_contiguous),layout,element_offset})
     }
     /// Actual original logical dimensions and block geometry.
     pub fn layout(&self) -> Nf4Layout {self.layout}
     /// Actual resident packed payload, not a peak memory or performance estimate.
     pub fn packed_payload_bytes(&self) -> usize {
-        self.layout.packed_payload_bytes(self.bias.as_ref().map(|bias|bias.dtype)).expect("validated NF4 layout")
+        self.packed.meta.num_elements()+self.scales.meta.num_elements()*4+64
+            +self.bias.as_ref().map_or(0,|bias|bias.meta.num_elements()*bias.dtype.size())
     }
     /// Original high/low nibble decoding into a bounded row interval, rounded to the requested activation storage.
     pub fn decode_rows(&self,begin:usize,rows:usize,dtype:DType) -> Result<RudaTensor<R>,Nf4Error> {
@@ -109,7 +119,7 @@ impl<R:Runtime> Nf4Gemm<R> {
         macro_rules! run {
             ($f:ty)=>{unsafe {kernels::decode::launch::<$f,R>(&self.packed.client,grid,RudaDim::new_1d(128),
                 self.packed.clone().into_tensor_arg(),self.scales.clone().into_tensor_arg(),self.codebook.clone().into_tensor_arg(),
-                output.clone().into_tensor_arg(),(begin*self.layout.input_features) as u32,self.layout.block_size as u32)}};
+                output.clone().into_tensor_arg(),(self.element_offset+begin*self.layout.input_features) as u32,self.layout.block_size as u32)}};
         }
         match dtype {DType::F32=>run!(f32),DType::F16=>run!(f16),DType::BF16=>run!(bf16),_=>unreachable!()}
         Ok(output)
@@ -163,7 +173,7 @@ impl<R:Runtime> Nf4Gemm<R> {
         let grid=RudaCount::Static(columns.div_ceil(16) as u32,rows.div_ceil(16) as u32,1);
         macro_rules! run {($f:ty,$o:ty)=>{unsafe {kernels::gemm::launch::<$f,$o,R>(&input.client,grid,RudaDim::new_1d(32),
             input.clone().into_tensor_arg(),self.packed.clone().into_tensor_arg(),self.scales.clone().into_tensor_arg(),self.codebook.clone().into_tensor_arg(),
-            output.clone().into_tensor_arg(),rows as u32,self.layout.output_features as u32,self.layout.input_features as u32,self.layout.block_size as u32,backward)}};}
+            output.clone().into_tensor_arg(),rows as u32,self.layout.output_features as u32,self.layout.input_features as u32,self.layout.block_size as u32,self.element_offset as u32,backward)}};}
         match (input.dtype,backward) {(DType::F16,false)=>run!(f16,f16),(DType::BF16,false)=>run!(bf16,bf16),
             (DType::F16,true)=>run!(f16,f32),(DType::BF16,true)=>run!(bf16,f32),_=>unreachable!()}
         Ok(())

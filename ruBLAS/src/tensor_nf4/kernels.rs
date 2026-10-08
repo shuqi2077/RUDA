@@ -23,7 +23,7 @@ pub fn decode<F: Float + RudaElement>(
 pub fn gemm<F: Float + RudaElement, O: Float + RudaElement>(
     input: &Tensor<F>, packed: &Tensor<u8>, scales: &Tensor<f32>, table: &Tensor<f32>,
     output: &mut Tensor<O>, rows: u32, columns: u32,
-    width: u32, block: u32, #[comptime] backward: bool,
+    width: u32, block: u32, element_offset: u32, #[comptime] backward: bool,
 ) {
     let lane = UNIT_POS as usize;
     let row_base = RUDA_POS_Y as usize * 16;
@@ -55,7 +55,7 @@ pub fn gemm<F: Float + RudaElement, O: Float + RudaElement>(
             if comptime!(backward) { wr = base + tr; wc = column_base + tc; }
             let mut value = F::cast_from(0.0f32);
             if wr < n && wc < k {
-                let index = wr * k + wc;
+                let index = element_offset as usize + wr * k + wc;
                 let byte = u32::cast_from(packed[index / 2]);
                 let mut code = byte & 15;
                 if index % 2 == 0 { code = byte >> 4; }
