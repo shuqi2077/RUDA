@@ -43,7 +43,7 @@ optional = true
 
 [dependencies.ruda-test-utils]
 path = "../ruda-test-utils"
-version = "0.1.35"
+version = "0.1.56"
 default-features = false
 optional = true
 
