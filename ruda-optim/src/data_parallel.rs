@@ -24,6 +24,11 @@ pub mod zero;
 /// Element-sharded gradients and optimizer states with replicated model weights.
 pub mod zero2;
 
+mod selected;
+/// Explicit parameter-subset replica groups over the original rank-local model.
+pub use selected::SelectedDataParallel;
+use selected::{map_selection, selected_device_matches, visit_selection};
+
 /// An explicit policy for trainable parameters unused by a local backward pass.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MissingGradientPolicy {
@@ -276,12 +281,13 @@ pub struct DataParallel<
     backend: PhantomData<B>,
 }
 
-/// Globally token-weighted gradients for one accumulation window.
+/// Reduced gradients for one explicit accumulation window.
 #[derive(Debug)]
 pub struct DataParallelGradients {
-    /// Sum of local unnormalized gradients divided by `global_weight`.
+    /// Weighted-mean derivatives, or SUM-only derivatives for selected `sum` calls.
+    /// A selected session also retains every unselected input derivative unchanged.
     pub gradients: GradientsParams,
-    /// Exact sum of caller-supplied sample/token weights across ranks.
+    /// Exact sample/token weight sum; selected `sum` calls instead count active ranks.
     pub global_weight: u64,
 }
 
@@ -290,6 +296,8 @@ struct Initialization {
     contract: Vec<ParameterContract>,
     root: u32,
     synchronize_buffers: bool,
+    #[serde(default)]
+    selected: bool,
     error: Option<String>,
 }
 #[derive(Serialize, Deserialize)]
@@ -312,7 +320,7 @@ impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> DataParal
         model: M,
         root: u32,
     ) -> Result<(Self, M), DataParallelError> {
-        Self::initialize_inner(communicator, model, root, false)
+        Self::initialize_inner(communicator, model, root, false, None)
     }
 
     /// Initialize a replica and explicitly broadcast integer and Bool parameter buffers too.
@@ -324,7 +332,7 @@ impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> DataParal
         model: M,
         root: u32,
     ) -> Result<(Self, M), DataParallelError> {
-        Self::initialize_inner(communicator, model, root, true)
+        Self::initialize_inner(communicator, model, root, true, None)
     }
 
     fn initialize_inner<M: AutodiffModule<B>>(
@@ -332,18 +340,18 @@ impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> DataParal
         model: M,
         root: u32,
         synchronize_buffers: bool,
+        selection: Option<&[ParamId]>,
     ) -> Result<(Self, M), DataParallelError> {
         let mut schema = Schema::new(synchronize_buffers);
-        model.visit(&mut schema);
+        let known = visit_selection::<B, _, _>(&model, &mut schema, selection);
         let mut error = schema.device_error;
+        if !known {
+            error = Some("selected parameter IDs are duplicated or absent from the actual model".into());
+        }
         if root >= communicator.world_size() {
             error = Some("broadcast root is outside the world".into());
         }
-        if model
-            .devices()
-            .iter()
-            .any(|device| device != communicator.device())
-        {
+        if !selected_device_matches::<B, _>(&model, communicator.device(), selection) {
             error = Some("each replica must reside on its communicator's device".into());
         }
         let requests = gather::<B::InnerBackend, C, _>(
@@ -352,6 +360,7 @@ impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> DataParal
                 contract: schema.contract.clone(),
                 root,
                 synchronize_buffers,
+                selected: selection.is_some(),
                 error,
             },
         )?;
@@ -362,6 +371,7 @@ impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> DataParal
             if request.root != root
                 || request.contract != schema.contract
                 || request.synchronize_buffers != synchronize_buffers
+                || request.selected != selection.is_some()
             {
                 return Err(contract(
                     "replica paths, shapes, dtypes, frozen flags or tied aliases differ",
@@ -376,7 +386,7 @@ impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> DataParal
             booleans: HashMap::new(),
             error: None,
         };
-        let model = model.map(&mut mapper);
+        let model = map_selection::<B, _, _>(model, &mut mapper, selection);
         if let Some(error) = mapper.error {
             return Err(error.into());
         }
@@ -417,7 +427,7 @@ impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> DataParal
         local_weight: u64,
         policy: MissingGradientPolicy,
     ) -> Result<DataParallelGradients, DataParallelError> {
-        self.reduce_inner(model, gradients, local_weight, policy, false)
+        self.reduce_inner(model, gradients, local_weight, policy, false, None, true)
     }
 
     /// Reduce into FP32 gradients for explicit FP32-master optimizer updates.
@@ -432,7 +442,7 @@ impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> DataParal
         local_weight: u64,
         policy: MissingGradientPolicy,
     ) -> Result<DataParallelGradients, DataParallelError> {
-        self.reduce_inner(model, gradients, local_weight, policy, true)
+        self.reduce_inner(model, gradients, local_weight, policy, true, None, true)
     }
 
     fn reduce_inner<M: AutodiffModule<B>>(
@@ -442,9 +452,11 @@ impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> DataParal
         local_weight: u64,
         policy: MissingGradientPolicy,
         fp32_gradients: bool,
+        selection: Option<&[ParamId]>,
+        normalize: bool,
     ) -> Result<DataParallelGradients, DataParallelError> {
         let mut schema = Schema::new(self.synchronize_buffers);
-        model.visit(&mut schema);
+        let known = visit_selection::<B, _, _>(model, &mut schema, selection);
         let mut check = Check::<B> {
             gradients: &gradients,
             ids: Vec::new(),
@@ -453,7 +465,10 @@ impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> DataParal
             device: self.communicator.device(),
             fp32_gradients,
         };
-        model.visit(&mut check);
+        visit_selection::<B, _, _>(model, &mut check, selection);
+        if !known {
+            check.error = Some("selected parameter IDs are duplicated or absent from the actual model".into());
+        }
         if schema.contract != self.contract || schema.ids != self.ids {
             check.error =
                 Some("model structure or parameter IDs changed after initialization".into());
@@ -461,11 +476,7 @@ impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> DataParal
         if check.present.iter().filter(|present| **present).count() != gradients.len() {
             check.error = Some("gradient container includes an unknown or frozen parameter".into());
         }
-        if model
-            .devices()
-            .iter()
-            .any(|device| device != self.communicator.device())
-        {
+        if !selected_device_matches::<B, _>(model, self.communicator.device(), selection) {
             check.error = Some("replica moved off its communicator's device".into());
         }
         if policy == MissingGradientPolicy::Error
@@ -505,7 +516,7 @@ impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> DataParal
                 }
             }
         }
-        if global_weight == 0 {
+        if normalize && global_weight == 0 {
             return Err(contract("cannot normalize a zero-weight global window"));
         }
         let mut reducer = Reduce::<B, C> {
@@ -518,10 +529,11 @@ impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> DataParal
             local_weight,
             global_weight,
             fp32_gradients,
+            normalize,
             error: None,
             backend: PhantomData,
         };
-        model.visit(&mut reducer);
+        visit_selection::<B, _, _>(model, &mut reducer, selection);
         if let Some(error) = reducer.error {
             return Err(error.into());
         }
@@ -707,6 +719,7 @@ struct Reduce<'a, B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBacken
     local_weight: u64,
     global_weight: u64,
     fp32_gradients: bool,
+    normalize: bool,
     error: Option<TensorDeviceError>,
     backend: PhantomData<B>,
 }
@@ -740,9 +753,14 @@ impl<B: AutodiffBackend, C: DataParallelCommunicator<B::InnerBackend>> ModuleVis
             .all_reduce_float(gradient.into_primitive().tensor(), ReduceOperation::Sum)
         {
             Ok(gradient) => {
-                let gradient =
-                    Tensor::<B::InnerBackend, D>::from_primitive(TensorPrimitive::Float(gradient))
-                        .div_scalar(self.global_weight as f64);
+                let gradient = Tensor::<B::InnerBackend, D>::from_primitive(
+                    TensorPrimitive::Float(gradient),
+                );
+                let gradient = if self.normalize {
+                    gradient.div_scalar(self.global_weight as f64)
+                } else {
+                    gradient
+                };
                 let gradient = if self.fp32_gradients {
                     gradient
                 } else {

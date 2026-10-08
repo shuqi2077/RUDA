@@ -25,6 +25,19 @@ pub struct GradientsParams {
     pub(super) container: TensorContainer<ParamId>,
 }
 
+/// Two actual gradient containers cannot be joined without replacing a source parameter's derivative.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GradientMergeError {
+    /// Actual parameter identities occurring in both input containers.
+    pub duplicates: alloc::vec::Vec<ParamId>,
+}
+impl core::fmt::Display for GradientMergeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "gradient containers share parameter IDs: {:?}", self.duplicates)
+    }
+}
+impl core::error::Error for GradientMergeError {}
+
 impl GradientsParams {
     /// Creates a new [GradientsParams](GradientsParams).
     pub fn new() -> Self {
@@ -108,6 +121,37 @@ impl GradientsParams {
     /// If any tensor is contained.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Move actual native derivatives into an explicit ID subset and its unchanged remainder.
+    /// No tensor copies, dtype conversions, normalization or missing-gradient values are created.
+    pub fn partition<B: Backend>(mut self, parameters: &[ParamId]) -> (Self, Self) {
+        let mut selected = Self::new();
+        for &id in parameters {
+            if let Some(value) = self.container.remove::<B>(&id) {
+                selected.container.register::<B>(id, value);
+            }
+        }
+        (selected, self)
+    }
+
+    /// Join disjoint actual native derivative sets, rejecting every collision before moving any value.
+    /// Useful after independently reducing explicit data/tensor/expert parameter groups.
+    pub fn merge_disjoint<B: Backend>(mut self, mut other: Self) -> Result<Self, GradientMergeError> {
+        let ids = other.container.ids().into_iter().copied().collect::<alloc::vec::Vec<_>>();
+        let mut duplicates = ids.iter().copied()
+            .filter(|id| self.container.get::<B>(id).is_some())
+            .collect::<alloc::vec::Vec<_>>();
+        if !duplicates.is_empty() {
+            duplicates.sort();
+            return Err(GradientMergeError { duplicates });
+        }
+        for id in ids {
+            if let Some(value) = other.container.remove::<B>(&id) {
+                self.container.register::<B>(id, value);
+            }
+        }
+        Ok(self)
     }
 
     #[cfg(feature = "collective")]
