@@ -44,13 +44,13 @@ fn contributing_range(
 }
 
 #[ruda(launch, address_type = "dynamic")]
-fn interpolate_bilinear_backward_kernel<F: Float, N: Size>(
-    grad: &Tensor<Vector<F, N>>,
+fn interpolate_bilinear_backward_kernel<F: Float, G: Float, A: Float, N: Size>(
+    grad: &Tensor<Vector<G, N>>,
     output: &mut Tensor<Vector<F, N>>,
     shape_out: Sequence<FastDivmod<usize>>,
     out_layout: LinearLayout,
     #[comptime] align_corners: bool,
-    #[define(F)] _dtype: StorageType,
+    #[define(F, G, A)] _types: [StorageType; 3],
 ) {
     if ABSOLUTE_POS >= output.len() {
         terminate!();
@@ -68,7 +68,7 @@ fn interpolate_bilinear_backward_kernel<F: Float, N: Size>(
     let (y_start, y_end) = contributing_range(input_y, height, grad_height, align_corners);
     let (x_start, x_end) = contributing_range(input_x, width, grad_width, align_corners);
     let index_base = batch * grad.stride(0) + channel * grad.stride(3);
-    let mut sum = Vector::zero();
+    let mut sum = Vector::<A, N>::zero();
 
     for y in y_start..y_end {
         let coordinate = bilinear_coordinate(y, height, grad_height, align_corners);
@@ -76,8 +76,8 @@ fn interpolate_bilinear_backward_kernel<F: Float, N: Size>(
         let y0 = lower as usize;
         let y1 = coordinate.ceil() as usize;
         let yw = F::cast_from(coordinate - lower);
-        let yw_ = Vector::new(F::one() - yw);
-        let yw = Vector::new(yw);
+        let yw_ = Vector::<A, N>::cast_from(F::one() - yw);
+        let yw = Vector::<A, N>::cast_from(yw);
 
         for x in x_start..x_end {
             let coordinate = bilinear_coordinate(x, width, grad_width, align_corners);
@@ -85,10 +85,10 @@ fn interpolate_bilinear_backward_kernel<F: Float, N: Size>(
             let x0 = lower as usize;
             let x1 = coordinate.ceil() as usize;
             let xw = F::cast_from(coordinate - lower);
-            let xw_ = Vector::new(F::one() - xw);
-            let xw = Vector::new(xw);
+            let xw_ = Vector::<A, N>::cast_from(F::one() - xw);
+            let xw = Vector::<A, N>::cast_from(xw);
             let index = index_base + y * grad.stride(1) + x * grad.stride(2);
-            let value = grad[index / vector_size];
+            let value = Vector::<A, N>::cast_from(grad[index / vector_size]);
 
             if input_y == y0 && input_x == x0 {
                 sum += value * xw_ * yw_;
@@ -105,7 +105,7 @@ fn interpolate_bilinear_backward_kernel<F: Float, N: Size>(
         }
     }
 
-    output[out_idx] = sum;
+    output[out_idx] = Vector::<F, N>::cast_from(sum);
 }
 
 pub fn interpolate_bilinear_backward_launch<R: Runtime>(
@@ -117,6 +117,7 @@ pub fn interpolate_bilinear_backward_launch<R: Runtime>(
         return output;
     }
     let vector_size = max_vector_size_many(&[&out_grad, &output], 3);
+    let types = super::base::backward_types(output.dtype, out_grad.dtype);
     let out_shape = shape_divmod(&output);
     let out_layout = linear_layout(&output, vector_size);
     let working_units = output.meta.num_elements() / vector_size as usize;
@@ -134,7 +135,7 @@ pub fn interpolate_bilinear_backward_launch<R: Runtime>(
         out_shape,
         out_layout,
         align_corners,
-        output.dtype.into(),
+        types,
     );
 
     output

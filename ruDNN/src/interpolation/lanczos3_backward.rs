@@ -62,13 +62,13 @@ fn axis_weights(coordinate: f32, last: f32) -> Sequence<f32> {
 }
 
 #[ruda(launch, address_type = "dynamic")]
-fn interpolate_lanczos3_backward_kernel<F: Float, N: Size>(
-    grad: &Tensor<Vector<F, N>>,
+fn interpolate_lanczos3_backward_kernel<F: Float, G: Float, A: Float, N: Size>(
+    grad: &Tensor<Vector<G, N>>,
     output: &mut Tensor<Vector<F, N>>,
     shape_out: Sequence<FastDivmod<usize>>,
     out_layout: LinearLayout,
     #[comptime] align_corners: bool,
-    #[define(F)] _dtype: StorageType,
+    #[define(F, G, A)] _types: [StorageType; 3],
 ) {
     if ABSOLUTE_POS >= output.len() {
         terminate!();
@@ -88,7 +88,7 @@ fn interpolate_lanczos3_backward_kernel<F: Float, N: Size>(
     let (y_start, y_end) = contributing_range(input_y, height, grad_height, align_corners);
     let (x_start, x_end) = contributing_range(input_x, width, grad_width, align_corners);
     let index_base = batch * grad.stride(0) + channel * grad.stride(3);
-    let mut sum = Vector::zero();
+    let mut sum = Vector::<A, N>::zero();
 
     for y in y_start..y_end {
         let coordinate = lanczos3_coordinate(y, height, grad_height, align_corners);
@@ -118,9 +118,9 @@ fn interpolate_lanczos3_backward_kernel<F: Float, N: Size>(
             }
 
             let index = index_base + y * grad.stride(1) + x * grad.stride(2);
-            let mut value = grad[index / vector_size];
+            let mut value = Vector::<A, N>::cast_from(grad[index / vector_size]);
             if weight_sum != 0.0 {
-                value *= Vector::new(F::cast_from(1.0 / weight_sum));
+                value *= Vector::<A, N>::cast_from(F::cast_from(1.0 / weight_sum));
             }
 
             #[unroll]
@@ -136,7 +136,7 @@ fn interpolate_lanczos3_backward_kernel<F: Float, N: Size>(
                             if x_position >= 0.0 && x_position <= last_x {
                                 if x_position as usize == input_x {
                                     let weight = weights_y[ky] * weights_x[kx];
-                                    sum += value * Vector::new(F::cast_from(weight));
+                                    sum += value * Vector::<A, N>::cast_from(F::cast_from(weight));
                                 }
                             }
                         }
@@ -146,7 +146,7 @@ fn interpolate_lanczos3_backward_kernel<F: Float, N: Size>(
         }
     }
 
-    output[out_idx] = sum;
+    output[out_idx] = Vector::<F, N>::cast_from(sum);
 }
 
 pub fn interpolate_lanczos3_backward_launch<R: Runtime>(
@@ -158,6 +158,7 @@ pub fn interpolate_lanczos3_backward_launch<R: Runtime>(
         return output;
     }
     let vector_size = max_vector_size_many(&[&out_grad, &output], 3);
+    let types = super::base::backward_types(output.dtype, out_grad.dtype);
     let out_shape = shape_divmod(&output);
     let out_layout = linear_layout(&output, vector_size);
     let working_units = output.meta.num_elements() / vector_size as usize;
@@ -175,7 +176,7 @@ pub fn interpolate_lanczos3_backward_launch<R: Runtime>(
         out_shape,
         out_layout,
         align_corners,
-        output.dtype.into(),
+        types,
     );
 
     output

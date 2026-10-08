@@ -1,10 +1,12 @@
 use ruda_kernel::dsl::Runtime;
+use ruda_kernel::dsl::prelude::StorageType;
 use ruda_kernel::tensor::contiguous::into_contiguous;
 use ruda_kernel::tensor::allocation::empty_device_dtype;
 use ruda_kernel::tensor::permutation::permute_nchw_to_nhwc;
 use ruda_kernel::tensor::permutation::permute_nhwc_to_nchw;
 use ruda_kernel::tensor::RudaTensor;
 use ruda_core::tensor::Shape;
+use ruda_core::tensor::DType;
 use ruda_core::tensor::TensorMetadata;
 use ruda_core::tensor::spatial::InterpolateMode;
 use ruda_core::tensor::spatial::InterpolateOptions;
@@ -17,6 +19,13 @@ use super::{
     lanczos3_backward::interpolate_lanczos3_backward_launch,
     nearest_backward::interpolate_nearest_backward_launch,
 };
+
+pub(super) fn backward_types(output: DType, gradient: DType) -> [StorageType; 3] {
+    let compute = if output == gradient { output }
+        else if output == DType::F64 || gradient == DType::F64 { DType::F64 }
+        else { DType::F32 };
+    [output.into(), gradient.into(), compute.into()]
+}
 
 /// Interpolate operation
 ///

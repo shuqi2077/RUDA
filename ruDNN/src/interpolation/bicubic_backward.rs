@@ -45,13 +45,13 @@ fn contributing_range(
 }
 
 #[ruda(launch, address_type = "dynamic")]
-fn interpolate_bicubic_backward_kernel<F: Float, N: Size>(
-    grad: &Tensor<Vector<F, N>>,
+fn interpolate_bicubic_backward_kernel<F: Float, G: Float, A: Float, N: Size>(
+    grad: &Tensor<Vector<G, N>>,
     output: &mut Tensor<Vector<F, N>>,
     shape_out: Sequence<FastDivmod<usize>>,
     out_layout: LinearLayout,
     #[comptime] align_corners: bool,
-    #[define(F)] _dtype: StorageType,
+    #[define(F, G, A)] _types: [StorageType; 3],
 ) {
     if ABSOLUTE_POS >= output.len() {
         terminate!();
@@ -71,7 +71,7 @@ fn interpolate_bicubic_backward_kernel<F: Float, N: Size>(
     let (y_start, y_end) = contributing_range(input_y, height, grad_height, align_corners);
     let (x_start, x_end) = contributing_range(input_x, width, grad_width, align_corners);
     let index_base = batch * grad.stride(0) + channel * grad.stride(3);
-    let mut sum = Vector::zero();
+    let mut sum = Vector::<A, N>::zero();
 
     for y in y_start..y_end {
         let coordinate = bicubic_coordinate(y, height, grad_height, align_corners);
@@ -83,20 +83,20 @@ fn interpolate_bicubic_backward_kernel<F: Float, N: Size>(
             let x_floor = coordinate.floor();
             let xw = Vector::<F, N>::new(F::cast_from(coordinate - x_floor));
             let index = index_base + y * grad.stride(1) + x * grad.stride(2);
-            let value = grad[index / vector_size];
+            let value = Vector::<A, N>::cast_from(grad[index / vector_size]);
 
             #[unroll]
             for ky in 0..4usize {
                 let offset_y = comptime![ky as f32 - 1.0];
                 let y_index = clamp(y_floor + offset_y, 0.0, last_y) as usize;
                 if y_index == input_y {
-                    let row_grad = value * cubic_coefficient(yw, ky);
+                    let row_grad = value * Vector::<A, N>::cast_from(cubic_coefficient(yw, ky));
                     #[unroll]
                     for kx in 0..4usize {
                         let offset_x = comptime![kx as f32 - 1.0];
                         let x_index = clamp(x_floor + offset_x, 0.0, last_x) as usize;
                         if x_index == input_x {
-                            sum += row_grad * cubic_coefficient(xw, kx);
+                            sum += row_grad * Vector::<A, N>::cast_from(cubic_coefficient(xw, kx));
                         }
                     }
                 }
@@ -104,7 +104,7 @@ fn interpolate_bicubic_backward_kernel<F: Float, N: Size>(
         }
     }
 
-    output[out_idx] = sum;
+    output[out_idx] = Vector::<F, N>::cast_from(sum);
 }
 
 pub fn interpolate_bicubic_backward_launch<R: Runtime>(
@@ -116,6 +116,7 @@ pub fn interpolate_bicubic_backward_launch<R: Runtime>(
         return output;
     }
     let vector_size = max_vector_size_many(&[&out_grad, &output], 3);
+    let types = super::base::backward_types(output.dtype, out_grad.dtype);
     let out_shape = shape_divmod(&output);
     let out_layout = linear_layout(&output, vector_size);
     let working_units = output.meta.num_elements() / vector_size as usize;
@@ -133,7 +134,7 @@ pub fn interpolate_bicubic_backward_launch<R: Runtime>(
         out_shape,
         out_layout,
         align_corners,
-        output.dtype.into(),
+        types,
     );
 
     output

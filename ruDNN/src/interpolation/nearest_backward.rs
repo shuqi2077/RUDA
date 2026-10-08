@@ -10,16 +10,16 @@ use ruda_kernel::dsl::Runtime;
 use ruda_kernel::tensor::layout::address_type;
 use ruda_kernel::tensor::layout::linear_layout;
 use ruda_kernel::tensor::layout::shape_divmod;
-use ruda_kernel::tensor::layout::max_vector_size;
+use ruda_kernel::tensor::layout::max_vector_size_many;
 use ruda_kernel::tensor::RudaTensor;
 
 #[ruda(launch_unchecked, address_type = "dynamic")]
-fn interpolate_nearest_backward_kernel<F: Float, N: Size>(
-    grad: &Tensor<Vector<F, N>>,
+fn interpolate_nearest_backward_kernel<F: Float, G: Float, A: Float, N: Size>(
+    grad: &Tensor<Vector<G, N>>,
     output: &mut Tensor<Vector<F, N>>,
     shape_out: Sequence<FastDivmod<usize>>,
     out_layout: LinearLayout,
-    #[define(F)] _dtype: StorageType,
+    #[define(F, G, A)] _types: [StorageType; 3],
 ) {
     if ABSOLUTE_POS >= output.len() {
         terminate!();
@@ -44,17 +44,17 @@ fn interpolate_nearest_backward_kernel<F: Float, N: Size>(
 
     let index_grad_base = b * grad.stride(0) + c * grad.stride(3);
 
-    let mut sum = Vector::zero();
+    let mut sum = Vector::<A, N>::zero();
 
     for grad_y in grad_y_start..grad_y_end {
         for grad_x in grad_x_start..grad_x_end {
             let index_grad = index_grad_base + grad_y * grad.stride(1) + grad_x * grad.stride(2);
 
-            sum += grad[index_grad / vector_size];
+            sum += Vector::<A, N>::cast_from(grad[index_grad / vector_size]);
         }
     }
 
-    output[out_idx] = sum;
+    output[out_idx] = Vector::<F, N>::cast_from(sum);
 }
 
 #[ruda]
@@ -73,7 +73,9 @@ pub fn interpolate_nearest_backward_launch<R: Runtime>(
     out_grad: RudaTensor<R>,
     output: RudaTensor<R>,
 ) -> RudaTensor<R> {
-    let vector_size = max_vector_size(&out_grad);
+    if output.meta.num_elements() == 0 { return output; }
+    let types = super::base::backward_types(output.dtype, out_grad.dtype);
+    let vector_size = max_vector_size_many(&[&out_grad, &output], 3);
     let out_shape = shape_divmod(&output);
     let out_layout = linear_layout(&output, vector_size);
 
@@ -92,7 +94,7 @@ pub fn interpolate_nearest_backward_launch<R: Runtime>(
             output.clone().into_tensor_arg(),
             out_shape,
             out_layout,
-            output.dtype.into(),
+            types,
         )
     };
 
