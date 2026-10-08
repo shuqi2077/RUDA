@@ -30,7 +30,7 @@ where B:AutodiffBackend,M:AutodiffModule<B>,O:Optimizer<M,B>,S:LrScheduler,U:Rec
     pub async fn capture_weighted_with_dtypes_async(model:&M,optimizer:&O,scheduler:&S,
         accumulator:&WeightedGradientsAccumulator<M>,state:U)
         -> Result<TrainingRecord<B,M,O,S,(ModuleDTypeRecord,(WeightedAccumulationState,U))>,RecorderError> {
-        TrainingRecord::<B,M,O,S,(WeightedAccumulationState,U)>::capture_with_dtypes_async(
+        TrainingRecord::<B,M,O,S,(WeightedAccumulationState,U)>::capture_async_with_dtypes(
             model,optimizer,scheduler,accumulator.inner(),(accumulator.state().clone(),state)).await
     }
 }

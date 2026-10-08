@@ -144,6 +144,26 @@ where B:AutodiffBackend,M:AutodiffModule<B>,O:SimpleOptimizer<B::InnerBackend> {
         for (group,records) in self.groups.iter_mut().zip(record.records) {group.records=records;}
         Ok(self)
     }
+    /// Restore actual original group histories to each prepared native leaf's
+    /// device immediately, with no first-step lazy migration. Original routes,
+    /// rank tags and tied shape/device metadata are checked before moving state.
+    /// Does not initialize absent/frozen histories or materialize base weights.
+    pub fn try_load_record_for_model(mut self,module:&M,record:GroupedOptimizerAdaptorRecord<O,B>)
+        -> Result<Self,OptimizerStatePlacementError> {
+        if record.version!=1 || record.routes!=self.route_record() {
+            return Err(OptimizerStatePlacementError::Group(GroupedOptimizerError::State("saved original group routing differs")));
+        }
+        self.validate_model(module).map_err(OptimizerStatePlacementError::Group)?;
+        self.validate_histories(&record.records.iter().collect::<Vec<_>>()).map_err(OptimizerStatePlacementError::Group)?;
+        let devices=record.records.iter().map(|records|super::placement::record_devices::<B,M,O>(module,records))
+            .collect::<Result<Vec<_>,_>>()?;
+        for ((group,records),devices) in self.groups.iter_mut().zip(record.records).zip(devices) {
+            group.records=records.into_iter().map(|(id,record)| {
+                let device=devices.get(&id).expect("validated original native group placement");(id,record.to_device(device))
+            }).collect();
+        }
+        Ok(self)
+    }
 }
 
 impl<O,M,B> Optimizer<M,B> for GroupedOptimizerAdaptor<O,M,B>

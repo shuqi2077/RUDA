@@ -66,6 +66,16 @@ where
     O: SimpleOptimizer<B::InnerBackend>,
     B: AutodiffBackend,
 {
+    /// Original native parameter-rank tag, without reading state tensor values.
+    pub fn parameter_rank(&self) -> usize {
+        match self {Self::V1(record)=>record.parameter_rank()}
+    }
+    /// Move actual original history/master buffers through the configured native
+    /// optimizer's own device mapper, retaining counters, options and rank tag.
+    /// No state initialization, dtype conversion or optimizer step is performed.
+    pub fn to_device(self,device:&B::Device) -> Self {
+        match self {Self::V1(record)=>Self::V1(record.to_device(device))}
+    }
     /// Converts the record into the optimizer state.
     ///
     /// # Returns

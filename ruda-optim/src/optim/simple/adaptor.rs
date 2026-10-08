@@ -15,6 +15,8 @@ use core::marker::PhantomData;
 use hashbrown::HashMap;
 mod grouped;
 pub use grouped::*;
+mod placement;
+pub use placement::OptimizerStatePlacementError;
 
 /// Wrapper struct that adapts any [simple optimizer](SimpleOptimizer) into
 /// an [optimizer](Optimizer).

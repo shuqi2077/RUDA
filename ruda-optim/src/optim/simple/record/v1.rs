@@ -91,6 +91,26 @@ where
     O: SimpleOptimizer<B>,
     B: Backend,
 {
+    /// Original concrete state rank; optional histories are not materialized.
+    pub fn parameter_rank(&self) -> usize {
+        match self {Self::Rank0(_)=>0,Self::Rank1(_)=>1,Self::Rank2(_)=>2,Self::Rank3(_)=>3,Self::Rank4(_)=>4,
+            Self::Rank5(_)=>5,Self::Rank6(_)=>6,Self::Rank7(_)=>7,Self::Rank8(_)=>8}
+    }
+    /// Reuse the original optimizer's state-device conversion for every supported
+    /// native rank, without inspecting or reconstructing the numerical algorithm.
+    pub fn to_device(self,device:&B::Device) -> Self {
+        match self {
+            Self::Rank0(state)=>Self::Rank0(O::to_device(state,device)),
+            Self::Rank1(state)=>Self::Rank1(O::to_device(state,device)),
+            Self::Rank2(state)=>Self::Rank2(O::to_device(state,device)),
+            Self::Rank3(state)=>Self::Rank3(O::to_device(state,device)),
+            Self::Rank4(state)=>Self::Rank4(O::to_device(state,device)),
+            Self::Rank5(state)=>Self::Rank5(O::to_device(state,device)),
+            Self::Rank6(state)=>Self::Rank6(O::to_device(state,device)),
+            Self::Rank7(state)=>Self::Rank7(O::to_device(state,device)),
+            Self::Rank8(state)=>Self::Rank8(O::to_device(state,device)),
+        }
+    }
     /// Convert the record into the state.
     ///
     /// # Returns
