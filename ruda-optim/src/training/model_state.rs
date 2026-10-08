@@ -10,6 +10,9 @@ use crate::{GradientsAccumulator,GradientsParams,GradientsParamsRecord,Optimizer
     WeightedAccumulationState,WeightedGradientsAccumulator,lr_scheduler::LrScheduler};
 use super::{RestoredTraining,RestoredWeightedTraining};
 
+mod groups;
+pub use groups::{InnerBackendRecord,ModelGroupTrainingRecord};
+
 /// Exact trainable IDs, logical shapes and storage, without frozen weight values.
 #[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
 pub struct TrainableParameterContract {

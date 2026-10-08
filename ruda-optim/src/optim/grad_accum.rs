@@ -67,6 +67,21 @@ impl<M> GradientsAccumulator<M> {
         Ok(())
     }
 
+    /// Restore pending gradients onto each actual parameter device of a mixed-group model.
+    /// The original model IDs/weights must already be restored. Rejection leaves
+    /// this accumulator unchanged; no values are summed, reset or normalized.
+    pub fn load_record_for_model<B: AutodiffBackend>(
+        &mut self,
+        record: GradientsParamsRecord,
+        model: &M,
+    ) -> Result<(), RecorderError>
+    where
+        M: AutodiffModule<B>,
+    {
+        self.grads = GradientsParams::from_record_for_model::<B, M>(record, model)?;
+        Ok(())
+    }
+
     /// Accumulate the given gradients for each parameter in the given module.
     pub fn accumulate<B: AutodiffBackend>(&mut self, module: &M, grads: GradientsParams)
     where

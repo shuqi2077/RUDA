@@ -13,7 +13,7 @@ use crate::{GradientsAccumulator, GradientsParamsRecord, Optimizer, WeightedGrad
 mod tests;
 
 mod model_state;
-pub use model_state::{ModelStateTrainingRecord,TrainableParameterContract};
+pub use model_state::{ModelStateTrainingRecord,TrainableParameterContract,InnerBackendRecord,ModelGroupTrainingRecord};
 mod fully_sharded;
 pub use fully_sharded::{RestoredFullyShardedTraining,RestoredFullyShardedWeightedTraining};
 
