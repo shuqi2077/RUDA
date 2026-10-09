@@ -148,6 +148,21 @@ where
         self.dataset.window(index, self.size)
     }
 
+    fn get_many(&self, indices: &[usize]) -> Option<Vec<Vec<I>>> {
+        let mut windows = Vec::with_capacity(indices.len());
+        let mut read_indices = Vec::new();
+        for &index in indices {
+            read_indices.clear();
+            read_indices.extend(index..index + self.size.get());
+            let window = self.dataset.get_many(&read_indices)?;
+            if window.len() != read_indices.len() {
+                return None;
+            }
+            windows.push(window);
+        }
+        Some(windows)
+    }
+
     /// Retrieves the number of windows in the dataset.
     ///
     /// # Returns

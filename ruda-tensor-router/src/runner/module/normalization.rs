@@ -1,4 +1,11 @@
 use super::*;
+use ruda_tensor::graph::{
+    ExponentialReluBackwardOpIr, ExponentialReluOpIr, GeluBackwardOpIr, GeluOpIr,
+    GroupNormBackwardSelectOpIr, GroupNormOpIr, LayerNormBackwardOpIr,
+    LayerNormBackwardSelectOpIr, LayerNormOpIr, LeakyReluBackwardOpIr, LeakyReluOpIr,
+    PreluBackwardSelectOpIr, PreluOpIr, RmsNormBackwardOpIr, RmsNormBackwardSelectOpIr,
+    RmsNormOpIr, SiluBackwardOpIr, SoftmaxBackwardOpIr, SoftmaxOpIr, UnaryOpIr,
+};
 
 impl<B: BackendIr> Runner<B> {
     pub(super) fn apply_exponential_relu_native(&self, handles: &mut HandleContainer<B::Handle>, desc: &ExponentialReluOpIr) {
