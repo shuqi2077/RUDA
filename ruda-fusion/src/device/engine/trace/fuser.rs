@@ -79,17 +79,17 @@ impl TraceFuser {
     // but should never return less.
     pub fn estimate_bindings(&self) -> u32 {
         let mut buffers = Vec::new();
+        let mut written = Vec::new();
         let mut estimation = 1; // Metadata takes one.
 
         // We assume we are not going to write multiple times in the same output buffer.
         for b in self.blocks_previous.iter() {
-            estimation += b.tensor_writes(&self.resources, &mut buffers).len() as u32;
+            estimation += b.tensor_write_count(&self.resources, &mut buffers, &mut written) as u32;
         }
 
         estimation += self
             .block_current
-            .tensor_writes(&self.resources, &mut buffers)
-            .len() as u32;
+            .tensor_write_count(&self.resources, &mut buffers, &mut written) as u32;
         estimation += self.resources.inputs.len() as u32;
 
         estimation

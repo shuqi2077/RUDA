@@ -102,10 +102,15 @@ impl AdaptiveState {
             let index = match vacant {
                 Some(index) => index,
                 None if pools.len() < ARENA_START + ARENA_SLOTS => pools.len(),
-                None => return Err(IoError::Unknown {
-                    description: "Adaptive page-size slots are all occupied by live allocations".into(),
-                    backtrace: BackTrace::capture(),
-                }),
+                None => {
+                    self.relocate(pools, storage)?;
+                    (ARENA_START..pools.len()).find(|&index| {
+                        matches!(&pools[index], DynamicPool::Sliced(pool) if pool.is_empty())
+                    }).ok_or_else(|| IoError::Unknown {
+                        description: "Adaptive page-size slots are all occupied by live allocations".into(),
+                        backtrace: BackTrace::capture(),
+                    })?
+                }
             };
             let mut pool = DynamicPool::Sliced(SlicedPool::new(page_size, page_size, self.alignment, index as u8));
             let allocated = match pool.alloc(storage, size) {

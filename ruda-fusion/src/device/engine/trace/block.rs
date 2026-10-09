@@ -449,27 +449,52 @@ impl FuseBlockBuilder {
     ) -> RegisteredTensors {
         let mut result = RegisteredTensors::default();
 
-        // All tensors where their latest representation is not read write should be written to since they
-        // are going to be used after the fused kernel by other operations.
-        for output in self.outputs.iter() {
-            if let Some((tensor, _precision)) = output.as_normal_tensor() {
-                // We get the latest representation from the resources, not just this block.
-                if let Some((tensor, precision)) = resources.outputs.get(tensor.id) {
-                    if !matches!(tensor.status, TensorStatus::ReadWrite) {
-                        result.insert(*precision, tensor.clone());
-                    } else if resources.buffers.get(tensor.id).is_some()
-                        && !buffers.contains(&tensor.id)
-                    {
-                        result.insert(*precision, tensor.clone());
-                        // We make sure we don't write multiple time in the same buffer, only the
-                        // earliest possible.
-                        buffers.push(tensor.id);
-                    }
-                }
-            }
+        for (tensor, precision) in self.tensor_write_candidates(resources, buffers) {
+            result.insert(precision, tensor.clone());
         }
 
         result
+    }
+
+    pub(super) fn tensor_write_count(
+        &self,
+        resources: &FuseResources,
+        buffers: &mut Vec<TensorId>,
+        written: &mut Vec<TensorId>,
+    ) -> usize {
+        written.clear();
+        for (tensor, _) in self.tensor_write_candidates(resources, buffers) {
+            if !written.contains(&tensor.id) {
+                written.push(tensor.id);
+            }
+        }
+        written.len()
+    }
+
+    fn tensor_write_candidates<'a>(
+        &'a self,
+        resources: &'a FuseResources,
+        buffers: &'a mut Vec<TensorId>,
+    ) -> impl Iterator<Item = (&'a TensorIr, FuseType)> + 'a {
+        // All tensors where their latest representation is not read write should be written to since they
+        // are going to be used after the fused kernel by other operations.
+        self.outputs.iter().filter_map(move |output| {
+            let (tensor, _) = output.as_normal_tensor()?;
+            // We get the latest representation from the resources, not just this block.
+            let (tensor, precision) = resources.outputs.get(tensor.id)?;
+            if !matches!(tensor.status, TensorStatus::ReadWrite) {
+                Some((tensor, *precision))
+            } else if resources.buffers.get(tensor.id).is_some()
+                && !buffers.contains(&tensor.id)
+            {
+                // We make sure we don't write multiple time in the same buffer, only the
+                // earliest possible.
+                buffers.push(tensor.id);
+                Some((tensor, *precision))
+            } else {
+                None
+            }
+        })
     }
 }
 
