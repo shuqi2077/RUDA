@@ -159,6 +159,14 @@ impl ComputeStorage for GpuStorage {
 
     fn supports_relocation(&self) -> bool { true }
 
+    fn available_memory(&self) -> Option<u64> {
+        let mut free = 0usize;
+        let mut total = 0usize;
+        // SAFETY: Both outputs are valid stack pointers; the server's CUDA context is current.
+        let status = unsafe { cudarc::driver::sys::cuMemGetInfo_v2(&mut free, &mut total) };
+        (status == cudarc::driver::sys::CUresult::CUDA_SUCCESS).then_some(free as u64)
+    }
+
     fn relocation_barrier(&mut self) -> Result<(), IoError> {
         // All streams in this context, not just the allocator's stream, may
         // still have kernels or interop copies using the old addresses.

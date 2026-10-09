@@ -119,6 +119,14 @@ impl ComputeStorage for GpuStorage {
 
     fn supports_relocation(&self) -> bool { true }
 
+    fn available_memory(&self) -> Option<u64> {
+        let mut free = 0usize;
+        let mut total = 0usize;
+        // SAFETY: Both outputs are valid stack pointers; the server's HIP device is current.
+        let status = unsafe { ruda_hip_sys::hipMemGetInfo(&mut free, &mut total) };
+        (status == HIP_SUCCESS).then_some(free as u64)
+    }
+
     fn relocation_barrier(&mut self) -> Result<(), IoError> {
         let status = unsafe { ruda_hip_sys::hipDeviceSynchronize() };
         if status == HIP_SUCCESS { Ok(()) }

@@ -93,6 +93,9 @@ pub trait ComputeStorage: Send {
     /// Whether this storage implements real relocation copies and completion waits.
     fn supports_relocation(&self) -> bool { false }
 
+    /// Driver-reported free device memory in bytes; None when it is unknown.
+    fn available_memory(&self) -> Option<u64> { None }
+
     /// Wait for all users of storage addresses, including work on other streams.
     fn relocation_barrier(&mut self) -> Result<(), IoError> {
         Err(IoError::UnsupportedIoOperation { backtrace: ruda_core::backtrace::BackTrace::capture() })

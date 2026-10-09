@@ -29,6 +29,12 @@ struct Relocation {
     cursor: u64,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TargetRoom {
+    Held,
+    MayAllocate,
+}
+
 impl AdaptiveState {
     pub(super) fn new(properties: &MemoryDeviceProperties) -> Self {
         let alignment = properties.alignment;
@@ -95,6 +101,7 @@ impl AdaptiveState {
             let page_size = size.saturating_add(MIB).checked_next_multiple_of(MIB)
                 .and_then(|size| size.checked_next_multiple_of(self.alignment))
                 .unwrap_or(self.max_page_size).clamp(self.min_page_size, self.max_page_size);
+            self.relieve_pressure(pools, storage, page_size)?;
             // Empty slots can be reused: no live descriptor can still name them.
             let vacant = (ARENA_START..pools.len()).find(|&index| {
                 matches!(&pools[index], DynamicPool::Sliced(pool) if pool.is_empty())
@@ -103,7 +110,7 @@ impl AdaptiveState {
                 Some(index) => index,
                 None if pools.len() < ARENA_START + ARENA_SLOTS => pools.len(),
                 None => {
-                    self.relocate(pools, storage)?;
+                    self.relocate(pools, storage, TargetRoom::MayAllocate)?;
                     (ARENA_START..pools.len()).find(|&index| {
                         matches!(&pools[index], DynamicPool::Sliced(pool) if pool.is_empty())
                     }).ok_or_else(|| IoError::Unknown {
@@ -116,22 +123,26 @@ impl AdaptiveState {
             let allocated = match pool.alloc(storage, size) {
                 Ok(handle) => handle,
                 Err(error) => {
-                    if !self.relocate(pools, storage)? { return Err(error); }
+                    if !self.relocate(pools, storage, TargetRoom::Held)? { return Err(error); }
                     pool.alloc(storage, size)?
                 }
             };
             if index == pools.len() { pools.push(pool); } else { pools[index] = pool; }
             if index != self.current { self.outdated.push(self.current); }
             self.current = index;
-            self.relocate(pools, storage)?;
+            self.relocate(pools, storage, TargetRoom::Held)?;
             return Ok(allocated);
         }
 
         if let Some(handle) = pools[self.current].try_reserve(size) { return Ok(handle); }
-        // Relocations only use room already held. An OOM never allocates a second
+        let page_size = self.pool(pools).page_size();
+        if self.relieve_pressure(pools, storage, page_size)? {
+            if let Some(handle) = pools[self.current].try_reserve(size) { return Ok(handle); }
+        }
+        // Pressure/OOM recovery only uses room already held. An OOM never allocates a second
         // page just to attempt to recover the first reservation.
         let allocated = pools[self.current].alloc(storage, size);
-        let reclaimed = self.relocate(pools, storage)?;
+        let reclaimed = self.relocate(pools, storage, TargetRoom::Held)?;
         match allocated {
             Ok(handle) => Ok(handle),
             Err(error) => match pools[self.current].try_reserve(size) {
@@ -153,7 +164,29 @@ impl AdaptiveState {
         }).sum()
     }
 
-    fn relocate<Storage: ComputeStorage>(&mut self, pools: &mut [DynamicPool], storage: &mut Storage) -> Result<bool, IoError> {
+    fn relieve_pressure<Storage: ComputeStorage>(
+        &mut self, pools: &mut [DynamicPool], storage: &mut Storage, page_size: u64,
+    ) -> Result<bool, IoError> {
+        if self.outdated.is_empty() { return Ok(false); }
+        if storage.available_memory().is_some_and(|free| free.saturating_sub(page_size) < page_size) {
+            return self.relocate(pools, storage, TargetRoom::Held);
+        }
+        Ok(false)
+    }
+
+    fn relocate<Storage: ComputeStorage>(
+        &mut self, pools: &mut [DynamicPool], storage: &mut Storage, room: TargetRoom,
+    ) -> Result<bool, IoError> {
+        let result = self.relocate_inner(pools, storage, room);
+        if room == TargetRoom::MayAllocate {
+            pools[self.current].cleanup(storage, 0, true);
+        }
+        result
+    }
+
+    fn relocate_inner<Storage: ComputeStorage>(
+        &mut self, pools: &mut [DynamicPool], storage: &mut Storage, room: TargetRoom,
+    ) -> Result<bool, IoError> {
         if self.outdated.is_empty() { return Ok(false); }
         if !storage.supports_relocation() {
             return Err(IoError::UnsupportedIoOperation { backtrace: BackTrace::capture() });
@@ -167,10 +200,19 @@ impl AdaptiveState {
         }
         pages.sort_by_key(|page| page.live_bytes);
         let mut moves = Vec::new();
+        let mut allocation_error = None;
         for page in pages {
             let start = moves.len();
             for (allocation, source, cursor) in page.allocations {
-                let Some(target) = pools[self.current].try_reserve(source.size()) else {
+                let target = match (pools[self.current].try_reserve(source.size()), room) {
+                    (Some(target), _) => Some(target),
+                    (None, TargetRoom::Held) => None,
+                    (None, TargetRoom::MayAllocate) => match pools[self.current].alloc(storage, source.size()) {
+                        Ok(target) => Some(target),
+                        Err(error) => { allocation_error = Some(error); None }
+                    },
+                };
+                let Some(target) = target else {
                     moves.truncate(start);
                     break;
                 };
@@ -180,7 +222,11 @@ impl AdaptiveState {
         }
         if moves.is_empty() {
             self.cleanup_outdated(pools, storage);
-            return Ok(self.outdated_pages(pools) < pages_before);
+            let reclaimed = self.outdated_pages(pools) < pages_before;
+            return match allocation_error {
+                Some(error) if !reclaimed => Err(error),
+                _ => Ok(reclaimed),
+            };
         }
         storage.relocation_barrier()?;
         let copied = storage.relocation_copy_batch(moves.iter().map(|relocation| {
