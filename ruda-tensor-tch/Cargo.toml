@@ -13,7 +13,7 @@ path = "src/bin/mps.rs"
 [package]
 edition = "2024"
 name = "ruda-tensor-tch"
-version = "0.21.64"
+version = "0.21.65"
 authors = [ "nathanielsimard <nathaniel.simard.42@gmail.com>",]
 build = "build.rs"
 autolib = false
@@ -55,7 +55,7 @@ version = "0.22.0"
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
-version = "0.21.51"
+version = "0.21.52"
 default-features = false
 
 [dependencies.ruda-core]
@@ -71,7 +71,7 @@ default-features = false
 
 [dependencies.ruda-test-runtime]
 path = "../ruda-test-runtime"
-version = "0.1.76"
+version = "0.1.77"
 default-features = false
 optional = true
 

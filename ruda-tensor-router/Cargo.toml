@@ -1,7 +1,7 @@
 [package]
 edition = "2024"
 name = "ruda-tensor-router"
-version = "0.21.41"
+version = "0.21.42"
 authors = [ "laggui <lagrange.guillaume.1@gmail.com>", "nathanielsimard <nathaniel.simard.42@gmail.com>",]
 build = false
 autolib = false
@@ -41,7 +41,7 @@ features = [ "mutex", "spin_mutex", "portable-atomic",]
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
-version = "0.21.51"
+version = "0.21.52"
 default-features = false
 features = [ "graph",]
 
@@ -58,7 +58,7 @@ default-features = false
 
 [dependencies.ruda-test-runtime]
 path = "../ruda-test-runtime"
-version = "0.1.76"
+version = "0.1.77"
 default-features = false
 optional = true
 
@@ -95,6 +95,6 @@ features = ["rt", "macros", "sync", "time"]
 [dependencies.ruccl]
 package = "ruCCL"
 path = "../ruCCL"
-version = "0.21.56"
+version = "0.21.57"
 optional = true
 default-features = false

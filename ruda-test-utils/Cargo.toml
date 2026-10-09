@@ -50,14 +50,14 @@ version = "1.16.1"
 
 [dependencies.ruda-kernel]
 path = "../ruda-kernel"
-version = "0.1.27"
+version = "0.1.28"
 default-features = false
 features = ["quantization-kernels"]
 
 [dependencies.rurand]
 package = "ruRAND"
 path = "../ruRAND"
-version = "0.1.76"
+version = "0.1.77"
 default-features = false
 
 [dependencies.half]
@@ -91,6 +91,6 @@ default-features = false
 
 [dependencies.ruda-test-runtime]
 path = "../ruda-test-runtime"
-version = "0.1.76"
+version = "0.1.77"
 default-features = false
 features = ["test-runtime"]
