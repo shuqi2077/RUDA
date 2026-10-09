@@ -1,6 +1,9 @@
 use crate::{FuserStatus, NumOperations, OperationFuser, stream::store::ExecutionStrategy};
 use ruda_tensor::graph::{OperationIr, TensorId, TensorIr, TensorStatus};
-use std::{collections::{HashMap, HashSet}, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 /// A block represents a list of operations, not necessarily in the same order as the execution
 /// stream.
@@ -81,12 +84,21 @@ impl<O: NumOperations> Block<O> {
                     .map(|closed| closed.map(|index| index + 1).unwrap_or(self.operations.len()))
                     .max()
                     .unwrap_or(self.operations.len());
-                while let Some(operation) = self.operations.get(settled) {
+                while settled < self.operations.len() {
                     let wanted = self.builders.iter().any(|builder| {
                         let mut probe = builder.clone_dyn();
                         probe.reset();
-                        probe.fuse(operation);
-                        matches!(probe.status(), FuserStatus::Open) || probe.properties().ready
+                        for operation in &self.operations[settled..] {
+                            probe.fuse(operation);
+                            let properties = probe.properties();
+                            if properties.ready && properties.score > 0 {
+                                return true;
+                            }
+                            if matches!(probe.status(), FuserStatus::Closed) {
+                                break;
+                            }
+                        }
+                        false
                     });
                     if wanted {
                         break;
@@ -220,7 +232,7 @@ impl<O: NumOperations> Block<O> {
             return RegistrationResult::Accepted;
         }
         let mut contains = false;
-        for node in operation.nodes() {
+        for node in operation.inputs().chain(operation.outputs()) {
             contains = self.ids.contains(&node.id);
 
             if contains {
@@ -268,7 +280,7 @@ impl<O: NumOperations> Block<O> {
             }
         }
 
-        for node in operation.nodes() {
+        for node in operation.inputs().chain(operation.outputs()) {
             self.ids.insert(node.id);
         }
     }

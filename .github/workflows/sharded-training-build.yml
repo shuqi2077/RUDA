@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'ruda-optim/**'
+      - 'ruda-runtime/**'
       - 'ruda-nn/**'
       - 'ruda-autodiff/**'
       - 'ruda-tensor/**'

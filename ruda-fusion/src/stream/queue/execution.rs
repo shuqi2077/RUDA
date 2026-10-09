@@ -47,7 +47,7 @@ impl<R: FusionRuntime> OperationQueue<R> {
     fn drain_queue(&mut self, num_drained: usize, handles: &mut HandleContainer<R::FusionHandle>) {
         self.global[0..num_drained]
             .iter()
-            .flat_map(|desc| desc.nodes())
+            .flat_map(|desc| desc.inputs().chain(desc.outputs()))
             .for_each(|tensor| {
                 if tensor.status == TensorStatus::ReadWrite {
                     self.variables.remove(&tensor.id);

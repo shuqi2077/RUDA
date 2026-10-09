@@ -51,7 +51,7 @@ impl<R: FusionRuntime> OperationQueue<R> {
         streams: &OperationStreams,
         current: StreamId,
     ) {
-        for node in global.nodes() {
+        for node in global.inputs().chain(global.outputs()) {
             if let Some(stream_id) = streams.get(node.id) {
                 self.variables.insert(node.id, (stream_id, node.status));
             } else {
