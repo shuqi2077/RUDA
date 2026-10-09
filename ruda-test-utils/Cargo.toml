@@ -57,7 +57,7 @@ features = ["quantization-kernels"]
 [dependencies.rurand]
 package = "ruRAND"
 path = "../ruRAND"
-version = "0.1.70"
+version = "0.1.71"
 default-features = false
 
 [dependencies.half]
