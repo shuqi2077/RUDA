@@ -1,7 +1,7 @@
 [package]
 edition = "2024"
 name = "ruda-tensor"
-version = "0.21.43"
+version = "0.21.44"
 authors = ["nathanielsimard <nathaniel.simard.42@gmail.com>"]
 build = false
 autolib = false
@@ -161,32 +161,32 @@ features = ["tensor-host-data", "tensor-device-settings", "serde", "shared-bytes
 
 [dependencies.ruda-driver-cpu]
 path = "../ruda-driver-cpu"
-version = "0.1.68"
+version = "0.1.69"
 default-features = false
 optional = true
 
 [dependencies.ruda-driver-cuda]
 path = "../ruda-driver-cuda"
-version = "0.1.68"
+version = "0.1.69"
 default-features = false
 optional = true
 
 [dependencies.ruda-driver-hip]
 path = "../ruda-driver-hip"
-version = "0.1.68"
+version = "0.1.69"
 default-features = false
 optional = true
 
 [dependencies.ruda-driver-wgpu]
 path = "../ruda-driver-wgpu"
-version = "0.1.68"
+version = "0.1.69"
 default-features = false
 optional = true
 
 [dependencies.rudnn]
 package = "ruDNN"
 path = "../ruDNN"
-version = "0.1.68"
+version = "0.1.69"
 default-features = false
 features = ["attention-fallback"]
 
@@ -207,7 +207,7 @@ optional = true
 
 [dependencies.ruda-kernel]
 path = "../ruda-kernel"
-version = "0.1.19"
+version = "0.1.20"
 default-features = false
 features = ["frontend"]
 optional = true

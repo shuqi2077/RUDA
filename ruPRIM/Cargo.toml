@@ -26,7 +26,7 @@ extended = ["heavy"]
 full = ["extended", "device-primitives"]
 
 [dependencies]
-ruda = { version = "0.1.20", path = "../ruda", default-features = false }
+ruda = { version = "0.1.21", path = "../ruda", default-features = false }
 half = { version = "=2.7.1", features = ["alloc", "num-traits", "serde"] }
 
 [dev-dependencies]
@@ -37,7 +37,7 @@ unsafe_code = "deny"
 
 [dependencies.ruda-kernel]
 path = "../ruda-kernel"
-version = "0.1.19"
+version = "0.1.20"
 default-features = false
 features = ["kernel-ir"]
 optional = true
@@ -63,7 +63,7 @@ optional = true
 
 [dependencies.ruda-test-utils]
 path = "../ruda-test-utils"
-version = "0.1.68"
+version = "0.1.69"
 default-features = false
 optional = true
 

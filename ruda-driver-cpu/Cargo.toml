@@ -125,13 +125,13 @@ features = [ "std",]
 [dependencies.ruda]
 package = "ruda-runtime"
 path = "../ruda-runtime"
-version = "0.1.9"
+version = "0.1.10"
 default-features = false
 features = [ "runtime", "runtime-channel-mutex", "runtime-std", "runtime-storage-bytes",]
 
 [dependencies.ruda-kernel]
 path = "../ruda-kernel"
-version = "0.1.19"
+version = "0.1.20"
 default-features = false
 features = [ "frontend", "frontend-std", "library", "lowering-mlir",]
 

@@ -54,7 +54,7 @@ required-features = ["std", "collective"]
 [dependencies.ruccl]
 package = "ruCCL"
 path = "../ruCCL"
-version = "0.21.48"
+version = "0.21.49"
 optional = true
 default-features = false
 
@@ -66,7 +66,7 @@ default-features = false
 
 [dependencies.ruda-tensor-rocm]
 path = "../ruda-tensor-rocm"
-version = "0.21.42"
+version = "0.21.43"
 optional = true
 default-features = false
 
@@ -78,14 +78,14 @@ default-features = false
 
 [dependencies.ruda-tensor-tch]
 path = "../ruda-tensor-tch"
-version = "0.21.56"
+version = "0.21.57"
 features = [ "default",]
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-wgpu]
 path = "../ruda-tensor-wgpu"
-version = "0.21.42"
+version = "0.21.43"
 optional = true
 default-features = false
 
@@ -121,7 +121,7 @@ version = "0.21.49"
 optional = true
 default-features = false
 path = "../ruda-tensor-device"
-version = "0.21.43"
+version = "0.21.44"
 features = [ "cuda",]
 
 [dependencies.ruda-fusion]
@@ -129,11 +129,11 @@ features = [ "std", "tracing",]
 optional = true
 default-features = false
 path = "../ruda-fusion"
-version = "0.21.42"
+version = "0.21.43"
 
 [dependencies.ruda-kernel]
 path = "../ruda-kernel"
-version = "0.1.19"
+version = "0.1.20"
 default-features = false
 optional = true
 features = [ "frontend",]
@@ -184,7 +184,7 @@ rustdoc-args = [ "--cfg", "docsrs",]
 
 [dependencies.ruda-driver-cuda]
 path = "../ruda-driver-cuda"
-version = "0.1.68"
+version = "0.1.69"
 optional = true
 # The CUDA example intentionally needs runtime defaults and dynamic CUDA loading.
 
