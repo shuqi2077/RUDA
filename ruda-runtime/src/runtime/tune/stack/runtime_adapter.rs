@@ -146,7 +146,7 @@ pub fn try_execute_stack<'a, R: Runtime, K: AutotuneKey, I: TuneInputs, O: Autot
     if reference >= set.len() { return Err(autotune_error(name, "reference index out of range")); }
     let key = set.generate_key(&input);
     let env = runtime_environment(client);
-    let problem = Problem { scope: if name.contains("fusion") { Scope::Graph } else { Scope::Operator }, operation: fields(&[name, device_id, &set.stack_checksum()]), environment: env.fingerprint,
+    let problem = Problem { scope: if name.contains("fusion") { Scope::Graph } else { Scope::Operator }, operation: fields(&[name, device_id, set.stack_checksum_ref()]), environment: env.fingerprint,
         workload: set.stack_workload(&input).ok_or_else(|| autotune_error(name, "no exact workload signature"))?,
         execution_context: env.execution_context, persistent: env.persistent };
     // Enumerate EVERY eligible priority group. Group order remains a useful bounded-search

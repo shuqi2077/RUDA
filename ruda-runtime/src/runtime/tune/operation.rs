@@ -135,13 +135,17 @@ impl<K: AutotuneKey, F: TuneInputs, Output: 'static> TunableSet<K, F, Output> {
 
     /// Separate, length-delimited manifest for the opt-in full-stack cache.
     pub fn stack_checksum(&self) -> String {
+        String::from(self.stack_checksum_ref())
+    }
+
+    pub(crate) fn stack_checksum_ref(&self) -> &str {
         self.stack_manifest.call_once(|| {
             let mut checksum = format!("stack-v1:{}:{};reference={:?};", self.stack_revision.len(), self.stack_revision, self.stack_reference);
             for tune in &self.tunables {
                 let _ = write!(checksum, "{}:{}", tune.function.name.len(), tune.function.name);
             }
             format!("{:x}", md5::compute(checksum))
-        }).clone()
+        }).as_str()
     }
 
     /// Generate a key from a set of inputs
