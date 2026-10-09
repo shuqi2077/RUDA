@@ -104,7 +104,7 @@ pub(crate) struct TunePlan {
     priorities: Vec<i8>,
     no_groups: Vec<usize>,
     groups: HashMap<i8, GroupPlan>,
-    returned: Vec<usize>,
+    returned: Vec<bool>,
 }
 
 #[derive(Default, Debug)]
@@ -176,7 +176,7 @@ impl TunePlan {
             priorities,
             no_groups,
             groups,
-            returned: Vec::new(),
+            returned: vec![false; tunables.len()],
         }
     }
 
@@ -205,7 +205,7 @@ impl TunePlan {
                 context_logs = Some(ctx);
             }
             for (index, _name) in group_indices {
-                if !self.returned.contains(&index) {
+                if !self.returned[index] {
                     all_skip = false;
                     indices.push(index);
                 }
@@ -219,7 +219,7 @@ impl TunePlan {
             self.next(context_logs)
         } else {
             for i in indices.iter() {
-                self.returned.push(*i);
+                self.returned[*i] = true;
             }
             indices
         }

@@ -50,7 +50,7 @@ pub fn copy_into<R: Runtime>(
     // It's normally faster on all devices, but since it doesn't parallelize on an axis, it
     // might be worst on GPU. Should tune at some point.
     let is_cpu = client.properties().hardware.num_cpu_cores.is_some();
-    if input.strides[rank - 1] != 1 && is_cpu {
+    if input.strides[rank - 1] != 1 && is_cpu && input.shape == output.shape {
         launch_copy_perpendicular_ref(client, input, output, dtype);
     } else {
         copy_gpu_ref(client, input, output, dtype);

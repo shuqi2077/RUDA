@@ -3,16 +3,32 @@ use super::GradientsParams;
 use ruda_model::module::{AutodiffModule, ModuleVisitor, Param, ParamId};
 use ruda_model::tensor::{Tensor, backend::AutodiffBackend};
 use core::marker::PhantomData;
+use hashbrown::HashSet;
 
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 
-#[derive(new)]
 pub struct GradientsParamsConverter<'a, M: AutodiffModule<B>, B: AutodiffBackend> {
     grads: &'a mut B::Gradients,
     grads_params: &'a mut GradientsParams,
     phatom: PhantomData<M>,
-    filter: Option<Vec<ParamId>>,
+    filter: Option<HashSet<ParamId>>,
+}
+
+impl<'a, M: AutodiffModule<B>, B: AutodiffBackend> GradientsParamsConverter<'a, M, B> {
+    /// Create a gradient visitor with an optional parameter-ID selection.
+    pub fn new(
+        grads: &'a mut B::Gradients,
+        grads_params: &'a mut GradientsParams,
+        filter: Option<Vec<ParamId>>,
+    ) -> Self {
+        Self {
+            grads,
+            grads_params,
+            phatom: PhantomData,
+            filter: filter.map(|ids| ids.into_iter().collect()),
+        }
+    }
 }
 
 #[derive(new)]

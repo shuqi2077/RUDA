@@ -58,8 +58,8 @@ impl<O: core::fmt::Debug> ExecutionPlanStore<O> {
         }
     }
 
-    pub fn find(&self, query: SearchQuery<'_>) -> Vec<ExecutionPlanId> {
-        self.index.find(query)
+    pub fn find(&self, query: SearchQuery<'_>) -> &[ExecutionPlanId] {
+        self.index.find_ref(query)
     }
 
     pub fn add(&mut self, exploration: ExecutionPlan<O>) -> ExecutionPlanId {

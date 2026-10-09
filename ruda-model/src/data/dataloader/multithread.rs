@@ -50,6 +50,8 @@ struct MultiThreadsDataloaderIterator<O> {
     workers: Vec<thread::JoinHandle<()>>,
     receiver: Option<mpsc::Receiver<Message<O>>>,
     progresses: Vec<Progress>,
+    items_total: usize,
+    items_processed: usize,
     cancelled: Arc<AtomicBool>,
 }
 
@@ -254,6 +256,8 @@ impl<O> MultiThreadsDataloaderIterator<O> {
             num_done: 0,
             workers,
             receiver: Some(receiver),
+            items_total: progresses.iter().map(|progress| progress.items_total).sum(),
+            items_processed: progresses.iter().map(|progress| progress.items_processed).sum(),
             progresses,
             cancelled: Arc::new(AtomicBool::new(false)),
         }
@@ -283,15 +287,7 @@ impl<O> Drop for MultiThreadsDataloaderIterator<O> {
 }
 impl<O: std::fmt::Debug> DataLoaderIterator<O> for MultiThreadsDataloaderIterator<O> {
     fn progress(&self) -> Progress {
-        let mut items_total = 0;
-        let mut items_processed = 0;
-
-        for progress in self.progresses.iter() {
-            items_total += progress.items_total;
-            items_processed += progress.items_processed;
-        }
-
-        Progress::new(items_processed, items_total)
+        Progress::new(self.items_processed, self.items_total)
     }
 }
 
@@ -317,6 +313,10 @@ impl<O: std::fmt::Debug> Iterator for MultiThreadsDataloaderIterator<O> {
             match item {
                 Message::Batch(index, item, progress) => {
                     if let Some(current) = self.progresses.get_mut(index) {
+                        self.items_processed =
+                            self.items_processed - current.items_processed + progress.items_processed;
+                        self.items_total =
+                            self.items_total - current.items_total + progress.items_total;
                         *current = progress;
                     }
                     return Some(item);

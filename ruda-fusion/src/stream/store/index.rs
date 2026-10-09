@@ -39,6 +39,10 @@ pub enum InsertQuery<'a> {
 impl ExecutionPlanIndex {
     /// Search optimizations with the given [query](SearchQuery).
     pub fn find(&self, query: SearchQuery<'_>) -> Vec<ExecutionPlanId> {
+        self.find_ref(query).to_vec()
+    }
+
+    pub(crate) fn find_ref(&self, query: SearchQuery<'_>) -> &[ExecutionPlanId] {
         match query {
             SearchQuery::PlansStartingWith(ops) => self.find_starting_with(ops),
         }
@@ -56,25 +60,25 @@ impl ExecutionPlanIndex {
     }
 
     /// Find execution plans starting with the `OperationIr`
-    fn find_starting_with(&self, operation: &OperationIr) -> Vec<ExecutionPlanId> {
+    fn find_starting_with(&self, operation: &OperationIr) -> &[ExecutionPlanId] {
         let key = self.operation_key(operation);
         let values = match self.mapping.get(&key) {
             Some(val) => val,
-            None => return Vec::new(),
+            None => return &[],
         };
 
         if values.is_empty() {
-            return Vec::new();
+            return &[];
         }
 
         let (_, index) = match values.iter().find(|value| &value.0 == operation) {
             Some(val) => val,
-            None => return Vec::new(),
+            None => return &[],
         };
 
         match self.starters.get(*index) {
-            Some(value) => value.clone(),
-            None => Vec::new(),
+            Some(value) => value,
+            None => &[],
         }
     }
 

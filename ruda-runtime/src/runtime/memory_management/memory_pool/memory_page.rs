@@ -182,53 +182,53 @@ impl MemoryPage {
     #[cfg_attr(feature = "runtime-tracing", tracing::instrument(level = "trace", skip(self)))]
     pub fn coalesce(&mut self) {
         self.slices_tmp.clear();
-        let mut job = self.memory_job();
-        let mut tasks = job.tasks.drain(..);
-
-        let mut task = match tasks.next() {
-            Some(task) => Some(task),
-            None => return,
+        if !self
+            .slices
+            .windows(2)
+            .any(|pair| pair[0].is_free() && pair[1].is_free())
+        {
+            return;
+        }
+        let storage = &self.storage;
+        let location_base = self.location_base;
+        let flush_run = |first: Slice, size: u64, count: usize, output: &mut Vec<Slice>| {
+            let slice = if count > 1 {
+                let mut storage = storage.clone();
+                storage.utilization = StorageUtilization {
+                    offset: first.storage.utilization.offset,
+                    size,
+                };
+                Slice::new(storage, 0)
+            } else {
+                first
+            };
+            let mut location = location_base;
+            location.slice = output.len() as u32;
+            slice.descriptor().update_location(location);
+            output.push(slice);
         };
-
-        let mut offset = 0;
+        let mut pending = None;
         let mut size = 0;
-
-        for (index, slice) in self.slices.drain(..).enumerate() {
-            let status = match &mut task {
-                Some(task) => task.on_coalesce(index),
-                None => MemoryTaskStatus::Ignoring,
-            };
-
-            match status {
-                MemoryTaskStatus::StartMerging => {
-                    offset = slice.storage.utilization.offset;
-                    size = slice.effective_size();
+        let mut count = 0;
+        for slice in self.slices.drain(..) {
+            if slice.is_free() {
+                size += slice.effective_size();
+                count += 1;
+                if pending.is_none() {
+                    pending = Some(slice);
                 }
-                MemoryTaskStatus::Merging => {
-                    size += slice.effective_size();
+            } else {
+                if let Some(first) = pending.take() {
+                    flush_run(first, size, count, &mut self.slices_tmp);
+                    size = 0;
+                    count = 0;
                 }
-                MemoryTaskStatus::Ignoring => {
-                    let slice_pos_updated = self.slices_tmp.len();
-                    slice
-                        .handle
-                        .descriptor()
-                        .update_slice(slice_pos_updated as u32);
-                    self.slices_tmp.push(slice);
-                }
-                MemoryTaskStatus::Completed => {
-                    let slice_pos_updated = self.slices_tmp.len();
-                    size += slice.effective_size();
-
-                    let mut storage = self.storage.clone();
-                    storage.utilization = StorageUtilization { offset, size };
-                    let page = Slice::new(storage, 0);
-                    let mut location = self.location_base;
-                    location.slice = slice_pos_updated as u32;
-                    page.descriptor().update_location(location);
-                    self.slices_tmp.push(page);
-                    task = tasks.next();
-                }
-            };
+                slice.descriptor().update_slice(self.slices_tmp.len() as u32);
+                self.slices_tmp.push(slice);
+            }
+        }
+        if let Some(first) = pending {
+            flush_run(first, size, count, &mut self.slices_tmp);
         }
 
         core::mem::swap(&mut self.slices, &mut self.slices_tmp);
@@ -252,6 +252,7 @@ impl MemoryPage {
         }
     }
 
+    #[cfg(test)]
     fn memory_job(&self) -> MemoryJob {
         let mut job = MemoryJob::default();
         let mut task = MemoryTask::default();
@@ -348,11 +349,13 @@ impl Display for MemoryPage {
     }
 }
 
+#[cfg(test)]
 #[derive(Default, Debug, PartialEq, Eq)]
 struct MemoryJob {
     tasks: Vec<MemoryTask>,
 }
 
+#[cfg(test)]
 #[derive(Default, Debug, PartialEq, Eq)]
 /// The goal of the memory task is to gather contiguous slice indices that can be merged into a single slice.
 struct MemoryTask {
@@ -366,6 +369,7 @@ struct MemoryTask {
     size: u64,
 }
 
+#[cfg(test)]
 impl MemoryTask {
     /// Tells the task that the given slice index will be coalesced.
     fn tag_coalesce(&mut self, index: usize) {
@@ -401,6 +405,7 @@ impl MemoryTask {
     }
 }
 
+#[cfg(test)]
 impl MemoryJob {
     fn add(&mut self, mut task: MemoryTask) -> MemoryTask {
         // A single index can't be merge with anything.
@@ -415,6 +420,7 @@ impl MemoryJob {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 enum MemoryTaskStatus {
     Merging,

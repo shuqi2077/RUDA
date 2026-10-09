@@ -6,9 +6,17 @@ use std::{
     io::{self, Read, Seek, SeekFrom},
     marker::PhantomData,
     path::Path,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::UNIX_EPOCH,
 };
+#[cfg(not(unix))]
+use std::sync::Mutex;
+
+struct JsonlSource {
+    file: File,
+    #[cfg(not(unix))]
+    cursor: Mutex<()>,
+}
 
 fn invalid(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.into())
@@ -270,18 +278,22 @@ impl JsonlIndexBuilder {
         if !self.state.finished { return Err(invalid("JSONL indexing has not reached EOF")); }
         self.state.identity.check(&self.file)?;
         Ok(IndexedJsonlDataset {
-            file: Arc::new(Mutex::new(self.file)), state: Arc::new(self.state), item: PhantomData,
+            file: Arc::new(JsonlSource {
+                file: self.file,
+                #[cfg(not(unix))]
+                cursor: Mutex::new(()),
+            }), state: Arc::new(self.state), item: PhantomData,
         })
     }
 }
 
 /// Immutable indexed JSONL, with deserialization performed only on requested rows.
 ///
-/// Clones share the source/index, not materialized examples. Reads serialize on
-/// the source handle; deserialization occurs outside that lock. Storage remains
+/// Clones share the source/index, not materialized examples. Unix reads use
+/// independent byte offsets; other targets serialize cursor-based reads. Storage remains
 /// proportional to the offset index plus concurrently requested row buffers.
 pub struct IndexedJsonlDataset<I> {
-    file: Arc<Mutex<File>>,
+    file: Arc<JsonlSource>,
     state: Arc<JsonlIndexState>,
     item: PhantomData<fn() -> I>,
 }
@@ -305,21 +317,32 @@ impl<I: DeserializeOwned> IndexedJsonlDataset<I> {
     /// None means only that the dataset index is out of bounds.
     pub fn get_raw(&self, index: usize) -> io::Result<Option<Vec<u8>>> {
         let Some(row) = self.state.records.get(index) else { return Ok(None); };
-        let mut file = self.file.lock().map_err(|_| io::Error::other("JSONL source lock poisoned"))?;
-        self.state.identity.check(&file)?;
-        let bytes = Self::read_row(&mut file, row)?;
-        self.state.identity.check(&file)?;
+        #[cfg(not(unix))]
+        let _cursor = self.file.cursor.lock().map_err(|_| io::Error::other("JSONL source lock poisoned"))?;
+        let file = &self.file.file;
+        self.state.identity.check(file)?;
+        let bytes = Self::read_row(file, row)?;
+        self.state.identity.check(file)?;
         Ok(Some(bytes))
     }
 
-    fn read_row(file: &mut File, row: &JsonlRecordLocation) -> io::Result<Vec<u8>> {
+    fn read_row(file: &File, row: &JsonlRecordLocation) -> io::Result<Vec<u8>> {
         let length = usize::try_from(row.length)
             .map_err(|_| invalid("JSONL row is larger than the process address space"))?;
         let mut bytes = Vec::new();
         bytes.try_reserve_exact(length).map_err(|error| io::Error::other(error.to_string()))?;
         bytes.resize(length, 0);
-        file.seek(SeekFrom::Start(row.offset))?;
-        file.read_exact(&mut bytes)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileExt;
+            file.read_exact_at(&mut bytes, row.offset)?;
+        }
+        #[cfg(not(unix))]
+        {
+            let mut file = file;
+            file.seek(SeekFrom::Start(row.offset))?;
+            file.read_exact(&mut bytes)?;
+        }
         Ok(bytes)
     }
 
@@ -331,21 +354,23 @@ impl<I: DeserializeOwned> IndexedJsonlDataset<I> {
             self.state.records[index].line_number)))
     }
 
-    /// Fetch requested actual rows under one source lock and metadata check pair.
+    /// Fetch requested actual rows under one metadata check pair.
     /// Requested order and duplicate indices are preserved; any missing index
     /// returns None before reading. An empty request returns an empty collection.
     pub fn get_many_raw(&self, indices: &[usize]) -> io::Result<Option<Vec<Vec<u8>>>> {
         if indices.iter().any(|&index| index >= self.state.records.len()) { return Ok(None); }
         if indices.is_empty() { return Ok(Some(Vec::new())); }
-        let mut file = self.file.lock().map_err(|_| io::Error::other("JSONL source lock poisoned"))?;
-        self.state.identity.check(&file)?;
-        let rows = indices.iter().map(|&index| Self::read_row(&mut file, &self.state.records[index]))
+        #[cfg(not(unix))]
+        let _cursor = self.file.cursor.lock().map_err(|_| io::Error::other("JSONL source lock poisoned"))?;
+        let file = &self.file.file;
+        self.state.identity.check(file)?;
+        let rows = indices.iter().map(|&index| Self::read_row(file, &self.state.records[index]))
             .collect::<io::Result<Vec<_>>>()?;
-        self.state.identity.check(&file)?;
+        self.state.identity.check(file)?;
         Ok(Some(rows))
     }
 
-    /// Deserialize a requested batch after releasing the shared source lock.
+    /// Deserialize a requested batch after completing its source reads.
     /// Parse/I/O failure is distinct from an out-of-bounds request, and no
     /// partially loaded collection is returned as a successful batch.
     pub fn get_many_result(&self, indices: &[usize]) -> io::Result<Option<Vec<I>>> {

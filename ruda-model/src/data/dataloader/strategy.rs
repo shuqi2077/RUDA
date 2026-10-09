@@ -63,16 +63,12 @@ impl<I: Send + Sync + 'static> BatchStrategy<I> for FixBatchStrategy<I> {
     }
 
     fn batch(&mut self, force: bool) -> Option<Vec<I>> {
-        if self.items.len() < self.batch_size && !force {
+        if self.items.is_empty() || (self.items.len() < self.batch_size && !force) {
             return None;
         }
 
         let mut items = Vec::with_capacity(self.batch_size);
         std::mem::swap(&mut items, &mut self.items);
-
-        if items.is_empty() {
-            return None;
-        }
 
         Some(items)
     }

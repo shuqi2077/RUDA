@@ -97,7 +97,7 @@ impl<O: core::fmt::Debug> Policy<O> {
         if self.num_operations == 0 {
             self.candidates = store
                 .find(SearchQuery::PlansStartingWith(operation))
-                .into_iter()
+                .iter().copied()
                 .map(OperationsValidator::new)
                 .collect();
         }
@@ -122,9 +122,8 @@ impl<O: core::fmt::Debug> Policy<O> {
     /// Check which candidates can be removed, and which one can go from
     /// 'candidate' to 'available'
     fn check_candidates(&mut self, store: &ExecutionPlanStore<O>) {
-        let mut candidates_to_remove = Vec::new();
-
-        for candidate in self.candidates.iter() {
+        let availables = &mut self.availables;
+        self.candidates.retain(|candidate| {
             match candidate.state {
                 ValidatorState::Found { size } => {
                     let item = store.get_unchecked(candidate.id);
@@ -141,24 +140,16 @@ impl<O: core::fmt::Debug> Policy<O> {
                         });
                     }
 
-                    self.availables
+                    availables
                         .push(AvailableItem::new(candidate.id, size, triggers));
-                    candidates_to_remove.push(candidate.id);
+                    false
                 }
                 ValidatorState::Invalidated => {
-                    candidates_to_remove.push(candidate.id);
+                    false
                 }
-                ValidatorState::Validating => {}
-            };
-        }
-
-        let mut updated_candidates = Vec::new();
-        core::mem::swap(&mut updated_candidates, &mut self.candidates);
-
-        self.candidates = updated_candidates
-            .into_iter()
-            .filter(|candidate| !candidates_to_remove.iter().any(|id| id == &candidate.id))
-            .collect();
+                ValidatorState::Validating => true,
+            }
+        });
     }
 
     fn check_availables(&mut self) {

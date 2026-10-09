@@ -12,6 +12,7 @@ pub struct Block<O> {
     operations: Vec<OperationIr>,
     ids: HashSet<TensorId>,
     ordering: Vec<usize>,
+    closed_at: Vec<Option<usize>>,
     /// The start position in the relative execution stream.
     pub start_pos: usize,
     /// The end position in the relative execution stream.
@@ -45,6 +46,7 @@ impl<O: NumOperations> Block<O> {
             operations: Vec::new(),
             ids: HashSet::new(),
             ordering: Vec::new(),
+            closed_at: vec![None; builders.len()],
             start_pos: usize::MAX,
             end_pos: usize::MIN,
         }
@@ -73,6 +75,25 @@ impl<O: NumOperations> Block<O> {
                 BlockOptimization::new(strategy, self.ordering)
             }
             BestOptimization::NotFound => {
+                let mut settled = self
+                    .closed_at
+                    .iter()
+                    .map(|closed| closed.map(|index| index + 1).unwrap_or(self.operations.len()))
+                    .max()
+                    .unwrap_or(self.operations.len());
+                while let Some(operation) = self.operations.get(settled) {
+                    let wanted = self.builders.iter().any(|builder| {
+                        let mut probe = builder.clone_dyn();
+                        probe.reset();
+                        probe.fuse(operation);
+                        matches!(probe.status(), FuserStatus::Open) || probe.properties().ready
+                    });
+                    if wanted {
+                        break;
+                    }
+                    settled += 1;
+                }
+                self.ordering.truncate(settled);
                 let strategy = ExecutionStrategy::Operations {
                     ordering: Arc::new(self.ordering.clone()),
                 };
@@ -182,8 +203,12 @@ impl<O: NumOperations> Block<O> {
             self.end_pos = pos + 1;
         }
 
-        for builder in self.builders.iter_mut() {
+        let index = self.operations.len() - 1;
+        for (builder, closed_at) in self.builders.iter_mut().zip(&mut self.closed_at) {
             builder.fuse(operation);
+            if closed_at.is_none() && matches!(builder.status(), FuserStatus::Closed) {
+                *closed_at = Some(index);
+            }
         }
 
         for node in operation.nodes() {
@@ -207,21 +232,14 @@ impl<O> ExecutionStrategy<O> {
     pub fn map_ordering(&mut self, mapping: &[usize]) {
         match self {
             ExecutionStrategy::Optimization { ordering, .. } => {
-                let mut ordering_mapped = ordering.to_vec();
-
-                for o in ordering_mapped.iter_mut() {
+                for o in Arc::make_mut(ordering).iter_mut() {
                     *o = mapping[*o];
                 }
-                *ordering = Arc::new(ordering_mapped);
             }
             ExecutionStrategy::Operations { ordering } => {
-                let mut ordering_mapped = ordering.to_vec();
-
-                for o in ordering_mapped.iter_mut() {
+                for o in Arc::make_mut(ordering).iter_mut() {
                     *o = mapping[*o];
                 }
-
-                *ordering = Arc::new(ordering_mapped);
             }
             ExecutionStrategy::Composed(items) => {
                 for item in items.iter_mut() {
@@ -290,6 +308,7 @@ impl<O> Clone for Block<O> {
             operations: self.operations.clone(),
             ids: self.ids.clone(),
             ordering: self.ordering.clone(),
+            closed_at: self.closed_at.clone(),
             start_pos: self.start_pos,
             end_pos: self.end_pos,
         }

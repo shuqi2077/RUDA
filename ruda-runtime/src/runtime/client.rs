@@ -141,14 +141,12 @@ impl<R: Runtime> ComputeClient<R> {
         &self,
         handles: Vec<Handle>,
     ) -> impl Future<Output = Result<Vec<Bytes>, ServerError>> + Send {
-        let shapes = handles
-            .iter()
-            .map(|it| [it.size_in_used() as usize].into())
-            .collect::<Vec<Shape>>();
         let descriptors = handles
             .into_iter()
-            .zip(shapes)
-            .map(|(handle, shape)| CopyDescriptor::new(handle.binding(), shape, [1].into(), 1))
+            .map(|handle| {
+                let shape = [handle.size_in_used() as usize].into();
+                CopyDescriptor::new(handle.binding(), shape, [1].into(), 1)
+            })
             .collect();
 
         self.do_read(descriptors)

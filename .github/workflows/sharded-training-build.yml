@@ -75,6 +75,10 @@ jobs:
       - name: Compile resumable dataset loading
         run: |
           cargo check --locked -p ruda-model --features dataset,record-item-custom-serde --lib
+      - name: Existing fusion planner and data loader regressions
+        run: |
+          cargo test --locked -p ruda-fusion --lib
+          cargo test --locked -p ruda-model --features dataset --lib data::dataloader::
       - name: Compile native generation continuation
         run: cargo check --locked -p ruda-llm --lib
       - name: Compile native FFT sparse and solver tuning

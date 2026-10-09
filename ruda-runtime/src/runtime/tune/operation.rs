@@ -4,6 +4,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::fmt::{Debug, Display};
 use core::hash::Hash;
+use spin::Once;
 
 use alloc::format;
 
@@ -44,6 +45,8 @@ pub struct TunableSet<K: AutotuneKey, F: TuneInputs, Output: 'static> {
     stack_reference: Option<usize>,
     stack_revision: String,
     stack_workload: Option<Arc<dyn for<'a> Fn(&F::At<'a>) -> String + Send + Sync>>,
+    checksum: Once<String>,
+    stack_manifest: Once<String>,
 }
 
 impl<K: AutotuneKey, F: TuneInputs, Output: 'static> TunableSet<K, F, Output> {
@@ -66,6 +69,8 @@ impl<K: AutotuneKey, F: TuneInputs, Output: 'static> TunableSet<K, F, Output> {
             stack_reference: None,
             stack_revision: String::new(),
             stack_workload: None,
+            checksum: Once::new(),
+            stack_manifest: Once::new(),
         }
     }
 
@@ -79,6 +84,7 @@ impl<K: AutotuneKey, F: TuneInputs, Output: 'static> TunableSet<K, F, Output> {
         self.stack_reference = Some(reference);
         self.stack_revision = revision.into();
         self.stack_workload = Some(Arc::new(workload));
+        self.stack_manifest = Once::new();
         self
     }
     pub fn stack_reference(&self) -> Option<usize> { self.stack_reference }
@@ -95,6 +101,8 @@ impl<K: AutotuneKey, F: TuneInputs, Output: 'static> TunableSet<K, F, Output> {
     /// Register a tunable with this tunable set.
     pub fn with(mut self, tunable: Tunable<K, F, Output>) -> Self {
         self.tunables.push(tunable);
+        self.checksum = Once::new();
+        self.stack_manifest = Once::new();
         self
     }
 
@@ -118,18 +126,22 @@ impl<K: AutotuneKey, F: TuneInputs, Output: 'static> TunableSet<K, F, Output> {
     /// set of tunable names changes.
     pub fn compute_checksum(&self) -> String {
         // Preserve legacy cache identity when the new controller is not enabled.
-        let mut checksum = String::new();
-        for tune in &self.tunables { checksum += &tune.function.name; }
-        format!("{:x}", md5::compute(checksum))
+        self.checksum.call_once(|| {
+            let mut checksum = String::new();
+            for tune in &self.tunables { checksum += &tune.function.name; }
+            format!("{:x}", md5::compute(checksum))
+        }).clone()
     }
 
     /// Separate, length-delimited manifest for the opt-in full-stack cache.
     pub fn stack_checksum(&self) -> String {
-        let mut checksum = format!("stack-v1:{}:{};reference={:?};", self.stack_revision.len(), self.stack_revision, self.stack_reference);
-        for tune in &self.tunables {
-            checksum += &format!("{}:{}", tune.function.name.len(), tune.function.name);
-        }
-        format!("{:x}", md5::compute(checksum))
+        self.stack_manifest.call_once(|| {
+            let mut checksum = format!("stack-v1:{}:{};reference={:?};", self.stack_revision.len(), self.stack_revision, self.stack_reference);
+            for tune in &self.tunables {
+                checksum += &format!("{}:{}", tune.function.name.len(), tune.function.name);
+            }
+            format!("{:x}", md5::compute(checksum))
+        }).clone()
     }
 
     /// Generate a key from a set of inputs

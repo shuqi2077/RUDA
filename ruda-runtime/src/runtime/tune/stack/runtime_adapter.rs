@@ -152,8 +152,10 @@ pub fn try_execute_stack<'a, R: Runtime, K: AutotuneKey, I: TuneInputs, O: Autot
     // Enumerate EVERY eligible priority group. Group order remains a useful bounded-search
     // heuristic but a first valid group no longer terminates the search.
     let mut indices = std::vec![reference]; let mut plan = set.plan(&key);
+    let mut included = std::vec![false; set.len()];
+    included[reference] = true;
     loop { let batch = plan.next(None); if batch.is_empty() { break; }
-        for index in batch { if !indices.contains(&index) { indices.push(index); } }
+        for index in batch { if !included[index] { indices.push(index); included[index] = true; } }
     }
     let candidates: Vec<_> = indices.iter().map(|&i| Candidate::new(set.fastest(i).name.clone())).collect();
     // Cache hits must retain normal asynchronous execution. TrialRunner fences before every
