@@ -57,6 +57,9 @@ pub struct Stream<B: SchedulerStreamBackend> {
 impl<B: SchedulerStreamBackend> Stream<B> {
     /// Flushes all tasks from the stream, returning them and clearing the internal task list.
     fn flush(&mut self) -> Vec<B::Task> {
+        if self.tasks.is_empty() {
+            return Vec::new();
+        }
         let mut returned = Vec::with_capacity(self.tasks.capacity());
         core::mem::swap(&mut returned, &mut self.tasks);
         returned

@@ -48,10 +48,15 @@ where
             while end < indices.len() && indices[end] >= offset && indices[end] < ends[dataset] {
                 end += 1;
             }
-            local_indices.clear();
-            local_indices.extend(indices[start..end].iter().map(|&index| index - offset));
-            let batch = self.datasets[dataset].get_many(&local_indices)?;
-            if batch.len() != local_indices.len() {
+            let translated = if offset == 0 {
+                &indices[start..end]
+            } else {
+                local_indices.clear();
+                local_indices.extend(indices[start..end].iter().map(|&index| index - offset));
+                local_indices.as_slice()
+            };
+            let batch = self.datasets[dataset].get_many(translated)?;
+            if batch.len() != translated.len() {
                 return None;
             }
             items.extend(batch);
