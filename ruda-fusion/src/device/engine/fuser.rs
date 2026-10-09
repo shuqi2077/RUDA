@@ -306,11 +306,7 @@ impl TraceOperationFuser {
                 })
             }
             BaseOperationIr::SwapDims(desc) => {
-                if !self.output_is_compatible(&desc.out) {
-                    return false;
-                }
-
-                if self.fuser.fuse(|fuser| {
+                if self.fuse_output(&desc.out, false, |fuser| {
                     fuser.input_swap_dims(&desc.input, &desc.out, (desc.dim1, desc.dim2))?;
 
                     Some(())
@@ -333,11 +329,7 @@ impl TraceOperationFuser {
                     return false;
                 }
 
-                if !self.output_is_compatible(&desc.out) {
-                    return false;
-                }
-
-                if self.fuser.fuse(|fuser| {
+                if self.fuse_output(&desc.out, false, |fuser| {
                     fuser.input_reshaped(&desc.input, &desc.out)?;
                     Some(())
                 }) {
@@ -348,15 +340,10 @@ impl TraceOperationFuser {
                 }
             }
             BaseOperationIr::Ones(desc) => {
-                if !self.output_is_compatible(&desc.out) {
-                    return false;
-                }
-
-                let elem: ElemType = desc.out.dtype.into();
-                let precision = elem.into();
-                let input = FuseArg::Literal(1, precision);
-
-                self.fuser.fuse(|fuser| {
+                self.fuse_output(&desc.out, false, |fuser| {
+                    let elem: ElemType = desc.out.dtype.into();
+                    let precision = elem.into();
+                    let input = FuseArg::Literal(1, precision);
                     let out = fuser.output(&desc.out)?;
 
                     fuser.fuse_operation(FuseOp::Assign(UnaryFuseArgs { input, out }));
@@ -365,15 +352,10 @@ impl TraceOperationFuser {
                 })
             }
             BaseOperationIr::Zeros(desc) => {
-                if !self.output_is_compatible(&desc.out) {
-                    return false;
-                }
-
-                let elem: ElemType = desc.out.dtype.into();
-                let precision = elem.into();
-                let input = FuseArg::Literal(0, precision);
-
-                self.fuser.fuse(|fuser| {
+                self.fuse_output(&desc.out, false, |fuser| {
+                    let elem: ElemType = desc.out.dtype.into();
+                    let precision = elem.into();
+                    let input = FuseArg::Literal(0, precision);
                     let out = fuser.output(&desc.out)?;
 
                     fuser.fuse_operation(FuseOp::Assign(UnaryFuseArgs { input, out }));
@@ -382,11 +364,7 @@ impl TraceOperationFuser {
                 })
             }
             BaseOperationIr::Gather(desc) => {
-                if !self.output_is_compatible(&desc.out) {
-                    return false;
-                }
-
-                self.fuser.fuse(|build| {
+                self.fuse_output(&desc.out, false, |build| {
                     let input = build.input_indexed(&desc.tensor)?;
                     let indices = build.input_indexed(&desc.indices)?;
                     let output = build.output(&desc.out)?;
@@ -402,11 +380,7 @@ impl TraceOperationFuser {
                 })
             }
             BaseOperationIr::Select(desc) => {
-                if !self.output_is_reference(&desc.out) {
-                    return false;
-                }
-
-                self.fuser.fuse(|build| {
+                self.fuse_output(&desc.out, true, |build| {
                     let input = build.input_indexed(&desc.tensor)?;
                     let indices = build.input_indexed(&desc.indices)?;
                     let output = build.output(&desc.out)?;
@@ -422,11 +396,7 @@ impl TraceOperationFuser {
                 })
             }
             BaseOperationIr::MaskWhere(desc) => {
-                if !self.output_is_compatible(&desc.out) {
-                    return false;
-                }
-
-                self.fuser.fuse(|build| {
+                self.fuse_output(&desc.out, false, |build| {
                     let cond = build.input(&desc.mask)?;
                     let rhs = build.input(&desc.tensor)?;
                     let lhs = build.input(&desc.value)?;
@@ -443,11 +413,7 @@ impl TraceOperationFuser {
                 })
             }
             BaseOperationIr::MaskFill(desc) => {
-                if !self.output_is_compatible(&desc.out) {
-                    return false;
-                }
-
-                self.fuser.fuse(|build| {
+                self.fuse_output(&desc.out, false, |build| {
                     let cond = build.input(&desc.mask)?;
                     let lhs = build.scalar(&desc.value, desc.out.dtype);
                     let rhs = build.input(&desc.tensor)?;
@@ -514,11 +480,7 @@ impl TraceOperationFuser {
                 FuseOp::Recip(UnaryFuseArgs { input, out })
             }),
             FloatOperationIr::Dequantize(desc) => {
-                if !self.output_is_compatible(&desc.out) {
-                    return false;
-                }
-
-                self.fuser.fuse(|build| {
+                self.fuse_output(&desc.out, false, |build| {
                     let qinput = build.input_quantized(&desc.input)?;
                     let out = build.output(&desc.out)?;
 
@@ -557,9 +519,6 @@ impl TraceOperationFuser {
                 })
             }
             NumericOperationIr::PowiScalar(desc) if desc.lhs.dtype.is_float() => {
-                if !self.output_is_compatible(&desc.out) {
-                    return false;
-                }
                 let (id, dtype) = match desc.rhs {
                     ScalarIr::Reference { id, dtype }
                         if matches!(dtype, DType::I32 | DType::U32 | DType::I64 | DType::U64) =>
@@ -568,7 +527,7 @@ impl TraceOperationFuser {
                     }
                     _ => return false,
                 };
-                self.fuser.fuse(|build| {
+                self.fuse_output(&desc.out, false, |build| {
                     let lhs = build.input(&desc.lhs)?;
                     let rhs = build.scalar(&id, dtype);
                     let out = build.output(&desc.out)?;
@@ -631,11 +590,7 @@ impl TraceOperationFuser {
                     FuseOp::GreaterEqual(BinaryFuseArgs { lhs, rhs, out })
                 }),
             NumericOperationIr::Full(desc) => {
-                if !self.output_is_compatible(&desc.out) {
-                    return false;
-                }
-
-                self.fuser.fuse(|build| {
+                self.fuse_output(&desc.out, false, |build| {
                     let input = build.scalar(&desc.value, desc.out.dtype);
                     let out = build.output(&desc.out)?;
 
@@ -651,11 +606,7 @@ impl TraceOperationFuser {
                 FuseOp::Rem(BinaryFuseArgs { lhs, rhs, out })
             }),
             NumericOperationIr::Clamp(desc) => {
-                if !self.output_is_compatible(&desc.out) {
-                    return false;
-                }
-
-                self.fuser.fuse(|build| {
+                self.fuse_output(&desc.out, false, |build| {
                     let input = build.input(&desc.tensor)?;
                     let min = build.scalar(&desc.min, desc.out.dtype);
                     let max = build.scalar(&desc.max, desc.out.dtype);
@@ -679,11 +630,7 @@ impl TraceOperationFuser {
     where
         Func: Fn(FuseArg, FuseArg, FuseArg) -> FuseOp,
     {
-        if !self.output_is_compatible(&desc.out) {
-            return false;
-        }
-
-        self.fuser.fuse(|build| {
+        self.fuse_output(&desc.out, false, |build| {
             let lhs = build.input(&desc.lhs)?;
             let rhs = build.input(&desc.rhs)?;
             let out = build.output(&desc.out)?;
@@ -705,11 +652,7 @@ impl TraceOperationFuser {
     where
         Func: Fn(FuseArg, FuseArg) -> FuseOp,
     {
-        if !self.output_is_compatible(out) {
-            return false;
-        }
-
-        self.fuser.fuse(|build| {
+        self.fuse_output(out, false, |build| {
             let input = build.input(input)?;
             let out = build.output(out)?;
             build.fuse_operation(func(input, out));
@@ -721,11 +664,7 @@ impl TraceOperationFuser {
     where
         Func: Fn(FuseArg, FuseArg, FuseArg) -> FuseOp,
     {
-        if !self.output_is_compatible(&desc.out) {
-            return false;
-        }
-
-        self.fuser.fuse(|build| {
+        self.fuse_output(&desc.out, false, |build| {
             let elem = desc.lhs.dtype;
             let lhs = build.input(&desc.lhs)?;
             let rhs = build.scalar(&desc.rhs, elem);
@@ -737,25 +676,44 @@ impl TraceOperationFuser {
         })
     }
 
-    fn output_is_reference(&mut self, out: &TensorIr) -> bool {
-        if !self.output_is_compatible(out) || self.current_output_shape != out.shape {
+    fn fuse_output(
+        &mut self,
+        out: &TensorIr,
+        reference_required: bool,
+        add_ops: impl FnOnce(&mut TraceFuser) -> Option<()>,
+    ) -> bool {
+        let Some(update_shape) = self.output_shape_update(out) else {
+            return false;
+        };
+        if reference_required && !update_shape && self.current_output_shape != out.shape {
             return false;
         }
-        self.reference_fixed = true;
+        if !self.fuser.fuse(add_ops) {
+            return false;
+        }
+        if update_shape {
+            if self.current_output_shape.is_empty() {
+                self.current_output_shape.clone_from(&out.shape);
+            } else {
+                self.current_output_shape.clone_from_slice(&out.shape);
+            }
+        }
+        if reference_required {
+            self.reference_fixed = true;
+        }
         true
     }
 
-    fn output_is_compatible(&mut self, out: &TensorIr) -> bool {
+    fn output_shape_update(&self, out: &TensorIr) -> Option<bool> {
         if self.current_output_shape.is_empty() {
-            self.current_output_shape.clone_from(&out.shape);
-            return true;
+            return Some(true);
         }
 
         let rank = self.current_output_shape.len();
 
         // Rank should be equal.
         if rank != out.shape.num_dims() {
-            return false;
+            return None;
         }
 
         let mut output_is_reference = true;
@@ -772,7 +730,7 @@ impl TraceOperationFuser {
 
             // Broadcast not enabled.
             if !self.settings.broadcast {
-                return false;
+                return None;
             }
 
             // Broadcasted on new dim.
@@ -787,19 +745,17 @@ impl TraceOperationFuser {
                 continue;
             }
 
-            return false;
+            return None;
         }
 
         if should_update {
             // For now forced to have exact shape.
             if self.reference_fixed || !output_is_reference {
-                return false;
+                return None;
             }
-
-            self.current_output_shape.clone_from_slice(&out.shape);
         }
 
-        true
+        Some(should_update)
     }
 }
 
