@@ -109,7 +109,7 @@ where
             lr,
             self.grad_clipping.as_ref(),
         );
-        mapper.selection = Some(parameter_ids);
+        mapper.selection = Some(ParameterSelection::Unsorted(parameter_ids));
         let module = module.map(&mut mapper);
         let GradAdaptor::Single(unused) = selected else {
             unreachable!("selected updates always use a single native gradient container");
@@ -196,6 +196,20 @@ impl GradAdaptor {
     }
 }
 
+enum ParameterSelection<'a> {
+    Unsorted(&'a [ParamId]),
+    Sorted(&'a [ParamId]),
+}
+
+impl ParameterSelection<'_> {
+    fn contains(&self, id: &ParamId) -> bool {
+        match self {
+            Self::Unsorted(ids) => ids.contains(id),
+            Self::Sorted(ids) => ids.binary_search(id).is_ok(),
+        }
+    }
+}
+
 #[derive(new)]
 struct SimpleOptimizerMapper<'a, B, O>
 where
@@ -210,7 +224,7 @@ where
     #[new(default)]
     updated: TensorContainer<ParamId>,
     #[new(default)]
-    selection: Option<&'a [ParamId]>,
+    selection: Option<ParameterSelection<'a>>,
 }
 
 impl<B, O> ModuleMapper<B> for SimpleOptimizerMapper<'_, B, O>
@@ -219,7 +233,7 @@ where
     O: SimpleOptimizer<B::InnerBackend>,
 {
     fn map_float<const D: usize>(&mut self, param: Param<Tensor<B, D>>) -> Param<Tensor<B, D>> {
-        if self.selection.is_some_and(|ids| !ids.contains(&param.id)) {
+        if self.selection.as_ref().is_some_and(|ids| !ids.contains(&param.id)) {
             return param;
         }
         if !param.is_require_grad() {

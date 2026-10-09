@@ -78,7 +78,7 @@ where B:AutodiffBackend,M:AutodiffModule<B>,O:SimpleOptimizer<B::InnerBackend> {
         }
         for ids in &mut selection {ids.sort();}
         let result=Self {groups,routes:routing,selection};result.validate_model(module)?;
-        result.validate_histories(&result.groups.iter().map(|group|&group.records).collect::<Vec<_>>())?;
+        result.validate_histories(result.groups.iter().map(|group|&group.records))?;
         Ok(result)
     }
     pub fn groups(&self) -> &[OptimizerAdaptor<O,M,B>] {&self.groups}
@@ -97,9 +97,10 @@ where B:AutodiffBackend,M:AutodiffModule<B>,O:SimpleOptimizer<B::InnerBackend> {
         for id in self.routes.keys() {if !ids.found.contains(id) {return Err(GroupedOptimizerError::UnknownParameter(id.val()));}}
         Ok(())
     }
-    fn validate_histories(&self,records:&[&HashMap<ParamId,AdaptorRecord<O,B>>]) -> Result<(),GroupedOptimizerError> {
+    fn validate_histories<'records>(&self,records:impl ExactSizeIterator<Item=&'records HashMap<ParamId,AdaptorRecord<O,B>>>) -> Result<(),GroupedOptimizerError>
+    where O:'records,B:'records {
         if records.len()!=self.groups.len() {return Err(GroupedOptimizerError::State("original group count differs"));}
-        for (index,records) in records.iter().enumerate() {
+        for (index,records) in records.enumerate() {
             if records.keys().any(|id|self.routes.get(id)!=Some(&index)) {
                 return Err(GroupedOptimizerError::State("native history belongs to another or unselected parameter group"));
             }
@@ -114,7 +115,7 @@ where B:AutodiffBackend,M:AutodiffModule<B>,O:SimpleOptimizer<B::InnerBackend> {
         self.validate_model(&module)?;
         for ((group,selection),rate) in self.groups.iter_mut().zip(&self.selection).zip(rates) {
             let mut mapper=SimpleOptimizerMapper::<B,O>::new(&group.optim,&mut group.records,&mut gradients,*rate,group.grad_clipping.as_ref());
-            mapper.selection=Some(selection);module=module.map(&mut mapper);
+            mapper.selection=Some(ParameterSelection::Sorted(selection));module=module.map(&mut mapper);
         }
         Ok((module,gradients))
     }
@@ -140,7 +141,7 @@ where B:AutodiffBackend,M:AutodiffModule<B>,O:SimpleOptimizer<B::InnerBackend> {
     /// regrouping, state resets, master casts or changes to group clippers.
     pub fn try_load_record(mut self,record:GroupedOptimizerAdaptorRecord<O,B>) -> Result<Self,GroupedOptimizerError> {
         if record.version!=1 || record.routes!=self.route_record() {return Err(GroupedOptimizerError::State("saved original group routing differs"));}
-        self.validate_histories(&record.records.iter().collect::<Vec<_>>())?;
+        self.validate_histories(record.records.iter())?;
         for (group,records) in self.groups.iter_mut().zip(record.records) {group.records=records;}
         Ok(self)
     }
@@ -154,7 +155,7 @@ where B:AutodiffBackend,M:AutodiffModule<B>,O:SimpleOptimizer<B::InnerBackend> {
             return Err(OptimizerStatePlacementError::Group(GroupedOptimizerError::State("saved original group routing differs")));
         }
         self.validate_model(module).map_err(OptimizerStatePlacementError::Group)?;
-        self.validate_histories(&record.records.iter().collect::<Vec<_>>()).map_err(OptimizerStatePlacementError::Group)?;
+        self.validate_histories(record.records.iter()).map_err(OptimizerStatePlacementError::Group)?;
         let devices=record.records.iter().map(|records|super::placement::record_devices::<B,M,O>(module,records))
             .collect::<Result<Vec<_>,_>>()?;
         for ((group,records),devices) in self.groups.iter_mut().zip(record.records).zip(devices) {

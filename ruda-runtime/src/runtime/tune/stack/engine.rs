@@ -151,6 +151,7 @@ impl StackTuner {
     /// cached lower-level decisions in this controller, including other workloads/devices.
     /// That may over-invalidate a pipeline but never hides a changed lower-level choice.
     pub fn lower_level_fingerprint(&self) -> String {
+        use std::fmt::Write;
         let s = self.lock();
         let mut parts = Vec::new();
         for (key, record) in &s.records {
@@ -161,7 +162,9 @@ impl StackTuner {
             if *scope != Scope::Pipeline { parts.push(fields(&[key, "unverified-reference"])); }
         }
         parts.sort();
-        super::cache::digest(fields(&parts.iter().map(String::as_str).collect::<Vec<_>>()).as_bytes())
+        let mut encoded = String::new();
+        for part in &parts { let _ = write!(encoded, "{}:{part}", part.len()); }
+        super::cache::digest(encoded.as_bytes())
     }
     /// Clone retained search diagnostics, oldest first, bounded by min(capacity, 128).
     /// Cache hits are counters, not new search reports.

@@ -227,13 +227,21 @@ fn append_field(out: &mut String, part: &str) {
     let _ = write!(out, "{}:", part.len());
     out.push_str(part);
 }
+
+fn append_fields(out: &mut String, parts: &[&str]) {
+    use std::fmt::Write;
+    let length = parts.iter().map(|part| {
+        part.len() + 1 + part.len().checked_ilog10().map_or(1, |digits| digits as usize + 1)
+    }).sum::<usize>();
+    let _ = write!(out, "{length}:");
+    for part in parts { append_field(out, part); }
+}
 /// Encode the full workload, ordered candidate manifest, reference and numerical policy.
 /// This returns identity text, not a cryptographic hash or proof of correctness.
 pub fn cache_key(problem: &Problem, candidates: &[Candidate], reference: usize, policy: &StackPolicy) -> String {
     let mut manifest = String::new();
     for c in candidates {
-        let entry = fields(&[&c.name, &c.revision, &std::format!("{:?}/{}", c.workspace_bytes, c.eligible)]);
-        append_field(&mut manifest, &entry);
+        append_fields(&mut manifest, &[&c.name, &c.revision, &std::format!("{:?}/{}", c.workspace_bytes, c.eligible)]);
     }
     fields(&["ruda-stack-autotune-v1", &std::format!("{:?}", problem.scope), &problem.operation, &problem.environment, &problem.workload,
         &problem.execution_context, &reference.to_string(), &manifest,

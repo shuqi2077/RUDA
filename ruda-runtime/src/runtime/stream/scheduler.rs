@@ -3,7 +3,7 @@ use crate::runtime::{
     logging::ServerLogger,
     stream::{StreamFactory, StreamPool},
 };
-use alloc::{format, sync::Arc, vec, vec::Vec};
+use alloc::{format, sync::Arc, vec::Vec};
 use ruda_core::stream_id::StreamId;
 
 /// Defines a trait for a scheduler stream backend, specifying the types and behavior for task scheduling.
@@ -128,7 +128,8 @@ impl<B: SchedulerStreamBackend> SchedulerMultiStream<B> {
 
         // If the task queue exceeds the maximum, execute the stream.
         if current.tasks.len() >= self.max_tasks {
-            self.execute_streams(vec![stream_id]);
+            let index = self.pool.stream_index(&stream_id);
+            self.execute_stream_index(index);
         }
     }
 
@@ -170,14 +171,31 @@ impl<B: SchedulerStreamBackend> SchedulerMultiStream<B> {
 
     /// Executes tasks from the specified streams based on the scheduling strategy.
     pub fn execute_streams(&mut self, stream_ids: Vec<StreamId>) {
+        if let [id] = stream_ids.as_slice() {
+            let index = self.pool.stream_index(id);
+            drop(stream_ids);
+            self.execute_stream_index(index);
+            return;
+        }
         let mut indices = Vec::with_capacity(stream_ids.len());
+        let mut seen = [0u64; 4];
 
         // Collect unique stream indices to avoid redundant processing.
         for id in stream_ids {
             let index = self.pool.stream_index(&id);
-            if !indices.contains(&index) {
+            let word = &mut seen[index / 64];
+            let mask = 1u64 << (index % 64);
+            if *word & mask == 0 {
+                *word |= mask;
                 indices.push(index);
             }
+        }
+
+        if let [index] = indices.as_slice() {
+            let index = *index;
+            drop(indices);
+            self.execute_stream_index(index);
+            return;
         }
 
         // Create schedules for each stream to be executed.
@@ -206,8 +224,22 @@ impl<B: SchedulerStreamBackend> SchedulerMultiStream<B> {
         }
     }
 
+    fn execute_stream_index(&mut self, index: usize) {
+        let stream = unsafe { self.pool.get_mut_index(index) };
+        let tasks = stream.flush();
+        let schedule = Schedule {
+            num_tasks: tasks.len(),
+            tasks: tasks.into_iter(),
+            stream_index: index,
+        };
+        match self.strategy {
+            SchedulerStrategy::Interleave => self.execute_schedules_interleave([schedule]),
+            SchedulerStrategy::Sequential => self.execute_schedules_sequence([schedule]),
+        }
+    }
+
     /// Executes schedules sequentially, processing each stream's tasks in order.
-    fn execute_schedules_sequence(&mut self, schedules: Vec<Schedule<B>>) {
+    fn execute_schedules_sequence(&mut self, schedules: impl IntoIterator<Item = Schedule<B>>) {
         for schedule in schedules {
             let stream = unsafe { self.pool.get_mut_index(schedule.stream_index) }; // Note: `unsafe` usage assumes valid index.
             for task in schedule.tasks {
@@ -226,7 +258,8 @@ impl<B: SchedulerStreamBackend> SchedulerMultiStream<B> {
     /// flushing all other streams first and flushing the execution stream at the end.
     /// This way, we ensure that most tasks are actually interleaved on the real compute queue
     /// shared across all streams.
-    fn execute_schedules_interleave(&mut self, mut schedules: Vec<Schedule<B>>) {
+    fn execute_schedules_interleave(&mut self, mut schedules: impl AsMut<[Schedule<B>]>) {
+        let schedules = schedules.as_mut();
         // Makes sure the tasks are ordered on the compute queue.
         for schedule in schedules.iter_mut().skip(1) {
             let stream = unsafe { self.pool.get_mut_index(schedule.stream_index) };
