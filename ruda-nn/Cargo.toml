@@ -101,7 +101,7 @@ features = [ "std", "tracing",]
 optional = true
 default-features = false
 path = "../ruda-fusion"
-version = "0.21.47"
+version = "0.21.48"
 
 [dependencies.ruda-kernel]
 path = "../ruda-kernel"
