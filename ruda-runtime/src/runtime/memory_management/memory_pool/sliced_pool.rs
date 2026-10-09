@@ -33,6 +33,10 @@ impl SlicedPool {
         output.extend(self.pages.iter().filter_map(|(page, _)| page.relocation_page()));
     }
 
+    pub(crate) fn relocation_inputs(&self, source: bool) -> impl Iterator<Item = super::RelocationInput> + '_ {
+        self.pages.iter().flat_map(move |(page, _)| page.relocation_inputs(source))
+    }
+
     pub(crate) fn release_relocated(&mut self, allocation: &ManagedMemoryHandle) -> Result<(), IoError> {
         self.pages[allocation.descriptor().page()].0.release_relocated(allocation)
     }

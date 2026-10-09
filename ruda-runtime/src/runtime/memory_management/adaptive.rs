@@ -1,7 +1,7 @@
 use super::{
     ManagedMemoryHandle, MemoryPoolOptions, PoolType,
     memory_manage::DynamicPool,
-    memory_pool::{MemoryPool, SlicedPool, calculate_padding},
+    memory_pool::{MemoryPool, RelocationInput, SlicedPool, calculate_padding},
 };
 use crate::runtime::{server::IoError, storage::{ComputeStorage, StorageHandle}};
 use alloc::{format, vec, vec::Vec};
@@ -19,6 +19,8 @@ pub(super) struct AdaptiveState {
     small_page_size: u64,
     current: usize,
     outdated: Vec<usize>,
+    stalled: Vec<RelocationInput>,
+    stalled_valid: bool,
 }
 
 struct Relocation {
@@ -49,6 +51,8 @@ impl AdaptiveState {
             small_page_size: aligned(8 * MIB),
             current: ARENA_START,
             outdated: Vec::new(),
+            stalled: Vec::new(),
+            stalled_valid: false,
         }
     }
 
@@ -177,9 +181,35 @@ impl AdaptiveState {
     ) -> Result<bool, IoError> {
         if self.outdated.is_empty() { return Ok(false); }
         if storage.available_memory().is_some_and(|free| free.saturating_sub(page_size) < page_size) {
-            return self.relocate(pools, storage, TargetRoom::Held);
+            if self.stalled_valid && storage.supports_relocation() && self.stalled_matches(pools) {
+                return Ok(false);
+            }
+            self.stalled_valid = false;
+            let mut inputs = core::mem::take(&mut self.stalled);
+            inputs.clear();
+            inputs.extend(self.relocation_inputs(pools));
+            self.stalled = inputs;
+            let cacheable = !self.stalled.iter().any(|input| {
+                matches!(input, RelocationInput::Allocation { pin_revision: usize::MAX, .. })
+            });
+            let reclaimed = self.relocate(pools, storage, TargetRoom::Held)?;
+            self.stalled_valid = !reclaimed && cacheable && self.stalled_matches(pools);
+            return Ok(reclaimed);
         }
         Ok(false)
+    }
+
+    fn relocation_inputs<'a>(&'a self, pools: &'a [DynamicPool]) -> impl Iterator<Item = RelocationInput> + 'a {
+        core::iter::once(RelocationInput::Pool(self.current))
+            .chain(self.pool(pools).relocation_inputs(false))
+            .chain(self.outdated.iter().flat_map(move |&index| {
+                let pool = match &pools[index] { DynamicPool::Sliced(pool) => pool, _ => unreachable!() };
+                core::iter::once(RelocationInput::Pool(index)).chain(pool.relocation_inputs(true))
+            }))
+    }
+
+    fn stalled_matches(&self, pools: &[DynamicPool]) -> bool {
+        self.stalled.iter().copied().eq(self.relocation_inputs(pools))
     }
 
     fn relocate<Storage: ComputeStorage>(
@@ -189,6 +219,7 @@ impl AdaptiveState {
         if room == TargetRoom::MayAllocate {
             pools[self.current].cleanup(storage, 0, true);
         }
+        if !matches!(&result, Ok(false)) { self.stalled_valid = false; }
         result
     }
 

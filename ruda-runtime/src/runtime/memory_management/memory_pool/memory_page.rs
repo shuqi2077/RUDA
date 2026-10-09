@@ -1,10 +1,10 @@
 use crate::runtime::{
     memory_management::{
-        BytesFormat, ManagedMemoryBinding, ManagedMemoryHandle, MemoryLocation, MemoryUsage,
+        BytesFormat, ManagedMemoryBinding, ManagedMemoryHandle, ManagedMemoryId, MemoryLocation, MemoryUsage,
         memory_pool::{Slice, calculate_padding},
     },
     server::IoError,
-    storage::{StorageHandle, StorageUtilization},
+    storage::{StorageHandle, StorageId, StorageUtilization},
 };
 use alloc::format;
 use alloc::string::String;
@@ -28,6 +28,15 @@ pub struct MemoryPage {
 pub(crate) struct RelocationPage {
     pub allocations: Vec<(ManagedMemoryHandle, StorageHandle, u64)>,
     pub live_bytes: u64,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RelocationInput {
+    Pool(usize),
+    Page(StorageId),
+    PinnedPage,
+    Free { bytes: u64, usable: u64 },
+    Allocation { id: ManagedMemoryId, size: u64, pinned: bool, pin_revision: usize },
 }
 
 impl MemoryPage {
@@ -192,6 +201,35 @@ impl MemoryPage {
         for slice in self.slices.iter() {
             slice.descriptor().update_page(page);
         }
+    }
+
+    pub(crate) fn relocation_inputs(&self, source: bool) -> impl Iterator<Item = RelocationInput> + '_ {
+        let pinned = source && self.slices.iter().any(|slice| !slice.is_free() && slice.handle.is_pinned());
+        let mut excluded = pinned.then_some(RelocationInput::PinnedPage);
+        let mut slices = self.slices.iter().peekable();
+        core::iter::once(RelocationInput::Page(self.storage.id)).chain(core::iter::from_fn(move || {
+            if pinned { return excluded.take(); }
+            let slice = slices.next()?;
+            if slice.is_free() {
+                let mut bytes = slice.effective_size();
+                let capacity = slice.storage.size();
+                let mut adjacent = false;
+                while let Some(next) = slices.peek() {
+                    if !next.is_free() { break; }
+                    bytes += next.effective_size();
+                    adjacent = true;
+                    slices.next();
+                }
+                Some(RelocationInput::Free { bytes, usable: if adjacent { bytes } else { capacity } })
+            } else {
+                let descriptor = slice.handle.descriptor();
+                let pin_revision = if source { descriptor.pin_revision() } else { 0 };
+                Some(RelocationInput::Allocation {
+                    id: descriptor.id, size: slice.storage.size(),
+                    pinned: source && slice.handle.is_pinned(), pin_revision,
+                })
+            }
+        }))
     }
 
     pub(crate) fn relocation_page(&self) -> Option<RelocationPage> {

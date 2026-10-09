@@ -1,8 +1,8 @@
 use crate::runtime::memory_management::MemoryHandle;
 use alloc::sync::Arc;
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(target_has_atomic = "64")]
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::AtomicU64;
 #[cfg(not(target_has_atomic = "64"))]
 use spin::Mutex;
 
@@ -37,6 +37,7 @@ impl Clone for ManagedMemoryHandle {
 pub(crate) struct ManagedMemoryDescriptor {
     pub(crate) id: ManagedMemoryId,
     pins: AtomicUsize,
+    pin_revision: AtomicUsize,
     #[cfg(target_has_atomic = "64")]
     location: AtomicU64,
     #[cfg(not(target_has_atomic = "64"))]
@@ -80,6 +81,22 @@ pub(crate) struct MemoryLocation {
 }
 
 impl ManagedMemoryDescriptor {
+    pub(crate) fn pin_revision(&self) -> usize {
+        let revision = self.pin_revision.load(Ordering::Acquire);
+        if revision == 0 {
+            self.pin_revision.compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+                .map(|_| 1).unwrap_or_else(|revision| revision)
+        } else {
+            revision
+        }
+    }
+
+    fn pin_changed(&self) {
+        let _ = self.pin_revision.fetch_update(Ordering::AcqRel, Ordering::Acquire, |revision| {
+            (revision != 0 && revision != usize::MAX).then(|| revision + 1)
+        });
+    }
+
     /// Update the memory location for the given [`ManagedMemoryId`].
     pub(crate) fn update_location(&self, location: MemoryLocation) {
         #[cfg(target_has_atomic = "64")]
@@ -186,6 +203,7 @@ impl ManagedMemoryHandle {
             descriptor: Arc::new(ManagedMemoryDescriptor {
                 id: ManagedMemoryId { value },
                 pins: AtomicUsize::new(0),
+                pin_revision: AtomicUsize::new(0),
                 #[cfg(target_has_atomic = "64")]
                 location: AtomicU64::new(MemoryLocation::uninit().to_bits()),
                 #[cfg(not(target_has_atomic = "64"))]
@@ -235,6 +253,7 @@ impl ManagedMemoryBinding {
     /// Keep this allocation's address fixed until the returned pin is dropped.
     pub fn pin(&self) -> MemoryResourcePin {
         self.descriptor.pins.fetch_add(1, core::sync::atomic::Ordering::AcqRel);
+        self.descriptor.pin_changed();
         MemoryResourcePin { binding: self.clone() }
     }
     /// Stable allocation identity, independent of the device address or view.
@@ -260,6 +279,7 @@ impl Clone for MemoryResourcePin {
 impl Drop for MemoryResourcePin {
     fn drop(&mut self) {
         self.binding.descriptor.pins.fetch_sub(1, core::sync::atomic::Ordering::AcqRel);
+        self.binding.descriptor.pin_changed();
     }
 }
 
