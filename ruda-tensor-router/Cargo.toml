@@ -95,6 +95,6 @@ features = ["rt", "macros", "sync", "time"]
 [dependencies.ruccl]
 package = "ruCCL"
 path = "../ruCCL"
-version = "0.21.57"
+version = "0.21.58"
 optional = true
 default-features = false
