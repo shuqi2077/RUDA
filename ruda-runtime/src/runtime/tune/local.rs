@@ -8,17 +8,17 @@ use core::{
     hash::Hash,
 };
 use hashbrown::HashMap;
-use spin::{Mutex, RwLock};
+use spin::RwLock;
 
 type Sets = RwLock<Option<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>>;
 
 /// A local tuner allows to create a tuner for a specific key that can be different from the server
 /// key.
 pub struct LocalTuner<AK: AutotuneKey, ID> {
-    state: Mutex<Option<HashMap<ID, Arc<Tuner<AK>>>>>,
+    state: RwLock<Option<HashMap<ID, Arc<Tuner<AK>>>>>,
     name: &'static str,
     sets: Sets,
-    device_sets: Mutex<Option<HashMap<ID, Arc<Sets>>>>,
+    device_sets: RwLock<Option<HashMap<ID, Arc<Sets>>>>,
 }
 
 /// Create a local tuner with the provided name.
@@ -42,10 +42,10 @@ where
     /// Create a new local tuner.
     pub const fn new(name: &'static str) -> Self {
         Self {
-            state: Mutex::new(None),
+            state: RwLock::new(None),
             name,
             sets: RwLock::new(None),
-            device_sets: Mutex::new(None),
+            device_sets: RwLock::new(None),
         }
     }
 
@@ -69,8 +69,9 @@ where
         I: TuneInputs,
         Out: AutotuneOutput,
     {
-        let sets = {
-            let mut devices = self.device_sets.lock();
+        let existing = self.device_sets.read().as_ref().and_then(|devices| devices.get(id)).cloned();
+        let sets = existing.unwrap_or_else(|| {
+            let mut devices = self.device_sets.write();
             let devices = devices.get_or_insert_with(HashMap::new);
             match devices.get(id) {
                 Some(sets) => sets.clone(),
@@ -78,7 +79,7 @@ where
                     .or_insert_with(|| Arc::new(RwLock::new(None)))
                     .clone(),
             }
-        };
+        });
         Self::init_set(&sets, init_set)
     }
 
@@ -127,7 +128,7 @@ where
 
     /// Clear the autotune state.
     pub fn clear(&self) {
-        if let Some(s) = self.state.lock().as_mut() {
+        if let Some(s) = self.state.write().as_mut() {
             s.clear()
         }
     }
@@ -172,8 +173,9 @@ where
         }
         let key = operations.generate_key(&inputs);
 
-        let tuner = {
-            let mut state = self.state.lock();
+        let existing = self.state.read().as_ref().and_then(|state| state.get(id)).cloned();
+        let tuner = existing.unwrap_or_else(|| {
+            let mut state = self.state.write();
             let state = state.get_or_insert_with(HashMap::new);
             match state.get(id) {
                 Some(tuner) => tuner.clone(),
@@ -184,7 +186,7 @@ where
                     })
                     .clone(),
             }
-        };
+        });
 
         // First, check for a cache hit under a read lock.
         if let TuneCacheResult::Hit { fastest_index } = tuner.fastest(&key) {
