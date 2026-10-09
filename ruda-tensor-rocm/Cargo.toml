@@ -52,7 +52,7 @@ optional = true
 
 [dependencies.ruda-driver-hip]
 path = "../ruda-driver-hip"
-version = "0.1.70"
+version = "0.1.71"
 default-features = false
 
 [dependencies.ruda-kernel]
