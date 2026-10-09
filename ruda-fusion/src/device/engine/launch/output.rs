@@ -40,13 +40,13 @@ struct OutputSorted<'a> {
 }
 
 #[derive(Debug)]
-enum OutputKind {
+enum OutputKind<'a> {
     Normal,
     Inplace {
         /// The position in the potential inplace vector
         input_pos: usize,
     },
-    Transform(TensorView),
+    Transform(&'a TensorView),
 }
 
 impl<'a, R: Runtime> OutputPlanner<'a, R> {
@@ -145,7 +145,7 @@ impl<'a, R: Runtime> OutputPlanner<'a, R> {
                         output,
                         tensor_global,
                         strides,
-                        original,
+                        *original,
                         block_idx,
                     );
                 }
@@ -157,8 +157,8 @@ impl<'a, R: Runtime> OutputPlanner<'a, R> {
                         plan,
                         output,
                         tensor_global,
-                        original,
-                        dims,
+                        *original,
+                        *dims,
                         block_idx,
                     );
                 }
@@ -326,7 +326,7 @@ impl<'a, R: Runtime> OutputPlanner<'a, R> {
         tensor_global: &TensorIr,
         output: &OutputSorted,
         strides: &[usize],
-    ) -> (OutputKind, usize) {
+    ) -> (OutputKind<'a>, usize) {
         let mut block_idx = None;
         for (i, block) in plan.blocks.iter().enumerate() {
             if block.writes.contains_key(&output.tensor_relative.id) {
@@ -340,7 +340,7 @@ impl<'a, R: Runtime> OutputPlanner<'a, R> {
             TensorView::Reshape { reshaped, .. } => reshaped == &output.tensor_relative.id,
             TensorView::SwapDims { swapped, .. } => swapped == &output.tensor_relative.id,
         }) {
-            return (OutputKind::Transform(transform.clone()), block_idx);
+            return (OutputKind::Transform(transform), block_idx);
         }
 
         let block = &plan.blocks[block_idx];

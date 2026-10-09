@@ -132,18 +132,16 @@ impl<'a, R: Runtime> InputPlanner<'a, R> {
             .inputs_unhandled
             .contains(&tensor_relative.id)
         {
-            let mut is_a_view = false;
             // For each view we try to see if it's not possible to set it as a reference input.
             for view in self.resources.views.iter() {
                 for (block_plan, block) in plan.blocks.iter_mut().zip(self.blocks) {
-                    is_a_view = is_a_view
-                        || Self::analyze_view(pos, tensor_relative, block, block_plan, view);
+                    if Self::analyze_view(pos, tensor_relative, block, block_plan, view) {
+                        return;
+                    }
                 }
             }
 
-            if !is_a_view {
-                self.analyze_normal(plan, pos, tensor_relative, handle);
-            }
+            self.analyze_normal(plan, pos, tensor_relative, handle);
         }
     }
 
