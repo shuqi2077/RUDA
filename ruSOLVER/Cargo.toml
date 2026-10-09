@@ -22,7 +22,7 @@ ruccl = { version = "0.21.54", package = "ruCCL", path = "../ruCCL", default-fea
 rusparse = { version = "0.1.74", package = "ruSPARSE", path = "../ruSPARSE", default-features = false, optional = true }
 ruda-core = { version = "0.1.6", path = "../ruda-core", default-features = false, features = ["std", "tensor-host-data"], optional = true }
 ruda-kernel = { version = "0.1.26", path = "../ruda-kernel", default-features = false, features = ["frontend-std", "library", "device-tensor"], optional = true }
-ruda-driver-cuda = { version = "0.1.74", path = "../ruda-driver-cuda", features = ["direct-ptx"], optional = true }
+ruda-driver-cuda = { version = "0.1.75", path = "../ruda-driver-cuda", features = ["direct-ptx"], optional = true }
 
 [lints.rust]
 unsafe_code = "deny"
