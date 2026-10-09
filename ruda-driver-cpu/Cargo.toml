@@ -131,7 +131,7 @@ features = [ "runtime", "runtime-channel-mutex", "runtime-std", "runtime-storage
 
 [dependencies.ruda-kernel]
 path = "../ruda-kernel"
-version = "0.1.18"
+version = "0.1.19"
 default-features = false
 features = [ "frontend", "frontend-std", "library", "lowering-mlir",]
 
