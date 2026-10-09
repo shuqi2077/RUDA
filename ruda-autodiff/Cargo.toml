@@ -64,7 +64,7 @@ path = "src/lib.rs"
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
-version = "0.21.47"
+version = "0.21.48"
 default-features = false
 features = ["api"]
 
