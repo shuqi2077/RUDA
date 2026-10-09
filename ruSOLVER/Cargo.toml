@@ -18,7 +18,7 @@ collective = ["dep:ruccl"]
 cuda = ["tensor", "dep:ruda-driver-cuda"]
 
 [dependencies]
-ruccl = { version = "0.21.59", package = "ruCCL", path = "../ruCCL", default-features = false, optional = true }
+ruccl = { version = "0.21.60", package = "ruCCL", path = "../ruCCL", default-features = false, optional = true }
 rusparse = { version = "0.1.80", package = "ruSPARSE", path = "../ruSPARSE", default-features = false, optional = true }
 ruda-core = { version = "0.1.6", path = "../ruda-core", default-features = false, features = ["std", "tensor-host-data"], optional = true }
 ruda-kernel = { version = "0.1.31", path = "../ruda-kernel", default-features = false, features = ["frontend-std", "library", "device-tensor"], optional = true }
