@@ -286,6 +286,15 @@ impl TraceFuser {
         FuseArg::Scalar(new_index, precision)
     }
 
+    pub(crate) fn score(&self, scoring: &crate::device::engine::scoring::Scoring) -> u64 {
+        scoring.evaluate_builder(
+            self.blocks_previous
+                .iter()
+                .chain(core::iter::once(&self.block_current)),
+            &self.resources,
+        )
+    }
+
     /// Finish fusing and returns the created trace.
     pub fn finish(&mut self, shape_ref: Shape) -> FuseTrace {
         let mut resources = self.resources.clone();

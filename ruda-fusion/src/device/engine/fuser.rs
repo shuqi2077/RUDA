@@ -32,6 +32,7 @@ pub(crate) struct TraceOperationFuser {
     scoring: Scoring,
     pub(crate) settings: FuseSettings,
     pub(crate) current_output_shape: Shape,
+    reference_fixed: bool,
     status: FuserStatus,
     pub(crate) num_ops: usize,
     pub(crate) num_views: usize,
@@ -58,15 +59,26 @@ impl TraceOperationFuser {
         });
     }
 
-    /// Checks if the [operation](OperationIr) can be fused with the current fuser.
-    pub(crate) fn can_fuse(&self, op: &OperationIr) -> bool {
+    fn try_fused(&self, op: &OperationIr) -> Option<Self> {
         let len_previous = self.len();
         let mut fuser_cloned = self.clone();
 
         fuser_cloned.fuse(op);
         let len_after = fuser_cloned.len();
 
-        len_after > len_previous
+        (len_after > len_previous).then_some(fuser_cloned)
+    }
+
+    pub(crate) fn fuse_pair(first: &mut Self, second: &mut Self, op: &OperationIr) -> bool {
+        let Some(first_fused) = first.try_fused(op) else {
+            return false;
+        };
+        let Some(second_fused) = second.try_fused(op) else {
+            return false;
+        };
+        *first = first_fused;
+        *second = second_fused;
+        true
     }
 }
 
@@ -159,6 +171,7 @@ impl OperationFuser<FuseTrace> for TraceOperationFuser {
         self.status = FuserStatus::Open;
         self.fuser = TryTraceFuser::new(self.max_bindings, self.settings);
         self.current_output_shape = Shape::new([]);
+        self.reference_fixed = false;
     }
 
     fn status(&self) -> FuserStatus {
@@ -167,9 +180,7 @@ impl OperationFuser<FuseTrace> for TraceOperationFuser {
 
     fn properties(&self) -> FuserProperties {
         let ready = self.num_ops > 0;
-        let score = self
-            .scoring
-            .evaluate(&self.fuser.clone().finish(self.current_output_shape.clone()));
+        let score = self.fuser.fuser.score(&self.scoring);
 
         FuserProperties { ready, score }
     }
@@ -190,6 +201,7 @@ impl TraceOperationFuser {
             num_views: 0,
             max_bindings,
             current_output_shape: Shape::new([]),
+            reference_fixed: false,
             status: FuserStatus::Open,
         }
     }
@@ -261,6 +273,7 @@ impl TraceOperationFuser {
         let block_pos = self.fuser.fuser.num_previous_blocks();
         let current_output_shape =
             core::mem::replace(&mut self.current_output_shape, Shape::new([]));
+        self.reference_fixed = false;
 
         self.fuser.fuser.next_block(current_output_shape, settings);
 
@@ -389,7 +402,7 @@ impl TraceOperationFuser {
                 })
             }
             BaseOperationIr::Select(desc) => {
-                if !self.output_is_compatible(&desc.out) {
+                if !self.output_is_reference(&desc.out) {
                     return false;
                 }
 
@@ -724,6 +737,14 @@ impl TraceOperationFuser {
         })
     }
 
+    fn output_is_reference(&mut self, out: &TensorIr) -> bool {
+        if !self.output_is_compatible(out) || self.current_output_shape != out.shape {
+            return false;
+        }
+        self.reference_fixed = true;
+        true
+    }
+
     fn output_is_compatible(&mut self, out: &TensorIr) -> bool {
         if self.current_output_shape.is_empty() {
             self.current_output_shape.clone_from(&out.shape);
@@ -737,7 +758,7 @@ impl TraceOperationFuser {
             return false;
         }
 
-        let mut updated = self.current_output_shape.clone();
+        let mut output_is_reference = true;
         let mut should_update = false;
 
         #[allow(clippy::needless_range_loop)]
@@ -756,13 +777,13 @@ impl TraceOperationFuser {
 
             // Broadcasted on new dim.
             if new == 0 {
+                output_is_reference = false;
                 continue;
             }
 
             // Broadcasted on curr dim - update reference output shape.
             if curr == 0 && self.settings.output_shape_updates {
                 should_update = true;
-                updated[i] = new;
                 continue;
             }
 
@@ -771,7 +792,7 @@ impl TraceOperationFuser {
 
         if should_update {
             // For now forced to have exact shape.
-            if updated != out.shape {
+            if self.reference_fixed || !output_is_reference {
                 return false;
             }
 

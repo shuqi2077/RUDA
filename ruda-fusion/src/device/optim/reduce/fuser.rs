@@ -158,35 +158,17 @@ impl<R: Runtime> ReduceFuser<R> {
     }
 
     fn on_elemwise_read(&mut self, operation: &OperationIr) {
-        let can_register =
-            self.fuser.can_fuse(operation) && self.fuser_read_fallback.can_fuse(operation);
-
-        match can_register {
-            true => {
-                self.fuser.fuse(operation);
-                self.fuser_read_fallback.fuse(operation);
-            }
-            false => {
-                self.fuser.close();
-                self.fuser_read_fallback.close();
-            }
-        };
+        if !TraceOperationFuser::fuse_pair(&mut self.fuser, &mut self.fuser_read_fallback, operation) {
+            self.fuser.close();
+            self.fuser_read_fallback.close();
+        }
     }
 
     fn on_elemwise_write(&mut self, operation: &OperationIr) {
-        let can_register =
-            self.fuser.can_fuse(operation) && self.fuser_write_fallback.can_fuse(operation);
-
-        match can_register {
-            true => {
-                self.fuser.fuse(operation);
-                self.fuser_write_fallback.fuse(operation);
-            }
-            false => {
-                self.fuser.close();
-                self.fuser_write_fallback.close();
-            }
-        };
+        if !TraceOperationFuser::fuse_pair(&mut self.fuser, &mut self.fuser_write_fallback, operation) {
+            self.fuser.close();
+            self.fuser_write_fallback.close();
+        }
     }
 }
 

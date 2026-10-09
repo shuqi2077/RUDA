@@ -96,19 +96,10 @@ impl<R: Runtime> OperationFuser<RudaOptimization<R>> for MatmulFuser<R> {
                 self.fuser_fallback.close();
             }
         } else {
-            let can_register =
-                self.fuser.can_fuse(operation) && self.fuser_fallback.can_fuse(operation);
-
-            match can_register {
-                true => {
-                    self.fuser.fuse(operation);
-                    self.fuser_fallback.fuse(operation);
-                }
-                false => {
-                    self.fuser.close();
-                    self.fuser_fallback.close();
-                }
-            };
+            if !TraceOperationFuser::fuse_pair(&mut self.fuser, &mut self.fuser_fallback, operation) {
+                self.fuser.close();
+                self.fuser_fallback.close();
+            }
         }
     }
 

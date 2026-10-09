@@ -462,13 +462,47 @@ impl FuseBlockBuilder {
         buffers: &mut Vec<TensorId>,
         written: &mut Vec<TensorId>,
     ) -> usize {
+        self.tensor_write_ids(resources, buffers, written);
+        written.len()
+    }
+
+    pub(crate) fn io_for_scoring(
+        &self,
+    ) -> (
+        impl Iterator<Item = &[FuseOp]>,
+        impl Iterator<Item = &[FuseOp]>,
+    ) {
+        (
+            self.reads.values().map(Vec::as_slice),
+            self.writes.values().map(Vec::as_slice),
+        )
+    }
+
+    pub(crate) fn tensor_local_write_count(
+        &self,
+        resources: &FuseResources,
+        buffers: &mut Vec<TensorId>,
+        written: &mut Vec<TensorId>,
+    ) -> usize {
+        self.tensor_write_ids(resources, buffers, written);
+        written
+            .iter()
+            .filter(|&&id| self.locals.get_any_precision(id).is_some())
+            .count()
+    }
+
+    fn tensor_write_ids(
+        &self,
+        resources: &FuseResources,
+        buffers: &mut Vec<TensorId>,
+        written: &mut Vec<TensorId>,
+    ) {
         written.clear();
         for (tensor, _) in self.tensor_write_candidates(resources, buffers) {
             if !written.contains(&tensor.id) {
                 written.push(tensor.id);
             }
         }
-        written.len()
     }
 
     fn tensor_write_candidates<'a>(

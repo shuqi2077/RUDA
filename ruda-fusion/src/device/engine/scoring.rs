@@ -1,8 +1,9 @@
 use crate::device::engine::{
     codegen::ir::{FuseArg, FuseOp, UnaryFuseArgs},
-    trace::FuseTrace,
+    trace::{FuseResources, FuseTrace, block::FuseBlockBuilder},
 };
 use ruda_tensor::graph::OperationIr;
+use std::vec::Vec;
 
 #[derive(Debug, Clone, Default)]
 /// Tracks and evaluates the efficiency of operation fusion.
@@ -49,6 +50,33 @@ impl Scoring {
             }
         }
 
+        self.calculate_score(num_reads_fused, num_writes_fused, num_penalty)
+    }
+
+    pub(crate) fn evaluate_builder<'a>(
+        &self,
+        blocks: impl Iterator<Item = &'a FuseBlockBuilder>,
+        resources: &FuseResources,
+    ) -> u64 {
+        let mut num_reads_fused = 0;
+        let mut num_writes_fused = 0;
+        let mut num_penalty = 0;
+        let mut buffers = Vec::new();
+        let mut written = Vec::new();
+        for block in blocks {
+            let (reads, writes) = block.io_for_scoring();
+            for ops in reads {
+                let (count, penalty) = self.count_fused_io(ops, |args| &args.input);
+                num_reads_fused += count;
+                num_penalty += penalty;
+            }
+            for ops in writes {
+                let (count, penalty) = self.count_fused_io(ops, |args| &args.out);
+                num_writes_fused += count;
+                num_penalty += penalty;
+            }
+            num_writes_fused += block.tensor_local_write_count(resources, &mut buffers, &mut written);
+        }
         self.calculate_score(num_reads_fused, num_writes_fused, num_penalty)
     }
 
