@@ -5781,7 +5781,7 @@ dependencies = [
 
 [[package]]
 name = "ruda-kernel"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "bitflags",
  "bytemuck",
