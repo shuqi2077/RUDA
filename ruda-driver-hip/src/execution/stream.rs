@@ -70,12 +70,11 @@ impl EventStreamBackend for HipStreamBackend {
             self.logger.clone(),
             MemoryManagementOptions::new("Main GPU Memory"),
         );
-        // We use the same page size and memory pools configuration for CPU pinned memory, since we
-        // expect the CPU to have at least the same amount of RAM as GPU memory.
-        let host_memory_config = match &self.mem_config {
-            #[cfg(not(exclusive_memory_only))]
-            MemoryConfiguration::Adaptive => MemoryConfiguration::default(),
-            _ => self.mem_config.clone(),
+        // Pinned host buffers keep fixed addresses even when GPU memory is adaptive.
+        let host_memory_config = if self.mem_config.is_adaptive() {
+            MemoryConfiguration::default()
+        } else {
+            self.mem_config.clone()
         };
         let memory_management_cpu = MemoryManagement::from_configuration(
             PinnedMemoryStorage::new(stream),

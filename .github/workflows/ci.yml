@@ -45,6 +45,7 @@ jobs:
                 cargo check --locked -p ruda --no-default-features --features "$features" --lib --test facade --example vector-add
                 cargo check --locked -p ruda-facade-consumer --features "$features"
               done
+              cargo check --locked -p ruda --no-default-features --features cuda,hip,wgpu,runtime-exclusive-memory-only --lib
           - name: v36 native and CUDA test compilation
             key: v36-native
             command: |

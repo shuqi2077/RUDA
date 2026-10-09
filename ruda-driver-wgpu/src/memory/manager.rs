@@ -42,10 +42,10 @@ impl WgpuMemManager {
                 | BufferUsages::COPY_DST
                 | BufferUsages::INDIRECT,
         );
-        let main_storage = match &memory_config {
-            #[cfg(not(exclusive_memory_only))]
-            MemoryConfiguration::Adaptive => main_storage.with_relocation_queue(queue),
-            _ => main_storage,
+        let main_storage = if memory_config.is_adaptive() {
+            main_storage.with_relocation_queue(queue)
+        } else {
+            main_storage
         };
         let memory_main = MemoryManagement::from_configuration(
             main_storage,

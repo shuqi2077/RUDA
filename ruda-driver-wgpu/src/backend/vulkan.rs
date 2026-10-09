@@ -242,11 +242,10 @@ fn register_features(
         let mut heaps = memory_props.memory_heaps.iter().take(num_heaps);
         if let Some(heap) = heaps.find(|it| it.flags.contains(MemoryHeapFlags::DEVICE_LOCAL)) {
             let heap_size = heap.size;
-            let max_page_size = match memory_config {
-                #[cfg(not(exclusive_memory_only))]
-                MemoryConfiguration::SubSlices | MemoryConfiguration::Adaptive => heap_size / 4,
-                MemoryConfiguration::ExclusivePages => heap_size,
-                MemoryConfiguration::Custom { .. } => heap_size,
+            let max_page_size = if memory_config.uses_subslices() {
+                heap_size / 4
+            } else {
+                heap_size
             };
             props.memory.max_page_size = max_page_size;
         }

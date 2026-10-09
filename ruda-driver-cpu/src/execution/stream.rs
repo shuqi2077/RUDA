@@ -42,13 +42,11 @@ impl CpuStream {
         logger: Arc<ServerLogger>,
     ) -> Self {
         let queue = CpuExecutionQueue::get(logger.clone());
-        let storage = match &memory_config {
-            #[cfg(not(exclusive_memory_only))]
-            MemoryConfiguration::Adaptive => {
-                let relocation_queue = queue.clone();
-                BytesStorage::default().with_relocation_barrier(move || relocation_queue.flush())
-            }
-            _ => BytesStorage::default(),
+        let storage = if memory_config.is_adaptive() {
+            let relocation_queue = queue.clone();
+            BytesStorage::default().with_relocation_barrier(move || relocation_queue.flush())
+        } else {
+            BytesStorage::default()
         };
         let memory_management = MemoryManagement::from_configuration(
             storage,

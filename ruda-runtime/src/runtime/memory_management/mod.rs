@@ -78,3 +78,22 @@ impl Default for MemoryConfiguration {
         }
     }
 }
+
+impl MemoryConfiguration {
+    /// Whether workload-sized relocatable pages are explicitly enabled.
+    pub fn is_adaptive(&self) -> bool {
+        #[cfg(not(exclusive_memory_only))]
+        { matches!(self, Self::Adaptive) }
+        #[cfg(exclusive_memory_only)]
+        { false }
+    }
+
+    /// Whether this preset uses sliced pages rather than a whole device heap.
+    /// Custom pools retain their explicitly supplied page sizes.
+    pub fn uses_subslices(&self) -> bool {
+        #[cfg(not(exclusive_memory_only))]
+        { matches!(self, Self::SubSlices | Self::Adaptive) }
+        #[cfg(exclusive_memory_only)]
+        { false }
+    }
+}
