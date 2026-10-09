@@ -50,14 +50,14 @@ impl<O: NumOperations> Processor<O> {
         }
 
         if matches!(mode, ExecutionMode::Sync)
-            && let Some(plans) = store.find_sync_sequence(segment.operations()).map(|plans| plans.to_vec())
+            && let Some(plans) = store.find_sync_sequence(segment.operations())
         {
             let num_plans = plans.len();
             let num_ops = segment.operations().len();
             log_fusion(FusionLogLevel::Full, move || {
                 format!("[plan] cache hit: execute sync sequence ({num_plans} plans, {num_ops} ops)")
             });
-            for id in plans {
+            for id in plans.iter().copied() {
                 store.add_trigger(id, ExecutionTrigger::OnSync);
                 segment.execute(id, store);
                 self.reset(store, segment.operations());
