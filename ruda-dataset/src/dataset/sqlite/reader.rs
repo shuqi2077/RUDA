@@ -4,7 +4,10 @@ use std::{
 };
 
 use r2d2::Pool;
-use r2d2_sqlite::{SqliteConnectionManager, rusqlite::OptionalExtension};
+use r2d2_sqlite::{
+    SqliteConnectionManager,
+    rusqlite::{OptionalExtension, Statement},
+};
 use serde::de::DeserializeOwned;
 use serde_rusqlite::{columns_from_statement, from_row_with_columns};
 
@@ -102,20 +105,13 @@ impl<I> SqliteDataset<I> {
     pub fn split(&self) -> &str {
         self.split.as_str()
     }
-}
 
-impl<I> Dataset<I> for SqliteDataset<I>
-where
-    I: Clone + Send + Sync + DeserializeOwned,
-{
-    /// Get an item from the dataset.
-    fn get(&self, index: usize) -> Option<I> {
+    fn read_item(&self, statement: &mut Statement<'_>, index: usize) -> Option<I>
+    where
+        I: DeserializeOwned,
+    {
         // Row ids start with 1 (one) and index starts with 0 (zero)
         let row_id = index + 1;
-
-        // Get a connection from the pool
-        let connection = self.conn_pool.get().unwrap();
-        let mut statement = connection.prepare(self.select_statement.as_str()).unwrap();
 
         if self.row_serialized {
             // Fetch with a single column `item` and deserialize it with MessagePack
@@ -139,6 +135,30 @@ where
                 .optional() //Converts Error (not found) to None
                 .unwrap()
         }
+    }
+}
+
+impl<I> Dataset<I> for SqliteDataset<I>
+where
+    I: Clone + Send + Sync + DeserializeOwned,
+{
+    /// Get an item from the dataset.
+    fn get(&self, index: usize) -> Option<I> {
+        let connection = self.conn_pool.get().unwrap();
+        let mut statement = connection.prepare(self.select_statement.as_str()).unwrap();
+        self.read_item(&mut statement, index)
+    }
+
+    fn get_many(&self, indices: &[usize]) -> Option<Vec<I>> {
+        if indices.is_empty() {
+            return Some(Vec::new());
+        }
+        let connection = self.conn_pool.get().unwrap();
+        let mut statement = connection.prepare(self.select_statement.as_str()).unwrap();
+        indices
+            .iter()
+            .map(|&index| self.read_item(&mut statement, index))
+            .collect()
     }
 
     /// Return the number of rows in the dataset.

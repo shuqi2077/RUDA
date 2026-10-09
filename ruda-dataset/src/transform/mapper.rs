@@ -27,6 +27,14 @@ where
         item.map(|item| self.mapper.map(&item))
     }
 
+    fn get_many(&self, indices: &[usize]) -> Option<Vec<O>> {
+        let items = self.dataset.get_many(indices)?;
+        if items.len() != indices.len() {
+            return None;
+        }
+        Some(items.iter().map(|item| self.mapper.map(item)).collect())
+    }
+
     fn len(&self) -> usize {
         self.dataset.len()
     }

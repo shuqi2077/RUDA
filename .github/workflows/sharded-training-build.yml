@@ -83,6 +83,7 @@ jobs:
           cargo test --locked -p ruda-fusion --features distributed,device-stack-autotune,device-autotune-checks,ruda-test-runtime/cuda --lib device::engine::scoring::tests
           cargo test --locked -p ruda-model --features dataset --lib data::dataloader::
           cargo test --locked -p ruda-dataset --lib transform::
+          cargo test --locked -p ruda-dataset --lib dataset::sqlite::tests
       - name: Compile native generation continuation
         run: cargo check --locked -p ruda-llm --lib
       - name: Compile native FFT sparse and solver tuning
