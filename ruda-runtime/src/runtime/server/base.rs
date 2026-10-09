@@ -389,6 +389,12 @@ where
     /// Ask the server to release memory that it can release.
     fn memory_cleanup(&mut self, stream_id: StreamId);
 
+    /// Explicitly compact eligible allocations and release empty pages.
+    /// Backends must submit pending address users and confirm relocation completion.
+    fn memory_compact(&mut self, _stream_id: StreamId) -> Result<(), ServerError> {
+        Err(IoError::UnsupportedIoOperation { backtrace: BackTrace::capture() }.into())
+    }
+
     /// Enable collecting timestamps.
     fn start_profile(&mut self, stream_id: StreamId) -> Result<ProfilingToken, ServerError>;
 

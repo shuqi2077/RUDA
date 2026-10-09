@@ -158,6 +158,14 @@ impl AdaptiveState {
         self.outdated.retain(|&index| !matches!(&pools[index], DynamicPool::Sliced(pool) if pool.is_empty()));
     }
 
+    pub(super) fn compact<Storage: ComputeStorage>(
+        &mut self, pools: &mut [DynamicPool], storage: &mut Storage,
+    ) -> Result<(), IoError> {
+        self.cleanup_outdated(pools, storage);
+        self.relocate(pools, storage, TargetRoom::Held)?;
+        Ok(())
+    }
+
     fn outdated_pages(&self, pools: &[DynamicPool]) -> usize {
         self.outdated.iter().map(|&index| match &pools[index] {
             DynamicPool::Sliced(pool) => pool.page_count(), _ => unreachable!(),

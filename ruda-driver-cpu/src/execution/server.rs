@@ -185,6 +185,14 @@ impl ComputeServer for CpuServer {
         stream.memory_management.cleanup(true)
     }
 
+    fn memory_compact(&mut self, stream_id: StreamId) -> Result<(), ServerError> {
+        self.scheduler.execute_streams(vec![stream_id]);
+        let stream = self.scheduler.stream(&stream_id);
+        stream.flush(StreamErrorMode { ignore: false, flush: false })?;
+        stream.memory_management.compact()?;
+        Ok(())
+    }
+
     unsafe fn launch(
         &mut self,
         kernel: Self::Kernel,

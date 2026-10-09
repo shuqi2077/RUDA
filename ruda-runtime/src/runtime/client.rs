@@ -919,6 +919,16 @@ impl<R: Runtime> ComputeClient<R> {
             .submit(move |server| server.memory_cleanup(stream_id));
     }
 
+    /// Explicitly compact adaptive memory into already held pages and release empty pages.
+    /// Blocks until relocation copies complete and propagates errors. Pinned addresses stay fixed.
+    /// Call outside graph capture. Fixed pools only release empty pages; no release is guaranteed.
+    pub fn memory_compact(&self) -> Result<(), ServerError> {
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| server.memory_compact(stream_id))
+            .unwrap()
+    }
+
     /// Measure the execution time of some inner operations.
     #[track_caller]
     pub fn profile<O: Send + 'static>(

@@ -147,6 +147,10 @@ impl WgpuMemManager {
         self.memory_pool.cleanup(explicit);
     }
 
+    pub(crate) fn memory_compact(&mut self) -> Result<(), IoError> {
+        self.memory_pool.compact()
+    }
+
     pub(crate) fn mode(&mut self, mode: MemoryAllocationMode) {
         self.memory_pool.mode(mode);
     }

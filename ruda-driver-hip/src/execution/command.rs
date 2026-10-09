@@ -70,6 +70,10 @@ impl<'a> Command<'a> {
         self.streams.current().memory_management_gpu.cleanup(true)
     }
 
+    pub fn memory_compact(&mut self) -> Result<(), IoError> {
+        self.streams.current().memory_management_gpu.compact()
+    }
+
     /// Set the [`MemoryAllocationMode`] for the current stream.
     ///
     /// # Parameters

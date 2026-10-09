@@ -1,4 +1,5 @@
 use std::{
+    fmt::Write,
     marker::PhantomData,
     path::{Path, PathBuf},
 };
@@ -6,7 +7,7 @@ use std::{
 use r2d2::Pool;
 use r2d2_sqlite::{
     SqliteConnectionManager,
-    rusqlite::{OptionalExtension, Statement},
+    rusqlite::{OptionalExtension, Row, Statement, limits::Limit, params_from_iter},
 };
 use serde::de::DeserializeOwned;
 use serde_rusqlite::{columns_from_statement, from_row_with_columns};
@@ -113,27 +114,22 @@ impl<I> SqliteDataset<I> {
         // Row ids start with 1 (one) and index starts with 0 (zero)
         let row_id = index + 1;
 
+        statement
+            .query_row([row_id], |row| Ok(self.item_from_row(row)))
+            .optional()
+            .unwrap()
+    }
+
+    fn item_from_row(&self, row: &Row<'_>) -> I
+    where
+        I: DeserializeOwned,
+    {
         if self.row_serialized {
             // Fetch with a single column `item` and deserialize it with MessagePack
-            statement
-                .query_row([row_id], |row| {
-                    // Deserialize item (blob) with MessagePack (rmp-serde)
-                    Ok(
-                        rmp_serde::from_slice::<I>(row.get_ref(0).unwrap().as_blob().unwrap())
-                            .unwrap(),
-                    )
-                })
-                .optional() //Converts Error (not found) to None
-                .unwrap()
+            rmp_serde::from_slice::<I>(row.get_ref(0).unwrap().as_blob().unwrap()).unwrap()
         } else {
             // Fetch a row with multiple columns and deserialize it serde_rusqlite
-            statement
-                .query_row([row_id], |row| {
-                    // Deserialize the row with serde_rusqlite
-                    Ok(from_row_with_columns::<I>(row, &self.columns).unwrap())
-                })
-                .optional() //Converts Error (not found) to None
-                .unwrap()
+            from_row_with_columns::<I>(row, &self.columns).unwrap()
         }
     }
 }
@@ -145,7 +141,9 @@ where
     /// Get an item from the dataset.
     fn get(&self, index: usize) -> Option<I> {
         let connection = self.conn_pool.get().unwrap();
-        let mut statement = connection.prepare(self.select_statement.as_str()).unwrap();
+        let mut statement = connection
+            .prepare_cached(self.select_statement.as_str())
+            .unwrap();
         self.read_item(&mut statement, index)
     }
 
@@ -154,11 +152,74 @@ where
             return Some(Vec::new());
         }
         let connection = self.conn_pool.get().unwrap();
-        let mut statement = connection.prepare(self.select_statement.as_str()).unwrap();
-        indices
-            .iter()
-            .map(|&index| self.read_item(&mut statement, index))
-            .collect()
+        let variable_limit = connection.limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER).unwrap() as usize;
+        let sql_limit = (connection.limit(Limit::SQLITE_LIMIT_SQL_LENGTH).unwrap() as usize)
+            .min(i32::MAX as usize - 1);
+        let prefix = "WITH req(row_id, ord) AS (VALUES ";
+        let selection = if self.row_serialized { "t.item" } else { "t.*" };
+        let suffix = format!(
+            ") SELECT {selection}, t.row_id FROM req LEFT JOIN {} t ON t.row_id = req.row_id ORDER BY req.ord",
+            self.split,
+        );
+        if variable_limit == 0 || prefix.len() + suffix.len() + 5 > sql_limit {
+            let mut statement = connection
+                .prepare_cached(self.select_statement.as_str())
+                .unwrap();
+            return indices
+                .iter()
+                .map(|&index| self.read_item(&mut statement, index))
+                .collect();
+        }
+
+        let mut items = Vec::with_capacity(indices.len());
+        let mut query = String::new();
+        let mut start = 0;
+        while start < indices.len() {
+            query.clear();
+            query.push_str(prefix);
+            let mut end = start;
+            while end < indices.len() && end - start < variable_limit {
+                let ordinal = end - start;
+                let digits = if ordinal == 0 {
+                    1
+                } else {
+                    ordinal.ilog10() as usize + 1
+                };
+                let comma = usize::from(ordinal != 0);
+                if query.len() + suffix.len() + 4 + digits + comma > sql_limit {
+                    break;
+                }
+                if ordinal != 0 {
+                    query.push(',');
+                }
+                let _ = write!(query, "(?,{ordinal})");
+                end += 1;
+            }
+            query.push_str(&suffix);
+            let mut statement = connection.prepare(&query).unwrap();
+            let present_column = statement.column_count() - 1;
+            let rows = statement
+                .query_map(
+                    params_from_iter(indices[start..end].iter().map(|&index| index + 1)),
+                    |row| {
+                        if row.get::<_, Option<i64>>(present_column)?.is_none() {
+                            Ok(None)
+                        } else {
+                            Ok(Some(self.item_from_row(row)))
+                        }
+                    },
+                )
+                .unwrap();
+            let before = items.len();
+            for row in rows {
+                items.push(row.unwrap()?);
+            }
+            if items.len() - before != end - start {
+                return None;
+            }
+            start = end;
+        }
+        Some(items)
     }
 
     /// Return the number of rows in the dataset.

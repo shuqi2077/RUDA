@@ -407,6 +407,17 @@ impl<Storage: ComputeStorage> MemoryManagement<Storage> {
         }
     }
 
+    /// Compact adaptive allocations into already held pages, then release empty pages.
+    /// Pinned resources stay in place. Fixed pools only release empty pages.
+    /// Relocation errors remain explicit; success does not guarantee pages were freed.
+    pub fn compact(&mut self) -> Result<(), IoError> {
+        if let Some(adaptive) = self.adaptive.as_mut() {
+            adaptive.compact(&mut self.pools, &mut self.storage)?;
+        }
+        self.cleanup(true);
+        Ok(())
+    }
+
     /// Returns the storage from the specified binding
     pub fn get_cursor(&self, binding: ManagedMemoryBinding) -> Result<u64, IoError> {
         let slice = self.find(binding)?;

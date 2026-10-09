@@ -275,6 +275,15 @@ impl ComputeServer for CudaServer {
         };
         command.allocation_mode(mode)
     }
+
+    fn memory_compact(&mut self, stream_id: StreamId) -> Result<(), ServerError> {
+        let mut command = self.command_no_inputs(
+            stream_id,
+            StreamErrorMode { ignore: false, flush: false },
+        )?;
+        command.memory_compact()?;
+        Ok(())
+    }
 }
 
 impl ServerCommunication for CudaServer {

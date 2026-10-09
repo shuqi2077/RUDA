@@ -437,6 +437,14 @@ impl ComputeServer for WgpuServer {
         stream.mem_manage.memory_cleanup(true);
     }
 
+    fn memory_compact(&mut self, stream_id: StreamId) -> Result<(), ServerError> {
+        self.scheduler.execute_streams(vec![stream_id]);
+        let stream = self.scheduler.stream(&stream_id);
+        stream.flush(StreamErrorMode { ignore: false, flush: false })?;
+        stream.mem_manage.memory_compact()?;
+        Ok(())
+    }
+
     fn allocation_mode(&mut self, mode: MemoryAllocationMode, stream_id: StreamId) {
         self.scheduler.execute_streams(vec![stream_id]);
         let stream = self.scheduler.stream(&stream_id);
