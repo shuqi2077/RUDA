@@ -15,7 +15,7 @@ use ruda_kernel::dsl::{
     ir::MemoryDeviceProperties,
     server::{
         Binding, ComputeServer, CopyDescriptor, IoError, KernelArguments, ProfileError,
-        ProfilingToken, ServerCommunication, ServerError, ServerUtilities,
+        ProfilingToken, ServerCommunication, ServerError, ServerUtilities, StreamErrorMode,
     },
     zspace::{Shape, Strides, strides},
 };

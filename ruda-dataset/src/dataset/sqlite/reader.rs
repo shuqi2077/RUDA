@@ -151,6 +151,9 @@ where
         if indices.is_empty() {
             return Some(Vec::new());
         }
+        if indices.len() == 1 {
+            return self.get(indices[0]).map(|item| vec![item]);
+        }
         let connection = self.conn_pool.get().unwrap();
         let variable_limit = connection.limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER).unwrap() as usize;
         let sql_limit = (connection.limit(Limit::SQLITE_LIMIT_SQL_LENGTH).unwrap() as usize)
@@ -161,7 +164,7 @@ where
             ") SELECT {selection}, t.row_id FROM req LEFT JOIN {} t ON t.row_id = req.row_id ORDER BY req.ord",
             self.split,
         );
-        if variable_limit == 0 || prefix.len() + suffix.len() + 5 > sql_limit {
+        if variable_limit <= 1 || prefix.len() + suffix.len() + 5 > sql_limit {
             let mut statement = connection
                 .prepare_cached(self.select_statement.as_str())
                 .unwrap();
