@@ -29,7 +29,7 @@ dirs = ["ruda-runtime/dirs"]
 toml = ["ruda-runtime/toml"]
 
 [dependencies]
-ruda-runtime = { path = "../ruda-runtime", version = "0.1.15", default-features = false }
+ruda-runtime = { path = "../ruda-runtime", version = "0.1.16", default-features = false }
 ruda-kernel = { path = "../ruda-kernel", version = "0.1.25", optional = true }
 ruda-driver-cuda = { path = "../ruda-driver-cuda", version = "0.1.74", optional = true }
 ruda-driver-hip = { path = "../ruda-driver-hip", version = "0.1.74", optional = true }
