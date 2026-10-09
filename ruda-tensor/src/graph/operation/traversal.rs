@@ -1,5 +1,79 @@
 use super::*;
 
+struct OptionalTensors<'a, const N: usize> {
+    tensors: core::array::IntoIter<Option<&'a TensorIr>, N>,
+}
+
+impl<'a, const N: usize> Iterator for OptionalTensors<'a, N> {
+    type Item = &'a TensorIr;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.tensors.find_map(core::convert::identity)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.tensors.as_slice().iter().filter(|tensor| tensor.is_some()).count();
+        (remaining, Some(remaining))
+    }
+}
+
+macro_rules! tensor_iter {
+    ($($fixed:ident: $n:literal),*; $($optional:ident: $m:literal),*) => {
+        enum TensorIter<'a> {
+            Slice(core::slice::Iter<'a, TensorIr>),
+            $($fixed(core::array::IntoIter<&'a TensorIr, $n>),)*
+            $($optional(OptionalTensors<'a, $m>),)*
+        }
+
+        $(impl<'a> From<[&'a TensorIr; $n]> for TensorIter<'a> {
+            fn from(tensors: [&'a TensorIr; $n]) -> Self {
+                Self::$fixed(tensors.into_iter())
+            }
+        })*
+
+        $(impl<'a> From<[Option<&'a TensorIr>; $m]> for TensorIter<'a> {
+            fn from(tensors: [Option<&'a TensorIr>; $m]) -> Self {
+                Self::$optional(OptionalTensors { tensors: tensors.into_iter() })
+            }
+        })*
+
+        impl<'a> Iterator for TensorIter<'a> {
+            type Item = &'a TensorIr;
+
+            #[inline]
+            fn next(&mut self) -> Option<Self::Item> {
+                match self {
+                    Self::Slice(tensors) => tensors.next(),
+                    $(Self::$fixed(tensors) => tensors.next(),)*
+                    $(Self::$optional(tensors) => tensors.next(),)*
+                }
+            }
+
+            #[inline]
+            fn nth(&mut self, n: usize) -> Option<Self::Item> {
+                match self {
+                    Self::Slice(tensors) => tensors.nth(n),
+                    $(Self::$fixed(tensors) => tensors.nth(n),)*
+                    $(Self::$optional(tensors) => tensors.nth(n),)*
+                }
+            }
+
+            fn size_hint(&self) -> (usize, Option<usize>) {
+                match self {
+                    Self::Slice(tensors) => tensors.size_hint(),
+                    $(Self::$fixed(tensors) => tensors.size_hint(),)*
+                    $(Self::$optional(tensors) => tensors.size_hint(),)*
+                }
+            }
+        }
+    };
+}
+
+tensor_iter! {
+    Fixed0: 0, Fixed1: 1, Fixed2: 2, Fixed3: 3, Fixed4: 4, Fixed5: 5, Fixed6: 6;
+    Optional2: 2, Optional3: 3, Optional5: 5
+}
+
 
 impl CustomOpIr {
     /// Create a new custom operation intermediate representation.
@@ -25,12 +99,12 @@ impl CustomOpIr {
         )
     }
 
-    fn inputs(&self) -> Box<dyn Iterator<Item = &TensorIr> + '_> {
-        Box::new(self.inputs.iter())
+    fn inputs(&self) -> TensorIter<'_> {
+        TensorIter::Slice(self.inputs.iter())
     }
 
-    fn outputs(&self) -> Box<dyn Iterator<Item = &TensorIr> + '_> {
-        Box::new(self.outputs.iter())
+    fn outputs(&self) -> TensorIter<'_> {
+        TensorIter::Slice(self.outputs.iter())
     }
 }
 
@@ -106,7 +180,7 @@ impl OperationIr {
             OperationIr::Module(repr) => repr.inputs(),
             OperationIr::Init(repr) => repr.inputs(),
             OperationIr::Custom(repr) => repr.inputs(),
-            OperationIr::Drop(repr) => Box::new([repr].into_iter()),
+            OperationIr::Drop(repr) => TensorIter::from([repr]),
             #[cfg(feature = "graph-distributed")]
             OperationIr::Distributed(repr) => repr.inputs(),
         }
@@ -126,7 +200,7 @@ impl OperationIr {
             OperationIr::Module(repr) => repr.outputs(),
             OperationIr::Init(repr) => repr.outputs(),
             OperationIr::Custom(repr) => repr.outputs(),
-            OperationIr::Drop(_repr) => Box::new([].into_iter()),
+            OperationIr::Drop(_repr) => TensorIter::from([]),
             #[cfg(feature = "graph-distributed")]
             OperationIr::Distributed(repr) => repr.outputs(),
         }
@@ -174,69 +248,69 @@ impl OperationIr {
 }
 
 impl BaseOperationIr {
-    fn inputs(&self) -> Box<dyn Iterator<Item = &TensorIr> + '_> {
+    fn inputs(&self) -> TensorIter<'_> {
         match self {
-            BaseOperationIr::Reshape(repr) => Box::new([&repr.input].into_iter()),
-            BaseOperationIr::SwapDims(repr) => Box::new([&repr.input].into_iter()),
-            BaseOperationIr::Permute(repr) => Box::new([&repr.input].into_iter()),
-            BaseOperationIr::Expand(repr) => Box::new([&repr.input].into_iter()),
-            BaseOperationIr::Flip(repr) => Box::new([&repr.input].into_iter()),
-            BaseOperationIr::Slice(repr) => Box::new([&repr.tensor].into_iter()),
-            BaseOperationIr::SliceAssign(repr) => Box::new([&repr.tensor, &repr.value].into_iter()),
-            BaseOperationIr::Gather(repr) => Box::new([&repr.tensor, &repr.indices].into_iter()),
+            BaseOperationIr::Reshape(repr) => TensorIter::from([&repr.input]),
+            BaseOperationIr::SwapDims(repr) => TensorIter::from([&repr.input]),
+            BaseOperationIr::Permute(repr) => TensorIter::from([&repr.input]),
+            BaseOperationIr::Expand(repr) => TensorIter::from([&repr.input]),
+            BaseOperationIr::Flip(repr) => TensorIter::from([&repr.input]),
+            BaseOperationIr::Slice(repr) => TensorIter::from([&repr.tensor]),
+            BaseOperationIr::SliceAssign(repr) => TensorIter::from([&repr.tensor, &repr.value]),
+            BaseOperationIr::Gather(repr) => TensorIter::from([&repr.tensor, &repr.indices]),
             BaseOperationIr::Scatter(repr) => {
-                Box::new([&repr.tensor, &repr.indices, &repr.value].into_iter())
+                TensorIter::from([&repr.tensor, &repr.indices, &repr.value])
             }
             BaseOperationIr::ScatterNd(repr) => {
-                Box::new([&repr.data, &repr.indices, &repr.values].into_iter())
+                TensorIter::from([&repr.data, &repr.indices, &repr.values])
             }
-            BaseOperationIr::GatherNd(repr) => Box::new([&repr.data, &repr.indices].into_iter()),
-            BaseOperationIr::Select(repr) => Box::new([&repr.tensor, &repr.indices].into_iter()),
+            BaseOperationIr::GatherNd(repr) => TensorIter::from([&repr.data, &repr.indices]),
+            BaseOperationIr::Select(repr) => TensorIter::from([&repr.tensor, &repr.indices]),
             BaseOperationIr::SelectAssign(repr) => {
-                Box::new([&repr.tensor, &repr.indices, &repr.value].into_iter())
+                TensorIter::from([&repr.tensor, &repr.indices, &repr.value])
             }
             BaseOperationIr::MaskWhere(repr) => {
-                Box::new([&repr.tensor, &repr.mask, &repr.value].into_iter())
+                TensorIter::from([&repr.tensor, &repr.mask, &repr.value])
             }
-            BaseOperationIr::MaskFill(repr) => Box::new([&repr.tensor, &repr.mask].into_iter()),
-            BaseOperationIr::Equal(repr) => Box::new([&repr.lhs, &repr.rhs].into_iter()),
-            BaseOperationIr::EqualElem(repr) => Box::new([&repr.lhs].into_iter()),
-            BaseOperationIr::RepeatDim(repr) => Box::new([&repr.tensor].into_iter()),
-            BaseOperationIr::Cat(repr) => Box::new(repr.tensors.iter()),
-            BaseOperationIr::Cast(repr) => Box::new([&repr.input].into_iter()),
-            BaseOperationIr::Unfold(repr) => Box::new([&repr.input].into_iter()),
-            BaseOperationIr::Empty(_repr) => Box::new([].into_iter()),
-            BaseOperationIr::Ones(_repr) => Box::new([].into_iter()),
-            BaseOperationIr::Zeros(_repr) => Box::new([].into_iter()),
+            BaseOperationIr::MaskFill(repr) => TensorIter::from([&repr.tensor, &repr.mask]),
+            BaseOperationIr::Equal(repr) => TensorIter::from([&repr.lhs, &repr.rhs]),
+            BaseOperationIr::EqualElem(repr) => TensorIter::from([&repr.lhs]),
+            BaseOperationIr::RepeatDim(repr) => TensorIter::from([&repr.tensor]),
+            BaseOperationIr::Cat(repr) => TensorIter::Slice(repr.tensors.iter()),
+            BaseOperationIr::Cast(repr) => TensorIter::from([&repr.input]),
+            BaseOperationIr::Unfold(repr) => TensorIter::from([&repr.input]),
+            BaseOperationIr::Empty(_repr) => TensorIter::from([]),
+            BaseOperationIr::Ones(_repr) => TensorIter::from([]),
+            BaseOperationIr::Zeros(_repr) => TensorIter::from([]),
         }
     }
 
-    fn outputs(&self) -> Box<dyn Iterator<Item = &TensorIr> + '_> {
+    fn outputs(&self) -> TensorIter<'_> {
         match self {
-            BaseOperationIr::Reshape(repr) => Box::new([&repr.out].into_iter()),
-            BaseOperationIr::SwapDims(repr) => Box::new([&repr.out].into_iter()),
-            BaseOperationIr::Permute(repr) => Box::new([&repr.out].into_iter()),
-            BaseOperationIr::Expand(repr) => Box::new([&repr.out].into_iter()),
-            BaseOperationIr::Flip(repr) => Box::new([&repr.out].into_iter()),
-            BaseOperationIr::Slice(repr) => Box::new([&repr.out].into_iter()),
-            BaseOperationIr::SliceAssign(repr) => Box::new([&repr.out].into_iter()),
-            BaseOperationIr::Gather(repr) => Box::new([&repr.out].into_iter()),
-            BaseOperationIr::Scatter(repr) => Box::new([&repr.out].into_iter()),
-            BaseOperationIr::ScatterNd(repr) => Box::new([&repr.out].into_iter()),
-            BaseOperationIr::GatherNd(repr) => Box::new([&repr.out].into_iter()),
-            BaseOperationIr::Select(repr) => Box::new([&repr.out].into_iter()),
-            BaseOperationIr::SelectAssign(repr) => Box::new([&repr.out].into_iter()),
-            BaseOperationIr::MaskWhere(repr) => Box::new([&repr.out].into_iter()),
-            BaseOperationIr::MaskFill(repr) => Box::new([&repr.out].into_iter()),
-            BaseOperationIr::Equal(repr) => Box::new([&repr.out].into_iter()),
-            BaseOperationIr::EqualElem(repr) => Box::new([&repr.out].into_iter()),
-            BaseOperationIr::RepeatDim(repr) => Box::new([&repr.out].into_iter()),
-            BaseOperationIr::Cat(repr) => Box::new([&repr.out].into_iter()),
-            BaseOperationIr::Cast(repr) => Box::new([&repr.out].into_iter()),
-            BaseOperationIr::Unfold(repr) => Box::new([&repr.out].into_iter()),
-            BaseOperationIr::Empty(repr) => Box::new([&repr.out].into_iter()),
-            BaseOperationIr::Ones(repr) => Box::new([&repr.out].into_iter()),
-            BaseOperationIr::Zeros(repr) => Box::new([&repr.out].into_iter()),
+            BaseOperationIr::Reshape(repr) => TensorIter::from([&repr.out]),
+            BaseOperationIr::SwapDims(repr) => TensorIter::from([&repr.out]),
+            BaseOperationIr::Permute(repr) => TensorIter::from([&repr.out]),
+            BaseOperationIr::Expand(repr) => TensorIter::from([&repr.out]),
+            BaseOperationIr::Flip(repr) => TensorIter::from([&repr.out]),
+            BaseOperationIr::Slice(repr) => TensorIter::from([&repr.out]),
+            BaseOperationIr::SliceAssign(repr) => TensorIter::from([&repr.out]),
+            BaseOperationIr::Gather(repr) => TensorIter::from([&repr.out]),
+            BaseOperationIr::Scatter(repr) => TensorIter::from([&repr.out]),
+            BaseOperationIr::ScatterNd(repr) => TensorIter::from([&repr.out]),
+            BaseOperationIr::GatherNd(repr) => TensorIter::from([&repr.out]),
+            BaseOperationIr::Select(repr) => TensorIter::from([&repr.out]),
+            BaseOperationIr::SelectAssign(repr) => TensorIter::from([&repr.out]),
+            BaseOperationIr::MaskWhere(repr) => TensorIter::from([&repr.out]),
+            BaseOperationIr::MaskFill(repr) => TensorIter::from([&repr.out]),
+            BaseOperationIr::Equal(repr) => TensorIter::from([&repr.out]),
+            BaseOperationIr::EqualElem(repr) => TensorIter::from([&repr.out]),
+            BaseOperationIr::RepeatDim(repr) => TensorIter::from([&repr.out]),
+            BaseOperationIr::Cat(repr) => TensorIter::from([&repr.out]),
+            BaseOperationIr::Cast(repr) => TensorIter::from([&repr.out]),
+            BaseOperationIr::Unfold(repr) => TensorIter::from([&repr.out]),
+            BaseOperationIr::Empty(repr) => TensorIter::from([&repr.out]),
+            BaseOperationIr::Ones(repr) => TensorIter::from([&repr.out]),
+            BaseOperationIr::Zeros(repr) => TensorIter::from([&repr.out]),
         }
     }
 
@@ -335,109 +409,109 @@ impl BaseOperationIr {
 }
 
 impl NumericOperationIr {
-    fn inputs(&self) -> Box<dyn Iterator<Item = &TensorIr> + '_> {
+    fn inputs(&self) -> TensorIter<'_> {
         match self {
-            NumericOperationIr::Add(repr) => Box::new([&repr.lhs, &repr.rhs].into_iter()),
-            NumericOperationIr::AddScalar(repr) => Box::new([&repr.lhs].into_iter()),
-            NumericOperationIr::Sub(repr) => Box::new([&repr.lhs, &repr.rhs].into_iter()),
-            NumericOperationIr::SubScalar(repr) => Box::new([&repr.lhs].into_iter()),
-            NumericOperationIr::Mul(repr) => Box::new([&repr.lhs, &repr.rhs].into_iter()),
-            NumericOperationIr::MulScalar(repr) => Box::new([&repr.lhs].into_iter()),
-            NumericOperationIr::Div(repr) => Box::new([&repr.lhs, &repr.rhs].into_iter()),
-            NumericOperationIr::DivScalar(repr) => Box::new([&repr.lhs].into_iter()),
-            NumericOperationIr::Rem(repr) => Box::new([&repr.lhs, &repr.rhs].into_iter()),
-            NumericOperationIr::RemScalar(repr) => Box::new([&repr.lhs].into_iter()),
-            NumericOperationIr::GreaterElem(repr) => Box::new([&repr.lhs].into_iter()),
-            NumericOperationIr::GreaterEqualElem(repr) => Box::new([&repr.lhs].into_iter()),
-            NumericOperationIr::LowerElem(repr) => Box::new([&repr.lhs].into_iter()),
-            NumericOperationIr::LowerEqualElem(repr) => Box::new([&repr.lhs].into_iter()),
-            NumericOperationIr::Greater(repr) => Box::new([&repr.lhs, &repr.rhs].into_iter()),
-            NumericOperationIr::GreaterEqual(repr) => Box::new([&repr.lhs, &repr.rhs].into_iter()),
-            NumericOperationIr::Lower(repr) => Box::new([&repr.lhs, &repr.rhs].into_iter()),
-            NumericOperationIr::LowerEqual(repr) => Box::new([&repr.lhs, &repr.rhs].into_iter()),
-            NumericOperationIr::ArgMax(repr) => Box::new([&repr.input].into_iter()),
-            NumericOperationIr::ArgTopK(repr) => Box::new([&repr.input].into_iter()),
-            NumericOperationIr::TopK(repr) => Box::new([&repr.input].into_iter()),
-            NumericOperationIr::ArgMin(repr) => Box::new([&repr.input].into_iter()),
-            NumericOperationIr::Clamp(repr) => Box::new([&repr.tensor].into_iter()),
-            NumericOperationIr::Abs(repr) => Box::new([&repr.input].into_iter()),
-            NumericOperationIr::Full(_repr) => Box::new([].into_iter()),
-            NumericOperationIr::MeanDim(repr) => Box::new([&repr.input].into_iter()),
-            NumericOperationIr::Mean(repr) => Box::new([&repr.input].into_iter()),
-            NumericOperationIr::Sum(repr) => Box::new([&repr.input].into_iter()),
-            NumericOperationIr::SumDim(repr) => Box::new([&repr.input].into_iter()),
-            NumericOperationIr::Prod(repr) => Box::new([&repr.input].into_iter()),
-            NumericOperationIr::ProdDim(repr) => Box::new([&repr.input].into_iter()),
-            NumericOperationIr::Max(repr) => Box::new([&repr.input].into_iter()),
-            NumericOperationIr::MaxDimWithIndices(repr) => Box::new([&repr.tensor].into_iter()),
-            NumericOperationIr::MinDimWithIndices(repr) => Box::new([&repr.tensor].into_iter()),
-            NumericOperationIr::Min(repr) => Box::new([&repr.input].into_iter()),
-            NumericOperationIr::MaxDim(repr) => Box::new([&repr.input].into_iter()),
-            NumericOperationIr::MinDim(repr) => Box::new([&repr.input].into_iter()),
-            NumericOperationIr::MaxAbs(repr) => Box::new([&repr.input].into_iter()),
-            NumericOperationIr::MaxAbsDim(repr) => Box::new([&repr.input].into_iter()),
-            NumericOperationIr::IntRandom(_repr) => Box::new([].into_iter()),
-            NumericOperationIr::Powi(repr) => Box::new([&repr.lhs, &repr.rhs].into_iter()),
-            NumericOperationIr::PowiScalar(repr) => Box::new([&repr.lhs].into_iter()),
-            NumericOperationIr::CumMin(repr) => Box::new([&repr.input].into_iter()),
-            NumericOperationIr::CumMax(repr) => Box::new([&repr.input].into_iter()),
-            NumericOperationIr::CumProd(repr) => Box::new([&repr.input].into_iter()),
-            NumericOperationIr::CumSum(repr) => Box::new([&repr.input].into_iter()),
+            NumericOperationIr::Add(repr) => TensorIter::from([&repr.lhs, &repr.rhs]),
+            NumericOperationIr::AddScalar(repr) => TensorIter::from([&repr.lhs]),
+            NumericOperationIr::Sub(repr) => TensorIter::from([&repr.lhs, &repr.rhs]),
+            NumericOperationIr::SubScalar(repr) => TensorIter::from([&repr.lhs]),
+            NumericOperationIr::Mul(repr) => TensorIter::from([&repr.lhs, &repr.rhs]),
+            NumericOperationIr::MulScalar(repr) => TensorIter::from([&repr.lhs]),
+            NumericOperationIr::Div(repr) => TensorIter::from([&repr.lhs, &repr.rhs]),
+            NumericOperationIr::DivScalar(repr) => TensorIter::from([&repr.lhs]),
+            NumericOperationIr::Rem(repr) => TensorIter::from([&repr.lhs, &repr.rhs]),
+            NumericOperationIr::RemScalar(repr) => TensorIter::from([&repr.lhs]),
+            NumericOperationIr::GreaterElem(repr) => TensorIter::from([&repr.lhs]),
+            NumericOperationIr::GreaterEqualElem(repr) => TensorIter::from([&repr.lhs]),
+            NumericOperationIr::LowerElem(repr) => TensorIter::from([&repr.lhs]),
+            NumericOperationIr::LowerEqualElem(repr) => TensorIter::from([&repr.lhs]),
+            NumericOperationIr::Greater(repr) => TensorIter::from([&repr.lhs, &repr.rhs]),
+            NumericOperationIr::GreaterEqual(repr) => TensorIter::from([&repr.lhs, &repr.rhs]),
+            NumericOperationIr::Lower(repr) => TensorIter::from([&repr.lhs, &repr.rhs]),
+            NumericOperationIr::LowerEqual(repr) => TensorIter::from([&repr.lhs, &repr.rhs]),
+            NumericOperationIr::ArgMax(repr) => TensorIter::from([&repr.input]),
+            NumericOperationIr::ArgTopK(repr) => TensorIter::from([&repr.input]),
+            NumericOperationIr::TopK(repr) => TensorIter::from([&repr.input]),
+            NumericOperationIr::ArgMin(repr) => TensorIter::from([&repr.input]),
+            NumericOperationIr::Clamp(repr) => TensorIter::from([&repr.tensor]),
+            NumericOperationIr::Abs(repr) => TensorIter::from([&repr.input]),
+            NumericOperationIr::Full(_repr) => TensorIter::from([]),
+            NumericOperationIr::MeanDim(repr) => TensorIter::from([&repr.input]),
+            NumericOperationIr::Mean(repr) => TensorIter::from([&repr.input]),
+            NumericOperationIr::Sum(repr) => TensorIter::from([&repr.input]),
+            NumericOperationIr::SumDim(repr) => TensorIter::from([&repr.input]),
+            NumericOperationIr::Prod(repr) => TensorIter::from([&repr.input]),
+            NumericOperationIr::ProdDim(repr) => TensorIter::from([&repr.input]),
+            NumericOperationIr::Max(repr) => TensorIter::from([&repr.input]),
+            NumericOperationIr::MaxDimWithIndices(repr) => TensorIter::from([&repr.tensor]),
+            NumericOperationIr::MinDimWithIndices(repr) => TensorIter::from([&repr.tensor]),
+            NumericOperationIr::Min(repr) => TensorIter::from([&repr.input]),
+            NumericOperationIr::MaxDim(repr) => TensorIter::from([&repr.input]),
+            NumericOperationIr::MinDim(repr) => TensorIter::from([&repr.input]),
+            NumericOperationIr::MaxAbs(repr) => TensorIter::from([&repr.input]),
+            NumericOperationIr::MaxAbsDim(repr) => TensorIter::from([&repr.input]),
+            NumericOperationIr::IntRandom(_repr) => TensorIter::from([]),
+            NumericOperationIr::Powi(repr) => TensorIter::from([&repr.lhs, &repr.rhs]),
+            NumericOperationIr::PowiScalar(repr) => TensorIter::from([&repr.lhs]),
+            NumericOperationIr::CumMin(repr) => TensorIter::from([&repr.input]),
+            NumericOperationIr::CumMax(repr) => TensorIter::from([&repr.input]),
+            NumericOperationIr::CumProd(repr) => TensorIter::from([&repr.input]),
+            NumericOperationIr::CumSum(repr) => TensorIter::from([&repr.input]),
         }
     }
 
-    fn outputs(&self) -> Box<dyn Iterator<Item = &TensorIr> + '_> {
+    fn outputs(&self) -> TensorIter<'_> {
         match self {
-            NumericOperationIr::Add(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::AddScalar(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::Sub(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::SubScalar(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::Mul(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::MulScalar(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::Div(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::DivScalar(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::Rem(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::RemScalar(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::GreaterElem(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::GreaterEqualElem(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::LowerElem(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::LowerEqualElem(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::Greater(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::GreaterEqual(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::Lower(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::LowerEqual(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::ArgMax(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::ArgTopK(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::TopK(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::ArgMin(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::Clamp(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::Abs(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::Full(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::MeanDim(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::Mean(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::Sum(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::SumDim(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::Prod(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::ProdDim(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::Max(repr) => Box::new([&repr.out].into_iter()),
+            NumericOperationIr::Add(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::AddScalar(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::Sub(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::SubScalar(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::Mul(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::MulScalar(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::Div(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::DivScalar(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::Rem(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::RemScalar(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::GreaterElem(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::GreaterEqualElem(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::LowerElem(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::LowerEqualElem(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::Greater(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::GreaterEqual(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::Lower(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::LowerEqual(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::ArgMax(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::ArgTopK(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::TopK(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::ArgMin(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::Clamp(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::Abs(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::Full(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::MeanDim(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::Mean(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::Sum(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::SumDim(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::Prod(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::ProdDim(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::Max(repr) => TensorIter::from([&repr.out]),
             NumericOperationIr::MaxDimWithIndices(repr) => {
-                Box::new([&repr.out, &repr.out_indices].into_iter())
+                TensorIter::from([&repr.out, &repr.out_indices])
             }
             NumericOperationIr::MinDimWithIndices(repr) => {
-                Box::new([&repr.out, &repr.out_indices].into_iter())
+                TensorIter::from([&repr.out, &repr.out_indices])
             }
-            NumericOperationIr::Min(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::MaxDim(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::MinDim(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::MaxAbs(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::MaxAbsDim(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::IntRandom(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::Powi(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::PowiScalar(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::CumMin(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::CumMax(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::CumProd(repr) => Box::new([&repr.out].into_iter()),
-            NumericOperationIr::CumSum(repr) => Box::new([&repr.out].into_iter()),
+            NumericOperationIr::Min(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::MaxDim(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::MinDim(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::MaxAbs(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::MaxAbsDim(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::IntRandom(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::Powi(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::PowiScalar(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::CumMin(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::CumMax(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::CumProd(repr) => TensorIter::from([&repr.out]),
+            NumericOperationIr::CumSum(repr) => TensorIter::from([&repr.out]),
         }
     }
     fn mark_read_only(&mut self, nodes: &[TensorId]) -> Vec<TensorIr> {
@@ -595,92 +669,92 @@ impl NumericOperationIr {
 }
 
 impl FloatOperationIr {
-    fn inputs(&self) -> Box<dyn Iterator<Item = &TensorIr> + '_> {
+    fn inputs(&self) -> TensorIter<'_> {
         match self {
-            FloatOperationIr::Matmul(repr) => Box::new([&repr.lhs, &repr.rhs].into_iter()),
-            FloatOperationIr::Cross(repr) => Box::new([&repr.lhs, &repr.rhs].into_iter()),
-            FloatOperationIr::Random(_repr) => Box::new([].into_iter()),
-            FloatOperationIr::Exp(repr) => Box::new([&repr.input].into_iter()),
-            FloatOperationIr::Log(repr) => Box::new([&repr.input].into_iter()),
-            FloatOperationIr::Log1p(repr) => Box::new([&repr.input].into_iter()),
-            FloatOperationIr::Erf(repr) => Box::new([&repr.input].into_iter()),
-            FloatOperationIr::Recip(repr) => Box::new([&repr.input].into_iter()),
-            FloatOperationIr::PowfScalar(repr) => Box::new([&repr.lhs].into_iter()),
+            FloatOperationIr::Matmul(repr) => TensorIter::from([&repr.lhs, &repr.rhs]),
+            FloatOperationIr::Cross(repr) => TensorIter::from([&repr.lhs, &repr.rhs]),
+            FloatOperationIr::Random(_repr) => TensorIter::from([]),
+            FloatOperationIr::Exp(repr) => TensorIter::from([&repr.input]),
+            FloatOperationIr::Log(repr) => TensorIter::from([&repr.input]),
+            FloatOperationIr::Log1p(repr) => TensorIter::from([&repr.input]),
+            FloatOperationIr::Erf(repr) => TensorIter::from([&repr.input]),
+            FloatOperationIr::Recip(repr) => TensorIter::from([&repr.input]),
+            FloatOperationIr::PowfScalar(repr) => TensorIter::from([&repr.lhs]),
             FloatOperationIr::Sqrt(repr)
             | FloatOperationIr::Rsqrt(repr)
             | FloatOperationIr::Silu(repr) => {
-                Box::new([&repr.input].into_iter())
+                TensorIter::from([&repr.input])
             }
-            FloatOperationIr::Cos(repr) => Box::new([&repr.input].into_iter()),
-            FloatOperationIr::Sin(repr) => Box::new([&repr.input].into_iter()),
-            FloatOperationIr::Tanh(repr) => Box::new([&repr.input].into_iter()),
-            FloatOperationIr::Round(repr) => Box::new([&repr.input].into_iter()),
-            FloatOperationIr::Floor(repr) => Box::new([&repr.input].into_iter()),
-            FloatOperationIr::Ceil(repr) => Box::new([&repr.input].into_iter()),
-            FloatOperationIr::Trunc(repr) => Box::new([&repr.input].into_iter()),
-            FloatOperationIr::IntoInt(repr) | FloatOperationIr::QuantizeDynamic(repr) => Box::new([&repr.input].into_iter()),
+            FloatOperationIr::Cos(repr) => TensorIter::from([&repr.input]),
+            FloatOperationIr::Sin(repr) => TensorIter::from([&repr.input]),
+            FloatOperationIr::Tanh(repr) => TensorIter::from([&repr.input]),
+            FloatOperationIr::Round(repr) => TensorIter::from([&repr.input]),
+            FloatOperationIr::Floor(repr) => TensorIter::from([&repr.input]),
+            FloatOperationIr::Ceil(repr) => TensorIter::from([&repr.input]),
+            FloatOperationIr::Trunc(repr) => TensorIter::from([&repr.input]),
+            FloatOperationIr::IntoInt(repr) | FloatOperationIr::QuantizeDynamic(repr) => TensorIter::from([&repr.input]),
             FloatOperationIr::Quantize(repr) => {
-                Box::new([&repr.tensor, &repr.qparams.scales].into_iter())
+                TensorIter::from([&repr.tensor, &repr.qparams.scales])
             }
-            FloatOperationIr::Dequantize(repr) => Box::new([&repr.input].into_iter()),
-            FloatOperationIr::IsNan(repr) => Box::new([&repr.input].into_iter()),
-            FloatOperationIr::IsInf(repr) => Box::new([&repr.input].into_iter()),
+            FloatOperationIr::Dequantize(repr) => TensorIter::from([&repr.input]),
+            FloatOperationIr::IsNan(repr) => TensorIter::from([&repr.input]),
+            FloatOperationIr::IsInf(repr) => TensorIter::from([&repr.input]),
             FloatOperationIr::GridSample2d(repr) => {
-                Box::new([&repr.tensor, &repr.grid].into_iter())
+                TensorIter::from([&repr.tensor, &repr.grid])
             }
-            FloatOperationIr::Tan(repr) => Box::new([&repr.input].into_iter()),
-            FloatOperationIr::Cosh(repr) => Box::new([&repr.input].into_iter()),
-            FloatOperationIr::Sinh(repr) => Box::new([&repr.input].into_iter()),
-            FloatOperationIr::ArcCos(repr) => Box::new([&repr.input].into_iter()),
-            FloatOperationIr::ArcCosh(repr) => Box::new([&repr.input].into_iter()),
-            FloatOperationIr::ArcSin(repr) => Box::new([&repr.input].into_iter()),
-            FloatOperationIr::ArcSinh(repr) => Box::new([&repr.input].into_iter()),
-            FloatOperationIr::ArcTan(repr) => Box::new([&repr.input].into_iter()),
-            FloatOperationIr::ArcTanh(repr) => Box::new([&repr.input].into_iter()),
-            FloatOperationIr::ArcTan2(repr) => Box::new([&repr.lhs, &repr.rhs].into_iter()),
-            FloatOperationIr::Powf(repr) => Box::new([&repr.lhs, &repr.rhs].into_iter()),
+            FloatOperationIr::Tan(repr) => TensorIter::from([&repr.input]),
+            FloatOperationIr::Cosh(repr) => TensorIter::from([&repr.input]),
+            FloatOperationIr::Sinh(repr) => TensorIter::from([&repr.input]),
+            FloatOperationIr::ArcCos(repr) => TensorIter::from([&repr.input]),
+            FloatOperationIr::ArcCosh(repr) => TensorIter::from([&repr.input]),
+            FloatOperationIr::ArcSin(repr) => TensorIter::from([&repr.input]),
+            FloatOperationIr::ArcSinh(repr) => TensorIter::from([&repr.input]),
+            FloatOperationIr::ArcTan(repr) => TensorIter::from([&repr.input]),
+            FloatOperationIr::ArcTanh(repr) => TensorIter::from([&repr.input]),
+            FloatOperationIr::ArcTan2(repr) => TensorIter::from([&repr.lhs, &repr.rhs]),
+            FloatOperationIr::Powf(repr) => TensorIter::from([&repr.lhs, &repr.rhs]),
         }
     }
-    fn outputs(&self) -> Box<dyn Iterator<Item = &TensorIr> + '_> {
+    fn outputs(&self) -> TensorIter<'_> {
         match self {
-            FloatOperationIr::Matmul(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::Cross(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::Random(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::Exp(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::Log(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::Log1p(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::Erf(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::Recip(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::PowfScalar(repr) => Box::new([&repr.out].into_iter()),
+            FloatOperationIr::Matmul(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::Cross(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::Random(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::Exp(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::Log(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::Log1p(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::Erf(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::Recip(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::PowfScalar(repr) => TensorIter::from([&repr.out]),
             FloatOperationIr::Sqrt(repr)
             | FloatOperationIr::Rsqrt(repr)
             | FloatOperationIr::Silu(repr) => {
-                Box::new([&repr.out].into_iter())
+                TensorIter::from([&repr.out])
             }
-            FloatOperationIr::Cos(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::Sin(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::Tanh(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::Round(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::Floor(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::Ceil(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::Trunc(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::IntoInt(repr) | FloatOperationIr::QuantizeDynamic(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::Quantize(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::Dequantize(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::IsNan(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::IsInf(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::GridSample2d(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::Tan(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::Cosh(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::Sinh(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::ArcCos(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::ArcCosh(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::ArcSin(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::ArcSinh(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::ArcTan(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::ArcTanh(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::ArcTan2(repr) => Box::new([&repr.out].into_iter()),
-            FloatOperationIr::Powf(repr) => Box::new([&repr.out].into_iter()),
+            FloatOperationIr::Cos(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::Sin(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::Tanh(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::Round(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::Floor(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::Ceil(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::Trunc(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::IntoInt(repr) | FloatOperationIr::QuantizeDynamic(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::Quantize(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::Dequantize(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::IsNan(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::IsInf(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::GridSample2d(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::Tan(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::Cosh(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::Sinh(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::ArcCos(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::ArcCosh(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::ArcSin(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::ArcSinh(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::ArcTan(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::ArcTanh(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::ArcTan2(repr) => TensorIter::from([&repr.out]),
+            FloatOperationIr::Powf(repr) => TensorIter::from([&repr.out]),
         }
     }
 
@@ -785,39 +859,39 @@ impl FloatOperationIr {
 }
 
 impl IntOperationIr {
-    fn inputs(&self) -> Box<dyn Iterator<Item = &TensorIr> + '_> {
+    fn inputs(&self) -> TensorIter<'_> {
         match self {
-            IntOperationIr::Matmul(repr) => Box::new([&repr.lhs, &repr.rhs].into_iter()),
-            IntOperationIr::IntoFloat(repr) => Box::new([&repr.input].into_iter()),
-            IntOperationIr::BitwiseAnd(repr) => Box::new([&repr.lhs, &repr.rhs].into_iter()),
-            IntOperationIr::BitwiseAndScalar(repr) => Box::new([&repr.lhs].into_iter()),
-            IntOperationIr::BitwiseOr(repr) => Box::new([&repr.lhs, &repr.rhs].into_iter()),
-            IntOperationIr::BitwiseOrScalar(repr) => Box::new([&repr.lhs].into_iter()),
-            IntOperationIr::BitwiseXor(repr) => Box::new([&repr.lhs, &repr.rhs].into_iter()),
-            IntOperationIr::BitwiseXorScalar(repr) => Box::new([&repr.lhs].into_iter()),
-            IntOperationIr::BitwiseNot(repr) => Box::new([&repr.input].into_iter()),
-            IntOperationIr::BitwiseLeftShift(repr) => Box::new([&repr.lhs, &repr.rhs].into_iter()),
-            IntOperationIr::BitwiseLeftShiftScalar(repr) => Box::new([&repr.lhs].into_iter()),
-            IntOperationIr::BitwiseRightShift(repr) => Box::new([&repr.lhs, &repr.rhs].into_iter()),
-            IntOperationIr::BitwiseRightShiftScalar(repr) => Box::new([&repr.lhs].into_iter()),
+            IntOperationIr::Matmul(repr) => TensorIter::from([&repr.lhs, &repr.rhs]),
+            IntOperationIr::IntoFloat(repr) => TensorIter::from([&repr.input]),
+            IntOperationIr::BitwiseAnd(repr) => TensorIter::from([&repr.lhs, &repr.rhs]),
+            IntOperationIr::BitwiseAndScalar(repr) => TensorIter::from([&repr.lhs]),
+            IntOperationIr::BitwiseOr(repr) => TensorIter::from([&repr.lhs, &repr.rhs]),
+            IntOperationIr::BitwiseOrScalar(repr) => TensorIter::from([&repr.lhs]),
+            IntOperationIr::BitwiseXor(repr) => TensorIter::from([&repr.lhs, &repr.rhs]),
+            IntOperationIr::BitwiseXorScalar(repr) => TensorIter::from([&repr.lhs]),
+            IntOperationIr::BitwiseNot(repr) => TensorIter::from([&repr.input]),
+            IntOperationIr::BitwiseLeftShift(repr) => TensorIter::from([&repr.lhs, &repr.rhs]),
+            IntOperationIr::BitwiseLeftShiftScalar(repr) => TensorIter::from([&repr.lhs]),
+            IntOperationIr::BitwiseRightShift(repr) => TensorIter::from([&repr.lhs, &repr.rhs]),
+            IntOperationIr::BitwiseRightShiftScalar(repr) => TensorIter::from([&repr.lhs]),
         }
     }
 
-    fn outputs(&self) -> Box<dyn Iterator<Item = &TensorIr> + '_> {
+    fn outputs(&self) -> TensorIter<'_> {
         match self {
-            IntOperationIr::Matmul(repr) => Box::new([&repr.out].into_iter()),
-            IntOperationIr::IntoFloat(repr) => Box::new([&repr.out].into_iter()),
-            IntOperationIr::BitwiseAnd(repr) => Box::new([&repr.out].into_iter()),
-            IntOperationIr::BitwiseAndScalar(repr) => Box::new([&repr.out].into_iter()),
-            IntOperationIr::BitwiseOr(repr) => Box::new([&repr.out].into_iter()),
-            IntOperationIr::BitwiseOrScalar(repr) => Box::new([&repr.out].into_iter()),
-            IntOperationIr::BitwiseXor(repr) => Box::new([&repr.out].into_iter()),
-            IntOperationIr::BitwiseXorScalar(repr) => Box::new([&repr.out].into_iter()),
-            IntOperationIr::BitwiseNot(repr) => Box::new([&repr.out].into_iter()),
-            IntOperationIr::BitwiseLeftShift(repr) => Box::new([&repr.out].into_iter()),
-            IntOperationIr::BitwiseLeftShiftScalar(repr) => Box::new([&repr.out].into_iter()),
-            IntOperationIr::BitwiseRightShift(repr) => Box::new([&repr.out].into_iter()),
-            IntOperationIr::BitwiseRightShiftScalar(repr) => Box::new([&repr.out].into_iter()),
+            IntOperationIr::Matmul(repr) => TensorIter::from([&repr.out]),
+            IntOperationIr::IntoFloat(repr) => TensorIter::from([&repr.out]),
+            IntOperationIr::BitwiseAnd(repr) => TensorIter::from([&repr.out]),
+            IntOperationIr::BitwiseAndScalar(repr) => TensorIter::from([&repr.out]),
+            IntOperationIr::BitwiseOr(repr) => TensorIter::from([&repr.out]),
+            IntOperationIr::BitwiseOrScalar(repr) => TensorIter::from([&repr.out]),
+            IntOperationIr::BitwiseXor(repr) => TensorIter::from([&repr.out]),
+            IntOperationIr::BitwiseXorScalar(repr) => TensorIter::from([&repr.out]),
+            IntOperationIr::BitwiseNot(repr) => TensorIter::from([&repr.out]),
+            IntOperationIr::BitwiseLeftShift(repr) => TensorIter::from([&repr.out]),
+            IntOperationIr::BitwiseLeftShiftScalar(repr) => TensorIter::from([&repr.out]),
+            IntOperationIr::BitwiseRightShift(repr) => TensorIter::from([&repr.out]),
+            IntOperationIr::BitwiseRightShiftScalar(repr) => TensorIter::from([&repr.out]),
         }
     }
 
@@ -877,22 +951,22 @@ impl IntOperationIr {
 }
 
 impl BoolOperationIr {
-    fn inputs(&self) -> Box<dyn Iterator<Item = &TensorIr> + '_> {
+    fn inputs(&self) -> TensorIter<'_> {
         match self {
-            BoolOperationIr::IntoFloat(repr) => Box::new([&repr.input].into_iter()),
-            BoolOperationIr::IntoInt(repr) => Box::new([&repr.input].into_iter()),
-            BoolOperationIr::Not(repr) => Box::new([&repr.input].into_iter()),
-            BoolOperationIr::And(repr) => Box::new([&repr.lhs, &repr.rhs].into_iter()),
-            BoolOperationIr::Or(repr) => Box::new([&repr.lhs, &repr.rhs].into_iter()),
+            BoolOperationIr::IntoFloat(repr) => TensorIter::from([&repr.input]),
+            BoolOperationIr::IntoInt(repr) => TensorIter::from([&repr.input]),
+            BoolOperationIr::Not(repr) => TensorIter::from([&repr.input]),
+            BoolOperationIr::And(repr) => TensorIter::from([&repr.lhs, &repr.rhs]),
+            BoolOperationIr::Or(repr) => TensorIter::from([&repr.lhs, &repr.rhs]),
         }
     }
-    fn outputs(&self) -> Box<dyn Iterator<Item = &TensorIr> + '_> {
+    fn outputs(&self) -> TensorIter<'_> {
         match self {
-            BoolOperationIr::IntoFloat(repr) => Box::new([&repr.out].into_iter()),
-            BoolOperationIr::IntoInt(repr) => Box::new([&repr.out].into_iter()),
-            BoolOperationIr::Not(repr) => Box::new([&repr.out].into_iter()),
-            BoolOperationIr::And(repr) => Box::new([&repr.out].into_iter()),
-            BoolOperationIr::Or(repr) => Box::new([&repr.out].into_iter()),
+            BoolOperationIr::IntoFloat(repr) => TensorIter::from([&repr.out]),
+            BoolOperationIr::IntoInt(repr) => TensorIter::from([&repr.out]),
+            BoolOperationIr::Not(repr) => TensorIter::from([&repr.out]),
+            BoolOperationIr::And(repr) => TensorIter::from([&repr.out]),
+            BoolOperationIr::Or(repr) => TensorIter::from([&repr.out]),
         }
     }
     fn mark_read_only(&mut self, nodes: &[TensorId]) -> Vec<TensorIr> {
@@ -923,369 +997,345 @@ impl BoolOperationIr {
 }
 
 impl ModuleOperationIr {
-    fn inputs(&self) -> Box<dyn Iterator<Item = &TensorIr> + '_> {
+    fn inputs(&self) -> TensorIter<'_> {
         match self {
             ModuleOperationIr::Embedding(repr) => {
-                Box::new([&repr.weights, &repr.indices].into_iter())
+                TensorIter::from([&repr.weights, &repr.indices])
             }
             ModuleOperationIr::EmbeddingBackward(repr) => {
-                Box::new([&repr.weights, &repr.out_grad, &repr.indices].into_iter())
+                TensorIter::from([&repr.weights, &repr.out_grad, &repr.indices])
             }
             ModuleOperationIr::Linear(repr) => {
                 if let Some(bias) = &repr.bias {
-                    Box::new([&repr.x, &repr.weight, bias].into_iter())
+                    TensorIter::from([&repr.x, &repr.weight, bias])
                 } else {
-                    Box::new([&repr.x, &repr.weight].into_iter())
+                    TensorIter::from([&repr.x, &repr.weight])
                 }
             }
             ModuleOperationIr::LinearXBackward(repr) => {
-                Box::new([&repr.weight, &repr.output_grad].into_iter())
+                TensorIter::from([&repr.weight, &repr.output_grad])
             }
             ModuleOperationIr::LinearWeightBackward(repr) => {
-                Box::new([&repr.x, &repr.output_grad].into_iter())
+                TensorIter::from([&repr.x, &repr.output_grad])
             }
             ModuleOperationIr::LinearBiasBackward(repr) => {
-                Box::new([&repr.output_grad].into_iter())
+                TensorIter::from([&repr.output_grad])
             }
             ModuleOperationIr::Conv1d(repr) => {
                 if let Some(bias) = &repr.bias {
-                    Box::new([&repr.x, &repr.weight, bias].into_iter())
+                    TensorIter::from([&repr.x, &repr.weight, bias])
                 } else {
-                    Box::new([&repr.x, &repr.weight].into_iter())
+                    TensorIter::from([&repr.x, &repr.weight])
                 }
             }
             ModuleOperationIr::Conv1dXBackward(repr) => {
-                Box::new([&repr.x, &repr.weight, &repr.output_grad].into_iter())
+                TensorIter::from([&repr.x, &repr.weight, &repr.output_grad])
             }
             ModuleOperationIr::Conv1dWeightBackward(repr) => {
-                Box::new([&repr.x, &repr.weight, &repr.output_grad].into_iter())
+                TensorIter::from([&repr.x, &repr.weight, &repr.output_grad])
             }
             ModuleOperationIr::Conv1dBiasBackward(repr) => {
-                Box::new([&repr.x, &repr.bias, &repr.output_grad].into_iter())
+                TensorIter::from([&repr.x, &repr.bias, &repr.output_grad])
             }
             ModuleOperationIr::Conv2d(repr) => {
                 if let Some(bias) = &repr.bias {
-                    Box::new([&repr.x, &repr.weight, bias].into_iter())
+                    TensorIter::from([&repr.x, &repr.weight, bias])
                 } else {
-                    Box::new([&repr.x, &repr.weight].into_iter())
+                    TensorIter::from([&repr.x, &repr.weight])
                 }
             }
             ModuleOperationIr::Conv2dXBackward(repr) => {
-                Box::new([&repr.x, &repr.weight, &repr.output_grad].into_iter())
+                TensorIter::from([&repr.x, &repr.weight, &repr.output_grad])
             }
             ModuleOperationIr::Conv2dWeightBackward(repr) => {
-                Box::new([&repr.x, &repr.weight, &repr.output_grad].into_iter())
+                TensorIter::from([&repr.x, &repr.weight, &repr.output_grad])
             }
             ModuleOperationIr::Conv2dBiasBackward(repr) => {
-                Box::new([&repr.x, &repr.bias, &repr.output_grad].into_iter())
+                TensorIter::from([&repr.x, &repr.bias, &repr.output_grad])
             }
             ModuleOperationIr::Conv3d(repr) => {
                 if let Some(bias) = &repr.bias {
-                    Box::new([&repr.x, &repr.weight, bias].into_iter())
+                    TensorIter::from([&repr.x, &repr.weight, bias])
                 } else {
-                    Box::new([&repr.x, &repr.weight].into_iter())
+                    TensorIter::from([&repr.x, &repr.weight])
                 }
             }
             ModuleOperationIr::Conv3dXBackward(repr) => {
-                Box::new([&repr.x, &repr.weight, &repr.output_grad].into_iter())
+                TensorIter::from([&repr.x, &repr.weight, &repr.output_grad])
             }
             ModuleOperationIr::Conv3dWeightBackward(repr) => {
-                Box::new([&repr.x, &repr.weight, &repr.output_grad].into_iter())
+                TensorIter::from([&repr.x, &repr.weight, &repr.output_grad])
             }
             ModuleOperationIr::Conv3dBiasBackward(repr) => {
-                Box::new([&repr.x, &repr.bias, &repr.output_grad].into_iter())
+                TensorIter::from([&repr.x, &repr.bias, &repr.output_grad])
             }
             ModuleOperationIr::DeformableConv2d(repr) => match (&repr.mask, &repr.bias) {
                 (Some(mask), Some(bias)) => {
-                    Box::new([&repr.x, &repr.offset, &repr.weight, mask, bias].into_iter())
+                    TensorIter::from([&repr.x, &repr.offset, &repr.weight, mask, bias])
                 }
                 (Some(mask), None) => {
-                    Box::new([&repr.x, &repr.offset, &repr.weight, mask].into_iter())
+                    TensorIter::from([&repr.x, &repr.offset, &repr.weight, mask])
                 }
                 (None, Some(bias)) => {
-                    Box::new([&repr.x, &repr.offset, &repr.weight, bias].into_iter())
+                    TensorIter::from([&repr.x, &repr.offset, &repr.weight, bias])
                 }
-                (None, None) => Box::new([&repr.x, &repr.offset, &repr.weight].into_iter()),
+                (None, None) => TensorIter::from([&repr.x, &repr.offset, &repr.weight]),
             },
             ModuleOperationIr::DeformableConv2dBackward(repr) => match (&repr.mask, &repr.bias) {
-                (Some(mask), Some(bias)) => Box::new(
-                    [
+                (Some(mask), Some(bias)) => TensorIter::from([
                         &repr.x,
                         &repr.offset,
                         &repr.weight,
                         &repr.out_grad,
                         mask,
                         bias,
-                    ]
-                    .into_iter(),
-                ),
-                (Some(mask), None) => Box::new(
-                    [&repr.x, &repr.offset, &repr.weight, &repr.out_grad, mask].into_iter(),
-                ),
-                (None, Some(bias)) => Box::new(
-                    [&repr.x, &repr.offset, &repr.weight, &repr.out_grad, bias].into_iter(),
-                ),
+                    ]),
+                (Some(mask), None) => TensorIter::from([&repr.x, &repr.offset, &repr.weight, &repr.out_grad, mask]),
+                (None, Some(bias)) => TensorIter::from([&repr.x, &repr.offset, &repr.weight, &repr.out_grad, bias]),
                 (None, None) => {
-                    Box::new([&repr.x, &repr.offset, &repr.weight, &repr.out_grad].into_iter())
+                    TensorIter::from([&repr.x, &repr.offset, &repr.weight, &repr.out_grad])
                 }
             },
             ModuleOperationIr::ConvTranspose1d(repr) => {
                 if let Some(bias) = &repr.bias {
-                    Box::new([&repr.x, &repr.weight, bias].into_iter())
+                    TensorIter::from([&repr.x, &repr.weight, bias])
                 } else {
-                    Box::new([&repr.x, &repr.weight].into_iter())
+                    TensorIter::from([&repr.x, &repr.weight])
                 }
             }
             ModuleOperationIr::ConvTranspose2d(repr) => {
                 if let Some(bias) = &repr.bias {
-                    Box::new([&repr.x, &repr.weight, bias].into_iter())
+                    TensorIter::from([&repr.x, &repr.weight, bias])
                 } else {
-                    Box::new([&repr.x, &repr.weight].into_iter())
+                    TensorIter::from([&repr.x, &repr.weight])
                 }
             }
             ModuleOperationIr::ConvTranspose3d(repr) => {
                 if let Some(bias) = &repr.bias {
-                    Box::new([&repr.x, &repr.weight, bias].into_iter())
+                    TensorIter::from([&repr.x, &repr.weight, bias])
                 } else {
-                    Box::new([&repr.x, &repr.weight].into_iter())
+                    TensorIter::from([&repr.x, &repr.weight])
                 }
             }
-            ModuleOperationIr::AvgPool1d(repr) => Box::new([&repr.x].into_iter()),
-            ModuleOperationIr::AvgPool2d(repr) => Box::new([&repr.x].into_iter()),
+            ModuleOperationIr::AvgPool1d(repr) => TensorIter::from([&repr.x]),
+            ModuleOperationIr::AvgPool2d(repr) => TensorIter::from([&repr.x]),
             ModuleOperationIr::AvgPool1dBackward(repr) => {
-                Box::new([&repr.x, &repr.grad].into_iter())
+                TensorIter::from([&repr.x, &repr.grad])
             }
             ModuleOperationIr::AvgPool2dBackward(repr) => {
-                Box::new([&repr.x, &repr.grad].into_iter())
+                TensorIter::from([&repr.x, &repr.grad])
             }
-            ModuleOperationIr::AdaptiveAvgPool1d(repr) => Box::new([&repr.x].into_iter()),
-            ModuleOperationIr::AdaptiveAvgPool2d(repr) => Box::new([&repr.x].into_iter()),
-            ModuleOperationIr::AdaptiveAvgPool3d(repr) => Box::new([&repr.x].into_iter()),
-            ModuleOperationIr::AvgPool3d(repr) => Box::new([&repr.x].into_iter()),
-            ModuleOperationIr::AvgPool3dBackward(repr) => Box::new([&repr.x, &repr.grad].into_iter()),
+            ModuleOperationIr::AdaptiveAvgPool1d(repr) => TensorIter::from([&repr.x]),
+            ModuleOperationIr::AdaptiveAvgPool2d(repr) => TensorIter::from([&repr.x]),
+            ModuleOperationIr::AdaptiveAvgPool3d(repr) => TensorIter::from([&repr.x]),
+            ModuleOperationIr::AvgPool3d(repr) => TensorIter::from([&repr.x]),
+            ModuleOperationIr::AvgPool3dBackward(repr) => TensorIter::from([&repr.x, &repr.grad]),
             ModuleOperationIr::AdaptiveAvgPool3dBackward(repr) => {
-                Box::new([&repr.x, &repr.grad].into_iter())
+                TensorIter::from([&repr.x, &repr.grad])
             }
             ModuleOperationIr::AdaptiveAvgPool1dBackward(repr) => {
-                Box::new([&repr.x, &repr.grad].into_iter())
+                TensorIter::from([&repr.x, &repr.grad])
             }
             ModuleOperationIr::AdaptiveAvgPool2dBackward(repr) => {
-                Box::new([&repr.x, &repr.grad].into_iter())
+                TensorIter::from([&repr.x, &repr.grad])
             }
-            ModuleOperationIr::MaxPool1d(repr) => Box::new([&repr.x].into_iter()),
-            ModuleOperationIr::MaxPool1dWithIndices(repr) => Box::new([&repr.x].into_iter()),
+            ModuleOperationIr::MaxPool1d(repr) => TensorIter::from([&repr.x]),
+            ModuleOperationIr::MaxPool1dWithIndices(repr) => TensorIter::from([&repr.x]),
             ModuleOperationIr::MaxPool1dWithIndicesBackward(repr) => {
-                Box::new([&repr.x, &repr.indices, &repr.grad].into_iter())
+                TensorIter::from([&repr.x, &repr.indices, &repr.grad])
             }
-            ModuleOperationIr::MaxPool2d(repr) => Box::new([&repr.x].into_iter()),
-            ModuleOperationIr::MaxPool3d(repr) => Box::new([&repr.x].into_iter()),
-            ModuleOperationIr::MaxPool3dWithIndices(repr) => Box::new([&repr.x].into_iter()),
+            ModuleOperationIr::MaxPool2d(repr) => TensorIter::from([&repr.x]),
+            ModuleOperationIr::MaxPool3d(repr) => TensorIter::from([&repr.x]),
+            ModuleOperationIr::MaxPool3dWithIndices(repr) => TensorIter::from([&repr.x]),
             ModuleOperationIr::MaxPool3dWithIndicesBackward(repr) => {
-                Box::new([&repr.x, &repr.indices, &repr.grad].into_iter())
+                TensorIter::from([&repr.x, &repr.indices, &repr.grad])
             }
-            ModuleOperationIr::MaxPool2dWithIndices(repr) => Box::new([&repr.x].into_iter()),
+            ModuleOperationIr::MaxPool2dWithIndices(repr) => TensorIter::from([&repr.x]),
             ModuleOperationIr::MaxPool2dWithIndicesBackward(repr) => {
-                Box::new([&repr.x, &repr.indices, &repr.grad].into_iter())
+                TensorIter::from([&repr.x, &repr.indices, &repr.grad])
             }
-            ModuleOperationIr::Interpolate(repr) => Box::new([&repr.x].into_iter()),
-            ModuleOperationIr::Interpolate1d(repr) => Box::new([&repr.x].into_iter()),
-            ModuleOperationIr::Interpolate3d(repr) => Box::new([&repr.x].into_iter()),
-            ModuleOperationIr::Interpolate1dBackward(repr) => Box::new([&repr.x, &repr.grad].into_iter()),
-            ModuleOperationIr::Interpolate3dBackward(repr) => Box::new([&repr.x, &repr.grad].into_iter()),
-            ModuleOperationIr::LayerNorm(repr) => Box::new([&repr.x, &repr.gamma].into_iter().chain(repr.beta.iter())),
+            ModuleOperationIr::Interpolate(repr) => TensorIter::from([&repr.x]),
+            ModuleOperationIr::Interpolate1d(repr) => TensorIter::from([&repr.x]),
+            ModuleOperationIr::Interpolate3d(repr) => TensorIter::from([&repr.x]),
+            ModuleOperationIr::Interpolate1dBackward(repr) => TensorIter::from([&repr.x, &repr.grad]),
+            ModuleOperationIr::Interpolate3dBackward(repr) => TensorIter::from([&repr.x, &repr.grad]),
+            ModuleOperationIr::LayerNorm(repr) => TensorIter::from([Some(&repr.x), Some(&repr.gamma), repr.beta.as_ref()]),
             ModuleOperationIr::LayerNormBackward(repr) => {
-                Box::new([&repr.x, &repr.gamma, &repr.grad, &repr.mean, &repr.rstd].into_iter())
+                TensorIter::from([&repr.x, &repr.gamma, &repr.grad, &repr.mean, &repr.rstd])
             }
-            ModuleOperationIr::RmsNorm(repr) => Box::new([&repr.x, &repr.gamma].into_iter()),
-            ModuleOperationIr::Softmax(repr) => Box::new([&repr.x].into_iter()),
-            ModuleOperationIr::SiluNative(repr) => Box::new([&repr.input].into_iter()),
-            ModuleOperationIr::GeluNative(repr) => Box::new([&repr.x].into_iter()),
-            ModuleOperationIr::GeluNativeBackward(repr) => Box::new([&repr.x, &repr.grad].into_iter()),
-            ModuleOperationIr::ExponentialReluNative(repr) => Box::new([&repr.x].into_iter()),
-            ModuleOperationIr::ExponentialReluNativeBackward(repr) => Box::new([&repr.x, &repr.grad].into_iter()),
-            ModuleOperationIr::LeakyReluNative(repr) => Box::new([&repr.x].into_iter()),
-            ModuleOperationIr::LeakyReluNativeBackward(repr) => Box::new([&repr.x, &repr.grad].into_iter()),
-            ModuleOperationIr::PreluNative(repr) => Box::new([&repr.x, &repr.alpha].into_iter()),
-            ModuleOperationIr::PreluNativeBackwardSelect(repr) => Box::new([&repr.x, &repr.alpha, &repr.grad].into_iter()),
-            ModuleOperationIr::GroupNorm(repr) => Box::new([&repr.x].into_iter().chain(repr.gamma.iter()).chain(repr.beta.iter())),
+            ModuleOperationIr::RmsNorm(repr) => TensorIter::from([&repr.x, &repr.gamma]),
+            ModuleOperationIr::Softmax(repr) => TensorIter::from([&repr.x]),
+            ModuleOperationIr::SiluNative(repr) => TensorIter::from([&repr.input]),
+            ModuleOperationIr::GeluNative(repr) => TensorIter::from([&repr.x]),
+            ModuleOperationIr::GeluNativeBackward(repr) => TensorIter::from([&repr.x, &repr.grad]),
+            ModuleOperationIr::ExponentialReluNative(repr) => TensorIter::from([&repr.x]),
+            ModuleOperationIr::ExponentialReluNativeBackward(repr) => TensorIter::from([&repr.x, &repr.grad]),
+            ModuleOperationIr::LeakyReluNative(repr) => TensorIter::from([&repr.x]),
+            ModuleOperationIr::LeakyReluNativeBackward(repr) => TensorIter::from([&repr.x, &repr.grad]),
+            ModuleOperationIr::PreluNative(repr) => TensorIter::from([&repr.x, &repr.alpha]),
+            ModuleOperationIr::PreluNativeBackwardSelect(repr) => TensorIter::from([&repr.x, &repr.alpha, &repr.grad]),
+            ModuleOperationIr::GroupNorm(repr) => TensorIter::from([Some(&repr.x), repr.gamma.as_ref(), repr.beta.as_ref()]),
             ModuleOperationIr::GroupNormBackwardSelect(repr) => {
-                Box::new([&repr.x, &repr.grad, &repr.mean, &repr.rstd].into_iter().chain(repr.gamma.iter()))
+                TensorIter::from([Some(&repr.x), Some(&repr.grad), Some(&repr.mean), Some(&repr.rstd), repr.gamma.as_ref()])
             }
-            ModuleOperationIr::SiluNativeBackward(repr) => Box::new([&repr.x, &repr.grad].into_iter()),
-            ModuleOperationIr::SoftmaxBackward(repr) => Box::new([&repr.working, &repr.grad].into_iter()),
-            ModuleOperationIr::RmsNormBackward(repr) => Box::new([&repr.x, &repr.gamma, &repr.grad, &repr.rstd].into_iter()),
-            ModuleOperationIr::RmsNormBackwardSelect(repr) => Box::new([&repr.x, &repr.gamma, &repr.grad, &repr.rstd].into_iter()),
+            ModuleOperationIr::SiluNativeBackward(repr) => TensorIter::from([&repr.x, &repr.grad]),
+            ModuleOperationIr::SoftmaxBackward(repr) => TensorIter::from([&repr.working, &repr.grad]),
+            ModuleOperationIr::RmsNormBackward(repr) => TensorIter::from([&repr.x, &repr.gamma, &repr.grad, &repr.rstd]),
+            ModuleOperationIr::RmsNormBackwardSelect(repr) => TensorIter::from([&repr.x, &repr.gamma, &repr.grad, &repr.rstd]),
             ModuleOperationIr::LayerNormBackwardSelect(repr) => {
-                Box::new([&repr.x, &repr.gamma, &repr.grad, &repr.mean, &repr.rstd].into_iter())
+                TensorIter::from([&repr.x, &repr.gamma, &repr.grad, &repr.mean, &repr.rstd])
             }
             ModuleOperationIr::InterpolateBackward(repr) => {
-                Box::new([&repr.x, &repr.grad].into_iter())
+                TensorIter::from([&repr.x, &repr.grad])
             }
-            ModuleOperationIr::Rfft(repr) => Box::new([&repr.signal].into_iter()),
+            ModuleOperationIr::Rfft(repr) => TensorIter::from([&repr.signal]),
             ModuleOperationIr::IRfft(repr) => {
-                Box::new([&repr.input_re, &repr.input_im].into_iter())
+                TensorIter::from([&repr.input_re, &repr.input_im])
             }
             ModuleOperationIr::Attention(repr) => {
                 if let Some(mask) = &repr.mask {
                     if let Some(attn_bias) = &repr.attn_bias {
-                        Box::new([&repr.query, &repr.key, &repr.value, mask, attn_bias].into_iter())
+                        TensorIter::from([&repr.query, &repr.key, &repr.value, mask, attn_bias])
                     } else {
-                        Box::new([&repr.query, &repr.key, &repr.value, mask].into_iter())
+                        TensorIter::from([&repr.query, &repr.key, &repr.value, mask])
                     }
                 } else if let Some(attn_bias) = &repr.attn_bias {
-                    Box::new([&repr.query, &repr.key, &repr.value, attn_bias].into_iter())
+                    TensorIter::from([&repr.query, &repr.key, &repr.value, attn_bias])
                 } else {
-                    Box::new([&repr.query, &repr.key, &repr.value].into_iter())
+                    TensorIter::from([&repr.query, &repr.key, &repr.value])
                 }
             }
-            ModuleOperationIr::CtcLoss(repr) => Box::new(
-                [
+            ModuleOperationIr::CtcLoss(repr) => TensorIter::from([
                     &repr.log_probs,
                     &repr.targets,
                     &repr.input_lengths,
                     &repr.target_lengths,
-                ]
-                .into_iter(),
-            ),
-            ModuleOperationIr::CtcLossBackward(repr) => Box::new(
-                [
+                ]),
+            ModuleOperationIr::CtcLossBackward(repr) => TensorIter::from([
                     &repr.log_probs,
                     &repr.targets,
                     &repr.input_lengths,
                     &repr.target_lengths,
                     &repr.grad_loss,
-                ]
-                .into_iter(),
-            ),
+                ]),
         }
     }
-    fn outputs(&self) -> Box<dyn Iterator<Item = &TensorIr> + '_> {
+    fn outputs(&self) -> TensorIter<'_> {
         match self {
-            ModuleOperationIr::Embedding(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::EmbeddingBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::Linear(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::LinearXBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::LinearWeightBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::LinearBiasBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::Conv1d(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::Conv1dXBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::Conv1dWeightBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::Conv1dBiasBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::Conv2d(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::Conv2dXBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::Conv2dWeightBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::Conv2dBiasBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::Conv3d(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::Conv3dXBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::Conv3dWeightBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::Conv3dBiasBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::DeformableConv2d(repr) => Box::new([&repr.out].into_iter()),
+            ModuleOperationIr::Embedding(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::EmbeddingBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::Linear(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::LinearXBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::LinearWeightBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::LinearBiasBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::Conv1d(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::Conv1dXBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::Conv1dWeightBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::Conv1dBiasBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::Conv2d(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::Conv2dXBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::Conv2dWeightBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::Conv2dBiasBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::Conv3d(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::Conv3dXBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::Conv3dWeightBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::Conv3dBiasBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::DeformableConv2d(repr) => TensorIter::from([&repr.out]),
             ModuleOperationIr::DeformableConv2dBackward(repr) => {
                 match (&repr.mask_grad, &repr.bias_grad) {
-                    (Some(mask_grad), Some(bias_grad)) => Box::new(
-                        [
+                    (Some(mask_grad), Some(bias_grad)) => TensorIter::from([
                             &repr.input_grad,
                             &repr.offset_grad,
                             &repr.weight_grad,
                             mask_grad,
                             bias_grad,
-                        ]
-                        .into_iter(),
-                    ),
-                    (Some(mask_grad), None) => Box::new(
-                        [
+                        ]),
+                    (Some(mask_grad), None) => TensorIter::from([
                             &repr.input_grad,
                             &repr.offset_grad,
                             &repr.weight_grad,
                             mask_grad,
-                        ]
-                        .into_iter(),
-                    ),
-                    (None, Some(bias_grad)) => Box::new(
-                        [
+                        ]),
+                    (None, Some(bias_grad)) => TensorIter::from([
                             &repr.input_grad,
                             &repr.offset_grad,
                             &repr.weight_grad,
                             bias_grad,
-                        ]
-                        .into_iter(),
-                    ),
-                    (None, None) => Box::new(
-                        [&repr.input_grad, &repr.offset_grad, &repr.weight_grad].into_iter(),
-                    ),
+                        ]),
+                    (None, None) => TensorIter::from([&repr.input_grad, &repr.offset_grad, &repr.weight_grad]),
                 }
             }
-            ModuleOperationIr::ConvTranspose1d(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::ConvTranspose2d(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::ConvTranspose3d(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::AvgPool1d(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::AvgPool2d(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::AvgPool1dBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::AvgPool2dBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::AdaptiveAvgPool1d(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::AdaptiveAvgPool2d(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::AdaptiveAvgPool3d(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::AvgPool3d(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::AvgPool3dBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::AdaptiveAvgPool3dBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::AdaptiveAvgPool1dBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::AdaptiveAvgPool2dBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::MaxPool1d(repr) => Box::new([&repr.out].into_iter()),
+            ModuleOperationIr::ConvTranspose1d(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::ConvTranspose2d(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::ConvTranspose3d(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::AvgPool1d(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::AvgPool2d(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::AvgPool1dBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::AvgPool2dBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::AdaptiveAvgPool1d(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::AdaptiveAvgPool2d(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::AdaptiveAvgPool3d(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::AvgPool3d(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::AvgPool3dBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::AdaptiveAvgPool3dBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::AdaptiveAvgPool1dBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::AdaptiveAvgPool2dBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::MaxPool1d(repr) => TensorIter::from([&repr.out]),
             ModuleOperationIr::MaxPool1dWithIndices(repr) => {
-                Box::new([&repr.out, &repr.out_indices].into_iter())
+                TensorIter::from([&repr.out, &repr.out_indices])
             }
             ModuleOperationIr::MaxPool1dWithIndicesBackward(repr) => {
-                Box::new([&repr.out].into_iter())
+                TensorIter::from([&repr.out])
             }
-            ModuleOperationIr::MaxPool2d(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::MaxPool3d(repr) => Box::new([&repr.out].into_iter()),
+            ModuleOperationIr::MaxPool2d(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::MaxPool3d(repr) => TensorIter::from([&repr.out]),
             ModuleOperationIr::MaxPool3dWithIndices(repr) => {
-                Box::new([&repr.out, &repr.out_indices].into_iter())
+                TensorIter::from([&repr.out, &repr.out_indices])
             }
-            ModuleOperationIr::MaxPool3dWithIndicesBackward(repr) => Box::new([&repr.out].into_iter()),
+            ModuleOperationIr::MaxPool3dWithIndicesBackward(repr) => TensorIter::from([&repr.out]),
             ModuleOperationIr::MaxPool2dWithIndices(repr) => {
-                Box::new([&repr.out, &repr.out_indices].into_iter())
+                TensorIter::from([&repr.out, &repr.out_indices])
             }
             ModuleOperationIr::MaxPool2dWithIndicesBackward(repr) => {
-                Box::new([&repr.out].into_iter())
+                TensorIter::from([&repr.out])
             }
-            ModuleOperationIr::Interpolate(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::Interpolate1d(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::Interpolate3d(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::Interpolate1dBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::Interpolate3dBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::LayerNorm(repr) => Box::new([&repr.out, &repr.mean, &repr.rstd].into_iter()),
+            ModuleOperationIr::Interpolate(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::Interpolate1d(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::Interpolate3d(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::Interpolate1dBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::Interpolate3dBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::LayerNorm(repr) => TensorIter::from([&repr.out, &repr.mean, &repr.rstd]),
             ModuleOperationIr::LayerNormBackward(repr) => {
-                Box::new([&repr.input_grad, &repr.weight_grad, &repr.bias_grad].into_iter())
+                TensorIter::from([&repr.input_grad, &repr.weight_grad, &repr.bias_grad])
             }
-            ModuleOperationIr::RmsNorm(repr) => Box::new([&repr.out, &repr.rstd].into_iter()),
-            ModuleOperationIr::Softmax(repr) => Box::new([&repr.out, &repr.working].into_iter()),
-            ModuleOperationIr::SiluNative(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::GeluNative(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::GeluNativeBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::ExponentialReluNative(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::ExponentialReluNativeBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::LeakyReluNative(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::LeakyReluNativeBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::PreluNative(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::PreluNativeBackwardSelect(repr) => Box::new(repr.input_grad.iter().chain(repr.weight_grad.iter())),
-            ModuleOperationIr::GroupNorm(repr) => Box::new([&repr.out, &repr.mean, &repr.rstd].into_iter()),
+            ModuleOperationIr::RmsNorm(repr) => TensorIter::from([&repr.out, &repr.rstd]),
+            ModuleOperationIr::Softmax(repr) => TensorIter::from([&repr.out, &repr.working]),
+            ModuleOperationIr::SiluNative(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::GeluNative(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::GeluNativeBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::ExponentialReluNative(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::ExponentialReluNativeBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::LeakyReluNative(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::LeakyReluNativeBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::PreluNative(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::PreluNativeBackwardSelect(repr) => TensorIter::from([repr.input_grad.as_ref(), repr.weight_grad.as_ref()]),
+            ModuleOperationIr::GroupNorm(repr) => TensorIter::from([&repr.out, &repr.mean, &repr.rstd]),
             ModuleOperationIr::GroupNormBackwardSelect(repr) => {
-                Box::new(repr.input_grad.iter().chain(repr.weight_grad.iter()).chain(repr.bias_grad.iter()))
+                TensorIter::from([repr.input_grad.as_ref(), repr.weight_grad.as_ref(), repr.bias_grad.as_ref()])
             }
-            ModuleOperationIr::SiluNativeBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::SoftmaxBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::RmsNormBackward(repr) => Box::new([&repr.input_grad, &repr.weight_grad].into_iter()),
-            ModuleOperationIr::RmsNormBackwardSelect(repr) => Box::new(repr.input_grad.iter().chain(repr.weight_grad.iter())),
+            ModuleOperationIr::SiluNativeBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::SoftmaxBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::RmsNormBackward(repr) => TensorIter::from([&repr.input_grad, &repr.weight_grad]),
+            ModuleOperationIr::RmsNormBackwardSelect(repr) => TensorIter::from([repr.input_grad.as_ref(), repr.weight_grad.as_ref()]),
             ModuleOperationIr::LayerNormBackwardSelect(repr) => {
-                Box::new(repr.input_grad.iter().chain(repr.weight_grad.iter()).chain(repr.bias_grad.iter()))
+                TensorIter::from([repr.input_grad.as_ref(), repr.weight_grad.as_ref(), repr.bias_grad.as_ref()])
             }
-            ModuleOperationIr::InterpolateBackward(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::Rfft(repr) => Box::new([&repr.out_re, &repr.out_im].into_iter()),
-            ModuleOperationIr::IRfft(repr) => Box::new([&repr.out_signal].into_iter()),
-            ModuleOperationIr::Attention(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::CtcLoss(repr) => Box::new([&repr.out].into_iter()),
-            ModuleOperationIr::CtcLossBackward(repr) => Box::new([&repr.out].into_iter()),
+            ModuleOperationIr::InterpolateBackward(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::Rfft(repr) => TensorIter::from([&repr.out_re, &repr.out_im]),
+            ModuleOperationIr::IRfft(repr) => TensorIter::from([&repr.out_signal]),
+            ModuleOperationIr::Attention(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::CtcLoss(repr) => TensorIter::from([&repr.out]),
+            ModuleOperationIr::CtcLossBackward(repr) => TensorIter::from([&repr.out]),
         }
     }
 
@@ -1665,15 +1715,15 @@ impl ModuleOperationIr {
 
 #[cfg(feature = "graph-distributed")]
 impl DistributedOperationIr {
-    fn inputs(&self) -> Box<dyn Iterator<Item = &TensorIr> + '_> {
+    fn inputs(&self) -> TensorIter<'_> {
         match self {
-            DistributedOperationIr::AllReduce(repr) => Box::new([&repr.tensor].into_iter()),
+            DistributedOperationIr::AllReduce(repr) => TensorIter::from([&repr.tensor]),
         }
     }
 
-    fn outputs(&self) -> Box<dyn Iterator<Item = &TensorIr> + '_> {
+    fn outputs(&self) -> TensorIter<'_> {
         match self {
-            DistributedOperationIr::AllReduce(repr) => Box::new([&repr.out].into_iter()),
+            DistributedOperationIr::AllReduce(repr) => TensorIter::from([&repr.out]),
         }
     }
 
@@ -1691,11 +1741,11 @@ impl DistributedOperationIr {
 }
 
 impl InitOperationIr {
-    fn inputs(&self) -> Box<dyn Iterator<Item = &TensorIr> + '_> {
-        Box::new([].into_iter())
+    fn inputs(&self) -> TensorIter<'_> {
+        TensorIter::from([])
     }
-    fn outputs(&self) -> Box<dyn Iterator<Item = &TensorIr> + '_> {
-        Box::new([&self.out].into_iter())
+    fn outputs(&self) -> TensorIter<'_> {
+        TensorIter::from([&self.out])
     }
 }
 

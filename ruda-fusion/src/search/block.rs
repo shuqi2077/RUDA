@@ -153,6 +153,10 @@ impl<O: NumOperations> Block<O> {
         false
     }
 
+    pub(super) fn contains_operation_tensors(&self, operation: &OperationIr) -> bool {
+        operation.inputs().chain(operation.outputs()).any(|tensor| self.flow.contains(tensor.id))
+    }
+
     /// Merge the current block with the other one and returns if the operation is successful.
     ///
     /// # Warning

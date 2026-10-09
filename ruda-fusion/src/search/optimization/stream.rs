@@ -244,12 +244,11 @@ impl<O: NumOperations> StreamOptimizer<O> {
     }
 
     fn merge_blocks(&mut self, operation: &OperationIr, all: bool) -> MergeBlockStep {
-        let nodes = operation.nodes();
         let ordered = OperationNode { operation, position: self.length }.ordered_range().is_some();
         let mut block_merges = Vec::new();
 
         for (i, block) in self.blocks.iter().enumerate() {
-            if all || block.contains_tensors(&nodes) || (ordered && block.ordered_range().is_some()) {
+            if all || block.contains_operation_tensors(operation) || (ordered && block.ordered_range().is_some()) {
                 block_merges.push(i);
             }
         }
@@ -263,24 +262,16 @@ impl<O: NumOperations> StreamOptimizer<O> {
         }
         let guard = Dag::new(&self.blocks).reachability();
 
-        let blocks_to_merge = self
-            .blocks
+        let blocks_to_merge = block_merges
             .iter()
-            .enumerate()
-            .filter_map(|(i, g)| match block_merges.contains(&i) {
-                true => Some(g),
-                false => None,
-            })
+            .map(|&index| &self.blocks[index])
             .collect::<Vec<_>>();
 
         let merged = merge_blocks_with_guard(&blocks_to_merge, false, &guard);
 
         let mut clear_blocks = || {
-            let mut indices = block_merges.to_vec();
-            indices.sort();
-
-            for g in indices.into_iter().rev() {
-                self.blocks.remove(g);
+            for &index in block_merges.iter().rev() {
+                self.blocks.remove(index);
             }
         };
 
