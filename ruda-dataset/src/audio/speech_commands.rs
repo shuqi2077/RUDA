@@ -154,6 +154,10 @@ impl Dataset<SpeechItem> for SpeechCommandsDataset {
         self.dataset.get(index)
     }
 
+    fn get_many(&self, indices: &[usize]) -> Option<Vec<SpeechItem>> {
+        self.dataset.get_many(indices)
+    }
+
     fn len(&self) -> usize {
         self.dataset.len()
     }

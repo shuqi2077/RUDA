@@ -77,7 +77,7 @@ jobs:
           cargo check --locked -p ruda-fusion --features distributed,device-stack-autotune,device-autotune-checks --lib
       - name: Compile resumable dataset loading
         run: |
-          cargo check --locked -p ruda-model --features dataset,record-item-custom-serde --lib
+          cargo check --locked -p ruda-model --features dataset,record-item-custom-serde,audio --lib
           cargo check --locked -p ruda-tensor-router --no-default-features --lib
       - name: Existing fusion planner and data loader regressions
         run: |
