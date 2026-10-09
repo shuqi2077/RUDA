@@ -22,7 +22,7 @@ use super::{AutotuneKey, AutotuneOutput, TunableSet, TuneCacheResult, TuneInputs
 /// it blocks inline. Either way the benchmarking itself is synchronous; only the
 /// per-sample profile resolution is awaited.
 pub struct Tuner<K: AutotuneKey> {
-    cache: Arc<spin::Mutex<TuneCache<K>>>,
+    cache: Arc<spin::RwLock<TuneCache<K>>>,
     logger: Arc<spin::Mutex<Logger>>,
 }
 
@@ -110,14 +110,14 @@ impl<K: AutotuneKey> Tuner<K> {
     /// `std_io` is enabled.
     pub fn new(name: &str, device_id: &str) -> Self {
         Self {
-            cache: Arc::new(spin::Mutex::new(TuneCache::new(name, device_id))),
+            cache: Arc::new(spin::RwLock::new(TuneCache::new(name, device_id))),
             logger: Arc::new(spin::Mutex::new(Logger::new())),
         }
     }
 
     /// Fetch the fastest autotune operation index for an autotune key.
     pub fn fastest(&self, key: &K) -> TuneCacheResult {
-        self.cache.lock().fastest(key)
+        self.cache.read().fastest(key)
     }
 
     /// Check the cache, validate checksums if needed, and kick off a tuning job if the
@@ -137,7 +137,7 @@ impl<K: AutotuneKey> Tuner<K> {
         // Submit outside the cache lock to preserve the device/cache lock order.
         client.flush().expect("Cannot autotune with pre-existing stream errors");
         {
-            let mut cache = self.cache.lock();
+            let mut cache = self.cache.write();
             let cur = cache.fastest(key);
 
             #[cfg(std_io)]
@@ -159,7 +159,7 @@ impl<K: AutotuneKey> Tuner<K> {
                 }
             }
             // Scope the guard: the rest of this function re-locks `self.cache` (fast
-            // path insert, `process_request`), and `spin::Mutex` is non-reentrant.
+            // path insert, `process_request`), and the write lock is non-reentrant.
         }
 
         log::info!("Tuning {key}");
@@ -179,7 +179,7 @@ impl<K: AutotuneKey> Tuner<K> {
 
         // Fast path: single tunable, no benchmarking needed.
         if results.len() == 1 {
-            self.cache.lock().cache_insert(key.clone(), 0);
+            self.cache.write().cache_insert(key.clone(), 0);
             return TuneCacheResult::Hit { fastest_index: 0 };
         }
 
@@ -255,7 +255,7 @@ impl<K: AutotuneKey> Tuner<K> {
 /// Await every profile sample, pick the fastest tunable, commit to the cache.
 async fn process_request<K: AutotuneKey>(
     request: TuneRequest<K>,
-    cache: &spin::Mutex<TuneCache<K>>,
+    cache: &spin::RwLock<TuneCache<K>>,
     logger: &spin::Mutex<Logger>,
 ) -> TuneCacheResult {
     let TuneRequest {
@@ -276,7 +276,7 @@ async fn process_request<K: AutotuneKey>(
 
         if profiles.is_empty() {
             results[index] = AutotuneResult::error(AutotuneError::Unknown {
-                name: name.to_string(),
+                name,
                 err: "No profiling available".to_string(),
             });
             continue;
@@ -289,7 +289,7 @@ async fn process_request<K: AutotuneKey>(
         }
 
         results[index] = AutotuneResult::success(AutotuneOutcome::new(
-            name.to_string(),
+            name,
             index,
             BenchmarkComputations::new(&BenchmarkDurations::from_durations(
                 timing_method,
@@ -298,18 +298,12 @@ async fn process_request<K: AutotuneKey>(
         ));
     }
 
-    results.sort_by(|a, b| {
-        let a = a
+    results.sort_by_cached_key(|result| {
+        result
             .outcome
             .as_ref()
             .map(|r| r.computation.score())
-            .unwrap_or(u64::MAX);
-        let b = b
-            .outcome
-            .as_ref()
-            .map(|r| r.computation.score())
-            .unwrap_or(u64::MAX);
-        a.cmp(&b)
+            .unwrap_or(u64::MAX)
     });
 
     let fastest_index = results
@@ -322,10 +316,10 @@ async fn process_request<K: AutotuneKey>(
 
     {
         log_result(&mut logger.lock(), &key, &results, context_logs.as_deref());
-        cache.lock().cache_insert(key.clone(), fastest_index);
+        cache.write().cache_insert(key.clone(), fastest_index);
         #[cfg(std_io)]
         cache
-            .lock()
+            .write()
             .persistent_cache_insert(key, checksum, fastest_index, results);
     }
 
