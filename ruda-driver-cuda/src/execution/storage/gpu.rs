@@ -35,6 +35,12 @@ pub struct GpuResource {
 }
 
 impl GpuResource {
+    /// Retain the adaptive allocator's address lease for a foreign pointer owner.
+    /// Fixed-pool resources do not require a lease.
+    pub fn address_pin(&self) -> Option<ruda::runtime::memory_management::MemoryResourcePin> {
+        self.pin.clone()
+    }
+
     /// Creates a new [`GpuResource`].
     pub fn new(ptr: u64, binding: *mut std::ffi::c_void, size: u64) -> Self {
         Self { ptr, binding, size, pin: None }

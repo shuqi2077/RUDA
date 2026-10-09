@@ -43,7 +43,11 @@ static TRUSTED_INDEX_CALLS: AtomicU64 = AtomicU64::new(0);
 static STORAGE_REDUCTION_CALLS: AtomicU64 = AtomicU64::new(0);
 static WARP_REDUCTION_CALLS: AtomicU64 = AtomicU64::new(0);
 
-pub struct Allocation { handle: Handle, bytes: usize }
+pub struct Allocation {
+    handle: Handle,
+    bytes: usize,
+    _pin: Option<ruda::runtime::memory_management::MemoryResourcePin>,
+}
 
 #[repr(C)]
 pub struct Descriptor {
@@ -166,7 +170,8 @@ pub unsafe extern "C" fn ruda_torch_alloc(bytes: usize, allocation: *mut *mut Al
         // RUDA bindings/stream events protect its use; do not drain this queue
         // for every freshly allocated PyTorch output tensor.
         if !async_dispatch_enabled() { sync(&client); }
-        unsafe { *ptr = resource.resource().ptr; *allocation = Box::into_raw(Box::new(Allocation { handle, bytes })); }
+        let pin = resource.resource().address_pin();
+        unsafe { *ptr = resource.resource().ptr; *allocation = Box::into_raw(Box::new(Allocation { handle, bytes, _pin: pin })); }
     })
 }
 

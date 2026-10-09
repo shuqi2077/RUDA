@@ -89,11 +89,15 @@ impl MemoryPool for SlicedPool {
         storage: &mut Storage,
         size: u64,
     ) -> Result<super::ManagedMemoryHandle, crate::runtime::server::IoError> {
+        let page_index = u16::try_from(self.pages.len()).map_err(|_| IoError::Unknown {
+            description: "Sliced pool page index capacity exhausted".into(),
+            backtrace: ruda_core::backtrace::BackTrace::capture(),
+        })?;
         let storage = storage.alloc(self.page_size)?;
 
         let storage_id = storage.id;
         let mut location_base = self.location_base;
-        location_base.page = self.pages.len() as u16;
+        location_base.page = page_index;
 
         let mut page = MemoryPage::new(storage, self.alignment, location_base);
         let returned = page.try_reserve(size);
