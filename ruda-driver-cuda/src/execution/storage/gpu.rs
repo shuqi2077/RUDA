@@ -25,6 +25,7 @@ pub struct GpuStorage {
 /// A GPU memory resource allocated for CUDA using [`GpuStorage`].
 #[derive(Debug)]
 pub struct GpuResource {
+    pin: Option<ruda::runtime::memory_management::MemoryResourcePin>,
     /// The GPU memory pointer.
     pub ptr: u64,
     /// The CUDA binding pointer.
@@ -36,7 +37,7 @@ pub struct GpuResource {
 impl GpuResource {
     /// Creates a new [`GpuResource`].
     pub fn new(ptr: u64, binding: *mut std::ffi::c_void, size: u64) -> Self {
-        Self { ptr, binding, size }
+        Self { ptr, binding, size, pin: None }
     }
 }
 
@@ -142,6 +143,37 @@ impl ComputeStorage for GpuStorage {
 
     fn alignment(&self) -> usize {
         self.mem_alignment
+    }
+
+    fn get_pinned(&mut self, handle: &StorageHandle, binding: ruda::runtime::memory_management::ManagedMemoryBinding) -> Self::Resource {
+        let mut resource = self.get(handle);
+        resource.pin = Some(binding.pin());
+        resource
+    }
+
+    fn supports_relocation(&self) -> bool { true }
+
+    fn relocation_barrier(&mut self) -> Result<(), IoError> {
+        // All streams in this context, not just the allocator's stream, may
+        // still have kernels or interop copies using the old addresses.
+        let status = unsafe { cudarc::driver::sys::cuCtxSynchronize() };
+        if status == cudarc::driver::sys::CUresult::CUDA_SUCCESS { Ok(()) }
+        else { Err(IoError::Unknown { description: format!("CUDA relocation wait: {status:?}"), backtrace: BackTrace::capture() }) }
+    }
+
+    fn relocation_copy(&mut self, source: &StorageHandle, target: &StorageHandle) -> Result<(), IoError> {
+        let src = self.memory.get(&source.id).expect("relocation source").0 + source.offset();
+        let dst = self.memory.get(&target.id).expect("relocation target").0 + target.offset();
+        // The allocator holds both nonoverlapping reservations until completion.
+        let status = unsafe { cudarc::driver::sys::cuMemcpyDtoDAsync_v2(dst, src, source.size() as usize, self.stream) };
+        if status == cudarc::driver::sys::CUresult::CUDA_SUCCESS { Ok(()) }
+        else { Err(IoError::Unknown { description: format!("CUDA relocation copy: {status:?}"), backtrace: BackTrace::capture() }) }
+    }
+
+    fn relocation_complete(&mut self) -> Result<(), IoError> {
+        let status = unsafe { cudarc::driver::sys::cuStreamSynchronize(self.stream) };
+        if status == cudarc::driver::sys::CUresult::CUDA_SUCCESS { Ok(()) }
+        else { Err(IoError::Unknown { description: format!("CUDA relocation completion: {status:?}"), backtrace: BackTrace::capture() }) }
     }
 
     fn get(&mut self, handle: &StorageHandle) -> Self::Resource {

@@ -244,7 +244,7 @@ fn register_features(
             let heap_size = heap.size;
             let max_page_size = match memory_config {
                 #[cfg(not(exclusive_memory_only))]
-                MemoryConfiguration::SubSlices => heap_size / 4,
+                MemoryConfiguration::SubSlices | MemoryConfiguration::Adaptive => heap_size / 4,
                 MemoryConfiguration::ExclusivePages => heap_size,
                 MemoryConfiguration::Custom { .. } => heap_size,
             };

@@ -19,6 +19,23 @@ pub struct SlicedPool {
 }
 
 impl SlicedPool {
+    pub(crate) fn page_size(&self) -> u64 { self.page_size }
+
+    pub(crate) fn is_empty(&self) -> bool { self.pages.is_empty() }
+
+    pub(crate) fn can_reserve(&self, size: u64) -> bool {
+        self.pages.iter().any(|(page, _)| page.can_reserve(size))
+    }
+
+    pub(crate) fn movable_allocations(&self) -> Vec<(ManagedMemoryHandle, crate::runtime::storage::StorageHandle, u64)> {
+        let mut allocations = Vec::new();
+        for (page, _) in &self.pages { page.movable_allocations(&mut allocations); }
+        allocations
+    }
+
+    pub(crate) fn release_relocated(&mut self, allocation: &ManagedMemoryHandle) -> Result<(), IoError> {
+        self.pages[allocation.descriptor().page()].0.release_relocated(allocation)
+    }
     pub fn new(page_size: u64, max_slice_size: u64, alignment: u64, pool_pos: u8) -> Self {
         Self {
             pages: Vec::new(),

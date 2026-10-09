@@ -72,13 +72,18 @@ impl EventStreamBackend for HipStreamBackend {
         );
         // We use the same page size and memory pools configuration for CPU pinned memory, since we
         // expect the CPU to have at least the same amount of RAM as GPU memory.
+        let host_memory_config = match &self.mem_config {
+            #[cfg(not(exclusive_memory_only))]
+            MemoryConfiguration::Adaptive => MemoryConfiguration::default(),
+            _ => self.mem_config.clone(),
+        };
         let memory_management_cpu = MemoryManagement::from_configuration(
             PinnedMemoryStorage::new(stream),
             &MemoryDeviceProperties {
                 max_page_size: self.mem_props.max_page_size,
                 alignment: PINNED_MEMORY_ALIGNMENT as u64,
             },
-            self.mem_config.clone(),
+            host_memory_config,
             self.logger.clone(),
             MemoryManagementOptions::new("Pinned CPU Memory").mode(MemoryAllocationMode::Auto),
         );

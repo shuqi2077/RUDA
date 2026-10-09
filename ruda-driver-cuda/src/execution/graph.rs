@@ -71,6 +71,7 @@ struct CompletionFence {
 
 #[derive(Debug)]
 pub(crate) struct PinnedBinding {
+    _pin: ruda::runtime::memory_management::MemoryResourcePin,
     pub binding: Binding,
     pub pointer: u64,
 }
@@ -111,7 +112,8 @@ impl KernelGraph {
             return Ok(());
         }
         self.pin_indices.insert(key, self.pins.len());
-        self.pins.push(PinnedBinding { binding, pointer });
+        let pin = binding.memory.pin();
+        self.pins.push(PinnedBinding { binding, pointer, _pin: pin });
         Ok(())
     }
 

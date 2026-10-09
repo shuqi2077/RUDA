@@ -21,6 +21,7 @@ use spin::Mutex;
 #[derive(Default)]
 pub struct BytesStorage {
     memory: HashMap<StorageId, Arc<AllocatedBytes>>,
+    relocation_barrier: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl fmt::Debug for BytesStorage {
@@ -35,6 +36,7 @@ impl fmt::Debug for BytesStorage {
 pub struct BytesResource {
     allocation: Arc<AllocatedBytes>,
     range: Range<usize>,
+    pin: Option<crate::runtime::memory_management::MemoryResourcePin>,
 }
 
 /// Invalid storage lookup or conflicting safe access.
@@ -122,6 +124,7 @@ impl Drop for AllocatedBytes {
 struct BorrowLease {
     allocation: Arc<AllocatedBytes>,
     region: BorrowRegion,
+    _pin: Option<crate::runtime::memory_management::MemoryResourcePin>,
 }
 
 impl BorrowLease {
@@ -142,7 +145,7 @@ impl BorrowLease {
         }
         borrows.push(region.clone());
         drop(borrows);
-        Ok(Self { allocation: resource.allocation.clone(), region })
+        Ok(Self { allocation: resource.allocation.clone(), region, _pin: resource.pin.clone() })
     }
 
     fn ptr(&self) -> *mut u8 {
@@ -259,6 +262,11 @@ impl BytesResource {
 }
 
 impl BytesStorage {
+    /// Wait for the backend's execution queue before resolving relocation copies.
+    pub fn with_relocation_barrier(mut self, barrier: impl Fn() + Send + Sync + 'static) -> Self {
+        self.relocation_barrier = Some(Arc::new(barrier));
+        self
+    }
     /// Validate an ID and its byte range before exposing a resource.
     pub fn try_get(&self, handle: &StorageHandle) -> Result<BytesResource, BytesAccessError> {
         let allocation = self.memory.get(&handle.id)
@@ -272,7 +280,7 @@ impl BytesStorage {
         if end > allocation.layout.size() {
             return Err(invalid());
         }
-        Ok(BytesResource { allocation: allocation.clone(), range: start..end })
+        Ok(BytesResource { allocation: allocation.clone(), range: start..end, pin: None })
     }
 }
 
@@ -284,6 +292,33 @@ impl ComputeStorage for BytesStorage {
     fn get(&mut self, handle: &StorageHandle) -> Self::Resource {
         self.try_get(handle).expect("invalid byte-storage handle")
     }
+
+    fn get_pinned(&mut self, handle: &StorageHandle, binding: crate::runtime::memory_management::ManagedMemoryBinding) -> Self::Resource {
+        let mut resource = self.get(handle);
+        resource.pin = Some(binding.pin());
+        resource
+    }
+
+    fn supports_relocation(&self) -> bool { true }
+
+    fn relocation_barrier(&mut self) -> Result<(), IoError> {
+        if let Some(barrier) = &self.relocation_barrier { barrier(); }
+        Ok(())
+    }
+
+    fn relocation_copy(&mut self, source: &StorageHandle, target: &StorageHandle) -> Result<(), IoError> {
+        let error = |error: BytesAccessError| IoError::Unknown {
+            description: alloc::format!("CPU relocation: {error}"), backtrace: BackTrace::capture(),
+        };
+        let source = self.try_get(source).map_err(error)?;
+        let target = self.try_get(target).map_err(error)?;
+        let read = source.try_read().map_err(error)?;
+        let mut write = target.try_write().map_err(error)?;
+        write.copy_from_slice(&read);
+        Ok(())
+    }
+
+    fn relocation_complete(&mut self) -> Result<(), IoError> { Ok(()) }
 
     #[cfg_attr(feature = "runtime-tracing", tracing::instrument(level = "trace", skip(self, size)))]
     fn alloc(&mut self, size: u64) -> Result<StorageHandle, IoError> {

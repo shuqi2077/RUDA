@@ -10,6 +10,7 @@ pub use base::*;
 /// Dynamic memory management strategy.
 mod memory_manage;
 pub use memory_manage::*;
+mod adaptive;
 
 use alloc::vec::Vec;
 
@@ -46,6 +47,10 @@ pub struct MemoryPoolOptions {
 /// High level configuration of memory management.
 #[derive(Clone, Debug)]
 pub enum MemoryConfiguration {
+    /// Opt-in workload-sized pages with relocation of unpinned live allocations.
+    /// Resolved resources and native graphs keep their addresses fixed.
+    #[cfg(not(exclusive_memory_only))]
+    Adaptive,
     /// The default preset, which uses pools that allocate sub slices.
     #[cfg(not(exclusive_memory_only))]
     SubSlices,

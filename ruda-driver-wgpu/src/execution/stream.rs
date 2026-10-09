@@ -73,7 +73,7 @@ impl WgpuStream {
 
         #[allow(unused_mut)]
         let mut mem_manage =
-            WgpuMemManager::new(device.clone(), memory_properties, memory_config, logger);
+            WgpuMemManager::new(device.clone(), queue.clone(), memory_properties, memory_config, logger);
 
         Self {
             mem_manage,
@@ -166,6 +166,10 @@ impl WgpuStream {
 
     /// Allocates a new empty buffer using the main memory pool.
     pub fn empty(&mut self, size: u64) -> Result<ManagedMemoryHandle, IoError> {
+        if self.mem_manage.relocation_pending(size) {
+            self.flush(StreamErrorMode { ignore: false, flush: false })
+                .map_err(|error| IoError::Execution(Box::new(error)))?;
+        }
         self.mem_manage.reserve(size)
     }
 

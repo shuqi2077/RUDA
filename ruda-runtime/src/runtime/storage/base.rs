@@ -85,6 +85,29 @@ pub trait ComputeStorage: Send {
     /// Returns the underlying resource for a specified storage handle
     fn get(&mut self, handle: &StorageHandle) -> Self::Resource;
 
+    /// Resolve a resource while retaining its address lease in adaptive mode.
+    fn get_pinned(&mut self, handle: &StorageHandle, _binding: ManagedMemoryBinding) -> Self::Resource {
+        self.get(handle)
+    }
+
+    /// Whether this storage implements real relocation copies and completion waits.
+    fn supports_relocation(&self) -> bool { false }
+
+    /// Wait for all users of storage addresses, including work on other streams.
+    fn relocation_barrier(&mut self) -> Result<(), IoError> {
+        Err(IoError::UnsupportedIoOperation { backtrace: ruda_core::backtrace::BackTrace::capture() })
+    }
+
+    /// Enqueue a device-local copy between disjoint, equally sized reservations.
+    fn relocation_copy(&mut self, _source: &StorageHandle, _target: &StorageHandle) -> Result<(), IoError> {
+        Err(IoError::UnsupportedIoOperation { backtrace: ruda_core::backtrace::BackTrace::capture() })
+    }
+
+    /// Wait for copies even when an earlier enqueue failed. Failure is not completion.
+    fn relocation_complete(&mut self) -> Result<(), IoError> {
+        self.relocation_barrier()
+    }
+
     /// Allocates `size` units of memory and returns a handle to it
     fn alloc(&mut self, size: u64) -> Result<StorageHandle, IoError>;
 

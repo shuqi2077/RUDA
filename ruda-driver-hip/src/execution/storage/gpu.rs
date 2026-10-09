@@ -21,6 +21,8 @@ pub struct GpuStorage {
 /// A GPU memory resource allocated for HIP using [`GpuStorage`].
 #[derive(new, Debug)]
 pub struct GpuResource {
+    #[new(default)]
+    pin: Option<ruda::runtime::memory_management::MemoryResourcePin>,
     /// The GPU memory pointer.
     pub ptr: ruda_hip_sys::hipDeviceptr_t,
     /// The HIP binding pointer.
@@ -107,6 +109,37 @@ impl ComputeStorage for GpuStorage {
 
     fn alignment(&self) -> usize {
         self.mem_alignment
+    }
+
+    fn get_pinned(&mut self, handle: &StorageHandle, binding: ruda::runtime::memory_management::ManagedMemoryBinding) -> Self::Resource {
+        let mut resource = self.get(handle);
+        resource.pin = Some(binding.pin());
+        resource
+    }
+
+    fn supports_relocation(&self) -> bool { true }
+
+    fn relocation_barrier(&mut self) -> Result<(), IoError> {
+        let status = unsafe { ruda_hip_sys::hipDeviceSynchronize() };
+        if status == HIP_SUCCESS { Ok(()) }
+        else { Err(IoError::Unknown { description: format!("HIP relocation wait: {status}"), backtrace: BackTrace::capture() }) }
+    }
+
+    fn relocation_copy(&mut self, source: &StorageHandle, target: &StorageHandle) -> Result<(), IoError> {
+        let src = *self.memory.get(&source.id).expect("relocation source") as u64 + source.offset();
+        let dst = *self.memory.get(&target.id).expect("relocation target") as u64 + target.offset();
+        let status = unsafe { ruda_hip_sys::hipMemcpyAsync(
+            dst as *mut std::ffi::c_void, src as *const std::ffi::c_void, source.size() as usize,
+            ruda_hip_sys::hipMemcpyKind_hipMemcpyDeviceToDevice, self.stream,
+        ) };
+        if status == HIP_SUCCESS { Ok(()) }
+        else { Err(IoError::Unknown { description: format!("HIP relocation copy: {status}"), backtrace: BackTrace::capture() }) }
+    }
+
+    fn relocation_complete(&mut self) -> Result<(), IoError> {
+        let status = unsafe { ruda_hip_sys::hipStreamSynchronize(self.stream) };
+        if status == HIP_SUCCESS { Ok(()) }
+        else { Err(IoError::Unknown { description: format!("HIP relocation completion: {status}"), backtrace: BackTrace::capture() }) }
     }
 
     fn get(&mut self, handle: &StorageHandle) -> Self::Resource {

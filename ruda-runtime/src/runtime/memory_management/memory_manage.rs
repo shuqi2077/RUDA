@@ -1,4 +1,5 @@
 use super::{
+    adaptive::AdaptiveState,
     MemoryConfiguration, MemoryPoolOptions, MemoryUsage, PoolType,
     memory_pool::{ExclusiveMemoryPool, MemoryPool, PersistentPool, SlicedPool},
 };
@@ -26,13 +27,13 @@ pub use super::memory_pool::{ManagedMemoryBinding, handle::*};
 // These are 288 bytes vs 64 bytes. Adding boxing isn't really worth
 // saving the 200 bytes.
 #[allow(clippy::large_enum_variant)]
-enum DynamicPool {
+pub(super) enum DynamicPool {
     Sliced(SlicedPool),
     Exclusive(ExclusiveMemoryPool),
 }
 
 impl DynamicPool {
-    fn find_at(&self, location: MemoryLocation) -> Result<&Slice, IoError> {
+    pub(super) fn find_at(&self, location: MemoryLocation) -> Result<&Slice, IoError> {
         match self {
             DynamicPool::Sliced(pool) => pool.find_at(location),
             DynamicPool::Exclusive(pool) => pool.find_at(location),
@@ -124,6 +125,7 @@ pub struct MemoryManagement<Storage> {
     name: String,
     persistent: PersistentPool,
     pools: Vec<DynamicPool>,
+    adaptive: Option<AdaptiveState>,
     storage: Storage,
     alloc_reserve_count: u64,
     mode: MemoryAllocationMode,
@@ -203,7 +205,14 @@ impl<Storage: ComputeStorage> MemoryManagement<Storage> {
         logger: Arc<ServerLogger>,
         options: MemoryManagementOptions,
     ) -> Self {
+        #[cfg(not(exclusive_memory_only))]
+        let adaptive = matches!(&config, MemoryConfiguration::Adaptive)
+            .then(|| AdaptiveState::new(properties));
+        #[cfg(exclusive_memory_only)]
+        let adaptive: Option<AdaptiveState> = None;
         let pool_options = match config {
+            #[cfg(not(exclusive_memory_only))]
+            MemoryConfiguration::Adaptive => adaptive.as_ref().expect("adaptive layout").pool_options(),
             #[cfg(not(exclusive_memory_only))]
             MemoryConfiguration::SubSlices => {
                 // Round chunk size to be aligned.
@@ -351,9 +360,10 @@ impl<Storage: ComputeStorage> MemoryManagement<Storage> {
             persistent: PersistentPool::new(
                 properties.max_page_size,
                 properties.alignment,
-                pools.len() as u8,
+                if adaptive.is_some() { u8::MAX } else { pools.len() as u8 },
             ),
             pools,
+            adaptive,
             storage,
             alloc_reserve_count: 0,
             mode,
@@ -439,6 +449,7 @@ impl<Storage: ComputeStorage> MemoryManagement<Storage> {
         offset_start: Option<u64>,
         offset_end: Option<u64>,
     ) -> Result<Storage::Resource, IoError> {
+        let pin_binding = self.adaptive.as_ref().map(|_| binding.clone());
         let handle = self.get_storage(binding)?;
 
         let handle = match offset_start {
@@ -449,7 +460,17 @@ impl<Storage: ComputeStorage> MemoryManagement<Storage> {
             Some(offset) => handle.offset_end(offset),
             None => handle,
         };
-        Ok(self.storage().get(&handle))
+        if let Some(binding) = pin_binding {
+            Ok(self.storage().get_pinned(&handle, binding))
+        } else {
+            Ok(self.storage().get(&handle))
+        }
+    }
+
+    /// Whether an adaptive reservation may relocate existing data. Queued-command
+    /// backends must submit their pending encoders before calling `reserve` here.
+    pub fn relocation_pending(&self, size: u64) -> bool {
+        self.adaptive.as_ref().is_some_and(|state| state.pending(&self.pools, size))
     }
 
     /// Finds a spot in memory for a resource with the given size in bytes, and returns a handle to it
@@ -497,6 +518,10 @@ impl<Storage: ComputeStorage> MemoryManagement<Storage> {
                 )
             },
         );
+
+        if let Some(adaptive) = &mut self.adaptive {
+            return adaptive.reserve(&mut self.pools, &mut self.storage, size);
+        }
 
         // Find first pool that fits this allocation
         let pool = self

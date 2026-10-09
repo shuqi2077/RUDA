@@ -26,6 +26,7 @@ pub(crate) struct WgpuMemManager {
 impl WgpuMemManager {
     pub(crate) fn new(
         device: wgpu::Device,
+        queue: wgpu::Queue,
         memory_properties: MemoryDeviceProperties,
         memory_config: MemoryConfiguration,
         logger: Arc<ServerLogger>,
@@ -33,15 +34,21 @@ impl WgpuMemManager {
         // Allocate storage & memory management for the main memory buffers. Any calls
         // to empty() or create() with a small enough size will be allocated from this
         // main memory pool.
+        let main_storage = WgpuStorage::new(
+            memory_properties.alignment as usize,
+            device.clone(),
+            BufferUsages::STORAGE
+                | BufferUsages::COPY_SRC
+                | BufferUsages::COPY_DST
+                | BufferUsages::INDIRECT,
+        );
+        let main_storage = match &memory_config {
+            #[cfg(not(exclusive_memory_only))]
+            MemoryConfiguration::Adaptive => main_storage.with_relocation_queue(queue),
+            _ => main_storage,
+        };
         let memory_main = MemoryManagement::from_configuration(
-            WgpuStorage::new(
-                memory_properties.alignment as usize,
-                device.clone(),
-                BufferUsages::STORAGE
-                    | BufferUsages::COPY_SRC
-                    | BufferUsages::COPY_DST
-                    | BufferUsages::INDIRECT,
-            ),
+            main_storage,
             &memory_properties,
             memory_config,
             logger.clone(),
@@ -93,6 +100,10 @@ impl WgpuMemManager {
             Ok(handle) => Ok(handle),
             Err(err) => Err(err),
         }
+    }
+
+    pub(crate) fn relocation_pending(&self, size: u64) -> bool {
+        self.memory_pool.relocation_pending(size)
     }
 
     pub(crate) fn reserve_staging(

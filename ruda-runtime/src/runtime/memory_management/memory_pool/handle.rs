@@ -1,5 +1,6 @@
 use crate::runtime::memory_management::MemoryHandle;
 use alloc::sync::Arc;
+use core::sync::atomic::AtomicUsize;
 #[cfg(target_has_atomic = "64")]
 use core::sync::atomic::{AtomicU64, Ordering};
 #[cfg(not(target_has_atomic = "64"))]
@@ -35,6 +36,7 @@ impl Clone for ManagedMemoryHandle {
 /// Send/Sync are derived from the fields; no unchecked Cell sharing is needed.
 pub(crate) struct ManagedMemoryDescriptor {
     pub(crate) id: ManagedMemoryId,
+    pins: AtomicUsize,
     #[cfg(target_has_atomic = "64")]
     location: AtomicU64,
     #[cfg(not(target_has_atomic = "64"))]
@@ -183,6 +185,7 @@ impl ManagedMemoryHandle {
         Self {
             descriptor: Arc::new(ManagedMemoryDescriptor {
                 id: ManagedMemoryId { value },
+                pins: AtomicUsize::new(0),
                 #[cfg(target_has_atomic = "64")]
                 location: AtomicU64::new(MemoryLocation::uninit().to_bits()),
                 #[cfg(not(target_has_atomic = "64"))]
@@ -207,6 +210,10 @@ impl ManagedMemoryHandle {
         Arc::strong_count(&self.descriptor) <= 1
     }
 
+    pub(crate) fn is_pinned(&self) -> bool {
+        self.descriptor.pins.load(core::sync::atomic::Ordering::Acquire) != 0
+    }
+
     /// Returns the binding for the current handle.
     pub fn binding(self) -> ManagedMemoryBinding {
         ManagedMemoryBinding {
@@ -225,6 +232,11 @@ impl ManagedMemoryHandle {
 }
 
 impl ManagedMemoryBinding {
+    /// Keep this allocation's address fixed until the returned pin is dropped.
+    pub fn pin(&self) -> MemoryResourcePin {
+        self.descriptor.pins.fetch_add(1, core::sync::atomic::Ordering::AcqRel);
+        MemoryResourcePin { binding: self.clone() }
+    }
     /// Stable allocation identity, independent of the device address or view.
     /// This is an identity token, not a pointer or proof that a resource is ready.
     pub fn id(&self) -> ManagedMemoryId { self.descriptor.id }
@@ -232,6 +244,22 @@ impl ManagedMemoryBinding {
     /// Retrieves the descriptor for the current binding.
     pub(crate) fn descriptor(&self) -> &ManagedMemoryDescriptor {
         &self.descriptor
+    }
+}
+
+/// A resolved resource or native graph's fixed-address allocation lease.
+#[derive(Debug)]
+pub struct MemoryResourcePin {
+    binding: ManagedMemoryBinding,
+}
+
+impl Clone for MemoryResourcePin {
+    fn clone(&self) -> Self { self.binding.pin() }
+}
+
+impl Drop for MemoryResourcePin {
+    fn drop(&mut self) {
+        self.binding.descriptor.pins.fetch_sub(1, core::sync::atomic::Ordering::AcqRel);
     }
 }
 

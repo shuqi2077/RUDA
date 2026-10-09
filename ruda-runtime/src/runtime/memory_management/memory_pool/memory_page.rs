@@ -152,6 +152,16 @@ impl MemoryPage {
         None
     }
 
+    pub(crate) fn can_reserve(&self, size: u64) -> bool {
+        let Some(needed) = size.checked_add(calculate_padding(size, self.alignment)) else { return false; };
+        let mut free = 0u64;
+        for slice in &self.slices {
+            free = if slice.is_free() { free.saturating_add(slice.effective_size()) } else { 0 };
+            if free >= needed { return true; }
+        }
+        false
+    }
+
     /// Gets the [storage handle](SliceHandle) with the correct offset and size using the slice
     /// binding.
     ///
@@ -177,6 +187,29 @@ impl MemoryPage {
         for slice in self.slices.iter() {
             slice.descriptor().update_page(page);
         }
+    }
+
+    pub(crate) fn movable_allocations(&self, output: &mut Vec<(ManagedMemoryHandle, StorageHandle, u64)>) {
+        for slice in &self.slices {
+            if !slice.is_free() && !slice.handle.is_pinned() {
+                output.push((slice.handle.clone(), slice.storage.clone(), slice.cursor));
+            }
+        }
+    }
+
+    pub(crate) fn release_relocated(&mut self, allocation: &ManagedMemoryHandle) -> Result<(), IoError> {
+        let location = allocation.descriptor().location();
+        let slice = self.slices.get_mut(location.slice as usize).ok_or_else(|| IoError::NotFound {
+            reason: "Relocation source slice does not exist".into(), backtrace: BackTrace::capture(),
+        })?;
+        if slice.handle.descriptor() != allocation.descriptor() {
+            return Err(IoError::NotFound { reason: "Relocation source identity changed".into(), backtrace: BackTrace::capture() });
+        }
+        let replacement = ManagedMemoryHandle::new();
+        replacement.descriptor().update_location(location);
+        slice.handle = replacement;
+        slice.cursor = 0;
+        Ok(())
     }
 
     /// Recompute the memory page metadata to make sure adjacent slices are merged together into a
