@@ -1,5 +1,8 @@
 use crate::runtime::memory_management::MemoryHandle;
 use alloc::sync::Arc;
+#[cfg(target_has_atomic = "64")]
+use core::sync::atomic::{AtomicU64, Ordering};
+#[cfg(not(target_has_atomic = "64"))]
 use spin::Mutex;
 
 /// Managed Memory handle
@@ -32,6 +35,9 @@ impl Clone for ManagedMemoryHandle {
 /// Send/Sync are derived from the fields; no unchecked Cell sharing is needed.
 pub(crate) struct ManagedMemoryDescriptor {
     pub(crate) id: ManagedMemoryId,
+    #[cfg(target_has_atomic = "64")]
+    location: AtomicU64,
+    #[cfg(not(target_has_atomic = "64"))]
     location: Mutex<MemoryLocation>,
 }
 
@@ -74,34 +80,80 @@ pub(crate) struct MemoryLocation {
 impl ManagedMemoryDescriptor {
     /// Update the memory location for the given [`ManagedMemoryId`].
     pub(crate) fn update_location(&self, location: MemoryLocation) {
-        *self.location.lock() = location;
+        #[cfg(target_has_atomic = "64")]
+        {
+            self.location.store(location.to_bits(), Ordering::Release);
+        }
+        #[cfg(not(target_has_atomic = "64"))]
+        {
+            *self.location.lock() = location;
+        }
     }
 
     /// Update only the slice position for the given [`ManagedMemoryId`].
     pub(crate) fn update_slice(&self, slice: u32) {
-        self.location.lock().slice = slice;
+        self.modify(|location| MemoryLocation { slice, ..location });
     }
 
     /// Update only the memory page position for the given [`ManagedMemoryId`].
     pub fn update_page(&self, page: u16) {
-        self.location.lock().page = page;
+        self.modify(|location| MemoryLocation { page, ..location });
     }
 
     /// Retrieves the current location.
     pub(crate) fn location(&self) -> MemoryLocation {
-        *self.location.lock()
+        #[cfg(target_has_atomic = "64")]
+        {
+            MemoryLocation::from_bits(self.location.load(Ordering::Acquire))
+        }
+        #[cfg(not(target_has_atomic = "64"))]
+        {
+            *self.location.lock()
+        }
     }
 
     pub(crate) fn slice(&self) -> usize {
-        self.location.lock().slice as usize
+        self.location().slice as usize
     }
 
     pub(crate) fn page(&self) -> usize {
-        self.location.lock().page as usize
+        self.location().page as usize
+    }
+
+    fn modify(&self, update: impl Fn(MemoryLocation) -> MemoryLocation) {
+        #[cfg(target_has_atomic = "64")]
+        {
+            let _ = self.location.fetch_update(Ordering::AcqRel, Ordering::Acquire, |bits| {
+                Some(update(MemoryLocation::from_bits(bits)).to_bits())
+            });
+        }
+        #[cfg(not(target_has_atomic = "64"))]
+        {
+            let mut location = self.location.lock();
+            *location = update(*location);
+        }
     }
 }
 
 impl MemoryLocation {
+    #[cfg(target_has_atomic = "64")]
+    fn to_bits(self) -> u64 {
+        self.pool as u64
+            | (self.page as u64) << 8
+            | (self.slice as u64) << 24
+            | (self.init as u64) << 56
+    }
+
+    #[cfg(target_has_atomic = "64")]
+    fn from_bits(bits: u64) -> Self {
+        Self {
+            pool: bits as u8,
+            page: (bits >> 8) as u16,
+            slice: (bits >> 24) as u32,
+            init: (bits >> 56) as u8,
+        }
+    }
+
     /// Creates a new memory location.
     pub(crate) fn new(pool: u8, page: u16, slice: u32) -> Self {
         Self {
@@ -131,6 +183,9 @@ impl ManagedMemoryHandle {
         Self {
             descriptor: Arc::new(ManagedMemoryDescriptor {
                 id: ManagedMemoryId { value },
+                #[cfg(target_has_atomic = "64")]
+                location: AtomicU64::new(MemoryLocation::uninit().to_bits()),
+                #[cfg(not(target_has_atomic = "64"))]
                 location: Mutex::new(MemoryLocation::uninit()),
             }),
             handle_count: Arc::new(()),
