@@ -4,7 +4,8 @@ use crate::{
     NumOperations,
     search::{
         Block, BlockOptimization,
-        merging::{MergeBlocksResult, merge_blocks},
+        graph::Dag,
+        merging::{MergeBlocksResult, merge_blocks_with_guard},
     },
     stream::store::ExecutionStrategy,
 };
@@ -13,8 +14,8 @@ use crate::{
 ///
 /// # Notes
 ///
-/// What we know here is that every block is independent at that time and can be executed
-/// in any order.
+/// Blocks may depend on one another. Merges preserve their dependency DAG and
+/// strategies execute in topological order, with source positions breaking ties.
 ///
 /// The contract is that the length of operations executed must include all operations. If we don't
 /// find an optimization that can be executed with that constraint, we return a
@@ -47,8 +48,7 @@ impl<O: NumOperations> BlocksOptimizer<O> {
     /// Optimizes the blocks.
     ///
     /// Strategy:
-    /// 1. Try to merge blocks together — independent blocks have no data
-    ///    dependency, so reordering across a merge is safe.
+    /// 1. Try to merge blocks without contracting a dependency cycle.
     /// 2. Ask every resulting block for its best optimization (or the
     ///    fallback [Operations](ExecutionStrategy::Operations) if no builder
     ///    matched) and concatenate the strategies.
@@ -63,6 +63,17 @@ impl<O: NumOperations> BlocksOptimizer<O> {
 
         let num_ops = self.num_ops;
         let blocks = core::mem::take(&mut self.blocks);
+        let blocks = if blocks.len() > 1 {
+            match Dag::new(&blocks).topological_order() {
+                Some(order) if order.iter().enumerate().any(|(index, &position)| index != position) => {
+                    let mut slots: Vec<_> = blocks.into_iter().map(Some).collect();
+                    order.into_iter().map(|index| slots[index].take().expect("each block taken once")).collect()
+                }
+                _ => blocks,
+            }
+        } else {
+            blocks
+        };
 
         let mut strategies: Vec<Box<ExecutionStrategy<O>>> = Vec::with_capacity(blocks.len());
         let mut ordering = Vec::new();
@@ -119,9 +130,13 @@ impl<O: NumOperations> BlocksOptimizer<O> {
         }
 
         Block::sort(&mut self.blocks);
+        for (index, block) in self.blocks.iter_mut().enumerate() {
+            block.seed_constituent(index);
+        }
         let blocks = self.blocks.iter().collect::<Vec<_>>();
+        let guard = Dag::new(&blocks).reachability();
 
-        match merge_blocks(&blocks, false) {
+        match merge_blocks_with_guard(&blocks, false, &guard) {
             MergeBlocksResult::Full(block) => {
                 self.blocks = vec![block];
             }

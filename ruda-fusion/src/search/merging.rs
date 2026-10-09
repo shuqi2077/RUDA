@@ -1,4 +1,5 @@
 use super::Block;
+use super::graph::{Dag, Reachability};
 use crate::NumOperations;
 
 #[derive(Debug, PartialEq)]
@@ -33,6 +34,18 @@ pub enum MergeBlocksResult<O> {
 ///    trying to merge the remaining blocks. We try some permutations based on the result from
 ///    step1.
 pub fn merge_blocks<O: NumOperations>(blocks: &[&Block<O>], sorted: bool) -> MergeBlocksResult<O> {
+    let mut seeded: Vec<_> = blocks.iter().map(|block| (**block).clone()).collect();
+    for (index, block) in seeded.iter_mut().enumerate() {
+        block.seed_constituent(index);
+    }
+    let refs: Vec<_> = seeded.iter().collect();
+    let guard = Dag::new(&refs).reachability();
+    merge_blocks_with_guard(&refs, sorted, &guard)
+}
+
+pub fn merge_blocks_with_guard<O: NumOperations>(
+    blocks: &[&Block<O>], sorted: bool, guard: &Reachability,
+) -> MergeBlocksResult<O> {
     if blocks.is_empty() {
         return MergeBlocksResult::Fail;
     }
@@ -45,20 +58,20 @@ pub fn merge_blocks<O: NumOperations>(blocks: &[&Block<O>], sorted: bool) -> Mer
         let block0 = blocks[0];
         let block1 = blocks[1];
 
-        return match merge_two(block0, block1) {
+        return match merge_two(block0, block1, guard) {
             Some(result) => MergeBlocksResult::Full(result),
             None => MergeBlocksResult::Fail,
         };
     }
 
-    let mut step1 = merge_blocks_step1(blocks);
+    let mut step1 = merge_blocks_step1(blocks, guard);
 
     if step1.full.len() == 1 && step1.failed.is_empty() && step1.partial.is_empty() {
         MergeBlocksResult::Full(step1.full.remove(0))
     } else if step1.partial.len() == 1 && step1.failed.is_empty() && step1.full.is_empty() {
         MergeBlocksResult::Full(step1.partial.remove(0))
     } else {
-        let result = merge_blocks_step2(step1);
+        let result = merge_blocks_step2(step1, guard);
 
         if !sorted {
             return result;
@@ -96,9 +109,9 @@ impl<O> Default for MergeBlockStep1<O> {
     }
 }
 
-fn merge_blocks_step1<O: NumOperations>(blocks: &[&Block<O>]) -> MergeBlockStep1<O> {
+fn merge_blocks_step1<O: NumOperations>(blocks: &[&Block<O>], guard: &Reachability) -> MergeBlockStep1<O> {
     let step_size = blocks.len() / 2;
-    let num_steps = f32::ceil(blocks.len() as f32 / step_size as f32) as usize;
+    let num_steps = blocks.len().div_ceil(step_size);
 
     let mut result = MergeBlockStep1::default();
 
@@ -106,7 +119,7 @@ fn merge_blocks_step1<O: NumOperations>(blocks: &[&Block<O>]) -> MergeBlockStep1
         let start = i * step_size;
         let end = usize::min(start + step_size, blocks.len());
 
-        match merge_blocks(&blocks[start..end], false) {
+        match merge_blocks_with_guard(&blocks[start..end], false, guard) {
             MergeBlocksResult::Full(block) => {
                 result.full.push(block);
             }
@@ -128,10 +141,10 @@ fn merge_blocks_step1<O: NumOperations>(blocks: &[&Block<O>]) -> MergeBlockStep1
     result
 }
 
-fn merge_blocks_step2<O: NumOperations>(mut step1: MergeBlockStep1<O>) -> MergeBlocksResult<O> {
+fn merge_blocks_step2<O: NumOperations>(mut step1: MergeBlockStep1<O>, guard: &Reachability) -> MergeBlocksResult<O> {
     // First let's try to merge partial graphs.
     if step1.partial.len() > 1 {
-        match merge_accumulator(&step1.partial[0], &step1.partial[1..]) {
+        match merge_accumulator(&step1.partial[0], &step1.partial[1..], guard) {
             MergeBlocksResult::Full(block) => {
                 step1.partial = vec![block];
             }
@@ -146,7 +159,7 @@ fn merge_blocks_step2<O: NumOperations>(mut step1: MergeBlockStep1<O>) -> MergeB
     // Then let's try to merge partial graphs with failed merges.
     if !step1.failed.is_empty() {
         step1.partial.append(&mut step1.failed);
-        match merge_accumulator(&step1.partial[0], &step1.partial[1..]) {
+        match merge_accumulator(&step1.partial[0], &step1.partial[1..], guard) {
             MergeBlocksResult::Full(block) => {
                 step1.partial = vec![block];
             }
@@ -160,7 +173,7 @@ fn merge_blocks_step2<O: NumOperations>(mut step1: MergeBlockStep1<O>) -> MergeB
 
     // Then let's try to merge full graphs.
     if step1.full.len() > 1 {
-        match merge_accumulator(&step1.full[0], &step1.full[1..]) {
+        match merge_accumulator(&step1.full[0], &step1.full[1..], guard) {
             MergeBlocksResult::Full(block) => {
                 step1.full = vec![block];
             }
@@ -175,7 +188,7 @@ fn merge_blocks_step2<O: NumOperations>(mut step1: MergeBlockStep1<O>) -> MergeB
     // Then let's try to merge full graphs with failed graphs.
     if !step1.full.is_empty() {
         step1.full.append(&mut step1.failed);
-        match merge_accumulator(&step1.full[0], &step1.full[1..]) {
+        match merge_accumulator(&step1.full[0], &step1.full[1..], guard) {
             MergeBlocksResult::Full(block) => {
                 step1.full = vec![block];
             }
@@ -190,7 +203,7 @@ fn merge_blocks_step2<O: NumOperations>(mut step1: MergeBlockStep1<O>) -> MergeB
     // Then let's try to merge full graphs with partial graphs.
     if !step1.full.is_empty() || !step1.partial.is_empty() {
         step1.full.append(&mut step1.partial);
-        match merge_accumulator(&step1.full[0], &step1.full[1..]) {
+        match merge_accumulator(&step1.full[0], &step1.full[1..], guard) {
             MergeBlocksResult::Full(block) => {
                 step1.full = vec![block];
             }
@@ -226,13 +239,14 @@ fn merge_blocks_step2<O: NumOperations>(mut step1: MergeBlockStep1<O>) -> MergeB
 fn merge_accumulator<O: NumOperations>(
     base: &Block<O>,
     blocks: &[Block<O>],
+    guard: &Reachability,
 ) -> MergeBlocksResult<O> {
     let mut base = base.clone();
     let mut merged_failed = Vec::<Block<O>>::new();
     let mut merged_success = false;
 
     for block in blocks {
-        match merge_two(&base, block) {
+        match merge_two(&base, block, guard) {
             None => {
                 merged_failed.push((*block).clone());
             }
@@ -257,7 +271,10 @@ fn merge_accumulator<O: NumOperations>(
     }
 }
 
-fn merge_two<O: NumOperations>(a: &Block<O>, b: &Block<O>) -> Option<Block<O>> {
+fn merge_two<O: NumOperations>(a: &Block<O>, b: &Block<O>, guard: &Reachability) -> Option<Block<O>> {
+    if !guard.can_contract(a.constituents(), b.constituents()) {
+        return None;
+    }
     if a.can_append(b) {
         let mut base = a.clone();
         if base.merge_validated(b) {

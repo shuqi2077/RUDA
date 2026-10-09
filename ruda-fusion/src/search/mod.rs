@@ -1,4 +1,5 @@
 mod block;
+pub(super) mod graph;
 mod optimization;
 
 pub(super) mod merging;

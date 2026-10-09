@@ -1,9 +1,9 @@
 use crate::{FuserStatus, NumOperations, OperationFuser, stream::store::ExecutionStrategy};
-use ruda_tensor::graph::{OperationIr, TensorId, TensorIr, TensorStatus};
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
+use crate::search::graph::{
+    GraphNode, OperationNode, SubGraph, TensorFlow, is_valid_execution_order,
 };
+use ruda_tensor::graph::{OperationIr, TensorId, TensorIr};
+use std::sync::Arc;
 
 /// A block represents a list of operations, not necessarily in the same order as the execution
 /// stream.
@@ -13,7 +13,8 @@ use std::{
 pub struct Block<O> {
     builders: Vec<Box<dyn OperationFuser<O>>>,
     operations: Vec<OperationIr>,
-    ids: HashSet<TensorId>,
+    flow: TensorFlow,
+    constituents: SubGraph,
     ordering: Vec<usize>,
     closed_at: Vec<Option<usize>>,
     /// The start position in the relative execution stream.
@@ -41,13 +42,40 @@ pub struct BlockOptimization<O> {
     pub ordering: Vec<usize>,
 }
 
+impl<O> Block<O> {
+    pub fn constituents(&self) -> &SubGraph {
+        &self.constituents
+    }
+
+    pub fn seed_constituent(&mut self, index: usize) {
+        self.constituents = SubGraph::single(index);
+    }
+}
+
+impl<O> GraphNode for Block<O> {
+    type Resource = TensorId;
+
+    fn produced(&self) -> impl Iterator<Item = TensorId> { self.flow.produced() }
+    fn read(&self) -> impl Iterator<Item = TensorId> { self.flow.read() }
+    fn freed(&self) -> impl Iterator<Item = TensorId> { self.flow.freed() }
+    fn produces(&self, resource: TensorId) -> bool { self.flow.produces(resource) }
+    fn reads(&self, resource: TensorId) -> bool { self.flow.reads(resource) }
+    fn position(&self) -> usize { self.start_pos }
+    fn read_position(&self, resource: TensorId) -> usize { self.flow.read_position(resource) }
+    fn produces_before(&self, resource: TensorId, position: usize) -> bool {
+        self.flow.produces_before(resource, position)
+    }
+    fn ordered_range(&self) -> Option<(usize, usize)> { self.flow.ordered_range() }
+}
+
 impl<O: NumOperations> Block<O> {
     /// Create a new block that will be optimized with the provided [optimization builders](OptimizationBuilder).
     pub fn new(builders: &[Box<dyn OperationFuser<O>>]) -> Self {
         Self {
             builders: builders.iter().map(|o| o.clone_dyn()).collect(),
             operations: Vec::new(),
-            ids: HashSet::new(),
+            flow: TensorFlow::new(),
+            constituents: SubGraph::empty(),
             ordering: Vec::new(),
             closed_at: vec![None; builders.len()],
             start_pos: usize::MAX,
@@ -117,7 +145,7 @@ impl<O: NumOperations> Block<O> {
     /// Returns if the block contains any of the provided [tensors](TensorIr).
     pub fn contains_tensors(&self, tensors: &[&TensorIr]) -> bool {
         for node in tensors {
-            if self.ids.contains(&node.id) {
+            if self.flow.contains(node.id) {
                 return true;
             }
         }
@@ -140,6 +168,7 @@ impl<O: NumOperations> Block<O> {
     pub(super) fn merge_validated(&mut self, other: &Block<O>) -> bool {
         let self_ready = self.has_ready_optimization();
         let other_ready = other.has_ready_optimization();
+        self.constituents.union_with(&other.constituents);
 
         for (op, pos) in other.operations.iter().zip(&other.ordering) {
             self.register(op, *pos, true);
@@ -159,53 +188,14 @@ impl<O: NumOperations> Block<O> {
     }
 
     /// Whether this append direction preserves production and last-use ordering.
-    pub fn can_append(&self, other: &Block<O>) -> bool {
-        let operations = self.operations.iter().zip(&self.ordering)
-            .chain(other.operations.iter().zip(&other.ordering));
-        let mut produced = HashMap::new();
-        #[cfg(feature = "distributed")]
-        let mut last_collective = None;
-        for (operation, &position) in operations.clone() {
-            #[cfg(feature = "distributed")]
-            if matches!(operation, OperationIr::Distributed(_)) {
-                if last_collective.is_some_and(|previous| previous > position) {
-                    return false;
-                }
-                last_collective = Some(position);
-            }
-            for tensor in operation.outputs() {
-                produced.entry(tensor.id).and_modify(|first: &mut usize| {
-                    *first = (*first).min(position);
-                }).or_insert(position);
-            }
-        }
+    pub fn can_append<'a>(&'a self, other: &'a Block<O>) -> bool {
+        is_valid_execution_order(self.operation_nodes().chain(other.operation_nodes()))
+    }
 
-        let mut alive = HashSet::new();
-        let mut dead = HashSet::new();
-        for (operation, &position) in operations {
-            for tensor in operation.inputs() {
-                if dead.contains(&tensor.id) {
-                    return false;
-                }
-                if !alive.contains(&tensor.id) {
-                    if produced.get(&tensor.id).is_some_and(|&first| first < position) {
-                        return false;
-                    }
-                    alive.insert(tensor.id);
-                }
-            }
-            for tensor in operation.inputs() {
-                if matches!(tensor.status, TensorStatus::ReadWrite) {
-                    alive.remove(&tensor.id);
-                    dead.insert(tensor.id);
-                }
-            }
-            for tensor in operation.outputs() {
-                dead.remove(&tensor.id);
-                alive.insert(tensor.id);
-            }
-        }
-        true
+    fn operation_nodes(&self) -> impl Iterator<Item = OperationNode<'_>> + Clone {
+        self.operations.iter().zip(&self.ordering).map(|(operation, &position)| {
+            OperationNode { operation, position }
+        })
     }
 
     fn has_ready_optimization(&self) -> bool {
@@ -227,13 +217,13 @@ impl<O: NumOperations> Block<O> {
         order: usize,
         force: bool,
     ) -> RegistrationResult {
-        if self.ids.is_empty() {
+        if self.flow.is_empty() {
             self.register_op(operation, order);
             return RegistrationResult::Accepted;
         }
         let mut contains = false;
         for node in operation.inputs().chain(operation.outputs()) {
-            contains = self.ids.contains(&node.id);
+            contains = self.flow.contains(node.id);
 
             if contains {
                 break;
@@ -262,6 +252,7 @@ impl<O: NumOperations> Block<O> {
     }
 
     fn register_op(&mut self, operation: &OperationIr, pos: usize) {
+        self.flow.register(operation, pos);
         self.operations.push(operation.clone());
         self.ordering.push(pos);
 
@@ -280,9 +271,6 @@ impl<O: NumOperations> Block<O> {
             }
         }
 
-        for node in operation.inputs().chain(operation.outputs()) {
-            self.ids.insert(node.id);
-        }
     }
 }
 
@@ -375,7 +363,8 @@ impl<O> Clone for Block<O> {
         Self {
             builders: self.builders.iter().map(|b| b.clone_dyn()).collect(),
             operations: self.operations.clone(),
-            ids: self.ids.clone(),
+            flow: self.flow.clone(),
+            constituents: self.constituents.clone(),
             ordering: self.ordering.clone(),
             closed_at: self.closed_at.clone(),
             start_pos: self.start_pos,
