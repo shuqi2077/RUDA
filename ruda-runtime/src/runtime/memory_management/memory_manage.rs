@@ -1,5 +1,5 @@
 use super::{
-    MemoryConfiguration, MemoryLocation, MemoryPoolOptions, MemoryUsage, PoolType,
+    MemoryConfiguration, MemoryPoolOptions, MemoryUsage, PoolType,
     memory_pool::{ExclusiveMemoryPool, MemoryPool, PersistentPool, SlicedPool},
 };
 use crate::runtime::{
