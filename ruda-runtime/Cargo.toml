@@ -1,6 +1,6 @@
 [package]
 name = "ruda-runtime"
-version = "0.1.5"
+version = "0.1.6"
 readme = "README.md"
 description = "Ruda portable host runtime."
 license-file = "../LICENSE"
