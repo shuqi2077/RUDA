@@ -36,6 +36,7 @@ struct OutputSorted<'a> {
     pos_original: usize,
     precision: FuseType,
     tensor_relative: &'a TensorIr,
+    shape_sum: usize,
 }
 
 #[derive(Debug)]
@@ -63,15 +64,16 @@ impl<'a, R: Runtime> OutputPlanner<'a, R> {
                 pos_original: pos,
                 precision: *precision,
                 tensor_relative: tensor,
+                shape_sum: 0,
             })
             .collect();
 
-        outputs_sorted.sort_by(|a, b| {
-            let a_val: usize = a.tensor_relative.shape.iter().sum();
-            let b_val: usize = b.tensor_relative.shape.iter().sum();
-
-            b_val.cmp(&a_val)
-        });
+        if outputs_sorted.len() > 1 {
+            for output in &mut outputs_sorted {
+                output.shape_sum = output.tensor_relative.shape.iter().sum();
+            }
+            outputs_sorted.sort_by(|a, b| b.shape_sum.cmp(&a.shape_sum));
+        }
 
         let mut handles = Vec::with_capacity(resources.outputs.len());
         let mut globals = Vec::with_capacity(resources.outputs.len());
