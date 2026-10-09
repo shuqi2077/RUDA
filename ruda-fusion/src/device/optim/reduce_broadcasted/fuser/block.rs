@@ -59,7 +59,7 @@ impl<R: Runtime> ReduceBlockFuser<R> {
     /// Creates a new block.
     pub fn new(fuser: ReduceFuser<R>) -> Self {
         Self {
-            fuser: fuser.clone(),
+            fuser,
             ops: Vec::new(),
             kind: ReduceBlockKind::Elemwise,
         }

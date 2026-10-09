@@ -145,8 +145,7 @@ impl<R: Runtime> OperationFuser<RudaOptimization<R>> for ReduceBroadcastedFuser<
             return;
         }
 
-        // We first need to simulate the fusion to check the consistency, then we perform the
-        // fusion.
+        // Check consistency before committing the speculative fusion.
         let mut next = self.clone();
         next.fuse_no_check(operation);
 
@@ -156,7 +155,7 @@ impl<R: Runtime> OperationFuser<RudaOptimization<R>> for ReduceBroadcastedFuser<
             self.state = ReduceBroadcastedStatus::Closed;
         } else {
             // Normal path.
-            self.fuse_no_check(operation);
+            *self = next;
         }
     }
 

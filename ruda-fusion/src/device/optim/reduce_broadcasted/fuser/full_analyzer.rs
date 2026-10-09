@@ -2,12 +2,12 @@ use super::block::ReduceBlockKind;
 use crate::device::optim::reduce_broadcasted::fuser::block::ReduceBlockFuser;
 use ruda_tensor::graph::{TensorId, TensorIr};
 use ruda_kernel::dsl::Runtime;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 #[derive(Debug)]
 pub struct FullFuserAnalyzer {
     // We need to know the block id of which we can reuse the read local input.
-    analyses: Vec<Vec<(TensorIr, usize)>>,
+    analyses: VecDeque<Vec<(TensorIr, usize)>>,
 }
 
 impl FullFuserAnalyzer {
@@ -53,12 +53,12 @@ impl FullFuserAnalyzer {
         state.analyses.remove(0);
 
         Self {
-            analyses: state.analyses,
+            analyses: state.analyses.into(),
         }
     }
 
     pub fn retrieve_next(&mut self) -> FullFuserAnalysis {
-        let inputs = self.analyses.remove(0);
+        let inputs = self.analyses.pop_front().expect("next block analysis");
         FullFuserAnalysis { inputs }
     }
 }

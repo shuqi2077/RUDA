@@ -110,17 +110,6 @@ impl<'a, R: Runtime> VectorizationPlanner<'a, R> {
             }
         }
 
-        let filtered = plan
-            .handle_inputs
-            .iter()
-            .map(|item| {
-                item.as_normal()
-                    // Filter out indexed resources.
-                    .map(|item| !self.resources.indexed.contains_key(&item.relative_id))
-                    .unwrap_or(true)
-            })
-            .collect::<Vec<_>>();
-
         let vector_sizes = match quants_vector_sizes {
             // Quantization normally triggers higher vectorization than anything else, no need to
             // compare to ref elem.
@@ -136,9 +125,12 @@ impl<'a, R: Runtime> VectorizationPlanner<'a, R> {
             &mut plan.vectorizations,
             plan.handle_inputs
                 .iter()
-                .enumerate()
-                .filter_map(|(i, item)| {
-                    if filtered[i] {
+                .filter_map(|item| {
+                    let included = item
+                        .as_normal()
+                        .map(|item| !self.resources.indexed.contains_key(&item.relative_id))
+                        .unwrap_or(true);
+                    if included {
                         Some(match item {
                             HandleInput::Normal(h) => {
                                 VectorizationHandle::NormalInput(&h.handle, &h.global_ir)
