@@ -132,13 +132,13 @@ default-features = false
 
 [dependencies.ruda-tensor-host]
 path = "../ruda-tensor-host"
-version = "0.21.43"
+version = "0.21.44"
 optional = true
 default-features = false
 features = ["std"]
 
 [dev-dependencies.ruda-tensor-host]
 path = "../ruda-tensor-host"
-version = "0.21.43"
+version = "0.21.44"
 default-features = false
 features = ["std"]
