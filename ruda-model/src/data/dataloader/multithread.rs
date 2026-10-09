@@ -8,7 +8,7 @@ use rand::{Rng, SeedableRng};
 use super::batcher::Batcher;
 use super::{BatchDataLoader, BatchStrategy, DataLoader, DataLoaderIterator, Progress};
 use std::sync::{
-    Arc, OnceLock,
+    Arc, Mutex, OnceLock,
     atomic::{AtomicBool, Ordering},
     mpsc,
 };
@@ -20,8 +20,9 @@ type RngSeed = <StdRng as SeedableRng>::Seed;
 
 /// A multi-threaded data loader that can be used to iterate over a dataset.
 ///
-/// Dropping an iterator stops prefetching and joins its workers, waiting for any
-/// dataset read or batch construction already in progress to return.
+/// Dropping an iterator stops prefetching and waits for any dataset read or batch
+/// construction already in progress to return. Workers are joined unless reuse
+/// is explicitly enabled with [`Self::reuse_workers`].
 pub struct MultiThreadDataLoader<B: Backend, I, O> {
     // Configuration parameters needed for initialization
     strategy: Box<dyn BatchStrategy<I>>,
@@ -30,9 +31,11 @@ pub struct MultiThreadDataLoader<B: Backend, I, O> {
     device: B::Device,
     seed: Option<RngSeed>,
     num_threads: usize,
+    reuse_workers: bool,
 
     // The lazily initialized data loaders
     dataloaders: OnceLock<Vec<BatchDataLoader<B, I, O>>>,
+    worker_pool: Arc<Mutex<WorkerPoolState<O>>>,
 }
 
 /// A message that can be sent between threads.
@@ -47,12 +50,147 @@ pub enum Message<O> {
 
 struct MultiThreadsDataloaderIterator<O> {
     num_done: usize,
+    num_workers: usize,
     workers: Vec<thread::JoinHandle<()>>,
+    reused_workers: Option<WorkerEpoch<O>>,
     receiver: Option<mpsc::Receiver<Message<O>>>,
     progresses: Vec<Progress>,
     items_total: usize,
     items_processed: usize,
     cancelled: Arc<AtomicBool>,
+}
+
+enum WorkerPoolState<O> {
+    Uninitialized,
+    Idle(WorkerPool<O>),
+    InUse,
+}
+
+struct WorkerJob<O> {
+    sender: mpsc::SyncSender<Message<O>>,
+    cancelled: Arc<AtomicBool>,
+    finished: mpsc::Sender<bool>,
+}
+
+struct WorkerCompletion(mpsc::Sender<bool>);
+
+impl Drop for WorkerCompletion {
+    fn drop(&mut self) {
+        // Preserve the original panic in the JoinHandle rather than catching it
+        // and continuing to use the failed worker's device/thread-local state.
+        let _ = self.0.send(thread::panicking());
+    }
+}
+
+struct WorkerPool<O> {
+    senders: Vec<mpsc::Sender<WorkerJob<O>>>,
+    workers: Vec<thread::JoinHandle<()>>,
+}
+
+impl<O> WorkerPool<O> {
+    fn shutdown(&mut self) -> thread::Result<()> {
+        self.senders.clear();
+        let mut result = Ok(());
+        for worker in self.workers.drain(..) {
+            if let Err(payload) = worker.join() {
+                if result.is_ok() {
+                    result = Err(payload);
+                }
+            }
+        }
+        result
+    }
+}
+
+impl<O> Drop for WorkerPool<O> {
+    fn drop(&mut self) {
+        let _ = self.shutdown();
+    }
+}
+
+struct WorkerLease<O> {
+    pool: Option<WorkerPool<O>>,
+    cache: Option<Arc<Mutex<WorkerPoolState<O>>>>,
+}
+
+impl<O> WorkerLease<O> {
+    fn release(mut self) {
+        let pool = self.pool.take().expect("leased worker pool");
+        let cache = self.cache.take().expect("worker pool cache");
+        *cache.lock().unwrap_or_else(|error| error.into_inner()) = WorkerPoolState::Idle(pool);
+    }
+}
+
+impl<O> Drop for WorkerLease<O> {
+    fn drop(&mut self) {
+        if let Some(cache) = self.cache.take() {
+            // This also handles partial initialization/dispatch. Close and join
+            // outside the cache lock before allowing a new pool to be created.
+            drop(self.pool.take());
+            *cache.lock().unwrap_or_else(|error| error.into_inner()) =
+                WorkerPoolState::Uninitialized;
+        }
+    }
+}
+
+struct WorkerEpoch<O> {
+    lease: WorkerLease<O>,
+    finished: mpsc::Receiver<bool>,
+    dispatched: usize,
+    failed: bool,
+}
+
+impl<O> WorkerEpoch<O> {
+    fn finish(mut self) -> thread::Result<()> {
+        for _ in 0..self.dispatched {
+            match self.finished.recv() {
+                Ok(panicked) => self.failed |= panicked,
+                Err(_) => {
+                    self.failed = true;
+                    break;
+                }
+            }
+        }
+        if self.failed {
+            let result = self
+                .lease
+                .pool
+                .as_mut()
+                .expect("leased worker pool")
+                .shutdown();
+            return match result {
+                Err(payload) => Err(payload),
+                Ok(()) => Err(Box::new(String::from("data loader worker failed to complete"))),
+            };
+        }
+        self.lease.release();
+        Ok(())
+    }
+}
+
+fn run_worker<B: Backend, I, O>(
+    dataloader: &BatchDataLoader<B, I, O>,
+    index: usize,
+    sender: &mpsc::SyncSender<Message<O>>,
+    cancelled: &AtomicBool,
+) where
+    I: Send + Sync + Clone + 'static,
+    O: Send + 'static,
+{
+    if cancelled.load(Ordering::Relaxed) {
+        return;
+    }
+    let mut iterator = dataloader.iter();
+    while !cancelled.load(Ordering::Relaxed) {
+        let Some(item) = iterator.next() else {
+            break;
+        };
+        let progress = iterator.progress();
+        if sender.send(Message::Batch(index, item, progress)).is_err() {
+            return;
+        }
+    }
+    sender.send(Message::Done).ok();
 }
 
 impl<B: Backend, I, O> MultiThreadDataLoader<B, I, O>
@@ -111,7 +249,80 @@ where
             device,
             seed,
             dataloaders: OnceLock::new(),
+            reuse_workers: false,
+            worker_pool: Arc::new(Mutex::new(WorkerPoolState::Uninitialized)),
         }
+    }
+
+    /// Enables reuse of idle workers across iterations (disabled by default).
+    ///
+    /// Finishing or dropping an iterator still waits for its in-flight reads and
+    /// batch construction. Concurrent iterators use separate transient workers
+    /// when the reusable pool is busy, rather than waiting behind another epoch.
+    /// A panicked worker is joined; failed batches are never automatically replayed.
+    pub fn reuse_workers(mut self, enabled: bool) -> Self {
+        self.reuse_workers = enabled;
+        if !enabled {
+            let previous = {
+                let mut cache = self
+                    .worker_pool
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                std::mem::replace(&mut *cache, WorkerPoolState::Uninitialized)
+            };
+            drop(previous);
+        }
+        self
+    }
+
+    fn lease_workers(&self, dataloaders: &[BatchDataLoader<B, I, O>]) -> Option<WorkerLease<O>> {
+        if !self.reuse_workers {
+            return None;
+        }
+        let pool = {
+            let mut cache = self
+                .worker_pool
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if matches!(*cache, WorkerPoolState::InUse) {
+                return None;
+            }
+            match std::mem::replace(&mut *cache, WorkerPoolState::InUse) {
+                WorkerPoolState::Idle(pool) => Some(pool),
+                WorkerPoolState::Uninitialized => None,
+                WorkerPoolState::InUse => unreachable!(),
+            }
+        };
+        let mut lease = WorkerLease {
+            pool,
+            cache: Some(self.worker_pool.clone()),
+        };
+        if lease.pool.is_none() {
+            let mut pool = WorkerPool {
+                senders: Vec::with_capacity(dataloaders.len()),
+                workers: Vec::with_capacity(dataloaders.len()),
+            };
+            for (index, dataloader) in dataloaders.iter().enumerate() {
+                let dataloader = dataloader.clone();
+                let (sender, receiver) = mpsc::channel::<WorkerJob<O>>();
+                let worker = thread::Builder::new()
+                    .name(std::format!("dataloader-{index}"))
+                    .spawn(move || {
+                        while let Ok(job) = receiver.recv() {
+                            let completion = WorkerCompletion(job.finished);
+                            run_worker(&dataloader, index, &job.sender, &job.cancelled);
+                            drop(job.sender);
+                            drop(job.cancelled);
+                            drop(completion);
+                        }
+                    })
+                    .expect("failed to spawn reusable data loader worker");
+                pool.senders.push(sender);
+                pool.workers.push(worker);
+            }
+            lease.pool = Some(pool);
+        }
+        Some(lease)
     }
 
     /// Force initialization if needed.
@@ -183,33 +394,40 @@ where
             progresses,
         );
 
-        for (index, dataloader) in dataloaders.iter().enumerate() {
-            let dataloader_cloned = dataloader.clone();
-            let sender_cloned = sender.clone();
-            let cancelled = iterator.cancelled.clone();
-            let worker = std::thread::Builder::new()
-                .name(std::format!("dataloader-{index}"))
-                .spawn(move || {
-                    if cancelled.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    let mut iterator = dataloader_cloned.iter();
-                    while !cancelled.load(Ordering::Relaxed) {
-                        let Some(item) = iterator.next() else {
-                            break;
-                        };
-                        let progress = iterator.progress();
-                        if sender_cloned
-                            .send(Message::Batch(index, item, progress))
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                    sender_cloned.send(Message::Done).ok();
-                })
-                .expect("failed to spawn data loader worker");
-            iterator.workers.push(worker);
+        if let Some(lease) = self.lease_workers(dataloaders) {
+            let (finished, receiver) = mpsc::channel();
+            iterator.reused_workers = Some(WorkerEpoch {
+                lease,
+                finished: receiver,
+                dispatched: 0,
+                failed: true,
+            });
+            let epoch = iterator.reused_workers.as_mut().expect("worker epoch");
+            for worker in &epoch.lease.pool.as_ref().expect("leased worker pool").senders {
+                worker
+                    .send(WorkerJob {
+                        sender: sender.clone(),
+                        cancelled: iterator.cancelled.clone(),
+                        finished: finished.clone(),
+                    })
+                    .unwrap_or_else(|_| panic!("reusable data loader worker disconnected"));
+                epoch.dispatched += 1;
+            }
+            epoch.failed = false;
+            drop(finished);
+        } else {
+            for (index, dataloader) in dataloaders.iter().enumerate() {
+                let dataloader_cloned = dataloader.clone();
+                let sender_cloned = sender.clone();
+                let cancelled = iterator.cancelled.clone();
+                let worker = std::thread::Builder::new()
+                    .name(std::format!("dataloader-{index}"))
+                    .spawn(move || {
+                        run_worker(&dataloader_cloned, index, &sender_cloned, &cancelled);
+                    })
+                    .expect("failed to spawn data loader worker");
+                iterator.workers.push(worker);
+            }
         }
         drop(sender);
 
@@ -223,14 +441,17 @@ where
     }
 
     fn to_device(&self, device: &B::Device) -> Arc<dyn DataLoader<B, O>> {
-        Arc::new(Self::from_seed(
-            self.strategy.clone_dyn(),
-            self.dataset.clone(),
-            self.batcher.clone(),
-            self.num_threads,
-            device.clone(),
-            self.seed,
-        ))
+        Arc::new(
+            Self::from_seed(
+                self.strategy.clone_dyn(),
+                self.dataset.clone(),
+                self.batcher.clone(),
+                self.num_threads,
+                device.clone(),
+                self.seed,
+            )
+            .reuse_workers(self.reuse_workers),
+        )
     }
 
     fn slice(&self, start: usize, end: usize) -> Arc<dyn DataLoader<B, O>> {
@@ -241,7 +462,8 @@ where
             self.num_threads,
             self.device.clone(),
             self.seed,
-        );
+        )
+        .reuse_workers(self.reuse_workers);
         Arc::new(dataloader)
     }
 }
@@ -254,7 +476,9 @@ impl<O> MultiThreadsDataloaderIterator<O> {
     ) -> Self {
         MultiThreadsDataloaderIterator {
             num_done: 0,
+            num_workers: progresses.len(),
             workers,
+            reused_workers: None,
             receiver: Some(receiver),
             items_total: progresses.iter().map(|progress| progress.items_total).sum(),
             items_processed: progresses.iter().map(|progress| progress.items_processed).sum(),
@@ -267,7 +491,10 @@ impl<O> MultiThreadsDataloaderIterator<O> {
         self.cancelled.store(true, Ordering::Relaxed);
         // Disconnect before joining so workers blocked on a full queue can exit.
         drop(self.receiver.take());
-        let mut result = Ok(());
+        let mut result = match self.reused_workers.take() {
+            Some(epoch) => epoch.finish(),
+            None => Ok(()),
+        };
         for worker in self.workers.drain(..) {
             if let Err(payload) = worker.join() {
                 if result.is_ok() {
@@ -295,7 +522,7 @@ impl<O: std::fmt::Debug> Iterator for MultiThreadsDataloaderIterator<O> {
     type Item = O;
 
     fn next(&mut self) -> Option<O> {
-        if self.workers.is_empty() {
+        if self.receiver.is_none() || self.num_workers == 0 {
             return None;
         }
 
@@ -326,7 +553,7 @@ impl<O: std::fmt::Debug> Iterator for MultiThreadsDataloaderIterator<O> {
                 }
             };
 
-            if self.num_done == self.workers.len() {
+            if self.num_done == self.num_workers {
                 if let Err(payload) = self.shutdown() {
                     std::panic::resume_unwind(payload);
                 }

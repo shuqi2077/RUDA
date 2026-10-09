@@ -12,6 +12,7 @@ pub struct DataLoaderBuilder<B: Backend, I, O> {
     strategy: Option<Box<dyn BatchStrategy<I>>>,
     batcher: Arc<dyn Batcher<B, I, O>>,
     num_threads: Option<usize>,
+    reuse_workers: bool,
     shuffle: Option<u64>,
     device: Option<B::Device>,
 }
@@ -39,6 +40,7 @@ where
             batcher: Arc::new(batcher),
             strategy: None,
             num_threads: None,
+            reuse_workers: false,
             shuffle: None,
             device: None,
         }
@@ -96,6 +98,16 @@ where
         self
     }
 
+    /// Enables reuse of idle background workers across iterations (default: false).
+    ///
+    /// Requires a positive [`Self::num_workers`] setting. Finishing or dropping an
+    /// iterator waits for its in-flight work; concurrent iterators use transient
+    /// workers if the reusable pool is busy. No effect for a single-threaded loader.
+    pub fn reuse_workers(mut self, enabled: bool) -> Self {
+        self.reuse_workers = enabled;
+        self
+    }
+
     /// Sets the data loader device.
     ///
     /// # Arguments
@@ -135,14 +147,17 @@ where
         if let Some(num_threads) = self.num_threads
             && num_threads > 0
         {
-            return Arc::new(MultiThreadDataLoader::new(
-                strategy,
-                dataset,
-                self.batcher,
-                num_threads,
-                device,
-                rng,
-            ));
+            return Arc::new(
+                MultiThreadDataLoader::new(
+                    strategy,
+                    dataset,
+                    self.batcher,
+                    num_threads,
+                    device,
+                    rng,
+                )
+                .reuse_workers(self.reuse_workers),
+            );
         }
 
         Arc::new(BatchDataLoader::new(
