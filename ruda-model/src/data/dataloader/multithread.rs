@@ -352,7 +352,8 @@ where
 
                 let datasets = match self.strategy.batch_size() {
                     Some(batch_size) => {
-                        PartialDataset::split_chunks(dataset, self.num_threads, batch_size)
+                        let split_size = if self.batch_reading { batch_size.max(1) } else { batch_size };
+                        PartialDataset::split_chunks(dataset, self.num_threads, split_size)
                     }
                     None => PartialDataset::split(dataset, self.num_threads),
                 };
