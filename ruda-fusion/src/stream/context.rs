@@ -1463,6 +1463,22 @@ impl RelativeOps for CreationOpIr {
 
 impl RelativeOps for TensorIr {
     fn to_relative(&self, converter: &mut OperationConverter) -> Self {
+        if let Some(relative) = converter.tensors_global2relative.get_mut(&self.id)
+            && let Some(global) = converter.tensors_relative2global.get_mut(&relative.id)
+            && global.shape == self.shape
+            && relative.shape.rank() == self.shape.rank()
+            && relative.shape.iter().zip(self.shape.iter()).all(|(relative_dim, global_dim)| {
+                converter.shapes_global2relative.get(global_dim) == Some(relative_dim)
+            })
+        {
+            global.id = self.id;
+            global.status = self.status;
+            global.dtype = self.dtype;
+            relative.status = self.status;
+            relative.dtype = self.dtype;
+            return relative.clone();
+        }
+
         let relative_id = self.id.to_relative(converter);
 
         // We can create relative shapes by mapping each shape found to an ID, which is a `usize`.
