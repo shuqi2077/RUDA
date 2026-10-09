@@ -1,6 +1,6 @@
 [package]
 name = "ruda"
-version = "0.1.25"
+version = "0.1.26"
 edition.workspace = true
 readme = "README.md"
 description = "Ruda GPU kernel API and portable runtime with CUDA, HIP and WGPU backends."
