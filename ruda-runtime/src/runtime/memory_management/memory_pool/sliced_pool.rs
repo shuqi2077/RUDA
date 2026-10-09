@@ -29,6 +29,11 @@ impl SlicedPool {
             location_base: MemoryLocation::new(pool_pos, 0, 0),
         }
     }
+
+    pub(crate) fn find_at(&self, location: MemoryLocation) -> Result<&Slice, IoError> {
+        let (page, _) = &self.pages[location.page as usize];
+        page.find_at(location)
+    }
 }
 
 impl MemoryPool for SlicedPool {
@@ -44,8 +49,7 @@ impl MemoryPool for SlicedPool {
     }
 
     fn find(&self, binding: &super::ManagedMemoryBinding) -> Result<&Slice, IoError> {
-        let (page, _) = &self.pages[binding.descriptor().page()];
-        page.find(binding)
+        self.find_at(binding.descriptor().location())
     }
 
     fn try_reserve(&mut self, size: u64) -> Option<super::ManagedMemoryHandle> {

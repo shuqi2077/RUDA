@@ -83,11 +83,32 @@ impl ExclusiveMemoryPool {
     /// Finds a free page that can contain the given size
     /// Returns a slice on that page if successful.
     fn get_free_page(&mut self, size: u64) -> Option<&mut MemoryPage> {
-        // Return the smallest free page that fits.
-        self.pages
-            .iter_mut()
-            .filter(|page| page.alloc_size >= size && page.slice.is_free())
-            .min_by_key(|page| page.free_count)
+        let mut selected = None;
+        let mut minimum = u32::MAX;
+        for (index, page) in self.pages.iter().enumerate() {
+            if page.alloc_size >= size && page.slice.is_free()
+                && (selected.is_none() || page.free_count < minimum)
+            {
+                selected = Some(index);
+                minimum = page.free_count;
+                if minimum == 0 {
+                    break;
+                }
+            }
+        }
+        match selected {
+            Some(index) => Some(&mut self.pages[index]),
+            None => None,
+        }
+    }
+
+    pub(crate) fn find_at(&self, location: MemoryLocation) -> Result<&Slice, IoError> {
+        let page_index = location.page as usize;
+        let page = self.pages.get(page_index).ok_or_else(|| IoError::NotFound {
+            backtrace: BackTrace::capture(),
+            reason: alloc::format!("Memory page {} doesn't exist", page_index).into(),
+        })?;
+        Ok(&page.slice)
     }
 
     fn alloc_page<Storage: ComputeStorage>(
@@ -173,21 +194,18 @@ impl MemoryPool for ExclusiveMemoryPool {
     }
 
     fn get_memory_usage(&self) -> MemoryUsage {
-        let used_slices: Vec<_> = self
-            .pages
-            .iter()
-            .filter(|page| !page.slice.is_free())
-            .collect();
-
-        MemoryUsage {
-            number_allocs: used_slices.len() as u64,
-            bytes_in_use: used_slices
-                .iter()
-                .map(|page| page.slice.storage.size())
-                .sum(),
-            bytes_padding: used_slices.iter().map(|page| page.slice.padding).sum(),
-            bytes_reserved: self.pages.iter().map(|page| page.alloc_size).sum(),
+        let mut usage = MemoryUsage {
+            number_allocs: 0, bytes_in_use: 0, bytes_padding: 0, bytes_reserved: 0,
+        };
+        for page in &self.pages {
+            usage.bytes_reserved += page.alloc_size;
+            if !page.slice.is_free() {
+                usage.number_allocs += 1;
+                usage.bytes_in_use += page.slice.storage.size();
+                usage.bytes_padding += page.slice.padding;
+            }
         }
+        usage
     }
 
     fn cleanup<Storage: ComputeStorage>(
@@ -243,17 +261,6 @@ impl MemoryPool for ExclusiveMemoryPool {
     }
 
     fn find(&self, binding: &ManagedMemoryBinding) -> Result<&Slice, IoError> {
-        let binding_descriptor = binding.descriptor();
-        let page_index = binding_descriptor.page();
-
-        let page = self
-            .pages
-            .get(page_index)
-            .ok_or_else(|| IoError::NotFound {
-                backtrace: BackTrace::capture(),
-                reason: alloc::format!("Memory page {} doesn't exist", page_index).into(),
-            })?;
-
-        Ok(&page.slice)
+        self.find_at(binding.descriptor().location())
     }
 }

@@ -157,7 +157,11 @@ impl MemoryPage {
     ///
     /// If the handle isn't returned, it means the binding isn't present in the given page.
     pub fn find(&self, binding: &ManagedMemoryBinding) -> Result<&Slice, IoError> {
-        let slice_index = binding.descriptor().slice();
+        self.find_at(binding.descriptor().location())
+    }
+
+    pub(crate) fn find_at(&self, location: MemoryLocation) -> Result<&Slice, IoError> {
+        let slice_index = location.slice as usize;
 
         self.slices
             .get(slice_index)

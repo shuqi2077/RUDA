@@ -1,5 +1,5 @@
 use super::{
-    MemoryConfiguration, MemoryPoolOptions, MemoryUsage, PoolType,
+    MemoryConfiguration, MemoryLocation, MemoryPoolOptions, MemoryUsage, PoolType,
     memory_pool::{ExclusiveMemoryPool, MemoryPool, PersistentPool, SlicedPool},
 };
 use crate::runtime::{
@@ -31,6 +31,15 @@ enum DynamicPool {
     Exclusive(ExclusiveMemoryPool),
 }
 
+impl DynamicPool {
+    fn find_at(&self, location: MemoryLocation) -> Result<&Slice, IoError> {
+        match self {
+            DynamicPool::Sliced(pool) => pool.find_at(location),
+            DynamicPool::Exclusive(pool) => pool.find_at(location),
+        }
+    }
+}
+
 impl MemoryPool for DynamicPool {
     fn accept(&self, size: u64) -> bool {
         match self {
@@ -40,10 +49,7 @@ impl MemoryPool for DynamicPool {
     }
 
     fn find(&self, binding: &ManagedMemoryBinding) -> Result<&Slice, IoError> {
-        match self {
-            DynamicPool::Sliced(m) => m.find(binding),
-            DynamicPool::Exclusive(m) => m.find(binding),
-        }
+        self.find_at(binding.descriptor().location())
     }
 
     #[cfg_attr(feature = "runtime-tracing", tracing::instrument(level = "trace", skip(self)))]
@@ -399,21 +405,21 @@ impl<Storage: ComputeStorage> MemoryManagement<Storage> {
 
     /// Returns the storage from the specified binding
     fn find(&self, binding: ManagedMemoryBinding) -> Result<&Slice, IoError> {
-        let id = binding.descriptor();
+        let location = binding.descriptor().location();
 
-        if id.location().pool >= self.pools.len() as u8 {
-            return self.persistent.find(&binding);
+        if location.pool >= self.pools.len() as u8 {
+            return self.persistent.find_at(location);
         }
 
         let pool =
             self.pools
-                .get(id.location().pool as usize)
+                .get(location.pool as usize)
                 .ok_or_else(|| IoError::NotFound {
                     backtrace: BackTrace::capture(),
-                    reason: format!("Pool {} doesn't exist", id.location().pool).into(),
+                    reason: format!("Pool {} doesn't exist", location.pool).into(),
                 })?;
 
-        let slice = pool.find(&binding)?;
+        let slice = pool.find_at(location)?;
 
         assert_eq!(slice.handle.descriptor(), binding.descriptor());
 

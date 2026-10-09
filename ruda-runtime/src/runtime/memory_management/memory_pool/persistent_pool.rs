@@ -62,6 +62,14 @@ impl PersistentPool {
         let effective_size = size + padding;
         self.sizes.contains_key(&effective_size)
     }
+
+    pub(crate) fn find_at(&self, location: MemoryLocation) -> Result<&Slice, IoError> {
+        let slice_index = location.slice as usize;
+        self.slices.get(slice_index).ok_or_else(|| IoError::NotFound {
+            backtrace: BackTrace::capture(),
+            reason: alloc::format!("Memory slice {} doesn't exist", slice_index).into(),
+        })
+    }
 }
 
 impl MemoryPool for PersistentPool {
@@ -70,14 +78,7 @@ impl MemoryPool for PersistentPool {
     }
 
     fn find(&self, binding: &super::ManagedMemoryBinding) -> Result<&Slice, IoError> {
-        let slice_index = binding.descriptor().slice();
-
-        self.slices
-            .get(slice_index)
-            .ok_or_else(|| IoError::NotFound {
-                backtrace: BackTrace::capture(),
-                reason: alloc::format!("Memory slice {} doesn't exist", slice_index).into(),
-            })
+        self.find_at(binding.descriptor().location())
     }
 
     fn try_reserve(&mut self, size: u64) -> Option<ManagedMemoryHandle> {
@@ -133,18 +134,18 @@ impl MemoryPool for PersistentPool {
     }
 
     fn get_memory_usage(&self) -> MemoryUsage {
-        let used_slices: Vec<_> = self
-            .slices
-            .iter()
-            .filter(|slice| !slice.is_free())
-            .collect();
-
-        MemoryUsage {
-            number_allocs: used_slices.len() as u64,
-            bytes_in_use: used_slices.iter().map(|slice| slice.storage.size()).sum(),
-            bytes_padding: used_slices.iter().map(|slice| slice.padding).sum(),
-            bytes_reserved: self.slices.iter().map(|slice| slice.effective_size()).sum(),
+        let mut usage = MemoryUsage {
+            number_allocs: 0, bytes_in_use: 0, bytes_padding: 0, bytes_reserved: 0,
+        };
+        for slice in &self.slices {
+            usage.bytes_reserved += slice.effective_size();
+            if !slice.is_free() {
+                usage.number_allocs += 1;
+                usage.bytes_in_use += slice.storage.size();
+                usage.bytes_padding += slice.padding;
+            }
         }
+        usage
     }
 
     fn cleanup<Storage: crate::runtime::storage::ComputeStorage>(
