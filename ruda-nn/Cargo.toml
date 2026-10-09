@@ -5,7 +5,7 @@ path = "tests/quantize.rs"
 [package]
 edition = "2024"
 name = "ruda-nn"
-version = "0.21.58"
+version = "0.21.59"
 authors = [ "nathanielsimard <nathaniel.simard.42@gmail.com>",]
 build = false
 autolib = false
