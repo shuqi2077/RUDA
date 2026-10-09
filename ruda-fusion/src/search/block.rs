@@ -1,6 +1,6 @@
 use crate::{FuserStatus, NumOperations, OperationFuser, stream::store::ExecutionStrategy};
-use ruda_tensor::graph::{OperationIr, TensorId, TensorIr};
-use std::{collections::HashSet, sync::Arc};
+use ruda_tensor::graph::{OperationIr, TensorId, TensorIr, TensorStatus};
+use std::{collections::{HashMap, HashSet}, sync::Arc};
 
 /// A block represents a list of operations, not necessarily in the same order as the execution
 /// stream.
@@ -119,6 +119,13 @@ impl<O: NumOperations> Block<O> {
     ///
     /// This will modify the current block even if the other block isn't correctly merged.
     pub fn merge(&mut self, other: &Block<O>) -> bool {
+        if !self.can_append(other) {
+            return false;
+        }
+        self.merge_validated(other)
+    }
+
+    pub(super) fn merge_validated(&mut self, other: &Block<O>) -> bool {
         let self_ready = self.has_ready_optimization();
         let other_ready = other.has_ready_optimization();
 
@@ -137,6 +144,56 @@ impl<O: NumOperations> Block<O> {
         // fusion before the merge, merging would collapse them and hide one
         // of the fusions — keep the blocks separate instead.
         !self_ready && !other_ready && self.has_ready_optimization()
+    }
+
+    /// Whether this append direction preserves production and last-use ordering.
+    pub fn can_append(&self, other: &Block<O>) -> bool {
+        let operations = self.operations.iter().zip(&self.ordering)
+            .chain(other.operations.iter().zip(&other.ordering));
+        let mut produced = HashMap::new();
+        #[cfg(feature = "distributed")]
+        let mut last_collective = None;
+        for (operation, &position) in operations.clone() {
+            #[cfg(feature = "distributed")]
+            if matches!(operation, OperationIr::Distributed(_)) {
+                if last_collective.is_some_and(|previous| previous > position) {
+                    return false;
+                }
+                last_collective = Some(position);
+            }
+            for tensor in operation.outputs() {
+                produced.entry(tensor.id).and_modify(|first: &mut usize| {
+                    *first = (*first).min(position);
+                }).or_insert(position);
+            }
+        }
+
+        let mut alive = HashSet::new();
+        let mut dead = HashSet::new();
+        for (operation, &position) in operations {
+            for tensor in operation.inputs() {
+                if dead.contains(&tensor.id) {
+                    return false;
+                }
+                if !alive.contains(&tensor.id) {
+                    if produced.get(&tensor.id).is_some_and(|&first| first < position) {
+                        return false;
+                    }
+                    alive.insert(tensor.id);
+                }
+            }
+            for tensor in operation.inputs() {
+                if matches!(tensor.status, TensorStatus::ReadWrite) {
+                    alive.remove(&tensor.id);
+                    dead.insert(tensor.id);
+                }
+            }
+            for tensor in operation.outputs() {
+                dead.remove(&tensor.id);
+                alive.insert(tensor.id);
+            }
+        }
+        true
     }
 
     fn has_ready_optimization(&self) -> bool {

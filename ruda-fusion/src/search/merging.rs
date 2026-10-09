@@ -232,14 +232,13 @@ fn merge_accumulator<O: NumOperations>(
     let mut merged_success = false;
 
     for block in blocks {
-        let mut base_current = base.clone();
-        match base_current.merge(block) {
-            false => {
+        match merge_two(&base, block) {
+            None => {
                 merged_failed.push((*block).clone());
             }
-            true => {
+            Some(merged) => {
                 merged_success = true;
-                base = base_current;
+                base = merged;
             }
         }
     }
@@ -259,18 +258,21 @@ fn merge_accumulator<O: NumOperations>(
 }
 
 fn merge_two<O: NumOperations>(a: &Block<O>, b: &Block<O>) -> Option<Block<O>> {
-    let mut base = a.clone();
-
-    if base.merge(b) {
-        return Some(base);
+    if a.can_append(b) {
+        let mut base = a.clone();
+        if base.merge_validated(b) {
+            return Some(base);
+        }
     }
 
-    let mut base = b.clone();
-
-    match base.merge(a) {
-        true => Some(base),
-        false => None,
+    if b.can_append(a) {
+        let mut base = b.clone();
+        if base.merge_validated(a) {
+            return Some(base);
+        }
     }
+
+    None
 }
 
 #[cfg(test)]

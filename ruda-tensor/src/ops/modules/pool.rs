@@ -1,44 +1,92 @@
 use crate::tensor::{FloatTensor, IntTensor};
-use crate::{Backend, TensorMetadata};
+use crate::{Backend, DType, FloatDType, IntDType, TensorMetadata, get_device_settings};
 use ruda_core::tensor::Shape;
 
 use super::{MaxPool1dBackward, MaxPool1dWithIndices};
 
 pub(crate) fn max_pool3d_from_2d<B: Backend>(input: FloatTensor<B>, kernel: [usize; 3],
     stride: [usize; 3], padding: [usize; 3], dilation: [usize; 3], ceil: bool) -> FloatTensor<B> {
-    let input = crate::api::Tensor::<B, 5>::new(crate::TensorPrimitive::Float(input));
-    crate::api::max_pool3d_composed(input, kernel, stride, padding, dilation, ceil).into_primitive().tensor()
+    let [batch, channels, depth, _, _] = input.shape().dims();
+    let planes = B::max_pool2d(volume_planes::<B>(input), [kernel[1], kernel[2]],
+        [stride[1], stride[2]], [padding[1], padding[2]], [dilation[1], dilation[2]], ceil);
+    let [_, _, height, width] = planes.shape().dims();
+    let lines = B::max_pool1d(plane_depth_lines::<B>(planes, batch, depth),
+        kernel[0], stride[0], padding[0], dilation[0], ceil);
+    depth_lines_volume::<B>(lines, batch, channels, height, width)
 }
 
 pub(crate) fn max_pool3d_with_indices_from_2d<B: Backend>(input: FloatTensor<B>, kernel: [usize; 3],
     stride: [usize; 3], padding: [usize; 3], dilation: [usize; 3], ceil: bool) -> super::MaxPool3dWithIndices<B> {
-    let input = crate::api::Tensor::<B, 5>::new(crate::TensorPrimitive::Float(input));
-    let (output, indices) = crate::api::max_pool3d_with_indices_composed(input, kernel, stride, padding, dilation, ceil);
-    super::MaxPool3dWithIndices::new(output.into_primitive().tensor(), indices.into_primitive())
+    let [batch, channels, depth, input_height, input_width] = input.shape().dims();
+    assert!(depth > 0 && input_height > 0 && input_width > 0,
+        "volume pooling indices require non-empty spatial axes");
+    let area = input_height.checked_mul(input_width).expect("pooling plane area overflow");
+    let volume = depth.checked_mul(area).expect("pooling volume size overflow");
+    assert!(volume <= i64::MAX as usize, "volume pooling indices exceed I64");
+    let planes = B::max_pool2d_with_indices(volume_planes::<B>(input), [kernel[1], kernel[2]],
+        [stride[1], stride[2]], [padding[1], padding[2]], [dilation[1], dilation[2]], ceil);
+    let [_, _, height, width] = planes.output.shape().dims();
+    let lines = B::max_pool1d_with_indices(plane_depth_lines::<B>(planes.output, batch, depth),
+        kernel[0], stride[0], padding[0], dilation[0], ceil);
+    let depth_indices = indices_i64::<B>(lines.indices);
+    let safe_depth_indices = B::int_clamp(depth_indices.clone(), 0i64.into(), (depth as i64 - 1).into());
+    let spatial_indices = B::int_gather(2,
+        int_plane_depth_lines::<B>(indices_i64::<B>(planes.indices), batch, depth),
+        safe_depth_indices.clone());
+    let bool_dtype = get_device_settings::<B>(&B::int_device(&depth_indices)).bool_dtype;
+    let invalid_depth = B::bool_or(B::int_lower_elem(depth_indices.clone(), 0i64.into(), bool_dtype),
+        B::int_greater_equal_elem(depth_indices, (depth as i64).into(), bool_dtype));
+    let invalid_spatial = B::bool_or(B::int_lower_elem(spatial_indices.clone(), 0i64.into(), bool_dtype),
+        B::int_greater_equal_elem(spatial_indices.clone(), (area as i64).into(), bool_dtype));
+    let indices = B::int_add(B::int_mul_scalar(safe_depth_indices, (area as i64).into()),
+        B::int_clamp(spatial_indices, 0i64.into(), (area as i64 - 1).into()));
+    let indices = B::int_mask_fill(indices, B::bool_or(invalid_depth, invalid_spatial), (-1i64).into());
+    super::MaxPool3dWithIndices::new(depth_lines_volume::<B>(lines.output, batch, channels, height, width),
+        int_depth_lines_volume::<B>(indices, batch, channels, height, width))
 }
 
 pub(crate) fn max_pool3d_backward_from_indices<B: Backend>(input: FloatTensor<B>, grad: FloatTensor<B>,
     indices: IntTensor<B>) -> FloatTensor<B> {
-    use crate::api::{DType, Int, Tensor};
     let [batch, channels, depth, height, width] = input.shape().dims();
     let volume = depth.checked_mul(height).and_then(|size| size.checked_mul(width)).expect("pooling volume overflow");
     let storage = input.dtype();
     let device = B::float_device(&input);
-    if volume == 0 { return Tensor::<B, 5>::zeros([batch, channels, depth, height, width],
-        (&device, storage)).into_primitive().tensor(); }
+    if volume == 0 { return B::float_zeros(Shape::new([batch, channels, depth, height, width]),
+        &device, storage.into()); }
     assert!(volume <= i64::MAX as usize, "pooling positions exceed I64");
     assert_eq!(indices.shape(), grad.shape(), "pooling gradient and positions differ");
     let [gb, gc, gd, gh, gw] = grad.shape().dims();
     assert_eq!([gb, gc], [batch, channels], "pooling gradient batch/channels differ");
     let count = gd.checked_mul(gh).and_then(|size| size.checked_mul(gw)).expect("pooling output volume overflow");
-    let compute = if storage == DType::F64 || grad.dtype() == DType::F64 { DType::F64 } else { DType::F32 };
-    let indices = Tensor::<B, 5, Int>::new(indices).cast(DType::I64).reshape([batch, channels, count]);
-    let invalid = indices.clone().lower_elem(0).bool_or(indices.clone().greater_equal_elem(volume as i64));
-    let values = Tensor::<B, 5>::new(crate::TensorPrimitive::Float(grad)).cast(compute)
-        .reshape([batch, channels, count]).mask_fill(invalid, 0);
-    Tensor::<B, 3>::zeros([batch, channels, volume], (&device, compute))
-        .scatter(2, indices.clamp(0, volume as i64 - 1), values, crate::IndexingUpdateOp::Add).cast(storage)
-        .reshape([batch, channels, depth, height, width]).into_primitive().tensor()
+    let compute = if storage == DType::F64 || grad.dtype() == DType::F64 { FloatDType::F64 } else { FloatDType::F32 };
+    let indices = B::int_reshape(indices_i64::<B>(indices), Shape::new([batch, channels, count]));
+    let bool_dtype = get_device_settings::<B>(&B::int_device(&indices)).bool_dtype;
+    let invalid = B::bool_or(B::int_lower_elem(indices.clone(), 0i64.into(), bool_dtype),
+        B::int_greater_equal_elem(indices.clone(), (volume as i64).into(), bool_dtype));
+    let grad = if grad.dtype() == compute.into() { grad } else { B::float_cast(grad, compute) };
+    let values = B::float_mask_fill(B::float_reshape(grad, Shape::new([batch, channels, count])), invalid, 0f32.into());
+    let output = B::float_scatter_add(2, B::float_zeros(Shape::new([batch, channels, volume]), &device, compute),
+        B::int_clamp(indices, 0i64.into(), (volume as i64 - 1).into()), values);
+    let output = if output.dtype() == storage { output } else { B::float_cast(output, storage.into()) };
+    B::float_reshape(output, Shape::new([batch, channels, depth, height, width]))
+}
+
+fn indices_i64<B: Backend>(indices: IntTensor<B>) -> IntTensor<B> {
+    if indices.dtype() == DType::I64 { indices } else { B::int_cast(indices, IntDType::I64) }
+}
+
+fn int_plane_depth_lines<B: Backend>(planes: IntTensor<B>, batch: usize, depth: usize) -> IntTensor<B> {
+    let [_, channels, height, width] = planes.shape().dims();
+    let lines = batch.checked_mul(channels).and_then(|count| count.checked_mul(height))
+        .and_then(|count| count.checked_mul(width)).expect("pooling depth line count overflow");
+    let volume = B::int_reshape(planes, Shape::new([batch, depth, channels, height, width]));
+    B::int_reshape(B::int_permute(volume, &[0, 2, 3, 4, 1]), Shape::new([lines, 1, depth]))
+}
+
+fn int_depth_lines_volume<B: Backend>(lines: IntTensor<B>, batch: usize, channels: usize,
+    height: usize, width: usize) -> IntTensor<B> {
+    let [_, _, depth] = lines.shape().dims();
+    B::int_permute(B::int_reshape(lines, Shape::new([batch, channels, height, width, depth])), &[0, 1, 4, 2, 3])
 }
 
 pub(super) fn volume_planes<B: Backend>(input: FloatTensor<B>) -> FloatTensor<B> {

@@ -72,6 +72,7 @@ jobs:
           cargo check --locked -p ruda-nn --no-default-features --features std,cuda,fusion,tensor-parallel --lib
           cargo check --locked -p ruda-torch-native --lib
           cargo check --locked -p ruCCL --lib
+          cargo check --locked -p ruda-fusion --features distributed --lib
       - name: Compile resumable dataset loading
         run: |
           cargo check --locked -p ruda-model --features dataset,record-item-custom-serde --lib
