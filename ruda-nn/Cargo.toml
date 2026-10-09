@@ -81,7 +81,7 @@ default-features = false
 [dependencies.ruda-model]
 default-features = false
 path = "../ruda-model"
-version = "0.21.49"
+version = "0.21.50"
 
 [dependencies.ruda-autodiff]
 path = "../ruda-autodiff"
