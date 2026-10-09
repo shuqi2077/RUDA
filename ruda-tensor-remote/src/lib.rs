@@ -8,7 +8,7 @@ pub(crate) mod client;
 pub mod server;
 
 pub(crate) mod shared;
-pub use ruda_tensor_router::{GraphBindings, GraphId, GraphIr};
+pub use ruda_tensor_router::{GraphBindings, GraphId, GraphIr, RunnerClient};
 
 #[cfg(feature = "client")]
 mod __client {
