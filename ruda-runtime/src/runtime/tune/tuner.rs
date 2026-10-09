@@ -170,9 +170,8 @@ impl<K: AutotuneKey> Tuner<K> {
             return TuneCacheResult::Hit { fastest_index: 0 };
         }
 
-        let autotunables = tunables.autotunables().collect::<Vec<_>>();
-        let mut results: Vec<AutotuneResult> = autotunables
-            .iter()
+        let mut results: Vec<AutotuneResult> = tunables
+            .autotunables()
             .map(|a| {
                 AutotuneResult::error(AutotuneError::Skip {
                     name: a.name.to_string(),
@@ -206,7 +205,7 @@ impl<K: AutotuneKey> Tuner<K> {
             }
 
             for index in tunable_indices {
-                let op = autotunables[index];
+                let op = tunables.fastest(index);
 
                 match tune_benchmark(op, test_inputs.clone(), client.clone()) {
                     Ok(profiles) => pending.push(PendingBench {

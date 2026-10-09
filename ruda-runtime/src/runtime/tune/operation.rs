@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::fmt::{Debug, Display};
+use core::fmt::{Debug, Display, Write};
 use core::hash::Hash;
 use spin::Once;
 
@@ -138,7 +138,7 @@ impl<K: AutotuneKey, F: TuneInputs, Output: 'static> TunableSet<K, F, Output> {
         self.stack_manifest.call_once(|| {
             let mut checksum = format!("stack-v1:{}:{};reference={:?};", self.stack_revision.len(), self.stack_revision, self.stack_reference);
             for tune in &self.tunables {
-                checksum += &format!("{}:{}", tune.function.name.len(), tune.function.name);
+                let _ = write!(checksum, "{}:{}", tune.function.name.len(), tune.function.name);
             }
             format!("{:x}", md5::compute(checksum))
         }).clone()
