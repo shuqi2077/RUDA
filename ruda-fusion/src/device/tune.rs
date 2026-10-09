@@ -6,7 +6,7 @@ use ruda_kernel::dsl::tune::{InputGenerator, TuneInputs};
 use hashbrown::HashMap;
 use std::fmt::Write;
 use std::marker::PhantomData;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// [`TuneInputs`] marker for [`TuneInput`]. This is the indirection that lets a
 /// `TunableSet<_, FusionTuneInputs<R, O>, _>` live `'static` inside `LocalTuner::init`'s
@@ -83,7 +83,7 @@ enum TuneState<'a, R: Runtime> {
         context: &'a mut Context<RudaFusionHandle<R>>,
         /// Shared with any `Fork` spawned from this `Original`. `Drop` drains from here
         /// if the cache-hit path never ran (e.g. wasm fallback succeeded on a fork).
-        new_handles: Arc<HandleCollector<R>>,
+        new_handles: OnceLock<Arc<HandleCollector<R>>>,
         /// Set by [`TuneInput::execute`] when the winner ran on this context, which
         /// suppresses the drain above.
         executed: bool,
@@ -103,7 +103,7 @@ impl<'a, R: Runtime, O> TuneInput<'a, R, O> {
             optimization: Arc::new(optimization),
             state: TuneState::Original {
                 context,
-                new_handles: Arc::new(HandleCollector::new()),
+                new_handles: OnceLock::new(),
                 executed: false,
             },
         }
@@ -189,7 +189,9 @@ impl<'a, R: Runtime, O> Clone for TuneInput<'a, R, O> {
         // .execute(inputs.clone())`) and must track outputs. `Fork` clones inherit the
         // source's tracking (benchmark forks stay non-tracking).
         let new_handles = match &self.state {
-            TuneState::Original { new_handles, .. } => Some(new_handles.clone()),
+            TuneState::Original { new_handles, .. } => Some(
+                new_handles.get_or_init(|| Arc::new(HandleCollector::new())).clone(),
+            ),
             TuneState::Fork { new_handles, .. } => new_handles.clone(),
         };
         Self {
@@ -213,10 +215,13 @@ impl<'a, R: Runtime, O> Drop for TuneInput<'a, R, O> {
                 if *executed {
                     return;
                 }
+                let Some(collector) = new_handles.get() else {
+                    return;
+                };
                 // Cache-hit path never ran. Drain anything the most recent `Fork`
                 // deposited and register entries the real context doesn't already have
                 // (those are genuine new outputs, not inputs inherited via `fork`).
-                for (id, handle) in new_handles.take() {
+                for (id, handle) in collector.take() {
                     if context.handles.get_handle_ref(&id).is_none() {
                         context.handles.register_handle(id, handle);
                     }
