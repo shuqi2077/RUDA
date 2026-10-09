@@ -64,14 +64,14 @@ path = "src/lib.rs"
 
 [dependencies.ruda-tensor-tch]
 path = "../ruda-tensor-tch"
-version = "0.21.55"
+version = "0.21.56"
 features = [ "default",]
 optional = true
 default-features = false
 
 [dependencies.ruda-tensor-wgpu]
 path = "../ruda-tensor-wgpu"
-version = "0.21.41"
+version = "0.21.42"
 features = [ "default",]
 optional = true
 default-features = false
@@ -143,7 +143,7 @@ version = "0.21.49"
 [dependencies.ruda-tensor]
 default-features = false
 path = "../ruda-tensor"
-version = "0.21.42"
+version = "0.21.43"
 features = [ "api",]
 
 [dependencies.ruda-tensor-device]
@@ -151,7 +151,7 @@ features = [ "cuda-default",]
 optional = true
 default-features = false
 path = "../ruda-tensor-device"
-version = "0.21.42"
+version = "0.21.43"
 
 [dependencies.ruda-core]
 path = "../ruda-core"

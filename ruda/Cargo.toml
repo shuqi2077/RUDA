@@ -1,6 +1,6 @@
 [package]
 name = "ruda"
-version = "0.1.19"
+version = "0.1.20"
 edition.workspace = true
 readme = "README.md"
 description = "Ruda GPU kernel API and portable runtime with CUDA, HIP and WGPU backends."
@@ -29,11 +29,11 @@ dirs = ["ruda-runtime/dirs"]
 toml = ["ruda-runtime/toml"]
 
 [dependencies]
-ruda-runtime = { path = "../ruda-runtime", version = "0.1.8", default-features = false }
-ruda-kernel = { path = "../ruda-kernel", version = "0.1.18", optional = true }
-ruda-driver-cuda = { path = "../ruda-driver-cuda", version = "0.1.67", optional = true }
-ruda-driver-hip = { path = "../ruda-driver-hip", version = "0.1.67", optional = true }
-ruda-driver-wgpu = { path = "../ruda-driver-wgpu", version = "0.1.67", optional = true }
+ruda-runtime = { path = "../ruda-runtime", version = "0.1.9", default-features = false }
+ruda-kernel = { path = "../ruda-kernel", version = "0.1.19", optional = true }
+ruda-driver-cuda = { path = "../ruda-driver-cuda", version = "0.1.68", optional = true }
+ruda-driver-hip = { path = "../ruda-driver-hip", version = "0.1.68", optional = true }
+ruda-driver-wgpu = { path = "../ruda-driver-wgpu", version = "0.1.68", optional = true }
 
 [dev-dependencies]
 bytemuck = "1.16.1"

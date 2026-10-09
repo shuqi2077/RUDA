@@ -149,7 +149,7 @@ features = [ "serde", "shared-bytes", "tensor-data", "id",]
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
-version = "0.21.42"
+version = "0.21.43"
 default-features = false
 features = [ "api",]
 
@@ -160,7 +160,7 @@ default-features = false
 
 [dependencies.ruda-kernel]
 path = "../ruda-kernel"
-version = "0.1.18"
+version = "0.1.19"
 default-features = false
 optional = true
 features = ["frontend"]
@@ -228,7 +228,7 @@ default-features = false
 
 [target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-tensor-rocm]
 path = "../ruda-tensor-rocm"
-version = "0.21.41"
+version = "0.21.42"
 optional = true
 default-features = false
 
@@ -240,14 +240,14 @@ default-features = false
 
 [target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-tensor-tch]
 path = "../ruda-tensor-tch"
-version = "0.21.55"
+version = "0.21.56"
 features = [ "default",]
 optional = true
 default-features = false
 
 [target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-tensor-wgpu]
 path = "../ruda-tensor-wgpu"
-version = "0.21.41"
+version = "0.21.42"
 optional = true
 default-features = false
 
@@ -260,7 +260,7 @@ default-features = false
 optional = true
 default-features = false
 path = "../ruda-tensor-device"
-version = "0.21.42"
+version = "0.21.43"
 features = [ "cuda",]
 
 [target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-fusion]
@@ -268,4 +268,4 @@ features = [ "std", "tracing",]
 optional = true
 default-features = false
 path = "../ruda-fusion"
-version = "0.21.41"
+version = "0.21.42"

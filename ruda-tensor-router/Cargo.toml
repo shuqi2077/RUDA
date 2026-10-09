@@ -41,7 +41,7 @@ features = [ "mutex", "spin_mutex", "portable-atomic",]
 
 [dependencies.ruda-tensor]
 path = "../ruda-tensor"
-version = "0.21.42"
+version = "0.21.43"
 default-features = false
 features = [ "graph",]
 
@@ -58,7 +58,7 @@ default-features = false
 
 [dependencies.ruda-test-runtime]
 path = "../ruda-test-runtime"
-version = "0.1.67"
+version = "0.1.68"
 default-features = false
 optional = true
 
@@ -95,6 +95,6 @@ features = ["rt", "macros", "sync", "time"]
 [dependencies.ruccl]
 package = "ruCCL"
 path = "../ruCCL"
-version = "0.21.47"
+version = "0.21.48"
 optional = true
 default-features = false
