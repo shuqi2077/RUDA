@@ -35,7 +35,7 @@ pub struct MultiThreadDataLoader<B: Backend, I, O> {
 
     // The lazily initialized data loaders
     dataloaders: OnceLock<Vec<BatchDataLoader<B, I, O>>>,
-    worker_pool: Arc<Mutex<WorkerPoolState<O>>>,
+    worker_pool: OnceLock<Arc<Mutex<WorkerPoolState<O>>>>,
 }
 
 /// A message that can be sent between threads.
@@ -70,6 +70,7 @@ struct WorkerJob<O> {
     sender: mpsc::SyncSender<Message<O>>,
     cancelled: Arc<AtomicBool>,
     finished: mpsc::Sender<bool>,
+    load: Box<dyn FnOnce(&mpsc::SyncSender<Message<O>>, &AtomicBool) + Send>,
 }
 
 struct WorkerCompletion(mpsc::Sender<bool>);
@@ -250,7 +251,7 @@ where
             seed,
             dataloaders: OnceLock::new(),
             reuse_workers: false,
-            worker_pool: Arc::new(Mutex::new(WorkerPoolState::Uninitialized)),
+            worker_pool: OnceLock::new(),
         }
     }
 
@@ -263,25 +264,20 @@ where
     pub fn reuse_workers(mut self, enabled: bool) -> Self {
         self.reuse_workers = enabled;
         if !enabled {
-            let previous = {
-                let mut cache = self
-                    .worker_pool
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner());
-                std::mem::replace(&mut *cache, WorkerPoolState::Uninitialized)
-            };
-            drop(previous);
+            drop(self.worker_pool.take());
         }
         self
     }
 
-    fn lease_workers(&self, dataloaders: &[BatchDataLoader<B, I, O>]) -> Option<WorkerLease<O>> {
+    fn lease_workers(&self, num_workers: usize) -> Option<WorkerLease<O>> {
         if !self.reuse_workers {
             return None;
         }
+        let worker_pool = self
+            .worker_pool
+            .get_or_init(|| Arc::new(Mutex::new(WorkerPoolState::Uninitialized)));
         let pool = {
-            let mut cache = self
-                .worker_pool
+            let mut cache = worker_pool
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
             if matches!(*cache, WorkerPoolState::InUse) {
@@ -295,22 +291,21 @@ where
         };
         let mut lease = WorkerLease {
             pool,
-            cache: Some(self.worker_pool.clone()),
+            cache: Some(worker_pool.clone()),
         };
         if lease.pool.is_none() {
             let mut pool = WorkerPool {
-                senders: Vec::with_capacity(dataloaders.len()),
-                workers: Vec::with_capacity(dataloaders.len()),
+                senders: Vec::with_capacity(num_workers),
+                workers: Vec::with_capacity(num_workers),
             };
-            for (index, dataloader) in dataloaders.iter().enumerate() {
-                let dataloader = dataloader.clone();
+            for index in 0..num_workers {
                 let (sender, receiver) = mpsc::channel::<WorkerJob<O>>();
                 let worker = thread::Builder::new()
                     .name(std::format!("dataloader-{index}"))
                     .spawn(move || {
                         while let Ok(job) = receiver.recv() {
                             let completion = WorkerCompletion(job.finished);
-                            run_worker(&dataloader, index, &job.sender, &job.cancelled);
+                            (job.load)(&job.sender, &job.cancelled);
                             drop(job.sender);
                             drop(job.cancelled);
                             drop(completion);
@@ -394,7 +389,7 @@ where
             progresses,
         );
 
-        if let Some(lease) = self.lease_workers(dataloaders) {
+        if let Some(lease) = self.lease_workers(dataloaders.len()) {
             let (finished, receiver) = mpsc::channel();
             iterator.reused_workers = Some(WorkerEpoch {
                 lease,
@@ -403,12 +398,25 @@ where
                 failed: true,
             });
             let epoch = iterator.reused_workers.as_mut().expect("worker epoch");
-            for worker in &epoch.lease.pool.as_ref().expect("leased worker pool").senders {
+            for (index, (worker, dataloader)) in epoch
+                .lease
+                .pool
+                .as_ref()
+                .expect("leased worker pool")
+                .senders
+                .iter()
+                .zip(dataloaders)
+                .enumerate()
+            {
+                let dataloader = dataloader.clone();
                 worker
                     .send(WorkerJob {
                         sender: sender.clone(),
                         cancelled: iterator.cancelled.clone(),
                         finished: finished.clone(),
+                        load: Box::new(move |sender, cancelled| {
+                            run_worker(&dataloader, index, sender, cancelled);
+                        }),
                     })
                     .unwrap_or_else(|_| panic!("reusable data loader worker disconnected"));
                 epoch.dispatched += 1;
