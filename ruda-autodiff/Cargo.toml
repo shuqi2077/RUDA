@@ -125,7 +125,7 @@ invalid_html_tags = "deny"
 
 [dependencies.rusolver]
 path = "../ruSOLVER"
-version = "0.1.75"
+version = "0.1.76"
 package = "ruda-solver"
 optional = true
 default-features = false
