@@ -48,11 +48,10 @@ impl BreadthFirstSearch {
             };
 
             let step_node = step.id();
-            if visited.contains(&step_node) {
+            if !visited.insert(step_node) {
                 continue;
             }
 
-            visited.insert(step_node);
             step.extend_parent_nodes(&mut step_parents);
 
             for id in step_parents.drain(..) {
