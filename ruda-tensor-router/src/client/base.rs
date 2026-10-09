@@ -9,7 +9,7 @@ use ruda_tensor::graph::{OperationIr, TensorId, TensorIr};
 use ruda_core::future::DynFut;
 use core::ops::DerefMut;
 use hashbrown::HashMap;
-use spin::Mutex;
+use spin::RwLock;
 
 /// Type alias for `<R as RunnerChannel>::Client`.
 pub type Client<R> = <R as RunnerChannel>::Client;
@@ -61,7 +61,7 @@ pub trait RunnerClient: Clone + Send + Sync + Sized {
 }
 
 pub(crate) struct RunnerClientLocator {
-    clients: Mutex<Option<HashMap<Key, Box<dyn core::any::Any + Send>>>>,
+    clients: RwLock<Option<HashMap<Key, Box<dyn core::any::Any + Send + Sync>>>>,
 }
 
 /// Get the client for the given device
@@ -80,7 +80,7 @@ impl RunnerClientLocator {
     /// Create a new client locator.
     pub const fn new() -> Self {
         Self {
-            clients: Mutex::new(None),
+            clients: RwLock::new(None),
         }
     }
 
@@ -90,7 +90,14 @@ impl RunnerClientLocator {
     pub fn client<R: RunnerChannel + 'static>(&self, device: &R::Device) -> Client<R> {
         let device_id = device.id();
         let client_id = (core::any::TypeId::of::<R>(), device_id);
-        let mut clients = self.clients.lock();
+        {
+            let clients = self.clients.read();
+            if let Some(client) = clients.as_ref().and_then(|clients| clients.get(&client_id)) {
+                let client: &Client<R> = client.downcast_ref().unwrap();
+                return client.clone();
+            }
+        }
+        let mut clients = self.clients.write();
 
         if clients.is_none() {
             let client = new_client::<R>(device);
@@ -117,7 +124,7 @@ impl RunnerClientLocator {
     fn register_inner<R: RunnerChannel + 'static>(
         key: Key,
         client: Client<R>,
-        clients: &mut Option<HashMap<Key, Box<dyn core::any::Any + Send>>>,
+        clients: &mut Option<HashMap<Key, Box<dyn core::any::Any + Send + Sync>>>,
     ) {
         if clients.is_none() {
             *clients = Some(HashMap::new());

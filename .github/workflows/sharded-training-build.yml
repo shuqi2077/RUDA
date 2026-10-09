@@ -9,6 +9,7 @@ on:
       - 'ruda-nn/**'
       - 'ruda-autodiff/**'
       - 'ruda-tensor/**'
+      - 'ruda-tensor-router/**'
       - 'ruda-tensor-device/**'
       - 'ruda-fusion/**'
       - 'ruBLAS/**'
@@ -77,6 +78,7 @@ jobs:
       - name: Compile resumable dataset loading
         run: |
           cargo check --locked -p ruda-model --features dataset,record-item-custom-serde --lib
+          cargo check --locked -p ruda-tensor-router --no-default-features --lib
       - name: Existing fusion planner and data loader regressions
         run: |
           cargo test --locked -p ruda-fusion --lib
@@ -84,6 +86,7 @@ jobs:
           cargo test --locked -p ruda-model --features dataset --lib data::dataloader::
           cargo test --locked -p ruda-dataset --lib transform::
           cargo test --locked -p ruda-dataset --lib dataset::sqlite::tests
+          cargo test --locked -p ruda-tensor-router --lib runner::tests::
       - name: Compile native generation continuation
         run: cargo check --locked -p ruda-llm --lib
       - name: Compile native FFT sparse and solver tuning
