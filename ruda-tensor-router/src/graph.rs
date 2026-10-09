@@ -75,7 +75,7 @@ struct Layout {
 impl IrVisitorMut for Layout {
     fn visit_tensor_mut(&mut self, tensor: &mut TensorIr) {
         self.tensors.insert(tensor.id);
-        for &dimension in &tensor.shape.dims {
+        for &dimension in tensor.shape.iter() {
             self.uses_unit |= dimension == 0;
             match dimension.checked_add(1) {
                 Some(count) => self.shapes = self.shapes.max(count),
@@ -105,7 +105,7 @@ struct Bind<'a> {
 impl IrVisitorMut for Bind<'_> {
     fn visit_tensor_mut(&mut self, tensor: &mut TensorIr) {
         tensor.id = self.ids[&tensor.id];
-        for dimension in &mut tensor.shape.dims { *dimension = self.bindings.shapes[*dimension]; }
+        for dimension in tensor.shape.iter_mut() { *dimension = self.bindings.shapes[*dimension]; }
     }
     fn visit_scalar_mut(&mut self, scalar: &mut ScalarIr) {
         let ScalarIr::UInt(index) = *scalar else { unreachable!("registered scalar placeholder"); };

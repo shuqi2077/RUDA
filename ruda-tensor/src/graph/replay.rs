@@ -103,7 +103,7 @@ impl IrVisitorMut for Normalizer {
     fn visit_tensor_mut(&mut self, tensor: &mut TensorIr) {
         let next = TensorId::new(self.tensors.len() as u64);
         tensor.id = *self.tensors.entry(tensor.id).or_insert(next);
-        for dimension in &mut tensor.shape.dims {
+        for dimension in tensor.shape.iter_mut() {
             let next = self.bindings.shapes.len();
             *dimension = *self.shapes.entry(*dimension).or_insert_with(|| {
                 self.bindings.shapes.push(*dimension);
