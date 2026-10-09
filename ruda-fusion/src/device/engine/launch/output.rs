@@ -184,11 +184,10 @@ impl<'a, R: Runtime> OutputPlanner<'a, R> {
                             &plan.handle_inputs,
                         );
 
-                        if let Some(shape) = new_runtime {
+                        if let Some(mut shape_global) = new_runtime {
                             let pos = plan.runtime_layouts.len();
-                            let mut shape_global = shape.clone();
-                            for (i, s) in shape.iter().enumerate() {
-                                shape_global[i] = *context.shapes_relative2global.get(s).unwrap();
+                            for s in shape_global.iter_mut() {
+                                *s = *context.shapes_relative2global.get(&*s).unwrap();
                             }
 
                             let strides = strides_dyn_rank(&shape_global);
