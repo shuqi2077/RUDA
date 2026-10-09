@@ -181,7 +181,11 @@ impl AdaptiveState {
     ) -> Result<bool, IoError> {
         if self.outdated.is_empty() { return Ok(false); }
         if storage.available_memory().is_some_and(|free| free.saturating_sub(page_size) < page_size) {
-            if self.stalled_valid && storage.supports_relocation() && self.stalled_matches(pools) {
+            if self.stalled_valid && self.stalled_matches(pools) {
+                if !storage.supports_relocation() {
+                    self.stalled_valid = false;
+                    return Err(IoError::UnsupportedIoOperation { backtrace: BackTrace::capture() });
+                }
                 return Ok(false);
             }
             self.stalled_valid = false;

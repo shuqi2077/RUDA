@@ -35,7 +35,7 @@ pub(crate) enum RelocationInput {
     Pool(usize),
     Page(StorageId),
     PinnedPage,
-    Free { bytes: u64, usable: u64 },
+    Free(u64),
     Allocation { id: ManagedMemoryId, size: u64, pinned: bool, pin_revision: usize },
 }
 
@@ -140,16 +140,18 @@ impl MemoryPage {
         let effective_size = size + padding;
 
         for (index, slice) in self.slices.iter_mut().enumerate() {
+            let available = slice.effective_size();
             let can_use_slice =
-                slice.storage.utilization.size >= effective_size && slice.handle.is_free();
+                available >= effective_size && slice.handle.is_free();
 
             if !can_use_slice {
                 continue;
             }
 
-            let can_be_split = slice.storage.utilization.size > effective_size;
+            let can_be_split = available > effective_size;
             let handle = slice.handle.clone();
-            let storage_old = slice.storage.clone();
+            let mut storage_old = slice.storage.clone();
+            storage_old.utilization.size = available;
 
             // Updates the current storage utilization.
             slice.storage.utilization.size = size;
@@ -211,16 +213,13 @@ impl MemoryPage {
             if pinned { return excluded.take(); }
             let slice = slices.next()?;
             if slice.is_free() {
-                let mut bytes = slice.effective_size();
-                let capacity = slice.storage.size();
-                let mut adjacent = false;
+                let mut size = slice.effective_size();
                 while let Some(next) = slices.peek() {
                     if !next.is_free() { break; }
-                    bytes += next.effective_size();
-                    adjacent = true;
+                    size += next.effective_size();
                     slices.next();
                 }
-                Some(RelocationInput::Free { bytes, usable: if adjacent { bytes } else { capacity } })
+                Some(RelocationInput::Free(size))
             } else {
                 let descriptor = slice.handle.descriptor();
                 let pin_revision = if source { descriptor.pin_revision() } else { 0 };
