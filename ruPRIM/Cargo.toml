@@ -26,7 +26,7 @@ extended = ["heavy"]
 full = ["extended", "device-primitives"]
 
 [dependencies]
-ruda = { version = "0.1.19", path = "../ruda", default-features = false }
+ruda = { version = "0.1.20", path = "../ruda", default-features = false }
 half = { version = "=2.7.1", features = ["alloc", "num-traits", "serde"] }
 
 [dev-dependencies]

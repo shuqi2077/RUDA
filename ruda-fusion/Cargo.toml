@@ -162,7 +162,7 @@ features = ["kernel-ir", "std", "elementwise"]
 
 [dependencies.ruda]
 path = "../ruda"
-version = "0.1.19"
+version = "0.1.20"
 default-features = false
 optional = true
 features = ["runtime"]
