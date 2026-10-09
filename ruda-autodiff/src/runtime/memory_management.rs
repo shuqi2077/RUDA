@@ -61,7 +61,7 @@ impl GraphMemoryManagement {
         // When consuming nodes with a backward pass, some other backward passes become
         // unavailable because some of their parents have been consumed. They are
         // identified here.
-        for leaf in leaves.clone() {
+        for &leaf in &leaves {
             self.unavailable_propagation(leaf);
         }
 
@@ -116,30 +116,38 @@ impl GraphMemoryManagement {
     }
 
     fn unavailable_propagation(&mut self, node_id: NodeId) -> NodeMemoryStatus {
+        Self::propagate_unavailable(&self.nodes, &mut self.statuses, node_id)
+    }
+
+    fn propagate_unavailable(
+        nodes: &HashMap<NodeRefCount, Vec<NodeId>>,
+        statuses: &mut HashMap<NodeId, NodeMemoryStatus>,
+        node_id: NodeId,
+    ) -> NodeMemoryStatus {
         // If already visited
-        if let Some(status) = self.statuses.get(&node_id) {
+        if let Some(status) = statuses.get(&node_id) {
             return status.clone();
         }
 
-        match self.nodes.get(&node_id).cloned() {
+        match nodes.get(&node_id) {
             // If node exists and any of its parents is unavailable, it is unavailable as well
             // If node exists but the parents vec is empty, it is a tensor that never had parents;
             //  the status remains unknown
             Some(parents) => {
                 let mut node_status = NodeMemoryStatus::Unknown;
-                for parent in parents {
-                    let parent_status = self.unavailable_propagation(parent);
+                for &parent in parents {
+                    let parent_status = Self::propagate_unavailable(nodes, statuses, parent);
                     if let NodeMemoryStatus::Unavailable = parent_status {
                         node_status = NodeMemoryStatus::Unavailable;
                     }
                 }
-                self.statuses.insert(node_id, node_status.clone());
+                statuses.insert(node_id, node_status.clone());
                 node_status
             }
             // If node does not exist, it was
             // deleted, so this and all its descendants are unavailable
             None => {
-                self.statuses.insert(node_id, NodeMemoryStatus::Unavailable);
+                statuses.insert(node_id, NodeMemoryStatus::Unavailable);
                 NodeMemoryStatus::Unavailable
             }
         }
@@ -158,9 +166,9 @@ impl GraphMemoryManagement {
         let parents = |node_id| {
             self.nodes
                 .get(&node_id)
-                .cloned()
-                .unwrap_or_default()
                 .into_iter()
+                .flatten()
+                .copied()
         };
 
         loop {
@@ -241,9 +249,9 @@ impl GraphMemoryManagement {
                     for parent in self
                         .nodes
                         .get(&node_id)
-                        .cloned()
-                        .unwrap_or_default()
                         .into_iter()
+                        .flatten()
+                        .copied()
                     {
                         if !visited.contains(&parent) {
                             to_visit.push(parent);
