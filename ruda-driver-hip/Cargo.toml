@@ -124,7 +124,7 @@ features = [ "compilation-cache", "std", "hash",]
 [dependencies.ruda]
 package = "ruda-runtime"
 path = "../ruda-runtime"
-version = "0.1.10"
+version = "0.1.11"
 default-features = false
 features = [ "runtime", "runtime-channel-mutex",]
 
