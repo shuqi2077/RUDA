@@ -259,7 +259,7 @@ impl MemoryPage {
         let mut pending = None;
         let mut size = 0;
         let mut count = 0;
-        for slice in self.slices.drain(..) {
+        for (index, slice) in self.slices.drain(..).enumerate() {
             if slice.is_free() {
                 size += slice.effective_size();
                 count += 1;
@@ -272,7 +272,9 @@ impl MemoryPage {
                     size = 0;
                     count = 0;
                 }
-                slice.descriptor().update_slice(self.slices_tmp.len() as u32);
+                if index != self.slices_tmp.len() {
+                    slice.descriptor().update_slice(self.slices_tmp.len() as u32);
+                }
                 self.slices_tmp.push(slice);
             }
         }

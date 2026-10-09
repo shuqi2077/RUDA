@@ -136,7 +136,7 @@ impl MemoryPool for SlicedPool {
             return;
         }
 
-        for (mut page, id) in self.pages.drain(..) {
+        for (index, (mut page, id)) in self.pages.drain(..).enumerate() {
             page.coalesce();
             let summary = page.summary(false);
 
@@ -144,7 +144,9 @@ impl MemoryPool for SlicedPool {
                 storage.dealloc(id);
             } else {
                 let page_pos = self.pages_tmp.len() as u16;
-                page.update_page(page_pos);
+                if index != page_pos as usize {
+                    page.update_page(page_pos);
+                }
                 self.pages_tmp.push((page, id));
             }
         }
