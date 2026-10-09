@@ -8,6 +8,7 @@ pub(crate) mod client;
 pub mod server;
 
 pub(crate) mod shared;
+pub use ruda_tensor_router::{GraphBindings, GraphId, GraphIr};
 
 #[cfg(feature = "client")]
 mod __client {
@@ -32,7 +33,12 @@ mod __client {
     ///```
     pub type RemoteBackend = BackendRouter<RemoteChannel<<RemoteProtocol as Protocol>::Client>>;
 
-    pub use client::RemoteDevice;
+    pub use client::{RemoteClient, RemoteDevice};
+
+    /// Obtain the same device client used by RemoteBackend for explicit graph operations.
+    pub fn remote_client(device: &RemoteDevice) -> RemoteClient {
+        ruda_tensor_router::get_client::<RemoteChannel<<RemoteProtocol as Protocol>::Client>>(device)
+    }
 }
 #[cfg(feature = "client")]
 pub use __client::*;

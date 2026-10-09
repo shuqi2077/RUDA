@@ -21,11 +21,12 @@ use crate::{
     scalar_float_ops, scalar_int_cmp_ops, scalar_int_ops, unary_float_ops, unary_int_ops,
 };
 use alloc::boxed::Box;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::sync::Arc;
 use ruda_tensor::{Backend, DType, ExecutionError, Shape, TensorData, tensor::IndexingUpdateOp};
 use ruda_tensor::graph::{
     BackendIr, BaseOperationIr, BoolOperationIr, FloatOperationIr, HandleContainer, IntOperationIr,
-    ModuleOperationIr, NumericOperationIr, OperationIr, TensorId, TensorIr, TensorStatus,
+    GraphBindings, GraphId, GraphIr, ModuleOperationIr, NumericOperationIr, OperationIr, TensorId, TensorIr, TensorStatus,
 };
 use ruda_core::{future::DynFut, stub::Mutex};
 
@@ -34,9 +35,12 @@ use ruda_core::{future::DynFut, stub::Mutex};
 pub struct RunnerContext<B: BackendIr> {
     /// Handle container to retrieve tensors based on their intermediate representation.
     handles: HandleContainer<B::Handle>,
+    graphs: BTreeMap<GraphId, Arc<crate::graph::CachedGraph>>,
 }
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
+static GRAPH_COUNTER: AtomicU64 = AtomicU64::new(0);
+static GRAPH_TENSOR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 impl<B: BackendIr> RunnerContext<B> {
     /// Create a new (uninitialized) empty tensor and returns its corresponding [tensor id](TensorId).
@@ -70,6 +74,7 @@ impl<B: BackendIr> Runner<B> {
         Self {
             context: Arc::new(Mutex::new(RunnerContext {
                 handles: HandleContainer::new(),
+                graphs: BTreeMap::new(),
             })),
             device,
             #[cfg(feature = "distributed")]
@@ -244,6 +249,36 @@ impl<B: BackendIr> RunnerClient for Runner<B> {
             #[cfg(feature = "distributed")]
             OperationIr::Distributed(op) => self.run_distributed(handles, op),
         }
+    }
+
+    fn register_graph(&self, graph: GraphIr) -> Result<GraphId, ExecutionError> {
+        let graph = Arc::new(crate::graph::CachedGraph::new(graph)?);
+        let id = GRAPH_COUNTER.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
+            .map_err(|_| crate::graph::graph_error("graph ID space exhausted"))?;
+        let id = GraphId(id);
+        self.context.lock().unwrap().graphs.insert(id, graph);
+        Ok(id)
+    }
+
+    fn execute_graph(&self, id: GraphId, bindings: GraphBindings) -> Result<(), ExecutionError> {
+        let graph = self.context.lock().unwrap().graphs.get(&id).cloned()
+            .ok_or_else(|| crate::graph::graph_error(alloc::format!("unknown registered graph {}", id.0)))?;
+        graph.replay(bindings, |reserved: &BTreeSet<TensorId>| {
+            let context = self.context.lock().unwrap();
+            loop {
+                let value = GRAPH_TENSOR_COUNTER.fetch_update(Ordering::Relaxed, Ordering::Relaxed,
+                    |value| value.checked_add(1).filter(|next| *next <= 1 << 63))
+                    .map_err(|_| crate::graph::graph_error("graph intermediate ID space exhausted"))?;
+                let tensor = TensorId::new(value | 1 << 63);
+                if !reserved.contains(&tensor) && !context.handles.has_handle(&tensor) { return Ok(tensor); }
+            }
+        }, |operation| self.register_op(operation))
+    }
+
+    fn remove_graph(&self, id: GraphId) -> Result<(), ExecutionError> {
+        self.context.lock().unwrap().graphs.remove(&id)
+            .ok_or_else(|| crate::graph::graph_error(alloc::format!("unknown registered graph {}", id.0)))?;
+        Ok(())
     }
 
     fn read_tensor_async(&self, tensor: TensorIr) -> DynFut<Result<TensorData, ExecutionError>> {

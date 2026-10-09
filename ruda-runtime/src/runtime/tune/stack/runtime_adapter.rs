@@ -7,7 +7,11 @@ static GLOBAL: OnceLock<StackTuner> = OnceLock::new();
 static SESSION: OnceLock<String> = OnceLock::new();
 /// Install once, before worker threads/model loading. No implicit environment mutation or I/O.
 pub fn enable_stack_autotune(policy: StackPolicy, cache_directory: Option<PathBuf>) -> Result<&'static StackTuner, TuneFailure> {
-    let tuner = StackTuner::new(policy, cache_directory)?;
+    enable_stack_autotune_with_memory_eviction(policy, cache_directory, MemoryEviction::Fifo)
+}
+/// Install a controller with explicit memory eviction; disk behavior and trials stay unchanged.
+pub fn enable_stack_autotune_with_memory_eviction(policy: StackPolicy, cache_directory: Option<PathBuf>, memory_eviction: MemoryEviction) -> Result<&'static StackTuner, TuneFailure> {
+    let tuner = StackTuner::new_with_memory_eviction(policy, cache_directory, memory_eviction)?;
     GLOBAL.set(tuner).map_err(|_| TuneFailure::invalid("stack autotuning was already configured"))?;
     Ok(GLOBAL.get().expect("controller was initialized"))
 }

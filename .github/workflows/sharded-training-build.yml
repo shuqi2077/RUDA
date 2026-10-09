@@ -10,6 +10,7 @@ on:
       - 'ruda-autodiff/**'
       - 'ruda-tensor/**'
       - 'ruda-tensor-router/**'
+      - 'ruda-tensor-remote/**'
       - 'ruda-tensor-device/**'
       - 'ruda-fusion/**'
       - 'ruBLAS/**'
@@ -79,6 +80,9 @@ jobs:
         run: |
           cargo check --locked -p ruda-model --features dataset,record-item-custom-serde,audio --lib
           cargo check --locked -p ruda-tensor-router --no-default-features --lib
+          cargo check --locked -p ruda-tensor-remote --no-default-features --features client --lib
+          cargo check --locked -p ruda-tensor-remote --no-default-features --features server --lib
+          cargo check --locked -p ruda-tensor-remote --features client,server --lib
       - name: Existing fusion planner and data loader regressions
         run: |
           cargo test --locked -p ruda-fusion --lib

@@ -2,7 +2,7 @@ use super::{RemoteChannel, RemoteClient};
 use crate::shared::{ComputeTask, TaskResponseContent, TensorRemote};
 use ruda_tensor::{DeviceId, DeviceOps, ExecutionError, TensorData};
 use ruda_communication::{Address, ProtocolClient, data_service::TensorTransferId};
-use ruda_tensor::graph::TensorIr;
+use ruda_tensor::graph::{GraphBindings, GraphId, GraphIr, TensorIr};
 use ruda_tensor_router::{MultiBackendBridge, RouterTensor, RunnerClient, get_client};
 use ruda_core::{backtrace::BackTrace, future::DynFut};
 use std::sync::OnceLock;
@@ -54,6 +54,27 @@ impl RunnerClient for RemoteClient {
     fn register_op(&self, op: ruda_tensor::graph::OperationIr) {
         self.sender
             .send(ComputeTask::RegisterOperation(Box::new(op)));
+    }
+
+    fn register_graph(&self, graph: GraphIr) -> Result<GraphId, ExecutionError> {
+        match self.graph_request(ComputeTask::RegisterGraph(graph))? {
+            TaskResponseContent::RegisterGraph(result) => result,
+            _ => Err(graph_rpc_error("invalid graph registration response")),
+        }
+    }
+
+    fn execute_graph(&self, graph: GraphId, bindings: GraphBindings) -> Result<(), ExecutionError> {
+        match self.graph_request(ComputeTask::ExecuteGraph(graph, bindings))? {
+            TaskResponseContent::ExecuteGraph(result) => result,
+            _ => Err(graph_rpc_error("invalid graph execution response")),
+        }
+    }
+
+    fn remove_graph(&self, graph: GraphId) -> Result<(), ExecutionError> {
+        match self.graph_request(ComputeTask::RemoveGraph(graph))? {
+            TaskResponseContent::RemoveGraph(result) => result,
+            _ => Err(graph_rpc_error("invalid graph release response")),
+        }
     }
 
     fn read_tensor_async(
@@ -125,6 +146,16 @@ impl RunnerClient for RemoteClient {
             },
             Err(e) => panic!("Failed to check dtype support: {:?}", e),
         }
+    }
+}
+
+fn graph_rpc_error(reason: impl Into<String>) -> ExecutionError {
+    ExecutionError::Generic { reason: reason.into(), backtrace: BackTrace::capture() }
+}
+impl RemoteClient {
+    fn graph_request(&self, task: ComputeTask) -> Result<TaskResponseContent, ExecutionError> {
+        let future = self.sender.send_async(task);
+        self.runtime.block_on(future).map_err(|error| graph_rpc_error(format!("graph request failed: {error:?}")))
     }
 }
 

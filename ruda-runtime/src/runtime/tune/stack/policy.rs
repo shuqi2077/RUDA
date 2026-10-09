@@ -13,6 +13,14 @@ pub enum Mode {
     /// This does not restore the legacy LocalTuner route.
     Disabled
 }
+/// Retention order for this controller's bounded process-memory cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryEviction {
+    /// Evict the oldest inserted key; the existing default.
+    Fifo,
+    /// Promote successful memory lookups and replace the least recently used key.
+    Lru,
+}
 /// Completed-work timing requested from the trial adapter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Timing {

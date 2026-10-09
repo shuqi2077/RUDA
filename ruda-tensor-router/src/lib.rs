@@ -9,6 +9,7 @@ mod backend;
 mod bridge;
 mod channel;
 mod client;
+mod graph;
 mod ops;
 mod runner;
 mod tensor;
@@ -29,6 +30,7 @@ pub use client::*;
 pub use runner::*;
 pub use tensor::*;
 pub use types::*;
+pub use ruda_tensor::graph::{GraphBindings, GraphId, GraphIr};
 
 /// A local channel with a simple byte bridge between backends.
 /// It transfers tensors between backends via the underlying [tensor data](ruda_tensor::TensorData).

@@ -9,7 +9,7 @@ use ruda_communication::{
     Protocol,
     data_service::{TensorDataService, TensorTransferId},
 };
-use ruda_tensor::graph::{BackendIr, OperationIr, TensorId, TensorIr};
+use ruda_tensor::graph::{BackendIr, GraphBindings, GraphId, GraphIr, OperationIr, TensorId, TensorIr};
 use ruda_tensor_router::Runner;
 use ruda_core::tensor::DType;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -53,6 +53,27 @@ where
             .send(ProcessorTask::RegisterOperation(op))
             .await
             .unwrap();
+    }
+
+    /// Register a relative graph and acknowledge its runner-issued ID.
+    pub async fn register_graph(&self, id: ConnectionId, graph: GraphIr) {
+        let (sender, receiver) = tokio::sync::mpsc::channel(1);
+        self.compute_sender.send(ProcessorTask::RegisterGraph(id, graph, sender)).await.unwrap();
+        self.writer_sender.send(receiver).await.unwrap();
+    }
+
+    /// Dispatch a concrete replay; acknowledgement is not a device completion fence.
+    pub async fn execute_graph(&self, id: ConnectionId, graph: GraphId, bindings: GraphBindings) {
+        let (sender, receiver) = tokio::sync::mpsc::channel(1);
+        self.compute_sender.send(ProcessorTask::ExecuteGraph(id, graph, bindings, sender)).await.unwrap();
+        self.writer_sender.send(receiver).await.unwrap();
+    }
+
+    /// Release a registration without canceling previously submitted work.
+    pub async fn remove_graph(&self, id: ConnectionId, graph: GraphId) {
+        let (sender, receiver) = tokio::sync::mpsc::channel(1);
+        self.compute_sender.send(ProcessorTask::RemoveGraph(id, graph, sender)).await.unwrap();
+        self.writer_sender.send(receiver).await.unwrap();
     }
 
     pub async fn register_tensor(&self, tensor_id: TensorId, data: TensorData) {

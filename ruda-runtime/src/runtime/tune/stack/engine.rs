@@ -120,15 +120,103 @@ pub struct Stats {
 }
 #[derive(Default)]
 struct State {
-    records: BTreeMap<String, Arc<Record>>, order: VecDeque<String>,
+    records: BTreeMap<String, Arc<Record>>, order: MemoryOrder,
     bypass: BTreeMap<String, Scope>,
     pending: BTreeSet<String>, devices: BTreeSet<String>, poisoned_devices: BTreeSet<String>,
     banned: BTreeMap<String, BTreeSet<String>>, regressions: BTreeMap<String, VecDeque<f64>>,
     reports: VecDeque<TuneReport>, stats: Stats,
 }
+enum MemoryOrder {
+    Fifo(VecDeque<String>),
+    Lru(LruOrder),
+}
+impl Default for MemoryOrder {
+    fn default() -> Self { Self::Fifo(VecDeque::new()) }
+}
+impl MemoryOrder {
+    fn new(eviction: MemoryEviction) -> Self {
+        match eviction { MemoryEviction::Fifo => Self::default(), MemoryEviction::Lru => Self::Lru(LruOrder::default()) }
+    }
+    fn len(&self) -> usize {
+        match self { Self::Fifo(order) => order.len(), Self::Lru(order) => order.indices.len() }
+    }
+    fn contains(&self, key: &String) -> bool {
+        match self { Self::Fifo(order) => order.contains(key), Self::Lru(order) => order.indices.contains_key(key.as_str()) }
+    }
+    fn push_back(&mut self, key: String) {
+        match self { Self::Fifo(order) => order.push_back(key), Self::Lru(order) => order.insert(key) }
+    }
+    fn pop_front(&mut self) -> Option<String> {
+        match self { Self::Fifo(order) => order.pop_front(), Self::Lru(order) => order.pop_front() }
+    }
+    fn promote(&mut self, key: &str) {
+        if let Self::Lru(order) = self { order.promote(key); }
+    }
+}
+#[derive(Default)]
+struct LruOrder {
+    indices: BTreeMap<Arc<str>, usize>,
+    slots: Vec<Option<LruEntry>>,
+    vacant: Vec<usize>,
+    head: Option<usize>,
+    tail: Option<usize>,
+}
+struct LruEntry {
+    key: Arc<str>,
+    previous: Option<usize>,
+    next: Option<usize>,
+}
+impl LruOrder {
+    fn detach(&mut self, index: usize) {
+        let entry = self.slots[index].as_ref().expect("retained LRU entry");
+        let (previous, next) = (entry.previous, entry.next);
+        match previous {
+            Some(previous) => self.slots[previous].as_mut().expect("previous LRU entry").next = next,
+            None => self.head = next,
+        }
+        match next {
+            Some(next) => self.slots[next].as_mut().expect("next LRU entry").previous = previous,
+            None => self.tail = previous,
+        }
+    }
+    fn append(&mut self, index: usize) {
+        let entry = self.slots[index].as_mut().expect("retained LRU entry");
+        entry.previous = self.tail;
+        entry.next = None;
+        match self.tail {
+            Some(tail) => self.slots[tail].as_mut().expect("last LRU entry").next = Some(index),
+            None => self.head = Some(index),
+        }
+        self.tail = Some(index);
+    }
+    fn promote(&mut self, key: &str) {
+        if let Some(&index) = self.indices.get(key) {
+            if self.tail != Some(index) { self.detach(index); self.append(index); }
+        }
+    }
+    fn insert(&mut self, key: String) {
+        if self.indices.contains_key(key.as_str()) { self.promote(&key); return; }
+        let key = Arc::<str>::from(key);
+        let index = match self.vacant.pop() {
+            Some(index) => index,
+            None => { self.slots.push(None); self.slots.len() - 1 },
+        };
+        self.slots[index] = Some(LruEntry { key: key.clone(), previous: None, next: None });
+        self.indices.insert(key, index);
+        self.append(index);
+    }
+    fn pop_front(&mut self) -> Option<String> {
+        let index = self.head?;
+        self.detach(index);
+        let entry = self.slots[index].take().expect("first LRU entry");
+        self.indices.remove(entry.key.as_ref());
+        self.vacant.push(index);
+        Some(entry.key.to_string())
+    }
+}
 /// No state mutex is held while running a candidate, validator, profile, or disk operation.
 /// Contenders use the declared reference instead of waiting (also avoids nested-tuning deadlocks).
-pub struct StackTuner { policy: StackPolicy, disk: Option<DiskCache>, state: Mutex<State> }
+pub struct StackTuner { policy: StackPolicy, memory_eviction: MemoryEviction, disk: Option<DiskCache>, state: Mutex<State> }
 struct Permit<'a> { tuner: &'a StackTuner, key: String, device: String }
 impl Drop for Permit<'_> {
     fn drop(&mut self) { let mut s = self.tuner.lock(); s.pending.remove(&self.key); s.devices.remove(&self.device); }
@@ -138,13 +226,19 @@ impl StackTuner {
     /// `None` disables disk storage. Construction performs no disk I/O and does
     /// not install this instance as the global runtime controller.
     pub fn new(policy: StackPolicy, cache_directory: Option<PathBuf>) -> Result<Self, TuneFailure> {
+        Self::new_with_memory_eviction(policy, cache_directory, MemoryEviction::Fifo)
+    }
+    /// Select an explicit memory retention order without changing disk eviction or validation.
+    pub fn new_with_memory_eviction(policy: StackPolicy, cache_directory: Option<PathBuf>, memory_eviction: MemoryEviction) -> Result<Self, TuneFailure> {
         policy.validate()?;
         let disk = cache_directory.map(|dir| DiskCache::new(dir, policy.capacity));
-        Ok(Self { policy, disk, state: Mutex::new(State::default()) })
+        Ok(Self { policy, memory_eviction, disk, state: Mutex::new(State { order: MemoryOrder::new(memory_eviction), ..State::default() }) })
     }
     fn lock(&self) -> MutexGuard<'_, State> { self.state.lock().unwrap_or_else(|e| e.into_inner()) }
     /// Borrow the immutable policy; runtime reconfiguration is not supported.
     pub fn policy(&self) -> &StackPolicy { &self.policy }
+    /// Return the immutable process-memory retention order.
+    pub fn memory_eviction(&self) -> MemoryEviction { self.memory_eviction }
     /// Snapshot this instance's counters without launching device work.
     pub fn stats(&self) -> Stats { self.lock().stats.clone() }
     /// Conservative dependency snapshot for complete pipelines. It includes all currently
@@ -169,6 +263,9 @@ impl StackTuner {
     /// Clone retained search diagnostics, oldest first, bounded by min(capacity, 128).
     /// Cache hits are counters, not new search reports.
     pub fn reports(&self) -> Vec<TuneReport> { self.lock().reports.iter().cloned().collect() }
+    fn promote(&self, state: &mut State, key: &str) {
+        state.order.promote(key);
+    }
     fn insert(&self, record: Record) {
         let mut s = self.lock();
         if !s.order.contains(&record.key) {
@@ -179,6 +276,7 @@ impl StackTuner {
             }
             s.order.push_back(record.key.clone());
         }
+        self.promote(&mut s, &record.key);
         s.records.insert(record.key.clone(), Arc::new(record));
     }
     fn allowed(&self, key: &str, c: &impl CandidateSource) -> bool {
@@ -232,10 +330,17 @@ impl StackTuner {
         let memory = { self.lock().records.get(&key).cloned() };
         if let Some(record) = memory {
             if let Some(d) = self.from_record(&record, candidates, reference, DecisionSource::MemoryCache) {
-                self.lock().stats.memory_hits += 1; return Ok(d);
+                let mut state = self.lock();
+                state.stats.memory_hits += 1;
+                self.promote(&mut state, &key);
+                return Ok(d);
             }
         }
-        if self.lock().bypass.contains_key(&key) { return Ok(fallback(DecisionSource::ValidationUnavailable)); }
+        let bypass = { self.lock().bypass.contains_key(&key) };
+        if bypass {
+            if self.memory_eviction == MemoryEviction::Lru { self.promote(&mut self.lock(), &key); }
+            return Ok(fallback(DecisionSource::ValidationUnavailable));
+        }
         if is_tuning() { return Ok(fallback(DecisionSource::Nested)); }
         let _permit = {
             let mut s = self.lock();
@@ -287,6 +392,7 @@ impl StackTuner {
                 let mut s = self.lock();
                 if !s.order.contains(&key) { s.order.push_back(key.clone()); }
                 s.bypass.insert(key.clone(), problem.scope);
+                self.promote(&mut s, &key);
                 while s.order.len() > self.policy.capacity {
                     if let Some(old) = s.order.pop_front() { s.records.remove(&old); s.banned.remove(&old); s.regressions.remove(&old); s.bypass.remove(&old); }
                 }

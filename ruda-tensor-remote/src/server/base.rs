@@ -159,6 +159,9 @@ where
                     stream.seed(seed).await;
                 }
                 ComputeTask::DTypeUsage(dtype) => stream.dtype_usage(connection_id, dtype).await,
+                ComputeTask::RegisterGraph(graph) => stream.register_graph(connection_id, graph).await,
+                ComputeTask::ExecuteGraph(graph, bindings) => stream.execute_graph(connection_id, graph, bindings).await,
+                ComputeTask::RemoveGraph(graph) => stream.remove_graph(connection_id, graph).await,
             }
         }
 

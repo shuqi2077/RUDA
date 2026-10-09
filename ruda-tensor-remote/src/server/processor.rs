@@ -3,7 +3,7 @@ use ruda_communication::{
     Protocol,
     data_service::{TensorDataService, TensorTransferId},
 };
-use ruda_tensor::graph::{BackendIr, OperationIr, TensorId, TensorIr};
+use ruda_tensor::graph::{BackendIr, GraphBindings, GraphId, GraphIr, OperationIr, TensorId, TensorIr};
 use ruda_tensor_router::{Runner, RunnerClient};
 use ruda_core::tensor::DType;
 use core::marker::PhantomData;
@@ -38,6 +38,9 @@ pub enum ProcessorTask {
     Seed(u64),
     DTypeUsage(ConnectionId, DType, Callback<TaskResponse>),
     Close,
+    RegisterGraph(ConnectionId, GraphIr, Callback<TaskResponse>),
+    ExecuteGraph(ConnectionId, GraphId, GraphBindings, Callback<TaskResponse>),
+    RemoveGraph(ConnectionId, GraphId, Callback<TaskResponse>),
 }
 
 impl<B: BackendIr, P> Processor<B, P>
@@ -57,6 +60,18 @@ where
                 match item {
                     ProcessorTask::RegisterOperation(op) => {
                         runner.register_op(*op);
+                    }
+                    ProcessorTask::RegisterGraph(id, graph, callback) => {
+                        let result = runner.register_graph(graph);
+                        callback.send(TaskResponse { content: TaskResponseContent::RegisterGraph(result), id }).await.unwrap();
+                    }
+                    ProcessorTask::ExecuteGraph(id, graph, bindings, callback) => {
+                        let result = runner.execute_graph(graph, bindings);
+                        callback.send(TaskResponse { content: TaskResponseContent::ExecuteGraph(result), id }).await.unwrap();
+                    }
+                    ProcessorTask::RemoveGraph(id, graph, callback) => {
+                        let result = runner.remove_graph(graph);
+                        callback.send(TaskResponse { content: TaskResponseContent::RemoveGraph(result), id }).await.unwrap();
                     }
                     ProcessorTask::Sync(id, callback) => {
                         let result = runner.sync();

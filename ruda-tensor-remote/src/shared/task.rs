@@ -1,6 +1,6 @@
 use ruda_tensor::{DTypeUsageSet, ExecutionError, TensorData};
 use ruda_communication::{Address, data_service::TensorTransferId};
-use ruda_tensor::graph::{OperationIr, TensorId, TensorIr};
+use ruda_tensor::graph::{GraphBindings, GraphId, GraphIr, OperationIr, TensorId, TensorIr};
 use ruda_core::{
     tensor::DType,
     id::{IdGenerator, StreamId},
@@ -67,6 +67,9 @@ pub enum ComputeTask {
     ReadTensor(TensorIr),
     SyncBackend,
     DTypeUsage(DType),
+    RegisterGraph(GraphIr),
+    ExecuteGraph(GraphId, GraphBindings),
+    RemoveGraph(GraphId),
 }
 
 #[allow(missing_docs)]
@@ -82,4 +85,7 @@ pub enum TaskResponseContent {
     ReadTensor(Result<TensorData, ExecutionError>),
     SyncBackend(Result<(), ExecutionError>),
     DTypeUsage(DTypeUsageSet),
+    RegisterGraph(Result<GraphId, ExecutionError>),
+    ExecuteGraph(Result<(), ExecutionError>),
+    RemoveGraph(Result<(), ExecutionError>),
 }

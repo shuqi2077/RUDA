@@ -23,6 +23,8 @@ pub use tensor::*;
 
 mod traversal;
 pub use traversal::*;
+mod visitor;
+pub use visitor::IrVisitorMut;
 
 mod kind;
 pub use kind::*;
