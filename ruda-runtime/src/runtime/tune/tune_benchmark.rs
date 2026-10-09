@@ -52,7 +52,7 @@ fn profile_exclusive<'a, R: Runtime, F: TuneInputs, Out: AutotuneOutput>(
     warmup(operation, inputs.clone(), client.clone())?;
 
     let num_samples = 10;
-    let mut durations = Vec::new();
+    let mut durations = Vec::with_capacity(num_samples);
 
     for _ in 0..num_samples {
         let result: Result<
@@ -106,7 +106,8 @@ fn warmup<'a, R: Runtime, F: TuneInputs, Out: AutotuneOutput>(
 ) -> Result<(), AutotuneError> {
     let num_warmup = 3;
 
-    let mut errors = Vec::with_capacity(num_warmup);
+    let mut num_errors = 0;
+    let mut last_error = None;
     // We make sure the server is in a correct state.
     let _errs = client.flush();
 
@@ -117,14 +118,17 @@ fn warmup<'a, R: Runtime, F: TuneInputs, Out: AutotuneOutput>(
         match profiled {
             Ok((Ok(_), _)) => {}
             Ok((Err(err), _)) => return Err(err),
-            Err(err) => errors.push(err),
+            Err(err) => {
+                num_errors += 1;
+                last_error = Some(err);
+            }
         }
     }
 
-    if errors.len() < num_warmup {
+    if num_errors < num_warmup {
         Ok(())
     } else {
-        let msg = alloc::format!("{:?}", errors.remove(num_warmup - 1));
+        let msg = alloc::format!("{:?}", last_error.expect("all warmup profiles failed"));
         Err(AutotuneError::Unknown {
             name: operation.name.to_string(),
             err: msg,

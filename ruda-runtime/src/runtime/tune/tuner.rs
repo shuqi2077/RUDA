@@ -164,6 +164,12 @@ impl<K: AutotuneKey> Tuner<K> {
 
         log::info!("Tuning {key}");
 
+        // Fast path: single tunable, no benchmarking needed.
+        if tunables.len() == 1 {
+            self.cache.write().cache_insert(key.clone(), 0);
+            return TuneCacheResult::Hit { fastest_index: 0 };
+        }
+
         let autotunables = tunables.autotunables().collect::<Vec<_>>();
         let mut results: Vec<AutotuneResult> = autotunables
             .iter()
@@ -176,12 +182,6 @@ impl<K: AutotuneKey> Tuner<K> {
 
         #[cfg(std_io)]
         let checksum = tunables.compute_checksum();
-
-        // Fast path: single tunable, no benchmarking needed.
-        if results.len() == 1 {
-            self.cache.write().cache_insert(key.clone(), 0);
-            return TuneCacheResult::Hit { fastest_index: 0 };
-        }
 
         let test_inputs = tunables.generate_inputs(key, inputs);
         client.flush().expect("Autotune input generation failed");
