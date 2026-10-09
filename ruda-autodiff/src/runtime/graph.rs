@@ -169,7 +169,9 @@ impl<'a> GraphCleaner<'a> {
         let mut should_remove = Vec::new();
         for graph in graphs.values() {
             {
-                let mut guard = graph.state.lock();
+                let Some(mut guard) = graph.state.try_lock() else {
+                    continue;
+                };
                 // Double safety: in case it was marked as no longer useful, but other
                 // nodes are still relevant, we only check which nodes can safely be removed.
                 if !guard.server.maybe_useful() {
