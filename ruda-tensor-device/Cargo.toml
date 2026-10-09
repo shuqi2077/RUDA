@@ -107,7 +107,7 @@ optional = true
 [dependencies.rurand]
 package = "ruRAND"
 path = "../ruRAND"
-version = "0.1.63"
+version = "0.1.64"
 default-features = false
 features = ["std", "tensor"]
 
