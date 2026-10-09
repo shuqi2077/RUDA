@@ -42,6 +42,10 @@ pub struct WgpuResource {
 }
 
 impl WgpuResource {
+    pub(crate) fn address_pin(&self) -> Option<ruda::runtime::memory_management::MemoryResourcePin> {
+        self.pin.clone()
+    }
+
     /// Return the binding view of the buffer.
     pub fn as_wgpu_bind_resource(&self) -> wgpu::BindingResource<'_> {
         // wgpu enforces 4-byte alignment for buffer binding sizes per the WebGPU spec.

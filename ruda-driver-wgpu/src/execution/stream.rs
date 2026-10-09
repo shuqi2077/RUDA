@@ -43,6 +43,7 @@ pub struct WgpuStream {
     /// Used to prevent wgpu staging buffer pool exhaustion during bulk writes
     /// (e.g. model loading with hundreds of tensors).
     pending_write_count: usize,
+    pending_address_pins: Vec<ruda::runtime::memory_management::MemoryResourcePin>,
 }
 
 impl WgpuStream {
@@ -92,6 +93,7 @@ impl WgpuStream {
             poll,
             submission_load: SubmissionLoad::default(),
             pending_write_count: 0,
+            pending_address_pins: Vec::new(),
         }
     }
 
@@ -223,6 +225,9 @@ impl WgpuStream {
 
         // This will _first_ fire off all pending write_buffer work.
         let index = self.queue.submit([tasks_encoder.finish()]);
+        // Unsubmitted encoders on any stream keep their resolved addresses
+        // fixed. Submitted work is covered by the relocation completion wait.
+        self.pending_address_pins.clear();
 
         self.submission_load
             .regulate(&self.device, self.tasks_count, index);
@@ -271,9 +276,12 @@ impl WgpuStream {
 
         let entries = resources
             .enumerate()
-            .map(|(i, r)| wgpu::BindGroupEntry {
-                binding: i as u32,
-                resource: r.as_wgpu_bind_resource(),
+            .map(|(i, r)| {
+                if let Some(pin) = r.address_pin() { self.pending_address_pins.push(pin); }
+                wgpu::BindGroupEntry {
+                    binding: i as u32,
+                    resource: r.as_wgpu_bind_resource(),
+                }
             })
             .collect::<Vec<_>>();
 
@@ -318,6 +326,7 @@ impl WgpuStream {
             }
             RudaCount::Dynamic(binding) => {
                 let res = self.mem_manage.get_resource(binding).unwrap();
+                if let Some(pin) = res.address_pin() { self.pending_address_pins.push(pin); }
                 pass.dispatch_workgroups_indirect(&res.buffer, res.offset);
             }
         }
