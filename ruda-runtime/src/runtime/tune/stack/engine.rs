@@ -3,7 +3,7 @@
 //! or explicit synchronization, while application adapters must honor that same contract.
 use super::{cache::{DiskCache, Record, now_seconds}, policy::*};
 use std::{cell::Cell, collections::{BTreeMap, BTreeSet, VecDeque}, path::PathBuf,
-    string::{String, ToString}, sync::{Mutex, MutexGuard}, time::{Duration, Instant}, vec::Vec};
+    string::{String, ToString}, sync::{Arc, Mutex, MutexGuard}, time::{Duration, Instant}, vec::Vec};
 
 std::thread_local! { static DEPTH: Cell<usize> = const { Cell::new(0) }; }
 /// Whether the current thread is inside a shared-controller trial.
@@ -120,7 +120,7 @@ pub struct Stats {
 }
 #[derive(Default)]
 struct State {
-    records: BTreeMap<String, Record>, order: VecDeque<String>,
+    records: BTreeMap<String, Arc<Record>>, order: VecDeque<String>,
     bypass: BTreeMap<String, Scope>,
     pending: BTreeSet<String>, devices: BTreeSet<String>, poisoned_devices: BTreeSet<String>,
     banned: BTreeMap<String, BTreeSet<String>>, regressions: BTreeMap<String, VecDeque<f64>>,
@@ -179,14 +179,15 @@ impl StackTuner {
             }
             s.order.push_back(record.key.clone());
         }
-        s.records.insert(record.key.clone(), record);
+        s.records.insert(record.key.clone(), Arc::new(record));
     }
-    fn allowed(&self, key: &str, c: &Candidate) -> bool {
-        c.fits(&self.policy) && !self.lock().banned.get(key).is_some_and(|b| b.contains(&c.name))
+    fn allowed(&self, key: &str, c: &impl CandidateSource) -> bool {
+        let c = c.view();
+        c.fits(&self.policy) && !self.lock().banned.get(key).is_some_and(|b| b.contains(c.name))
     }
-    fn from_record(&self, r: &Record, candidates: &[Candidate], reference: usize, source: DecisionSource) -> Option<Decision> {
+    fn from_record<C: CandidateSource>(&self, r: &Record, candidates: &[C], reference: usize, source: DecisionSource) -> Option<Decision> {
         if !r.is_fresh(now_seconds(), self.policy.ttl.as_secs().max(1)) || (self.policy.require_validation && !r.verified) { return None; }
-        let index = candidates.iter().position(|c| c.name == r.winner && self.allowed(&r.key, c))?;
+        let index = candidates.iter().position(|c| c.view().name == &r.winner && self.allowed(&r.key, c))?;
         Some(Decision { index, reference_index: reference, name: r.winner.clone(), source, verified: r.verified, ratio: Some(r.ratio), cache_key: r.key.clone() })
     }
     fn validation(&self, runner: &mut impl TrialRunner, reference: usize, candidate: usize) -> Result<bool, TuneFailure> {
@@ -205,18 +206,25 @@ impl StackTuner {
     /// key return InvalidInput. Trials may synchronize; memory hits do not.
     /// A returned decision does not execute the caller's live request.
     pub fn select(&self, problem: &Problem, candidates: &[Candidate], reference: usize, runner: &mut impl TrialRunner) -> Result<Decision, TuneFailure> {
+        self.select_candidates(problem, candidates, reference, runner)
+    }
+
+    pub(super) fn select_candidates<C: CandidateSource>(&self, problem: &Problem, candidates: &[C], reference: usize, runner: &mut impl TrialRunner) -> Result<Decision, TuneFailure> {
         if candidates.is_empty() || candidates.len() > 4096 || reference >= candidates.len()
             || problem.operation.is_empty() || problem.environment.is_empty() || problem.workload.is_empty() {
             return Err(TuneFailure::invalid("a workload, environment and valid reference candidate are required"));
         }
         let mut names = BTreeSet::new();
-        if candidates.iter().any(|c| c.name.is_empty() || c.name.len() > 4096 || !names.insert(&c.name)) {
+        if candidates.iter().any(|c| {
+            let c = c.view();
+            c.name.is_empty() || c.name.len() > 4096 || !names.insert(c.name)
+        }) {
             return Err(TuneFailure::invalid("candidate names must be nonempty, bounded and unique"));
         }
-        if !candidates[reference].fits(&self.policy) { return Err(TuneFailure::invalid("reference does not satisfy eligibility/workspace policy")); }
-        let key = cache_key(problem, candidates, reference, &self.policy);
+        if !candidates[reference].view().fits(&self.policy) { return Err(TuneFailure::invalid("reference does not satisfy eligibility/workspace policy")); }
+        let key = cache_key_candidates(problem, candidates, reference, &self.policy);
         if key.len() > 384 * 1024 { return Err(TuneFailure::invalid("autotune key exceeds 384 KiB")); }
-        let fallback = |source| Decision { index: reference, reference_index: reference, name: candidates[reference].name.clone(), source, verified: false, ratio: None, cache_key: key.clone() };
+        let fallback = |source| Decision { index: reference, reference_index: reference, name: String::clone(candidates[reference].view().name), source, verified: false, ratio: None, cache_key: key.clone() };
         if self.lock().poisoned_devices.contains(&problem.environment) {
             return Err(TuneFailure { kind: FailureKind::Quarantined, message: "device tuning lane is quarantined after an unconfirmed device completion".into() });
         }
@@ -286,8 +294,8 @@ impl StackTuner {
                 s.reports.push_back(TuneReport {
                     operation: problem.operation.clone(), environment: problem.environment.clone(),
                     workload: problem.workload.clone(), execution_context: problem.execution_context.clone(),
-                    winner: candidates[reference].name.clone(), elapsed: Duration::ZERO, budget_exhausted: false,
-                    candidates: std::vec![CandidateReport { name: candidates[reference].name.clone(), samples: 0,
+                    winner: String::clone(candidates[reference].view().name), elapsed: Duration::ZERO, budget_exhausted: false,
+                    candidates: std::vec![CandidateReport { name: String::clone(candidates[reference].view().name), samples: 0,
                         ratio: None, relative_mad: None, verified: false, note: e.message }],
                 });
                 Ok(fallback(DecisionSource::ValidationUnavailable))
@@ -295,7 +303,7 @@ impl StackTuner {
             Err(e) => { if e.kind == FailureKind::Device { self.fail_device(&problem.environment); } Err(e) }
         }
     }
-    fn explore(&self, problem: &Problem, candidates: &[Candidate], reference: usize, key: &str, runner: &mut impl TrialRunner) -> Result<(Decision, TuneReport, Record), TuneFailure> {
+    fn explore<C: CandidateSource>(&self, problem: &Problem, candidates: &[C], reference: usize, key: &str, runner: &mut impl TrialRunner) -> Result<(Decision, TuneReport, Record), TuneFailure> {
         let started = Instant::now();
         // The mandatory reference is validated even if its compilation takes the whole budget.
         // Never treat a failed reference as permission to choose an unverified fast candidate.
@@ -306,11 +314,11 @@ impl StackTuner {
         let mut winner = reference; let mut winner_ratio = 1.0; let mut winner_time = reference_time;
         let mut winner_reference = reference_time; let mut winner_checked = reference_checked;
         let mut reports = Vec::new();
-        reports.push(CandidateReport { name: candidates[reference].name.clone(), samples: 1, ratio: Some(1.0), relative_mad: Some(0.0), verified: reference_checked, note: "reference; retained unless a stable measured improvement qualifies".into() });
+        reports.push(CandidateReport { name: String::clone(candidates[reference].view().name), samples: 1, ratio: Some(1.0), relative_mad: Some(0.0), verified: reference_checked, note: "reference; retained unless a stable measured improvement qualifies".into() });
         let mut attempted = 1; let mut exhausted = false;
         for (index, candidate) in candidates.iter().enumerate() {
             if index == reference { continue; }
-            let mut report = CandidateReport { name: candidate.name.clone(), samples: 0, ratio: None, relative_mad: None, verified: false, note: String::new() };
+            let mut report = CandidateReport { name: String::clone(candidate.view().name), samples: 0, ratio: None, relative_mad: None, verified: false, note: String::new() };
             if !self.allowed(key, candidate) { report.note = "ineligible, unknown/over-budget workspace, or regressed candidate".into(); reports.push(report); continue; }
             if attempted >= self.policy.max_candidates || started.elapsed() >= self.policy.budget {
                 exhausted = true; report.note = "search budget exhausted".into(); reports.push(report); continue;
@@ -360,7 +368,7 @@ impl StackTuner {
             reports.push(report);
         }
         exhausted |= started.elapsed() >= self.policy.budget;
-        let record = Record { scope: problem.scope as u8, key: key.to_string(), winner: candidates[winner].name.clone(), created: now_seconds(),
+        let record = Record { scope: problem.scope as u8, key: key.to_string(), winner: String::clone(candidates[winner].view().name), created: now_seconds(),
             reference_ns: winner_reference.as_nanos().min(u64::MAX as u128) as u64,
             winner_ns: winner_time.as_nanos().min(u64::MAX as u128) as u64, ratio: winner_ratio, verified: winner_checked };
         let decision = Decision { index: winner, reference_index: reference, name: record.winner.clone(), source: DecisionSource::Tuned, verified: winner_checked, ratio: Some(winner_ratio), cache_key: key.to_string() };

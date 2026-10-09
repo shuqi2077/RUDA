@@ -169,15 +169,53 @@ pub struct Candidate {
 impl Candidate {
     /// Create an eligible revision-1 candidate without a workspace estimate.
     pub fn new(name: impl Into<String>) -> Self {
-        Self { name: name.into(), revision: "1".into(), workspace_bytes: None, eligible: true }
+        let name = name.into();
+        let view = CandidateView::new(&name);
+        let revision = view.revision.into();
+        let workspace_bytes = view.workspace_bytes;
+        let eligible = view.eligible;
+        Self { name, revision, workspace_bytes, eligible }
     }
     /// Check eligibility and the optional workspace ceiling, without executing code.
     pub fn fits(&self, policy: &StackPolicy) -> bool {
+        self.view().fits(policy)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct CandidateView<'a> {
+    pub(super) name: &'a String,
+    pub(super) revision: &'a str,
+    pub(super) workspace_bytes: Option<u64>,
+    pub(super) eligible: bool,
+}
+
+impl<'a> CandidateView<'a> {
+    pub(super) fn new(name: &'a String) -> Self {
+        Self { name, revision: "1", workspace_bytes: None, eligible: true }
+    }
+
+    pub(super) fn fits(&self, policy: &StackPolicy) -> bool {
         self.eligible && match policy.workspace_limit {
             Some(limit) => self.workspace_bytes.is_some_and(|n| n <= limit),
             None => true,
         }
     }
+}
+
+pub(super) trait CandidateSource {
+    fn view(&self) -> CandidateView<'_>;
+}
+
+impl CandidateSource for Candidate {
+    fn view(&self) -> CandidateView<'_> {
+        CandidateView { name: &self.name, revision: &self.revision,
+            workspace_bytes: self.workspace_bytes, eligible: self.eligible }
+    }
+}
+
+impl CandidateSource for CandidateView<'_> {
+    fn view(&self) -> CandidateView<'_> { *self }
 }
 
 /// Failure classification used to distinguish rejected trials from device faults.
@@ -239,9 +277,14 @@ fn append_fields(out: &mut String, parts: &[&str]) {
 /// Encode the full workload, ordered candidate manifest, reference and numerical policy.
 /// This returns identity text, not a cryptographic hash or proof of correctness.
 pub fn cache_key(problem: &Problem, candidates: &[Candidate], reference: usize, policy: &StackPolicy) -> String {
+    cache_key_candidates(problem, candidates, reference, policy)
+}
+
+pub(super) fn cache_key_candidates<C: CandidateSource>(problem: &Problem, candidates: &[C], reference: usize, policy: &StackPolicy) -> String {
     let mut manifest = String::new();
     for c in candidates {
-        append_fields(&mut manifest, &[&c.name, &c.revision, &std::format!("{:?}/{}", c.workspace_bytes, c.eligible)]);
+        let c = c.view();
+        append_fields(&mut manifest, &[c.name, c.revision, &std::format!("{:?}/{}", c.workspace_bytes, c.eligible)]);
     }
     fields(&["ruda-stack-autotune-v1", &std::format!("{:?}", problem.scope), &problem.operation, &problem.environment, &problem.workload,
         &problem.execution_context, &reference.to_string(), &manifest,

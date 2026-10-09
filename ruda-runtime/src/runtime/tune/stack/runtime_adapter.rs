@@ -1,4 +1,5 @@
 use super::*;
+use super::policy::CandidateView;
 use crate::runtime::{backend::Runtime, client::ComputeClient, tune::{AutotuneKey, AutotuneOutput, TunableSet, TuneInputs, AutotuneError}};
 use std::{any::type_name, path::PathBuf, string::{String, ToString}, sync::{Arc, OnceLock}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}, vec::Vec};
 
@@ -157,11 +158,11 @@ pub fn try_execute_stack<'a, R: Runtime, K: AutotuneKey, I: TuneInputs, O: Autot
     loop { let batch = plan.next(None); if batch.is_empty() { break; }
         for index in batch { if !included[index] { indices.push(index); included[index] = true; } }
     }
-    let candidates: Vec<_> = indices.iter().map(|&i| Candidate::new(set.fastest(i).name.clone())).collect();
+    let candidates: Vec<_> = indices.iter().map(|&i| CandidateView::new(&set.fastest(i).name)).collect();
     // Cache hits must retain normal asynchronous execution. TrialRunner fences before every
     // validation/measurement; do NOT synchronize ordinary requests just to read this cache.
     let mut trials = RuntimeTrials { client: client.clone(), set: &set, key: &key, input: &input, indices: &indices, timing: tuner.policy().timing };
-    let decision = tuner.select(&problem, &candidates, 0, &mut trials).map_err(|e| autotune_error(name, &e.to_string()))?;
+    let decision = tuner.select_candidates(&problem, &candidates, 0, &mut trials).map_err(|e| autotune_error(name, &e.to_string()))?;
     let output = set.fastest(indices[decision.index]).execute(input);
     if output.is_err() { tuner.invalidate(&decision, true); }
     output
