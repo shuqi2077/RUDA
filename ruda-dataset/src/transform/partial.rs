@@ -97,6 +97,10 @@ where
 
     fn get_many(&self, indices: &[usize]) -> Option<Vec<I>> {
         if indices.is_empty() { return Some(Vec::new()); }
+        if self.start_index == 0 {
+            if indices.iter().any(|&index| index >= self.end_index) { return None; }
+            return self.dataset.get_many(indices);
+        }
         let translated = indices.iter().map(|&index| {
             let index = index + self.start_index;
             (index >= self.start_index && index < self.end_index).then_some(index)
