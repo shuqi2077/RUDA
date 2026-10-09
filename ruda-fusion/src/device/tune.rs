@@ -4,6 +4,7 @@ use ruda_tensor::graph::{HandleContainer, TensorId, TensorIr};
 use ruda_kernel::dsl::Runtime;
 use ruda_kernel::dsl::tune::{InputGenerator, TuneInputs};
 use hashbrown::HashMap;
+use std::fmt::Write;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -128,17 +129,19 @@ impl<'a, R: Runtime, O> TuneInput<'a, R, O> {
     pub(crate) fn autotune_context_signature(&self) -> String {
         let mut tensors: Vec<_> = self.context().tensors.iter().collect();
         tensors.sort_by_key(|(id, _)| id.value());
-        let mut parts = Vec::new();
+        let mut signature = String::new();
         for (id, tensor) in tensors {
             let handle = self.handles().get_handle_ref(&tensor.id);
-            parts.push(format!("relative_id={id:?};shape={:?};dtype={:?};status={:?};layout={:?}", tensor.shape, tensor.dtype, tensor.status, handle.map(|h|
-                (&h.strides, h.dtype, h.handle.offset_start, h.handle.offset_end, h.handle.size_in_used()))));
+            if !signature.is_empty() { signature.push(';'); }
+            let _ = write!(signature, "relative_id={id:?};shape={:?};dtype={:?};status={:?};layout={:?}", tensor.shape, tensor.dtype, tensor.status, handle.map(|h|
+                (&h.strides, h.dtype, h.handle.offset_start, h.handle.offset_end, h.handle.size_in_used())));
         }
         let mut scalars: Vec<_> = self.context().scalars.iter().collect();
         scalars.sort_by_key(|(id, _)| id.value);
         let mut shapes: Vec<_> = self.context().shapes_relative2global.iter().collect();
         shapes.sort_by_key(|(id, _)| **id);
-        format!("{};scalars={scalars:?};shapes={shapes:?}", parts.join(";"))
+        let _ = write!(signature, ";scalars={scalars:?};shapes={shapes:?}");
+        signature
     }
 
     /// Read-only access to the wrapped context.
