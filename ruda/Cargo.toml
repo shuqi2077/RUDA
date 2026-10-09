@@ -33,7 +33,7 @@ ruda-runtime = { path = "../ruda-runtime", version = "0.1.14", default-features 
 ruda-kernel = { path = "../ruda-kernel", version = "0.1.24", optional = true }
 ruda-driver-cuda = { path = "../ruda-driver-cuda", version = "0.1.73", optional = true }
 ruda-driver-hip = { path = "../ruda-driver-hip", version = "0.1.73", optional = true }
-ruda-driver-wgpu = { path = "../ruda-driver-wgpu", version = "0.1.72", optional = true }
+ruda-driver-wgpu = { path = "../ruda-driver-wgpu", version = "0.1.73", optional = true }
 
 [dev-dependencies]
 bytemuck = "1.16.1"
