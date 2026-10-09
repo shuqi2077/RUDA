@@ -84,9 +84,14 @@ fn run_strategy<R: FusionRuntime>(
     operations: Vec<UnfusedOp<R>>,
 ) -> (Vec<UnfusedOp<R>>, usize) {
     let mut execution = OrderedExecution::new(operations);
-    {
-        let mut guard = ContextGuard::new(converter, handles);
-        execute_strategy::<R>(&mut optimization.strategy, &mut guard, &mut execution);
+    match &mut optimization.strategy {
+        ExecutionStrategy::Operations { ordering } => {
+            execution.execute_operations(handles, ordering);
+        }
+        strategy => {
+            let mut guard = ContextGuard::new(converter, handles);
+            execute_strategy::<R>(strategy, &mut guard, &mut execution);
+        }
     }
     execution.finish()
 }

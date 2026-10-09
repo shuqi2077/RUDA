@@ -1,4 +1,4 @@
-use hashbrown::HashMap;
+use hashbrown::{HashMap, hash_map::Entry};
 
 use crate::graph::{BackendIr, TensorHandle, TensorId, TensorIr, TensorStatus};
 
@@ -91,24 +91,27 @@ impl<H: Clone> HandleContainer<H> {
     /// Make sure the status corresponds to the operation you want to execute the handle on,
     /// otherwise you might remove a tensor handle that will be required in the future.
     pub fn get_handle(&mut self, id: &TensorId, status: &TensorStatus) -> H {
-        let (id, handle) = self
-            .handles
-            .remove_entry(id)
-            .unwrap_or_else(|| panic!("Should have handle for tensor {id:?}"));
-
-        match handle {
-            Handle::Existing(handle) => match status {
-                TensorStatus::ReadOnly => {
-                    self.handles.insert(id, Handle::Existing(handle.clone()));
-                    handle
-                }
-                TensorStatus::ReadWrite => handle,
+        let entry = match self.handles.entry(*id) {
+            Entry::Occupied(entry) => entry,
+            Entry::Vacant(_) => panic!("Should have handle for tensor {id:?}"),
+        };
+        let mut output = None;
+        let _ = entry.replace_entry_with(|id, handle| {
+            let handle = match handle {
+                Handle::Existing(handle) => handle,
+                Handle::NotInit => panic!("Cannot get uninitialized handle {id:?}."),
+            };
+            let retained = match status {
+                TensorStatus::ReadOnly => Some(Handle::Existing(handle.clone())),
+                TensorStatus::ReadWrite => None,
                 TensorStatus::NotInit => panic!(
                     "Cannot get uninitialized tensor {id:?}. Tensor exist but with wrong status"
                 ),
-            },
-            Handle::NotInit => panic!("Cannot get uninitialized handle {id:?}."),
-        }
+            };
+            output = Some(handle);
+            retained
+        });
+        output.unwrap()
     }
 
     /// Get the tensor handle for the given [tensor intermediate representation](TensorIr).
