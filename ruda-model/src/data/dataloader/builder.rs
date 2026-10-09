@@ -13,6 +13,7 @@ pub struct DataLoaderBuilder<B: Backend, I, O> {
     batcher: Arc<dyn Batcher<B, I, O>>,
     num_threads: Option<usize>,
     reuse_workers: bool,
+    batch_reading: bool,
     shuffle: Option<u64>,
     device: Option<B::Device>,
 }
@@ -41,6 +42,7 @@ where
             strategy: None,
             num_threads: None,
             reuse_workers: false,
+            batch_reading: false,
             shuffle: None,
             device: None,
         }
@@ -108,6 +110,16 @@ where
         self
     }
 
+    /// Enables batch dataset reads (default: false) for all workers.
+    ///
+    /// Uses the strategy's batch size, or one for an unknown or zero size. Reads
+    /// may fetch later samples before the strategy emits a batch. Missing items
+    /// or a mismatched result length panic without falling back to single reads.
+    pub fn batch_reading(mut self, enabled: bool) -> Self {
+        self.batch_reading = enabled;
+        self
+    }
+
     /// Sets the data loader device.
     ///
     /// # Arguments
@@ -156,17 +168,15 @@ where
                     device,
                     rng,
                 )
-                .reuse_workers(self.reuse_workers),
+                .reuse_workers(self.reuse_workers)
+                .batch_reading(self.batch_reading),
             );
         }
 
-        Arc::new(BatchDataLoader::new(
-            strategy,
-            dataset,
-            self.batcher,
-            device,
-            rng,
-        ))
+        Arc::new(
+            BatchDataLoader::new(strategy, dataset, self.batcher, device, rng)
+                .batch_reading(self.batch_reading),
+        )
     }
 }
 

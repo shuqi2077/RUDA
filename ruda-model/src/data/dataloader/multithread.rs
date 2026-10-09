@@ -32,6 +32,7 @@ pub struct MultiThreadDataLoader<B: Backend, I, O> {
     seed: Option<RngSeed>,
     num_threads: usize,
     reuse_workers: bool,
+    batch_reading: bool,
 
     // The lazily initialized data loaders
     dataloaders: OnceLock<Vec<BatchDataLoader<B, I, O>>>,
@@ -251,6 +252,7 @@ where
             seed,
             dataloaders: OnceLock::new(),
             reuse_workers: false,
+            batch_reading: false,
             worker_pool: OnceLock::new(),
         }
     }
@@ -265,6 +267,20 @@ where
         self.reuse_workers = enabled;
         if !enabled {
             drop(self.worker_pool.take());
+        }
+        self
+    }
+
+    /// Enables batch dataset reads for every worker (default: false).
+    ///
+    /// Missing items or a mismatched result length panic without rereading; the
+    /// iterator propagates worker failures using its existing shutdown behavior.
+    pub fn batch_reading(mut self, enabled: bool) -> Self {
+        self.batch_reading = enabled;
+        if let Some(dataloaders) = self.dataloaders.get_mut() {
+            for dataloader in dataloaders {
+                dataloader.set_batch_reading(enabled);
+            }
         }
         self
     }
@@ -361,6 +377,7 @@ where
                             self.device.clone(),
                             rng,
                         )
+                        .batch_reading(self.batch_reading)
                     })
                     .collect()
             })
@@ -458,7 +475,8 @@ where
                 device.clone(),
                 self.seed,
             )
-            .reuse_workers(self.reuse_workers),
+            .reuse_workers(self.reuse_workers)
+            .batch_reading(self.batch_reading),
         )
     }
 
@@ -471,7 +489,8 @@ where
             self.device.clone(),
             self.seed,
         )
-        .reuse_workers(self.reuse_workers);
+        .reuse_workers(self.reuse_workers)
+        .batch_reading(self.batch_reading);
         Arc::new(dataloader)
     }
 }

@@ -15,6 +15,7 @@ pub struct BatchDataLoader<B: Backend, I, O> {
     batcher: Arc<dyn Batcher<B, I, O>>,
     device: B::Device,
     rng: Option<Arc<spin::Mutex<rand::rngs::StdRng>>>,
+    batch_reading: bool,
 }
 
 impl<B: Backend, I, O> Clone for BatchDataLoader<B, I, O> {
@@ -25,6 +26,7 @@ impl<B: Backend, I, O> Clone for BatchDataLoader<B, I, O> {
             batcher: self.batcher.clone(),
             device: self.device.clone(),
             rng: self.rng.clone(),
+            batch_reading: self.batch_reading,
         }
     }
 }
@@ -57,7 +59,22 @@ impl<B: Backend, I, O> BatchDataLoader<B, I, O> {
             batcher,
             device,
             rng: rng.map(|rng| Arc::new(spin::Mutex::new(rng))),
+            batch_reading: false,
         }
+    }
+
+    /// Enables `Dataset::get_many` reads using the strategy's batch size (default: false).
+    ///
+    /// Unknown or zero batch sizes read one item at a time. Items are still passed
+    /// to the strategy individually; unread items remain buffered after an early
+    /// batch. Missing items or a mismatched result length panic without rereading.
+    pub fn batch_reading(mut self, enabled: bool) -> Self {
+        self.set_batch_reading(enabled);
+        self
+    }
+
+    pub(super) fn set_batch_reading(&mut self, enabled: bool) {
+        self.batch_reading = enabled;
     }
 }
 
@@ -68,6 +85,10 @@ struct BatchDataloaderIterator<B: Backend, I, O> {
     dataset: Arc<dyn Dataset<I>>,
     batcher: Arc<dyn Batcher<B, I, O>>,
     device: B::Device,
+    batch_reading: bool,
+    pending: std::vec::IntoIter<I>,
+    read_indices: Vec<usize>,
+    read_failed: bool,
 }
 
 impl<B, I, O> DataLoader<B, O> for BatchDataLoader<B, I, O>
@@ -92,6 +113,7 @@ where
             dataset,
             self.batcher.clone(),
             self.device.clone(),
+            self.batch_reading,
         ))
     }
 
@@ -104,13 +126,16 @@ where
             let mut rng = rng.lock();
             rng.fork()
         });
-        Arc::new(Self::new(
-            self.strategy.clone_dyn(),
-            self.dataset.clone(),
-            self.batcher.clone(),
-            device.clone(),
-            rng,
-        ))
+        Arc::new(
+            Self::new(
+                self.strategy.clone_dyn(),
+                self.dataset.clone(),
+                self.batcher.clone(),
+                device.clone(),
+                rng,
+            )
+            .batch_reading(self.batch_reading),
+        )
     }
 
     fn slice(&self, start: usize, end: usize) -> Arc<dyn DataLoader<B, O>> {
@@ -124,7 +149,8 @@ where
             self.batcher.clone(),
             self.device.clone(),
             rng,
-        );
+        )
+        .batch_reading(self.batch_reading);
         Arc::new(dataloader)
     }
 }
@@ -147,6 +173,7 @@ impl<B: Backend, I, O> BatchDataloaderIterator<B, I, O> {
         dataset: Arc<dyn Dataset<I>>,
         batcher: Arc<dyn Batcher<B, I, O>>,
         device: B::Device,
+        batch_reading: bool,
     ) -> Self {
         BatchDataloaderIterator {
             current_index: 0,
@@ -154,7 +181,51 @@ impl<B: Backend, I, O> BatchDataloaderIterator<B, I, O> {
             dataset,
             batcher,
             device,
+            batch_reading,
+            pending: Vec::new().into_iter(),
+            read_indices: Vec::new(),
+            read_failed: false,
         }
+    }
+
+    fn next_item(&mut self) -> Option<I> {
+        if !self.batch_reading {
+            return self.dataset.get(self.current_index);
+        }
+
+        assert!(
+            !self.read_failed,
+            "cannot resume a failed batch dataset read"
+        );
+        if let Some(item) = self.pending.next() {
+            return Some(item);
+        }
+
+        let len = self.dataset.len();
+        if self.current_index >= len {
+            return None;
+        }
+        let count = self.strategy.batch_size().unwrap_or(1).max(1)
+            .min(len - self.current_index);
+        self.read_indices.clear();
+        self.read_indices
+            .extend(self.current_index..self.current_index + count);
+
+        self.read_failed = true;
+        let items = self.dataset.get_many(&self.read_indices).unwrap_or_else(|| {
+            panic!(
+                "batch dataset read is missing an item in indices {:?}",
+                self.read_indices
+            )
+        });
+        assert_eq!(
+            items.len(),
+            count,
+            "batch dataset read returned the wrong number of items"
+        );
+        self.pending = items.into_iter();
+        self.read_failed = false;
+        self.pending.next()
     }
 }
 
@@ -162,7 +233,7 @@ impl<B: Backend, I, O> Iterator for BatchDataloaderIterator<B, I, O> {
     type Item = O;
 
     fn next(&mut self) -> Option<O> {
-        while let Some(item) = self.dataset.get(self.current_index) {
+        while let Some(item) = self.next_item() {
             self.current_index += 1;
             self.strategy.add(item);
 
