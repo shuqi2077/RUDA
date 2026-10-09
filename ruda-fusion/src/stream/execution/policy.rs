@@ -81,7 +81,9 @@ impl<O: core::fmt::Debug> Policy<O> {
             );
         }
 
-        if let Some((id, _length)) = self.found {
+        if let Some((id, length)) = self.found
+            && length <= operations.len()
+        {
             return Action::Execute(id);
         }
 
@@ -95,11 +97,13 @@ impl<O: core::fmt::Debug> Policy<O> {
     pub fn update(&mut self, store: &ExecutionPlanStore<O>, operation: &OperationIr) {
         // reset the candidates to contain all execution plans starting with the operation.
         if self.num_operations == 0 {
-            self.candidates = store
-                .find(SearchQuery::PlansStartingWith(operation))
-                .iter().copied()
-                .map(OperationsValidator::new)
-                .collect();
+            self.candidates.clear();
+            self.candidates.extend(
+                store
+                    .find(SearchQuery::PlansStartingWith(operation))
+                    .iter().copied()
+                    .map(OperationsValidator::new),
+            );
         }
 
         self.update_candidates(store, operation);
