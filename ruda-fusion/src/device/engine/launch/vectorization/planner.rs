@@ -378,20 +378,13 @@ fn vector_sizes_quants<R: Runtime>(
             | QuantValue::Q8S
             | QuantValue::E4M3
             | QuantValue::E5M2 => {
-                let vector_sizes = client
-                    .io_optimized_vector_sizes(size_of::<i8>())
-                    .collect::<Vec<_>>();
-
-                match &quants_vector_sizes {
-                    Some(sizes) => {
-                        if sizes[0] < vector_sizes[0] {
-                            *quants_vector_sizes = Some(vector_sizes);
-                        }
-                    }
-                    None => {
-                        *quants_vector_sizes = Some(vector_sizes);
-                    }
+                let vector_sizes = client.io_optimized_vector_sizes(size_of::<i8>());
+                if quants_vector_sizes.as_ref().is_some_and(|sizes| {
+                    sizes[0] >= vector_sizes.clone().next().unwrap()
+                }) {
+                    return;
                 }
+                *quants_vector_sizes = Some(vector_sizes.collect());
             }
             QuantValue::Q4F
             | QuantValue::Q4S
@@ -403,9 +396,8 @@ fn vector_sizes_quants<R: Runtime>(
         },
         QuantStore::PackedU32(_) | QuantStore::PackedNative(_) => {
             let storage_size = scheme.size_bits_stored() / 8;
-            let mut vector_sizes = client
-                .io_optimized_vector_sizes(storage_size)
-                .collect::<Vec<_>>();
+            let vector_sizes_base = client.io_optimized_vector_sizes(storage_size);
+            let mut vector_sizes = vector_sizes_base.clone().collect::<Vec<_>>();
 
             for val in vector_sizes.iter_mut() {
                 *val *= scheme.num_quants();
@@ -415,7 +407,7 @@ fn vector_sizes_quants<R: Runtime>(
 
             // We need to put back values that are not multiple of num_quants, but may be good
             // vectorization factor for other handles in a fused trace.
-            for val in client.io_optimized_vector_sizes(storage_size) {
+            for val in vector_sizes_base {
                 if val < min {
                     vector_sizes.push(val);
                 }

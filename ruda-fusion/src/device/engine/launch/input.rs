@@ -157,8 +157,6 @@ impl<'a, R: Runtime> InputPlanner<'a, R> {
             Notinit,
             /// The block reads the input, and therefore can use it for inplace.
             Selected(usize),
-            /// The same input is used in multiple blocks.
-            Unavailable,
         }
 
         let mut block_inplace_selection = BlockInplaceSelection::Notinit;
@@ -170,9 +168,8 @@ impl<'a, R: Runtime> InputPlanner<'a, R> {
                         block_inplace_selection = BlockInplaceSelection::Selected(idx);
                     }
                     BlockInplaceSelection::Selected(_) => {
-                        block_inplace_selection = BlockInplaceSelection::Unavailable;
+                        return;
                     }
-                    BlockInplaceSelection::Unavailable => {}
                 }
             }
         }
