@@ -66,7 +66,7 @@ impl<R: Runtime> RudaFusionHandle<R> {
     pub fn binding(self, shape: Shape) -> TensorBinding<R> {
         TensorBinding {
             handle: self.handle.binding(),
-            strides: self.strides.clone(),
+            strides: self.strides,
             shape,
             runtime: PhantomData,
         }

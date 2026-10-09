@@ -879,7 +879,7 @@ impl RelativeOps for FloatOperationIr {
                 input: desc.input.to_relative(converter),
                 out: desc.out.to_relative(converter),
             }),
-            FloatOperationIr::Trunc(desc) => FloatOperationIr::Ceil(UnaryOpIr {
+            FloatOperationIr::Trunc(desc) => FloatOperationIr::Trunc(UnaryOpIr {
                 input: desc.input.to_relative(converter),
                 out: desc.out.to_relative(converter),
             }),

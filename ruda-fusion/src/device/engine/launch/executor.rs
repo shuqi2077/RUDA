@@ -50,12 +50,7 @@ impl<'a, R: Runtime> LaunchPlanExecutor<'a, R> {
         context: &mut Context<RudaFusionHandle<R>>,
         plan: LaunchPlan<'a, R>,
     ) -> Result<TuneOutput<R>, ExecutionError<R, Runner>> {
-        let mut num_writes = 0;
-        for b in plan.blocks.iter() {
-            for writes in b.writes.values() {
-                num_writes += writes.len();
-            }
-        }
+        let has_writes = plan.blocks.iter().any(|block| block.writes.values().any(|writes| !writes.is_empty()));
 
         #[cfg(any(feature = "device-autotune-checks", feature = "device-stack-autotune"))]
         let mut tune_output = TuneOutput::Checked {
@@ -65,7 +60,7 @@ impl<'a, R: Runtime> LaunchPlanExecutor<'a, R> {
         #[cfg(not(any(feature = "device-autotune-checks", feature = "device-stack-autotune")))]
         let mut tune_output = TuneOutput::UnChecked(PhantomData);
 
-        if num_writes == 0 {
+        if !has_writes {
             // Nothing to write, can skip execution.
             return Ok(tune_output);
         }
@@ -73,14 +68,20 @@ impl<'a, R: Runtime> LaunchPlanExecutor<'a, R> {
         let mut inputs = GlobalArgsLaunch::default();
         let mut outputs = GlobalArgsLaunch::default();
 
-        register_inputs(plan.handle_inputs.clone(), &mut inputs);
+        inputs.tensors.values.reserve(plan.handle_inputs.len());
+        inputs.scalars.values.reserve(self.resources.scalars.len());
+        outputs.tensors.values.reserve(plan.handle_outputs.len());
+
+        register_inputs(&plan.handle_inputs, &mut inputs);
         register_scalars(
             self.resources.scalars.iter(),
             self.resources.views.iter(),
             context,
             &mut inputs,
         );
-        register_outputs::<R>(plan.handle_outputs.clone(), &mut outputs, &mut tune_output);
+        register_outputs::<R>(&plan.handle_outputs, &inputs, &mut outputs, &mut tune_output);
+
+        inputs.runtime_layouts.values.reserve(plan.runtime_layouts.iter().map(|layout| layout.shape.len() + layout.strides.len()).sum());
 
         for layout in plan.runtime_layouts {
             for s in layout.shape.iter() {
@@ -120,23 +121,12 @@ impl<'a, R: Runtime> LaunchPlanExecutor<'a, R> {
                 }
             };
 
-            let mut ops = Vec::<FuseOp>::new();
-
-            for read_ops in block_plan.reads.into_values() {
-                for op in read_ops {
-                    ops.push(op);
-                }
-            }
-
-            for op in block.ops.iter() {
-                ops.push(op.clone());
-            }
-
-            for opsw in block_plan.writes.into_values() {
-                for op in opsw {
-                    ops.push(op);
-                }
-            }
+            let num_ops = block_plan.reads.values().map(Vec::len).sum::<usize>()
+                + block.ops.len() + block_plan.writes.values().map(Vec::len).sum::<usize>();
+            let mut ops = Vec::<FuseOp>::with_capacity(num_ops);
+            ops.extend(block_plan.reads.into_values().flatten());
+            ops.extend(block.ops.iter().cloned());
+            ops.extend(block_plan.writes.into_values().flatten());
 
             let config = FuseBlockConfig {
                 rank: plan.rank,
@@ -160,14 +150,14 @@ impl<'a, R: Runtime> LaunchPlanExecutor<'a, R> {
 }
 
 fn register_inputs<R: Runtime>(
-    handle_inputs: Vec<HandleInput<R>>,
+    handle_inputs: &[HandleInput<R>],
     inputs: &mut GlobalArgsLaunch<R>,
 ) {
     for hi in handle_inputs {
         match hi {
             HandleInput::Normal(hi) => {
                 let at = hi.handle.required_address_type();
-                let arg = hi.handle.into_tensor_arg(hi.global_ir.shape.clone());
+                let arg = hi.handle.clone().into_tensor_arg(hi.global_ir.shape.clone());
                 inputs.tensors.push(GlobalTensorArg::new(
                     arg,
                     hi.precision.into_type(hi.vector_size),
@@ -178,7 +168,7 @@ fn register_inputs<R: Runtime>(
             HandleInput::QuantValues(hi) => {
                 let at = hi.handle.required_address_type();
                 let ty = Type::new(hi.global_ir.dtype.into()).with_vector_size(hi.vector_size);
-                let arg = hi.handle.into_tensor_arg(hi.global_ir.shape.clone());
+                let arg = hi.handle.clone().into_tensor_arg(hi.global_ir.shape.clone());
                 inputs.tensors.push(GlobalTensorArg::new(
                     arg,
                     ty,
@@ -188,7 +178,7 @@ fn register_inputs<R: Runtime>(
             }
             HandleInput::QuantParams(hi) => {
                 let at = hi.handle.required_address_type();
-                let arg = hi.handle.into_tensor_arg(hi.shape.clone());
+                let arg = hi.handle.clone().into_tensor_arg(hi.shape.clone());
                 inputs.tensors.push(GlobalTensorArg::new(
                     arg,
                     Type::new(ElemType::from_quant_param(hi.param).into()),
@@ -201,7 +191,8 @@ fn register_inputs<R: Runtime>(
 }
 
 fn register_outputs<R: Runtime>(
-    handle_outputs: Vec<HandleOutput<R>>,
+    handle_outputs: &[HandleOutput<R>],
+    inputs: &GlobalArgsLaunch<R>,
     outputs: &mut GlobalArgsLaunch<R>,
     #[allow(unused_variables)] tune_output: &mut TuneOutput<R>,
 ) {
@@ -217,11 +208,11 @@ fn register_outputs<R: Runtime>(
             } => {
                 outputs.tensors.push(GlobalTensorArg::new(
                     TensorArg::Alias {
-                        input_pos,
-                        strides,
-                        shape: global_shape,
+                        input_pos: *input_pos,
+                        strides: strides.clone(),
+                        shape: global_shape.clone(),
                     },
-                    precision.into_type(1),
+                    precision.into_type(inputs.tensors.values[*input_pos].ty.vector_size()),
                     false,
                     AddressType::default(),
                 ));
@@ -247,13 +238,13 @@ fn register_outputs<R: Runtime>(
 
                 #[cfg(any(feature = "device-autotune-checks", feature = "device-stack-autotune"))]
                 if let TuneOutput::Checked { handles, .. } = tune_output {
-                    handles.insert(relative_id, (global_shape.clone(), handle.clone()));
+                    handles.insert(*relative_id, (global_shape.clone(), handle.clone()));
                 }
 
-                let arg = handle.into_tensor_arg(global_shape.clone());
+                let arg = handle.clone().into_tensor_arg(global_shape.clone());
 
                 let elem = precision.into_elem();
-                let ty = Type::new(elem.into()).with_vector_size(vector_size);
+                let ty = Type::new(elem.into()).with_vector_size(*vector_size);
 
                 outputs
                     .tensors

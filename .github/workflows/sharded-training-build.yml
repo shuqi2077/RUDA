@@ -81,6 +81,7 @@ jobs:
         run: |
           cargo test --locked -p ruda-fusion --lib
           cargo test --locked -p ruda-model --features dataset --lib data::dataloader::
+          cargo test --locked -p ruda-dataset --lib transform::
       - name: Compile native generation continuation
         run: cargo check --locked -p ruda-llm --lib
       - name: Compile native FFT sparse and solver tuning

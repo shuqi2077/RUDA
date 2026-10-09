@@ -107,10 +107,19 @@ impl AdaptiveState {
                     backtrace: BackTrace::capture(),
                 }),
             };
-            let pool = DynamicPool::Sliced(SlicedPool::new(page_size, page_size, self.alignment, index as u8));
+            let mut pool = DynamicPool::Sliced(SlicedPool::new(page_size, page_size, self.alignment, index as u8));
+            let allocated = match pool.alloc(storage, size) {
+                Ok(handle) => handle,
+                Err(error) => {
+                    if !self.relocate(pools, storage)? { return Err(error); }
+                    pool.alloc(storage, size)?
+                }
+            };
             if index == pools.len() { pools.push(pool); } else { pools[index] = pool; }
             if index != self.current { self.outdated.push(self.current); }
             self.current = index;
+            self.relocate(pools, storage)?;
+            return Ok(allocated);
         }
 
         if let Some(handle) = pools[self.current].try_reserve(size) { return Ok(handle); }
@@ -133,31 +142,45 @@ impl AdaptiveState {
         self.outdated.retain(|&index| !matches!(&pools[index], DynamicPool::Sliced(pool) if pool.is_empty()));
     }
 
+    fn outdated_pages(&self, pools: &[DynamicPool]) -> usize {
+        self.outdated.iter().map(|&index| match &pools[index] {
+            DynamicPool::Sliced(pool) => pool.page_count(), _ => unreachable!(),
+        }).sum()
+    }
+
     fn relocate<Storage: ComputeStorage>(&mut self, pools: &mut [DynamicPool], storage: &mut Storage) -> Result<bool, IoError> {
         if self.outdated.is_empty() { return Ok(false); }
         if !storage.supports_relocation() {
             return Err(IoError::UnsupportedIoOperation { backtrace: BackTrace::capture() });
         }
-        let reserved_before: u64 = self.outdated.iter().map(|&index| pools[index].get_memory_usage().bytes_reserved).sum();
-        let mut moves = Vec::new();
+        let pages_before = self.outdated_pages(pools);
+        let mut pages = Vec::new();
         for &index in &self.outdated {
-            let allocations = match &pools[index] {
-                DynamicPool::Sliced(pool) => pool.movable_allocations(), _ => unreachable!(),
-            };
-            for (allocation, source, cursor) in allocations {
-                let Some(target) = pools[self.current].try_reserve(source.size()) else { continue; };
+            match &pools[index] {
+                DynamicPool::Sliced(pool) => pool.relocation_pages(&mut pages), _ => unreachable!(),
+            }
+        }
+        pages.sort_by_key(|page| page.live_bytes);
+        let mut moves = Vec::new();
+        for page in pages {
+            let start = moves.len();
+            for (allocation, source, cursor) in page.allocations {
+                let Some(target) = pools[self.current].try_reserve(source.size()) else {
+                    moves.truncate(start);
+                    break;
+                };
                 let destination = pools[self.current].find_at(target.descriptor().location())?.storage.clone();
                 moves.push(Relocation { allocation, target, source, destination, cursor });
             }
         }
         if moves.is_empty() {
             self.cleanup_outdated(pools, storage);
-            return Ok(self.outdated.iter().map(|&index| pools[index].get_memory_usage().bytes_reserved).sum::<u64>() < reserved_before);
+            return Ok(self.outdated_pages(pools) < pages_before);
         }
         storage.relocation_barrier()?;
-        let copied = moves.iter().try_for_each(|relocation| {
-            storage.relocation_copy(&relocation.source, &relocation.destination)
-        });
+        let copied = storage.relocation_copy_batch(moves.iter().map(|relocation| {
+            (&relocation.source, &relocation.destination)
+        }));
         // A failed enqueue can leave earlier copies active. No target may be
         // reused unless the completion wait proves those writes have finished.
         if let Err(error) = storage.relocation_complete() {
@@ -175,6 +198,6 @@ impl AdaptiveState {
         }
         self.cleanup_outdated(pools, storage);
         storage.flush();
-        Ok(self.outdated.iter().map(|&index| pools[index].get_memory_usage().bytes_reserved).sum::<u64>() < reserved_before)
+        Ok(self.outdated_pages(pools) < pages_before)
     }
 }

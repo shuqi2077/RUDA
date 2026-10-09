@@ -30,15 +30,15 @@ pub struct RuntimeEnvironment {
 /// Deployment tags must be set before first use; live mutation is not supported.
 /// Missing identity yields session-only caching rather than a fabricated driver version.
 pub fn runtime_environment<R: Runtime>(client: &ComputeClient<R>) -> RuntimeEnvironment {
-    use std::{any::TypeId, collections::BTreeMap, sync::Mutex};
+    use std::{any::TypeId, collections::BTreeMap, sync::RwLock};
     type Key = (TypeId, u16, u16, u64);
-    static ENVIRONMENTS: OnceLock<Mutex<BTreeMap<Key, RuntimeEnvironment>>> = OnceLock::new();
+    static ENVIRONMENTS: OnceLock<RwLock<BTreeMap<Key, RuntimeEnvironment>>> = OnceLock::new();
     let id = client.device_id();
     let key = (TypeId::of::<R>(), id.type_id, id.index_id, client.properties_fingerprint());
-    let cache = ENVIRONMENTS.get_or_init(|| Mutex::new(BTreeMap::new()));
-    if let Some(env) = cache.lock().unwrap_or_else(|p| p.into_inner()).get(&key).cloned() { return env; }
+    let cache = ENVIRONMENTS.get_or_init(|| RwLock::new(BTreeMap::new()));
+    if let Some(env) = cache.read().unwrap_or_else(|p| p.into_inner()).get(&key).cloned() { return env; }
     let env = probe_environment(client);
-    let mut cache = cache.lock().unwrap_or_else(|p| p.into_inner());
+    let mut cache = cache.write().unwrap_or_else(|p| p.into_inner());
     // Device/runtime metadata is immutable after initialization. Keep this memo bounded.
     if cache.len() < 256 { cache.insert(key, env.clone()); }
     env

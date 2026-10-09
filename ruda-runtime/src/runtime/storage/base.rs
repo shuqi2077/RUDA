@@ -103,6 +103,18 @@ pub trait ComputeStorage: Send {
         Err(IoError::UnsupportedIoOperation { backtrace: ruda_core::backtrace::BackTrace::capture() })
     }
 
+    /// Enqueue a group of relocation copies, with completion checked separately.
+    fn relocation_copy_batch<'a>(
+        &mut self,
+        copies: impl IntoIterator<Item = (&'a StorageHandle, &'a StorageHandle)>,
+    ) -> Result<(), IoError>
+    where
+        Self: Sized,
+    {
+        for (source, target) in copies { self.relocation_copy(source, target)?; }
+        Ok(())
+    }
+
     /// Wait for copies even when an earlier enqueue failed. Failure is not completion.
     fn relocation_complete(&mut self) -> Result<(), IoError> {
         self.relocation_barrier()

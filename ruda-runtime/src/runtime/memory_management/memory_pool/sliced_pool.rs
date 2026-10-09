@@ -23,14 +23,14 @@ impl SlicedPool {
 
     pub(crate) fn is_empty(&self) -> bool { self.pages.is_empty() }
 
+    pub(crate) fn page_count(&self) -> usize { self.pages.len() }
+
     pub(crate) fn can_reserve(&self, size: u64) -> bool {
         self.pages.iter().any(|(page, _)| page.can_reserve(size))
     }
 
-    pub(crate) fn movable_allocations(&self) -> Vec<(ManagedMemoryHandle, crate::runtime::storage::StorageHandle, u64)> {
-        let mut allocations = Vec::new();
-        for (page, _) in &self.pages { page.movable_allocations(&mut allocations); }
-        allocations
+    pub(crate) fn relocation_pages(&self, output: &mut Vec<super::RelocationPage>) {
+        output.extend(self.pages.iter().filter_map(|(page, _)| page.relocation_page()));
     }
 
     pub(crate) fn release_relocated(&mut self, allocation: &ManagedMemoryHandle) -> Result<(), IoError> {

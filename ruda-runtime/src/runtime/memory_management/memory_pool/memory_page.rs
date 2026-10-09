@@ -25,6 +25,11 @@ pub struct MemoryPage {
     location_base: MemoryLocation,
 }
 
+pub(crate) struct RelocationPage {
+    pub allocations: Vec<(ManagedMemoryHandle, StorageHandle, u64)>,
+    pub live_bytes: u64,
+}
+
 impl MemoryPage {
     /// Creates a new memory page with the given storage and memory alignment.
     pub fn new(storage: StorageHandle, alignment: u64, location_base: MemoryLocation) -> Self {
@@ -189,12 +194,19 @@ impl MemoryPage {
         }
     }
 
-    pub(crate) fn movable_allocations(&self, output: &mut Vec<(ManagedMemoryHandle, StorageHandle, u64)>) {
+    pub(crate) fn relocation_page(&self) -> Option<RelocationPage> {
+        if self.slices.iter().any(|slice| !slice.is_free() && slice.handle.is_pinned()) {
+            return None;
+        }
+        let mut allocations = Vec::new();
+        let mut live_bytes = 0;
         for slice in &self.slices {
-            if !slice.is_free() && !slice.handle.is_pinned() {
-                output.push((slice.handle.clone(), slice.storage.clone(), slice.cursor));
+            if !slice.is_free() {
+                live_bytes += slice.storage.size();
+                allocations.push((slice.handle.clone(), slice.storage.clone(), slice.cursor));
             }
         }
+        (!allocations.is_empty()).then_some(RelocationPage { allocations, live_bytes })
     }
 
     pub(crate) fn release_relocated(&mut self, allocation: &ManagedMemoryHandle) -> Result<(), IoError> {

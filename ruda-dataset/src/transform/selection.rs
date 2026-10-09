@@ -230,6 +230,13 @@ where
         self.wrapped.get(*index)
     }
 
+    fn get_many(&self, indices: &[usize]) -> Option<Vec<I>> {
+        if indices.is_empty() { return Some(Vec::new()); }
+        let translated = indices.iter().map(|&index| self.indices.get(index).copied())
+            .collect::<Option<Vec<_>>>()?;
+        self.wrapped.get_many(&translated)
+    }
+
     fn len(&self) -> usize {
         self.indices.len()
     }

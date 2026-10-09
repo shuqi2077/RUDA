@@ -72,6 +72,10 @@ where
         self.wrapped.get(index)
     }
 
+    fn get_many(&self, indices: &[usize]) -> Option<Vec<I>> {
+        self.wrapped.get_many(indices)
+    }
+
     fn len(&self) -> usize {
         self.wrapped.len()
     }

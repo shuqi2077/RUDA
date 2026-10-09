@@ -95,6 +95,15 @@ where
         self.dataset.get(index)
     }
 
+    fn get_many(&self, indices: &[usize]) -> Option<Vec<I>> {
+        if indices.is_empty() { return Some(Vec::new()); }
+        let translated = indices.iter().map(|&index| {
+            let index = index + self.start_index;
+            (index >= self.start_index && index < self.end_index).then_some(index)
+        }).collect::<Option<Vec<_>>>()?;
+        self.dataset.get_many(&translated)
+    }
+
     fn len(&self) -> usize {
         usize::min(self.end_index - self.start_index, self.dataset.len())
     }

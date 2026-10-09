@@ -86,6 +86,19 @@ impl WgpuStorage {
         self
     }
 
+    fn encode_relocation_copy(&self, encoder: &mut wgpu::CommandEncoder, source: &StorageHandle, target: &StorageHandle) -> Result<(), IoError> {
+        let src = self.memory.get(&source.id).expect("relocation source");
+        let dst = self.memory.get(&target.id).expect("relocation target");
+        let size = source.size().next_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT);
+        if source.offset() % wgpu::COPY_BUFFER_ALIGNMENT != 0 || target.offset() % wgpu::COPY_BUFFER_ALIGNMENT != 0
+            || source.offset().checked_add(size).is_none_or(|end| end > src.size())
+            || target.offset().checked_add(size).is_none_or(|end| end > dst.size()) {
+            return Err(IoError::UnsupportedIoOperation { backtrace: ruda_core::backtrace::BackTrace::capture() });
+        }
+        encoder.copy_buffer_to_buffer(src, source.offset(), dst, target.offset(), size);
+        Ok(())
+    }
+
     fn wait_relocation(&self) -> Result<(), IoError> {
         #[cfg(not(target_family = "wasm"))]
         {
@@ -128,19 +141,20 @@ impl ComputeStorage for WgpuStorage {
     }
 
     fn relocation_copy(&mut self, source: &StorageHandle, target: &StorageHandle) -> Result<(), IoError> {
-        let src = self.memory.get(&source.id).expect("relocation source");
-        let dst = self.memory.get(&target.id).expect("relocation target");
-        let size = source.size().next_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT);
-        if source.offset() % wgpu::COPY_BUFFER_ALIGNMENT != 0 || target.offset() % wgpu::COPY_BUFFER_ALIGNMENT != 0
-            || source.offset().checked_add(size).is_none_or(|end| end > src.size())
-            || target.offset().checked_add(size).is_none_or(|end| end > dst.size()) {
-            return Err(IoError::UnsupportedIoOperation { backtrace: ruda_core::backtrace::BackTrace::capture() });
-        }
+        self.relocation_copy_batch(core::iter::once((source, target)))
+    }
+
+    fn relocation_copy_batch<'a>(
+        &mut self,
+        copies: impl IntoIterator<Item = (&'a StorageHandle, &'a StorageHandle)>,
+    ) -> Result<(), IoError> {
+        let mut copies = copies.into_iter().peekable();
+        if copies.peek().is_none() { return Ok(()); }
         let validation = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let allocation = self.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
         let internal = self.device.push_error_scope(wgpu::ErrorFilter::Internal);
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("RUDA adaptive memory copies") });
-        encoder.copy_buffer_to_buffer(src, source.offset(), dst, target.offset(), size);
+        let copied = copies.try_for_each(|(source, target)| self.encode_relocation_copy(&mut encoder, source, target));
         self.relocation_queue.as_ref().expect("relocation queue").submit([encoder.finish()]);
         let errors = [internal.pop(), allocation.pop(), validation.pop()];
         #[cfg(not(target_family = "wasm"))]
@@ -151,13 +165,14 @@ impl ComputeStorage for WgpuStorage {
                     if first.is_none() { first = Some(error); }
                 }
             }
+            copied?;
             if let Some(error) = first {
                 return Err(IoError::Unknown { description: format!("WGPU relocation copy: {error}"),
                     backtrace: ruda_core::backtrace::BackTrace::capture() });
             }
         }
         #[cfg(target_family = "wasm")]
-        let _ = errors;
+        { let _ = errors; copied?; }
         Ok(())
     }
 
