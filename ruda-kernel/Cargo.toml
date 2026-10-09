@@ -170,7 +170,7 @@ optional = true
 [dependencies.ruda]
 package = "ruda-runtime"
 path = "../ruda-runtime"
-version = "0.1.9"
+version = "0.1.10"
 default-features = false
 optional = true
 
