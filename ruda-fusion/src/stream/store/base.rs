@@ -1,4 +1,8 @@
-use std::sync::Arc;
+use std::{
+    collections::{HashMap, hash_map::DefaultHasher},
+    hash::{Hash, Hasher},
+    sync::Arc,
+};
 
 use crate::search::BlockOptimization;
 
@@ -11,6 +15,12 @@ use serde::{Deserialize, Serialize};
 pub(crate) struct ExecutionPlanStore<O> {
     plans: Vec<ExecutionPlan<O>>,
     index: ExecutionPlanIndex,
+    sync_sequences: HashMap<u64, Vec<SyncSequence>>,
+}
+
+struct SyncSequence {
+    operations: Vec<OperationIr>,
+    plans: Vec<ExecutionPlanId>,
 }
 
 /// How a list of operations should be executed.
@@ -55,11 +65,39 @@ impl<O: core::fmt::Debug> ExecutionPlanStore<O> {
         Self {
             plans: Vec::new(),
             index: ExecutionPlanIndex::default(),
+            sync_sequences: HashMap::new(),
         }
     }
 
     pub fn find(&self, query: SearchQuery<'_>) -> &[ExecutionPlanId] {
         self.index.find_ref(query)
+    }
+
+    pub fn find_sync_sequence(&self, operations: &[OperationIr]) -> Option<&[ExecutionPlanId]> {
+        if self.sync_sequences.is_empty() {
+            return None;
+        }
+        self.sync_sequences.get(&Self::sequence_key(operations))?
+            .iter().find(|sequence| sequence.operations.as_slice() == operations)
+            .map(|sequence| sequence.plans.as_slice())
+    }
+
+    pub fn add_sync_sequence(&mut self, operations: Vec<OperationIr>, plans: Vec<ExecutionPlanId>) {
+        if plans.len() < 2 {
+            return;
+        }
+        let sequences = self.sync_sequences.entry(Self::sequence_key(&operations)).or_default();
+        if let Some(sequence) = sequences.iter_mut().find(|sequence| sequence.operations == operations) {
+            sequence.plans = plans;
+        } else {
+            sequences.push(SyncSequence { operations, plans });
+        }
+    }
+
+    fn sequence_key(operations: &[OperationIr]) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        operations.hash(&mut hasher);
+        hasher.finish()
     }
 
     pub fn add(&mut self, exploration: ExecutionPlan<O>) -> ExecutionPlanId {

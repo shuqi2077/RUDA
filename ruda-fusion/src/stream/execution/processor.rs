@@ -13,6 +13,11 @@ pub(crate) struct Processor<O> {
     explorer: Explorer<O>,
 }
 
+struct SyncCapture {
+    operations: Vec<OperationIr>,
+    plans: Vec<ExecutionPlanId>,
+}
+
 /// A part of a stream that can be executed partially using [execution plan](ExecutionPlan).
 pub(crate) trait StreamSegment<O> {
     /// The operations in the segment.
@@ -44,6 +49,25 @@ impl<O: NumOperations> Processor<O> {
             self.on_new_operation(&segment, store);
         }
 
+        if matches!(mode, ExecutionMode::Sync)
+            && let Some(plans) = store.find_sync_sequence(segment.operations()).map(|plans| plans.to_vec())
+        {
+            let num_plans = plans.len();
+            let num_ops = segment.operations().len();
+            log_fusion(FusionLogLevel::Full, move || {
+                format!("[plan] cache hit: execute sync sequence ({num_plans} plans, {num_ops} ops)")
+            });
+            for id in plans {
+                store.add_trigger(id, ExecutionTrigger::OnSync);
+                segment.execute(id, store);
+                self.reset(store, segment.operations());
+            }
+            if segment.operations().is_empty() {
+                return;
+            }
+        }
+        let mut sync_capture = None;
+
         loop {
             if segment.operations().is_empty() {
                 break;
@@ -53,7 +77,7 @@ impl<O: NumOperations> Processor<O> {
 
             match action {
                 Action::Explore => {
-                    self.explore(&mut segment, store, mode);
+                    self.explore(&mut segment, store, mode, &mut sync_capture);
 
                     if self.explorer.is_up_to_date() {
                         break;
@@ -81,10 +105,14 @@ impl<O: NumOperations> Processor<O> {
                         store.add_trigger(id, ExecutionTrigger::OnSync);
                     }
 
-                    segment.execute(id, store);
-                    self.reset(store, segment.operations());
+                    self.execute_plan(&mut segment, store, id, mode, &mut sync_capture);
                 }
             };
+        }
+        if segment.operations().is_empty()
+            && let Some(capture) = sync_capture
+        {
+            store.add_sync_sequence(capture.operations, capture.plans);
         }
     }
 
@@ -107,6 +135,7 @@ impl<O: NumOperations> Processor<O> {
         item: &mut Item,
         store: &mut ExecutionPlanStore<O>,
         mode: ExecutionMode,
+        sync_capture: &mut Option<SyncCapture>,
     ) {
         match self.explorer.explore(item.operations(), mode) {
             ExplorationAction::Completed(optim) => {
@@ -117,8 +146,7 @@ impl<O: NumOperations> Processor<O> {
                     optim,
                     mode,
                 );
-                item.execute(id, store);
-                self.reset(store, item.operations());
+                self.execute_plan(item, store, id, mode, sync_capture);
             }
             ExplorationAction::Continue => {
                 if let ExecutionMode::Sync = mode {
@@ -126,6 +154,22 @@ impl<O: NumOperations> Processor<O> {
                 }
             }
         }
+    }
+
+    fn execute_plan<Item: StreamSegment<O>>(
+        &mut self, item: &mut Item, store: &mut ExecutionPlanStore<O>, id: ExecutionPlanId,
+        mode: ExecutionMode, sync_capture: &mut Option<SyncCapture>,
+    ) {
+        if matches!(mode, ExecutionMode::Sync) {
+            if sync_capture.is_none() && store.get_unchecked(id).operations.len() < item.operations().len() {
+                *sync_capture = Some(SyncCapture { operations: item.operations().to_vec(), plans: Vec::new() });
+            }
+            if let Some(capture) = sync_capture {
+                capture.plans.push(id);
+            }
+        }
+        item.execute(id, store);
+        self.reset(store, item.operations());
     }
 
     fn reset(&mut self, store: &mut ExecutionPlanStore<O>, operations: &[OperationIr]) {
