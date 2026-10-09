@@ -151,6 +151,6 @@ optional = true
 
 [dependencies.ruda-driver-cuda]
 path = "../ruda-driver-cuda"
-version = "0.1.77"
+version = "0.1.78"
 default-features = false
 optional = true
