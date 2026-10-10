@@ -10,17 +10,19 @@ pub(crate) fn graph_error(reason: impl Into<alloc::string::String>) -> Execution
 pub(crate) struct CachedGraph {
     graph: GraphIr,
     layout: Layout,
+    boundary: BTreeSet<TensorId>,
 }
 impl CachedGraph {
-    pub(crate) fn new(graph: GraphIr) -> Result<Self, ExecutionError> {
+    pub(crate) fn new(mut graph: GraphIr) -> Result<Self, ExecutionError> {
         let (inputs, outputs) = GraphIr::classify(&graph.operations);
         if inputs != graph.inputs || outputs != graph.outputs {
             return Err(graph_error("graph boundary does not match its relative operations"));
         }
         let mut layout = Layout::default();
-        for operation in &graph.operations { operation.clone().visit_mut(&mut layout); }
+        for operation in &mut graph.operations { operation.visit_mut(&mut layout); }
         if layout.invalid { return Err(graph_error("graph has an invalid relative shape, scalar or slice placeholder")); }
-        Ok(Self { graph, layout })
+        let boundary = graph.inputs.iter().chain(&graph.outputs).copied().collect();
+        Ok(Self { graph, layout, boundary })
     }
 
     pub(crate) fn replay(
@@ -36,16 +38,15 @@ impl CachedGraph {
         if self.layout.uses_unit && bindings.shapes.first() != Some(&1) {
             return Err(graph_error("relative shape ID zero must bind to one"));
         }
-        let expected: BTreeSet<_> = self.graph.inputs.iter().chain(&self.graph.outputs).copied().collect();
         let mut ids = BTreeMap::new();
         let mut reserved = BTreeSet::new();
         for (relative, concrete) in &bindings.tensors {
-            if !expected.contains(relative) || ids.insert(*relative, *concrete).is_some() {
+            if !self.boundary.contains(relative) || ids.insert(*relative, *concrete).is_some() {
                 return Err(graph_error(format!("unexpected or duplicate graph tensor binding {relative}")));
             }
             reserved.insert(*concrete);
         }
-        if ids.len() != expected.len() { return Err(graph_error("graph bindings are missing boundary tensors")); }
+        if ids.len() != self.boundary.len() { return Err(graph_error("graph bindings are missing boundary tensors")); }
         for &relative in &self.layout.tensors {
             if let alloc::collections::btree_map::Entry::Vacant(entry) = ids.entry(relative) {
                 let concrete = allocate(&reserved)?;
