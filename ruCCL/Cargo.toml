@@ -106,7 +106,7 @@ features = [ "data-service", "websocket",]
 
 [dependencies.ruda-tensor-wgpu]
 path = "../ruda-tensor-wgpu"
-version = "0.21.55"
+version = "0.21.56"
 features = [ "default",]
 default-features = false
 optional = true
