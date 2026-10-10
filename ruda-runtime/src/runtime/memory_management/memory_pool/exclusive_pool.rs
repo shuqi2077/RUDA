@@ -86,8 +86,8 @@ impl ExclusiveMemoryPool {
         let mut selected = None;
         let mut minimum = u32::MAX;
         for (index, page) in self.pages.iter().enumerate() {
-            if page.alloc_size >= size && page.slice.is_free()
-                && (selected.is_none() || page.free_count < minimum)
+            if page.alloc_size >= size && (selected.is_none() || page.free_count < minimum)
+                && page.slice.is_free()
             {
                 selected = Some(index);
                 minimum = page.free_count;

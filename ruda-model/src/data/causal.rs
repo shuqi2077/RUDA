@@ -209,8 +209,7 @@ impl CausalBatcher {
     /// authorizes a model to attend across the retained boundaries.
     pub fn collate<B: Backend>(&self, samples: Vec<CausalExample>, device: &B::Device) -> Result<CausalBatch<B>, CausalDataError> {
         self.validate(&samples)?;
-        let lengths: Vec<_> = samples.iter().map(CausalExample::length).collect();
-        let maximum = *lengths.iter().max().unwrap();
+        let maximum = samples.iter().map(CausalExample::length).max().unwrap();
         let mut supervised_tokens = 0usize;
         let label_at = |sample: &CausalExample, position: usize| {
             if position == 0 && self.target_alignment == CausalTargetAlignment::NextToken { self.ignore_index }
@@ -218,7 +217,7 @@ impl CausalBatcher {
         };
         match self.layout {
             CausalBatchLayout::Packed => {
-                let total = lengths.iter().try_fold(0usize, |total, &length| total.checked_add(length))
+                let total = samples.iter().try_fold(0usize, |total, sample| total.checked_add(sample.length()))
                     .ok_or_else(|| invalid("packed causal token count overflow"))?;
                 let mut ids = Vec::with_capacity(total);
                 let mut labels = Vec::with_capacity(total);
@@ -245,6 +244,7 @@ impl CausalBatcher {
                 }))
             }
             CausalBatchLayout::Padded { pad_token_id, padding } => {
+                let lengths: Vec<_> = samples.iter().map(CausalExample::length).collect();
                 let slots = samples.len().checked_mul(maximum).ok_or_else(|| invalid("padded causal token count overflow"))?;
                 let shape = [samples.len(), maximum];
                 let mut ids = vec![pad_token_id; slots];

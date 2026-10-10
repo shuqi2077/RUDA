@@ -76,7 +76,22 @@ impl Dag {
 
     /// Whether the graph can be linearized.
     pub fn is_acyclic(&self) -> bool {
-        self.topological_order().is_some()
+        let n = self.len();
+        let mut pending: Vec<usize> = self.dependencies.iter().map(SubGraph::len).collect();
+        let mut ready: Vec<usize> = (0..n).filter(|&i| pending[i] == 0).collect();
+        let mut visited = 0;
+
+        while let Some(i) = ready.pop() {
+            visited += 1;
+            for dependent in self.dependents[i].iter() {
+                pending[dependent] -= 1;
+                if pending[dependent] == 0 {
+                    ready.push(dependent);
+                }
+            }
+        }
+
+        visited == n
     }
 
     /// Compute the transitive [Reachability] of the graph.
