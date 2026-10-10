@@ -6112,7 +6112,7 @@ dependencies = [
 
 [[package]]
 name = "ruda-tensor-device"
-version = "0.21.56"
+version = "0.21.57"
 dependencies = [
  "derive-new",
  "futures-lite",
