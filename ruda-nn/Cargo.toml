@@ -44,7 +44,7 @@ path = "src/lib.rs"
 
 [dependencies.ruda-tensor-remote]
 path = "../ruda-tensor-remote"
-version = "0.21.45"
+version = "0.21.46"
 optional = true
 default-features = false
 
