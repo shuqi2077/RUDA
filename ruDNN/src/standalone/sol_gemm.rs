@@ -153,7 +153,11 @@ fn operand_descriptor<I: Numeric>(tile: &SharedMemory<I>, base: usize, inner: us
     if comptime!(mn_major) {
         // K step of 32 bytes worth of K rows; panels are width * 128 bytes apart.
         let start = base + inner * comptime!(32 / bytes) * width;
-        result = tcgen05::descriptor_strided(&tile.slice(start, start + 8), comptime!((width * 128) as u32), 1024u32);
+        if comptime!(bytes == 4) {
+            result = tcgen05::descriptor_tf32_mn(&tile.slice(start, start + 8), comptime!((width * 128) as u32));
+        } else {
+            result = tcgen05::descriptor_strided(&tile.slice(start, start + 8), comptime!((width * 128) as u32), 1024u32);
+        }
     } else {
         let start = base + inner * comptime!(32 / bytes);
         result = tcgen05::descriptor(&tile.slice(start, start + 8));

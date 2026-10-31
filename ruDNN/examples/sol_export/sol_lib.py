@@ -65,8 +65,8 @@ def _gemm(name, a, b, out, m, n, k, batches=1, k_groups=1, ld=None, o_div=1, o_s
     col_split = _BIG * 8 if col_split is None else col_split
     if n % 8 or ld % 8 or o_s1 % 8 or o_s2 % 8 or col_split % 8 or col_stride % 8 or out.data_ptr() % 16:
         raise ValueError('GEMM output needs N, ld and batch strides % 8 == 0')
-    maps = [_tmap(a.tensor, a.dims, a.strides, [width, 1, width if a_mn else 128]),
-            _tmap(b.tensor, b.dims, b.strides, [width, 1, width if b_mn else bn])]
+    maps = [_tmap(a.tensor, a.dims, a.strides, [width, 1, width if a_mn else 128], atomic32=kind == 't' and a_mn),
+            _tmap(b.tensor, b.dims, b.strides, [width, 1, width if b_mn else bn], atomic32=kind == 't' and b_mn)]
     tiles = ((m + 127) // 128) * ((n + bn - 1) // bn) * batches if max_tiles is None else max_tiles * ((n + bn - 1) // bn)
     workers = max(1, min(tiles, _sm_count(out.device)))
     dummy = out
@@ -191,14 +191,14 @@ def _flash(name, q, k, v, out, lse=None, mask=None, flags=None, scale=1.0, cap=1
     if bhld:
         batch, heads, lq, _ = q.shape
         kv_heads, lk = k.shape[1], k.shape[2]
-        def tm(t, rows):
-            return _tmap(t, [dim, t.shape[2], t.shape[0] * t.shape[1]], [dim * es, t.shape[2] * dim * es], [width, rows, 1])
+        def tm(t, rows, atomic32=False):
+            return _tmap(t, [dim, t.shape[2], t.shape[0] * t.shape[1]], [dim * es, t.shape[2] * dim * es], [width, rows, 1], atomic32=atomic32)
     else:
         batch, lq, heads, _ = q.shape
         lk, kv_heads = k.shape[1], k.shape[2]
-        def tm(t, rows):
-            return _tmap(t, [dim, t.shape[2], t.shape[0] * t.shape[1]], [dim * es, t.shape[2] * dim * es], [width, 1, rows])
-    maps = [tm(q, 128), tm(k, bn), tm(v, bn)]
+        def tm(t, rows, atomic32=False):
+            return _tmap(t, [dim, t.shape[2], t.shape[0] * t.shape[1]], [dim * es, t.shape[2] * dim * es], [width, 1, rows], atomic32=atomic32)
+    maps = [tm(q, 128), tm(k, bn), tm(v, bn, atomic32=kind == 't')]
     dummy_f = lse if lse is not None else out
     _launch(name, [q, k, v, out, lse if lse is not None else torch.empty(1, dtype=torch.float32, device=q.device),
                    mask if mask is not None else dummy_f, flags if flags is not None else dummy_f],

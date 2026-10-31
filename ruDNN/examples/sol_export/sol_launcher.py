@@ -97,7 +97,7 @@ if hasattr(torch, 'float8_e4m3fn'):
     _MAP_TYPES[torch.float8_e5m2] = 0
 
 
-def _tmap(tensor, dims, strides, box):
+def _tmap(tensor, dims, strides, box, atomic32=False):
     """128B-swizzled tiled tensor map. dims/box innermost first (elements);
     strides: byte strides of dims[1:]."""
     storage = ctypes.create_string_buffer(128 + 63)
@@ -108,7 +108,7 @@ def _tmap(tensor, dims, strides, box):
     _check(_driver().cuTensorMapEncodeTiled(
         address, _MAP_TYPES[tensor.dtype], rank, ctypes.c_void_p(tensor.data_ptr()),
         (ctypes.c_uint64 * rank)(*dims), (ctypes.c_uint64 * max(1, rank - 1))(*strides),
-        (ctypes.c_uint32 * rank)(*box), (ctypes.c_uint32 * rank)(*([1] * rank)), 0, 3, 2, 0), 'cuTensorMapEncodeTiled')
+        (ctypes.c_uint32 * rank)(*box), (ctypes.c_uint32 * rank)(*([1] * rank)), 0, 4 if atomic32 else 3, 2, 0), 'cuTensorMapEncodeTiled')
     return storage, address
 
 

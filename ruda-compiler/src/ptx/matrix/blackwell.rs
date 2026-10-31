@@ -1,10 +1,35 @@
 use super::*;
 use ruda_core::ir::Tcgen05Op;
 
+fn supports_tcgen05(target: &crate::ptx::PtxTarget) -> bool {
+    match target.sm {
+        100 => target.version >= (8, 6),
+        103 => target.version >= (8, 8),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod target_tests {
+    use super::*;
+    use crate::ptx::PtxTarget;
+
+    #[test]
+    fn blackwell_target_versions() {
+        for (sm, version, expected) in [
+            (100, (8, 5), false), (100, (8, 6), true),
+            (103, (8, 7), false), (103, (8, 8), true),
+            (90, (8, 8), false), (120, (8, 8), false),
+        ] {
+            assert_eq!(supports_tcgen05(&PtxTarget { sm, version }), expected);
+        }
+    }
+}
+
 impl Emitter {
     pub(super) fn tcgen05(&mut self, out: Variable, kind: Tcgen05Op, args: Vec<Variable>) -> Result<()> {
-        if self.target.sm != 100 || self.target.version < (8, 6) {
-            return Err(unsupported("tcgen05 requires SM100a and PTX >= 8.6"));
+        if !supports_tcgen05(&self.target) {
+            return Err(unsupported("tcgen05 requires SM100a/PTX >= 8.6 or SM103a/PTX >= 8.8"));
         }
         self.architecture_specific = true;
         let arity = match kind {

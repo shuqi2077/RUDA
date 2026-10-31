@@ -279,7 +279,12 @@ pub fn flash_fwd<I: Numeric, O: Float>(
                 let abase = (step / 4) * 128 * width + (step % 4) * comptime!(32 / bytes);
                 let vbase = stage * kv_tile + step * comptime!(32 / bytes) * width;
                 let ad = tcgen05::descriptor(&p.slice(abase, abase + 8));
-                let bd = tcgen05::descriptor_strided(&vt.slice(vbase, vbase + 8), comptime!((bn * 128) as u32), 1024u32);
+                let mut bd = 0u64;
+                if comptime!(kind == 2) {
+                    bd = tcgen05::descriptor_tf32_mn(&vt.slice(vbase, vbase + 8), comptime!((bn * 128) as u32));
+                } else {
+                    bd = tcgen05::descriptor_strided(&vt.slice(vbase, vbase + 8), comptime!((bn * 128) as u32), 1024u32);
+                }
                 tcgen05::mma_kind(address + (2 * bn) as u32, ad, bd, step != 0, dim as u32, kind, false, true);
             }
             tcgen05::commit(&pv_done);

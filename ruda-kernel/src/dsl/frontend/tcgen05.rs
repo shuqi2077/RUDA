@@ -74,6 +74,11 @@ pub fn descriptor_strided<I: Numeric>(source: &Slice<I>, #[comptime] lbo: u32, #
     })
 }
 
+#[ruda]
+pub fn descriptor_tf32_mn<I: Numeric>(source: &Slice<I>, #[comptime] lbo: u32) -> u64 {
+    descriptor_strided(source, lbo, 512u32) ^ (3u64 << 61u32)
+}
+
 /// M=128 tcgen05 MMA of any supported kind (0 f16, 1 bf16, 2 tf32, 3 e4m3, 4 e5m2).
 #[ruda]
 pub fn mma_kind(address: u32, a: u64, b: u64, accumulate: bool, #[comptime] n: u32, #[comptime] kind: u32,
