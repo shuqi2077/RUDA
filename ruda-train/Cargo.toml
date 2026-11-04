@@ -37,7 +37,7 @@ log = { version = "=0.4.34", optional = true }
 ratatui = { version = "=0.30.2", optional = true }
 unicode-width = { version = "0.2", optional = true }
 derive-new = { version = "=0.7.0", optional = true }
-ruda-tensor-device = { version = "0.21.89", path = "../ruda-tensor/device", optional = true, default-features = false, features = ["cuda"] }
+ruda-tensor-device = { version = "0.21.90", path = "../ruda-tensor/device", optional = true, default-features = false, features = ["cuda"] }
 ruda-fusion = { version = "0.21.89", path = "../ruda-fusion", optional = true, default-features = false, features = ["test-util"] }
 
 [dev-dependencies]
