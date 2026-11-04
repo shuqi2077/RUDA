@@ -36,7 +36,7 @@ ruda-tensor-device = { version = "0.21.89", path = "../ruda-tensor/device", defa
 ruda-tensor-tch = { version = "0.21.93", path = "../ruda-tensor/tch", optional = true }
 tch = { version = "0.22.0", optional = true }
 ruda-store = { version = "0.21.72", path = "../ruda-store", default-features = false, features = ["std", "safetensors", "memmap"] }
-ruda-kernel = { version = "0.1.55", path = "../ruda-kernel", default-features = false, features = ["frontend-std", "library", "packed-quantization"] }
+ruda-kernel = { version = "0.1.56", path = "../ruda-kernel", default-features = false, features = ["frontend-std", "library", "packed-quantization"] }
 ruda-core = { version = "0.1.14", path = "../ruda-core", default-features = false, features = ["std", "ir", "tensor"] }
 ruda = { version = "0.1.56", path = "../ruda", default-features = false, features = ["runtime", "runtime-std", "runtime-storage-bytes"] }
 ruda-driver-hip = { version = "0.2.8", path = "../ruda-driver/hip", default-features = false, features = ["std"], optional = true }
