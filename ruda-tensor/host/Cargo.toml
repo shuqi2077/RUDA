@@ -95,7 +95,7 @@ default-features = false
 
 [dependencies.rublas-host]
 path = "../../ruBLAS/host"
-version = "0.2.0"
+version = "0.2.9"
 default-features = false
 
 [dependencies.rudnn-host]
