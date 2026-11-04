@@ -188,7 +188,7 @@ version = "1"
 
 [dependencies.ruda-compiler]
 path = "../ruda-compiler"
-version = "0.1.26"
+version = "0.1.27"
 default-features = false
 optional = true
 
