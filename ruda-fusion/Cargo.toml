@@ -12,7 +12,7 @@
 [package]
 edition = "2024"
 name = "ruda-fusion"
-version = "0.21.88"
+version = "0.21.89"
 authors = ["nathanielsimard <nathaniel.simard.42@gmail.com>"]
 build = false
 autolib = false
