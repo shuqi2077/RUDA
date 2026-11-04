@@ -175,7 +175,7 @@ invalid_html_tags = "warn"
 
 [dependencies.ruda-core]
 path = "../../ruda-core"
-version = "0.1.13"
+version = "0.1.14"
 default-features = false
 features = [ "ir",]
 

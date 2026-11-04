@@ -13,7 +13,7 @@ exclusive-memory-only = ["ruda/runtime-exclusive-memory-only"]
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
 ruda = { package = "ruda-runtime", path = "../../ruda-runtime", version = "0.1.33", default-features = false, features = ["runtime", "runtime-channel-mutex", "runtime-monitoring"] }
-ruda-core = { path = "../../ruda-core", version = "0.1.13", default-features = false, features = ["ir", "compilation-cache", "hash"] }
+ruda-core = { path = "../../ruda-core", version = "0.1.14", default-features = false, features = ["ir", "compilation-cache", "hash"] }
 ruda-kernel = { path = "../../ruda-kernel", version = "0.1.55", default-features = false, features = ["frontend", "lowering-metal"] }
 ruda-compiler = { path = "../../ruda-compiler", version = "0.1.26", default-features = false, features = ["cpp-default", "cpp-metal"] }
 objc2 = "0.6"

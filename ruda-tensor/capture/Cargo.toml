@@ -11,7 +11,7 @@ std = ["ruda-core/std", "ruda-tensor/std", "ruda-tensor-router/std"]
 fusion = ["std", "ruda-tensor-router/fusion"]
 
 [dependencies]
-ruda-core = { version = "0.1.13", path = "../../ruda-core", default-features = false }
+ruda-core = { version = "0.1.14", path = "../../ruda-core", default-features = false }
 ruda-tensor = { version = "0.21.89", path = "..", default-features = false, features = ["graph"] }
 ruda-tensor-router = { version = "0.21.81", path = "../router", default-features = false }
 spin = { version = "0.10.0", default-features = false, features = ["mutex", "spin_mutex", "portable-atomic"] }

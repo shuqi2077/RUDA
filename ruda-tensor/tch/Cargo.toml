@@ -69,7 +69,7 @@ default-features = false
 
 [dependencies.ruda-core]
 path = "../../ruda-core"
-version = "0.1.13"
+version = "0.1.14"
 default-features = false
 features = [ "serde", "shared-bytes", "tensor-data", "id",]
 
