@@ -16,7 +16,7 @@ std = ["ruda-core/std", "ruda-kernel/frontend-std"]
 
 [dependencies]
 half = { version = "2.7.1", default-features = false }
-rublas = { version = "0.2.9", path = "../ruBLAS", default-features = false, features = ["tensor-matmul"] }
+rublas = { version = "0.2.10", path = "../ruBLAS", default-features = false, features = ["tensor-matmul"] }
 ruda-driver-cann = { version = "0.2.10", path = "../ruda-driver/cann", optional = true }
 ruda-core = { version = "0.1.14", path = "../ruda-core", default-features = false, features = ["tensor"] }
 ruda-kernel = { version = "0.1.57", path = "../ruda-kernel", default-features = false, features = ["kernel-ir", "device-tensor"] }
