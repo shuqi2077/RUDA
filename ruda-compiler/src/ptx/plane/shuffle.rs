@@ -15,7 +15,7 @@ impl Emitter {
             self.line(format!("cvt.u32.{} {narrowed}, {index};", index_ty.suffix()));
             index = narrowed;
         }
-        let mask = self.plane_active_mask();
+        let mask = self.plane_member_mask();
         let result = self.shuffle_register_masked(ty, &input, &index, mode, &mask)?;
         let destination = self.destination(out)?;
         self.line(format!("mov.{} {destination}, {result};", ty.storage()));

@@ -210,6 +210,8 @@ fn branch_join_recovers_mask_but_not_inside_a_divergent_arm() {
         cond,
     ));
     let mut arm = k.body.child();
+    let shuffle = Plane::ShuffleUp(BinaryOperator { lhs: x, rhs: 1u32.into() });
+    arm.register(Instruction::new(shuffle.clone(), part));
     arm.register(Instruction::new(
         Plane::Sum(UnaryOperator { input: x }),
         part,
@@ -221,9 +223,14 @@ fn branch_join_recovers_mask_but_not_inside_a_divergent_arm() {
         Plane::Sum(UnaryOperator { input: x }),
         part,
     ));
+    k.body.register(Instruction::new(shuffle, part));
     store(&mut k.body, output, idx, part);
     let p = generate(k, 89, (8, 1));
-    assert_eq!(p.source.matches("activemask.b32").count(), 1);
+    assert_eq!(p.source.matches("activemask.b32").count(), 2);
+    let shuffles: Vec<_> = p.source.lines().filter(|line| line.contains("shfl.sync.up.b32")).collect();
+    assert_eq!(shuffles.len(), 2);
+    assert!(!shuffles[0].trim_end().ends_with(", 0xffffffff;"));
+    assert!(shuffles[1].trim_end().ends_with(", 0xffffffff;"));
 }
 
 #[test]
