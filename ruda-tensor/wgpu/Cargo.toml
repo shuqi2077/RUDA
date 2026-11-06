@@ -41,7 +41,7 @@ path = "src/lib.rs"
 
 [dependencies.ruda-tensor]
 path = ".."
-version = "0.21.91"
+version = "0.21.92"
 default-features = false
 features = [ "wgpu",]
 
