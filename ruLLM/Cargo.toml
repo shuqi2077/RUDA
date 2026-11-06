@@ -33,7 +33,7 @@ ruccl = { version = "0.21.99", package = "ruCCL", path = "../ruCCL", default-fea
 ruda-nn = { version = "0.21.84", path = "../ruda-nn", default-features = false, features = ["std"] }
 ruda-tensor = { version = "0.21.92", path = "../ruda-tensor", default-features = false, features = ["std", "kernel"] }
 ruda-tensor-device = { version = "0.21.92", path = "../ruda-tensor/device", default-features = false, features = ["std", "fusion"] }
-ruda-tensor-tch = { version = "0.21.95", path = "../ruda-tensor/tch", optional = true }
+ruda-tensor-tch = { version = "0.21.96", path = "../ruda-tensor/tch", optional = true }
 tch = { version = "0.22.0", optional = true }
 ruda-store = { version = "0.21.74", path = "../ruda-store", default-features = false, features = ["std", "safetensors", "memmap"] }
 ruda-kernel = { version = "0.1.58", path = "../ruda-kernel", default-features = false, features = ["frontend-std", "library", "packed-quantization"] }
