@@ -23,7 +23,7 @@ required-features = ["mnist"]
 [dependencies]
 ruda-model = { version = "0.21.76", path = "../ruda-model", default-features = false, features = ["std", "dataset"] }
 ruda-optim = { version = "0.21.82", path = "../ruda-optim", default-features = false, features = ["std"] }
-ruda-nn = { version = "0.21.84", path = "../ruda-nn", optional = true, default-features = false, features = ["std"] }
+ruda-nn = { version = "0.21.85", path = "../ruda-nn", optional = true, default-features = false, features = ["std"] }
 ruda-store = { version = "0.21.74", path = "../ruda-store", optional = true, default-features = false, features = ["std", "pytorch"] }
 dirs = { version = "=6.0.0", optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
