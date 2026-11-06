@@ -15,7 +15,7 @@ exclusive-memory-only = ["ruda/runtime-exclusive-memory-only"]
 ruda = { package = "ruda-runtime", path = "../../ruda-runtime", version = "0.1.34", default-features = false, features = ["runtime", "runtime-channel-mutex", "runtime-monitoring"] }
 ruda-core = { path = "../../ruda-core", version = "0.1.14", default-features = false, features = ["ir", "compilation-cache", "hash"] }
 ruda-kernel = { path = "../../ruda-kernel", version = "0.1.56", default-features = false, features = ["frontend", "lowering-metal"] }
-ruda-compiler = { path = "../../ruda-compiler", version = "0.1.27", default-features = false, features = ["cpp-default", "cpp-metal"] }
+ruda-compiler = { path = "../../ruda-compiler", version = "0.1.28", default-features = false, features = ["cpp-default", "cpp-metal"] }
 objc2 = "0.6"
 objc2-metal = { version = "0.3", features = ["block2", "MTLLibrary", "objc2-core-foundation"] }
 objc2-foundation = "0.3"
