@@ -30,7 +30,7 @@ ruda-model = { version = "0.21.75", path = "../ruda-model", default-features = f
 ruda-autodiff = { version = "0.21.76", path = "../ruda-autodiff", default-features = false, features = ["std"] }
 ruda-optim = { version = "0.21.81", path = "../ruda-optim", default-features = false, features = ["std"] }
 ruccl = { version = "0.21.98", package = "ruCCL", path = "../ruCCL", default-features = false, optional = true }
-ruda-nn = { version = "0.21.83", path = "../ruda-nn", default-features = false, features = ["std"] }
+ruda-nn = { version = "0.21.84", path = "../ruda-nn", default-features = false, features = ["std"] }
 ruda-tensor = { version = "0.21.91", path = "../ruda-tensor", default-features = false, features = ["std", "kernel"] }
 ruda-tensor-device = { version = "0.21.91", path = "../ruda-tensor/device", default-features = false, features = ["std", "fusion"] }
 ruda-tensor-tch = { version = "0.21.95", path = "../ruda-tensor/tch", optional = true }
