@@ -29,6 +29,46 @@ Default features: `ptx`, `cpp-default`.
 | `spirv` | Enable SPIR-V generation. |
 | `mlir` | Enable the MLIR backend and its LLVM dependencies. |
 
+## Vector and warp lowering on NVIDIA
+
+Use vector IR for independent adjacent elements, and plane reductions for
+cross-lane communication. The direct PTX backend selects instructions from
+the element types, vector width, requested PTX version and target SM:
+
+- FP16/BF16 arithmetic is paired where supported; Blackwell (SM100+ with
+  PTX 8.6+) can also pair FP32 add, subtract, multiply and explicit FMA.
+  A scalar operand broadcasts; an odd final lane uses scalar arithmetic.
+  Separate multiply and add operations keep their original rounding.
+- Contiguous register lanes can narrow FP32 to FP16/BF16 or FP32/FP16 to
+  FP8 in pairs. FP8-to-FP32 conversion uses both lanes of the packed input.
+  The backend retains the scalar rounding and FP8 saturation contracts;
+  enabling these optimizations does not opt the kernel into fast math.
+- Reductions omit the dynamic mask path when the required block dimensions
+  prove participation. Inside branches the mask is dynamic; after a structured
+  join it can be reused only if no lane exited or executed opaque assembly.
+  Short blocks, tail warps and masks with holes retain active-lane order.
+- Vector loads/stores reuse a per-buffer alignment check when the element
+  stride preserves alignment. Sliced or misaligned arguments still take the
+  scalar fallback; callers need not make a global alignment promise.
+
+These are register and collective optimizations, not a memory alignment
+promise or a choice of tile size. They do not change kernel arguments,
+bounds checks, or the selected CUDA backend.
+
+For operators that already assign whole warps to independent rows,
+`ptx::row::compile_row_variants` accepts a closure producing your own IR
+for each legal row/block layout. It does not infer an operator, change its
+mathematics, or select by kernel name. Respect the device block limit and skip
+layouts that exceed your scratch/register budget. Use `RowLayout::blocks` for
+the grid, keep tail rows masked across barriers, check output correctness,
+then use `select_row_variant` with your own validation/timing callback on
+representative inputs and cache the winner by
+device, operator, dtype and geometry. Layout selection never opts into
+lower precision. When the application's numerical contract permits it, an
+inverse-square-root instruction may separately opt into the existing
+`FastMath::ReducedPrecision` mode; validate that mode independently.
+The default scalar/NVRTC path is unchanged.
+
 ## Links
 
 - [Package source](https://github.com/shuqi2077/RUDA/tree/main/ruda-compiler/src)

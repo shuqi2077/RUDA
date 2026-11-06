@@ -46,6 +46,14 @@ pub(super) struct Emitter {
     pub target: PtxTarget,
     pub architecture_specific: bool,
     pub plane_width: u32,
+    // Straight-line participation from the required block size. Mixed full/tail
+    // warps or any earlier control flow require the actual runtime mask.
+    pub static_warp_mask: Option<u32>,
+    // Increment whenever control may leave a structured region without joining.
+    pub lane_exit_epoch: usize,
+    // Global base addresses are kernel parameters. For strides divisible by
+    // the vector alignment the predicate is loop-invariant and warp-uniform.
+    pub base_alignment: HashMap<(String, usize), String>,
     /// `RUDA_PTX_ASSUME_ALIGNED=1`: global vector accesses are naturally aligned
     /// (the launcher guarantees it), so no runtime alignment check/scalar fallback.
     pub assume_aligned: bool,
@@ -156,6 +164,13 @@ impl Emitter {
             target,
             architecture_specific: false,
             plane_width: (dim.x * dim.y * dim.z).min(32),
+            lane_exit_epoch: 0,
+            base_alignment: HashMap::new(),
+            static_warp_mask: match dim.x * dim.y * dim.z {
+                n if n.is_multiple_of(32) => Some(u32::MAX),
+                n if n < 32 => Some((1u32 << n) - 1),
+                _ => None,
+            },
             assume_aligned: std::env::var("RUDA_PTX_ASSUME_ALIGNED").is_ok_and(|v| v == "1"),
         };
         let mut params = Vec::new();
@@ -228,6 +243,10 @@ impl Emitter {
 
     pub fn reg_b32(&mut self) -> String {
         self.reg_with_storage("b32")
+    }
+
+    pub fn reg_b64(&mut self) -> String {
+        self.reg_with_storage("b64")
     }
 
     fn reg_with_storage(&mut self, storage: &str) -> String {

@@ -7,6 +7,23 @@ use ruda_core::ir::{
 impl Emitter {
     pub fn instruction(&mut self, instruction: Instruction) -> Result<()> {
         let instruction = instruction.lower_typed_memory().map_err(invalid)?;
+        // A structured branch suspends the known participation mask only
+        // inside its arms. All lanes rejoin unless an exit or opaque asm was
+        // encountered anywhere inside the region (including nested scopes).
+        if let Operation::Branch(branch) = instruction.operation {
+            let before = self.static_warp_mask.take();
+            let epoch = self.lane_exit_epoch;
+            if matches!(branch, Branch::Return | Branch::ReturnValue(_) | Branch::Break | Branch::Unreachable) {
+                self.lane_exit_epoch += 1;
+            }
+            self.branch(branch)?;
+            if self.lane_exit_epoch == epoch { self.static_warp_mask = before; }
+            return Ok(());
+        }
+        if matches!(instruction.operation, Operation::NonSemantic(ruda_core::ir::NonSemantic::Print { .. })) {
+            self.lane_exit_epoch += 1;
+            self.static_warp_mask = None;
+        }
         let output = instruction.out;
         self.instruction_inner(instruction)?;
         if let Some(out) = output

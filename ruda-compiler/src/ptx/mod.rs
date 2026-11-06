@@ -1,6 +1,7 @@
 //! Direct Kernel IR to PTX compilation, independent of CUDA C++ and NVRTC.
 
 mod emit;
+pub mod row;
 mod bitwise;
 mod barrier;
 mod atomic;
@@ -108,7 +109,7 @@ impl fmt::Display for PtxKernel {
 pub struct PtxCompiler;
 
 impl PtxCompiler {
-    pub const CACHE_VERSION: u32 = 59;
+    pub const CACHE_VERSION: u32 = 60;
 }
 
 impl Compiler for PtxCompiler {

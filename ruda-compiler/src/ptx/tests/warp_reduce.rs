@@ -30,7 +30,7 @@ fn native_integer_warp_reductions_preserve_type_scan_and_target_contracts() {
                 if native {
                     let suffix = if ty == Type::from(IntKind::I32) { "s32" } else { "u32" };
                     assert!(compiled.source.contains(&format!("redux.sync.{mnemonic}.{suffix}")));
-                    assert!(compiled.source.contains("activemask.b32"));
+                    assert!(compiled.source.contains(", 0xffffffff;"));
                     assert!(!compiled.source.contains("shfl.sync"));
                 }
                 if version >= (7, 0) { export(&compiled); }

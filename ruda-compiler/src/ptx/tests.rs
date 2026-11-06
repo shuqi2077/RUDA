@@ -20,6 +20,7 @@ mod integer_division;
 mod matrix_registers;
 mod async_groups;
 mod warp_reduce;
+mod pair_lowering;
 
 fn options() -> PtxCompilationOptions {
     PtxCompilationOptions {

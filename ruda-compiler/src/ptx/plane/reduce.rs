@@ -8,21 +8,41 @@ impl Emitter {
             return Err(invalid("plane reduction requires matching numeric input/output types"));
         }
         let source = self.value(input)?;
-        let mask = self.plane_active_mask();
-        if !scan && !exclusive && self.plane_width == 32
+        let mask = self.plane_member_mask();
+        let destination = self.destination(out)?;
+        if !scan && !exclusive
             && self.target.sm >= 80 && self.target.version >= (7, 0)
             && matches!(ty, Scalar::I32 | Scalar::U32)
             && matches!(operation, "add" | "min" | "max")
         {
-            let destination = self.destination(out)?;
             self.line(format!("redux.sync.{operation}.{} {destination}, {source}, {mask};", ty.suffix()));
             return Ok(());
+        }
+        if let Some(known) = self.static_warp_mask {
+            if known == u32::MAX {
+                return self.plane_reduce_full(ty, &source, &destination, operation, scan, exclusive);
+            }
+            return self.plane_reduce_ranks(ty, &source, &destination, &mask,
+                &known.count_ones().to_string(), operation, scan, exclusive, true);
+        }
+        if self.plane_width < 32 {
+            return self.plane_reduce_active(ty, &source, &destination, &mask, operation, scan, exclusive);
         }
         let full = self.reg(Scalar::Pred);
         let partial = self.label();
         let done = self.label();
         self.line(format!("setp.eq.u32 {full}, {mask}, 0xffffffff;"));
         self.line(format!("@!{full} bra {partial};"));
+        self.plane_reduce_full(ty, &source, &destination, operation, scan, exclusive)?;
+        self.line(format!("bra {done};"));
+        self.line(format!("{partial}:"));
+        self.plane_reduce_active(ty, &source, &destination, &mask, operation, scan, exclusive)?;
+        self.line(format!("{done}:"));
+        Ok(())
+    }
+
+    fn plane_reduce_full(&mut self, ty: Scalar, source: &str, destination: &str,
+        operation: &str, scan: bool, exclusive: bool) -> Result<()> {
         let mut accumulator = self.reg(ty);
         self.line(format!("mov.{} {accumulator}, {source};", ty.storage()));
         let lane = if scan {
@@ -55,12 +75,7 @@ impl Emitter {
             let identity = if ty.float() { ty.constant(ConstantValue::Float(identity as f64))? } else { identity.to_string() };
             self.line(format!("selp.{} {accumulator}, {identity}, {accumulator}, {first};", ty.storage()));
         }
-        let destination = self.destination(out)?;
         self.line(format!("mov.{} {destination}, {accumulator};", ty.storage()));
-        self.line(format!("bra {done};"));
-        self.line(format!("{partial}:"));
-        self.plane_reduce_active(ty, &source, &destination, &mask, operation, scan, exclusive)?;
-        self.line(format!("{done}:"));
         Ok(())
     }
 }

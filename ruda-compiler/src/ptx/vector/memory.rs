@@ -67,13 +67,13 @@ impl Emitter {
         };
         let aligned = alignment >= stride && alignment % stride == 0;
         if !matches!(array.kind, VariableKind::LocalArray { .. })
-            && self.packed_integer_memory(space, ty, &registers, &address, store, aligned)
+            && self.packed_integer_memory(space, ty, &registers, &address, &base, store, aligned)
         {
             self.line(format!("{end}:"));
             return Ok(());
         }
         if !matches!(array.kind, VariableKind::LocalArray { .. })
-            && self.packed_vector_memory(space, ty, &registers, &address, store, aligned)
+            && self.packed_vector_memory(space, ty, &registers, &address, &base, store, aligned)
         {
             self.line(format!("{end}:"));
             return Ok(());
@@ -83,12 +83,9 @@ impl Emitter {
         if vectorized {
             let scalar_path = self.label();
             let bytes = stride.min(self.vector_memory_bytes(space));
-            let alignment = self.reg(Scalar::U64);
-            let misaligned = self.reg(Scalar::Pred);
             if !aligned {
-                self.line(format!("and.b64 {alignment}, {address}, {};", bytes - 1));
-                self.line(format!("setp.ne.u64 {misaligned}, {alignment}, 0;"));
-                self.line(format!("@{misaligned} bra {scalar_path};"));
+                let misaligned = self.vector_misaligned(space, &base, &address, stride, bytes);
+                self.line(format!("@{misaligned} bra.uni {scalar_path};"));
             }
             let elements = bytes / ty.bytes();
             for (chunk, values) in registers.chunks(elements).enumerate() {
@@ -130,11 +127,32 @@ impl Emitter {
         Ok(())
     }
 
+    /// For base + i * stride, address % bytes == base % bytes when bytes
+    /// divides stride. Only apply this to stable global buffer parameters.
+    fn vector_misaligned(&mut self, space: &str, base: &str, address: &str, stride: usize, bytes: usize) -> String {
+        debug_assert!(bytes.is_power_of_two() && stride.is_multiple_of(bytes));
+        if space == "global" {
+            let key = (base.to_owned(), bytes);
+            if let Some(p) = self.base_alignment.get(&key) { return p.clone(); }
+            let bits = self.reg(Scalar::U64);
+            let p = self.reg(Scalar::Pred);
+            self.prologue += &format!("    and.b64 {bits}, {base}, {};\n    setp.ne.u64 {p}, {bits}, 0;\n", bytes - 1);
+            self.base_alignment.insert(key, p.clone());
+            p
+        } else {
+            let bits = self.reg(Scalar::U64);
+            let p = self.reg(Scalar::Pred);
+            self.line(format!("and.b64 {bits}, {address}, {};", bytes - 1));
+            self.line(format!("setp.ne.u64 {p}, {bits}, 0;"));
+            p
+        }
+    }
+
     fn vector_memory_bytes(&self, space: &str) -> usize {
         if space == "global" && self.target.sm >= 100 && self.target.version >= (8, 8) { 32 } else { 16 }
     }
 
-    fn packed_integer_memory(&mut self, space: &str, ty: Scalar, registers: &[String], address: &str, store: bool, aligned: bool) -> bool {
+    fn packed_integer_memory(&mut self, space: &str, ty: Scalar, registers: &[String], address: &str, base: &str, store: bool, aligned: bool) -> bool {
         if !(ty.narrow() || ty.fp8()) { return false; }
         let lane_bits = ty.bytes() * 8;
         let lanes = 32 / lane_bits;
@@ -143,11 +161,9 @@ impl Emitter {
         let bytes = size.min(self.vector_memory_bytes(space));
         let fallback = if aligned { None } else { Some((self.label(), self.label())) };
         if let Some((scalar_path, _)) = &fallback {
-            let low = self.reg(Scalar::U64);
-            let unaligned = self.reg(Scalar::Pred);
-            self.line(format!("and.b64 {low}, {address}, {};", bytes - 1));
-            self.line(format!("setp.ne.u64 {unaligned}, {low}, 0;"));
-            self.line(format!("@{unaligned} bra {scalar_path};"));
+            let unaligned = self.vector_misaligned(space, base, address, size, bytes);
+            let branch = if space == "global" { "bra.uni" } else { "bra" };
+            self.line(format!("@{unaligned} {branch} {scalar_path};"));
         }
         for (chunk, values) in registers.chunks(bytes / ty.bytes()).enumerate() {
             let words = (0..values.len() / lanes).map(|_| self.reg_b32()).collect::<Vec<_>>();
@@ -186,7 +202,7 @@ impl Emitter {
         true
     }
 
-    fn packed_vector_memory(&mut self, space: &str, ty: Scalar, registers: &[String], address: &str, store: bool, aligned: bool) -> bool {
+    fn packed_vector_memory(&mut self, space: &str, ty: Scalar, registers: &[String], address: &str, base: &str, store: bool, aligned: bool) -> bool {
         let half = matches!(ty, Scalar::F16 | Scalar::BF16);
         let width = registers.len();
         let wide = self.vector_memory_bytes(space) == 32;
@@ -197,11 +213,9 @@ impl Emitter {
         let alignment = width * ty.bytes();
         let fallback = if aligned { None } else { Some((self.label(), self.label())) };
         if let Some((scalar_path, _)) = &fallback {
-            let low = self.reg(Scalar::U64);
-            let unaligned = self.reg(Scalar::Pred);
-            self.line(format!("and.b64 {low}, {address}, {};", alignment - 1));
-            self.line(format!("setp.ne.u64 {unaligned}, {low}, 0;"));
-            self.line(format!("@{unaligned} bra {scalar_path};"));
+            let unaligned = self.vector_misaligned(space, base, address, alignment, alignment);
+            let branch = if space == "global" { "bra.uni" } else { "bra" };
+            self.line(format!("@{unaligned} {branch} {scalar_path};"));
         }
         let packed = if half { (0..width / 2).map(|_| self.reg_b32()).collect::<Vec<_>>() } else { registers.to_vec() };
         if half && store {

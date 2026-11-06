@@ -5,6 +5,7 @@ mod memory;
 mod views;
 mod indexing;
 mod reduction;
+mod pairs;
 
 fn scalar(variable: Variable) -> Variable {
     Variable::new(variable.kind, variable.ty.with_vector_size(1))
@@ -115,7 +116,8 @@ impl Emitter {
                 }
                 let input = self.value(op.input)?;
                 let registers = self.vector_destination(out)?;
-                self.line(format!("vote.sync.ballot.b32 {}, {input}, 0xffffffff;", registers[0]));
+                let mask = self.plane_member_mask();
+                self.line(format!("vote.sync.ballot.b32 {}, {input}, {mask};", registers[0]));
                 for register in &registers[1..] { self.line(format!("mov.u32 {register}, 0;")); }
                 return Ok(true);
             }
@@ -134,7 +136,8 @@ impl Emitter {
         }
         let destinations = self.vector_destination(out)?;
         let operands = args.iter().map(|arg| self.vector_values(*arg)).collect::<Result<Vec<_>>>()?;
-        for lane in 0..width {
+        let processed = self.packed_elementwise(instruction, out, &args, &destinations, &operands)?;
+        for lane in processed..width {
             let mut restore = Vec::new();
             let scalar_out = scalar(out);
             restore.push((scalar_out, self.registers.insert(scalar_out, destinations[lane].clone())));

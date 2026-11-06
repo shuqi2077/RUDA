@@ -4,7 +4,7 @@ use ruda_core::ir::{Arithmetic, Instruction, Operation, OperationReflect, Operat
 mod math;
 
 impl Emitter {
-    fn fp8_target(&self) -> Result<()> {
+    pub(super) fn fp8_target(&self) -> Result<()> {
         let supported = (self.target.sm >= 90 && self.target.version >= (7, 8))
             || (self.target.sm == 89 && self.target.version >= (8, 1));
         if !supported {
