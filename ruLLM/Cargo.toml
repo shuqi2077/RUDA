@@ -26,7 +26,7 @@ distributed = ["ruda-optim/collective", "dep:ruccl"]
 
 [dependencies]
 ruda-driver-cann = { version = "0.2.10", path = "../ruda-driver/cann", optional = true }
-ruda-model = { version = "0.21.74", path = "../ruda-model", default-features = false, features = ["std"] }
+ruda-model = { version = "0.21.75", path = "../ruda-model", default-features = false, features = ["std"] }
 ruda-autodiff = { version = "0.21.76", path = "../ruda-autodiff", default-features = false, features = ["std"] }
 ruda-optim = { version = "0.21.81", path = "../ruda-optim", default-features = false, features = ["std"] }
 ruccl = { version = "0.21.98", package = "ruCCL", path = "../ruCCL", default-features = false, optional = true }
