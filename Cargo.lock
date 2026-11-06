@@ -8005,7 +8005,7 @@ dependencies = [
 
 [[package]]
 name = "ruda"
-version = "0.1.57"
+version = "0.1.58"
 dependencies = [
  "bytemuck",
  "derive-new",

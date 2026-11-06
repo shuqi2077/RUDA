@@ -38,7 +38,7 @@ tch = { version = "0.22.0", optional = true }
 ruda-store = { version = "0.21.73", path = "../ruda-store", default-features = false, features = ["std", "safetensors", "memmap"] }
 ruda-kernel = { version = "0.1.57", path = "../ruda-kernel", default-features = false, features = ["frontend-std", "library", "packed-quantization"] }
 ruda-core = { version = "0.1.14", path = "../ruda-core", default-features = false, features = ["std", "ir", "tensor"] }
-ruda = { version = "0.1.57", path = "../ruda", default-features = false, features = ["runtime", "runtime-std", "runtime-storage-bytes"] }
+ruda = { version = "0.1.58", path = "../ruda", default-features = false, features = ["runtime", "runtime-std", "runtime-storage-bytes"] }
 ruda-driver-hip = { version = "0.2.10", path = "../ruda-driver/hip", default-features = false, features = ["std"], optional = true }
 ruda-driver-cuda = { version = "0.2.10", path = "../ruda-driver/cuda", default-features = false, features = ["std"], optional = true }
 rublas = { version = "0.2.9", path = "../ruBLAS", default-features = false, features = ["tensor-int4", "tensor-matmul", "tensor-ggml", "std"] }
