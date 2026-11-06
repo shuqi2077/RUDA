@@ -57,7 +57,7 @@ default-features = false
 
 [dependencies.ruda-kernel]
 path = "../../ruda-kernel"
-version = "0.1.57"
+version = "0.1.58"
 default-features = false
 features = [ "frontend", "library",]
 
