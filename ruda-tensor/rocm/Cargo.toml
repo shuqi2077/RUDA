@@ -39,7 +39,7 @@ features = [ "std", "hip",]
 
 [dependencies.ruda-tensor-device]
 path = "../device"
-version = "0.21.91"
+version = "0.21.92"
 default-features = false
 features = [ "default",]
 
