@@ -47,7 +47,7 @@ ruda-driver-wgpu = { path = "../ruda-driver/wgpu", version = "0.2.10", optional 
 ruda-driver-cpu = { path = "../ruda-driver/cpu", version = "0.2.11", optional = true }
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
-ruda-driver-metal = { path = "../ruda-driver/metal", version = "0.2.10", optional = true }
+ruda-driver-metal = { path = "../ruda-driver/metal", version = "0.2.11", optional = true }
 
 [dev-dependencies]
 bytemuck = "1.16.1"
