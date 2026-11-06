@@ -57,7 +57,7 @@ version = "0.22.0"
 [dependencies.ruccl]
 package = "ruCCL"
 path = "../../ruCCL"
-version = "0.21.97"
+version = "0.21.98"
 default-features = false
 features = ["native"]
 optional = true
