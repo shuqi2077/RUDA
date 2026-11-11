@@ -59,7 +59,7 @@ default-features = false
 
 [dependencies.ruda]
 path = "../../ruda"
-version = "0.1.59"
+version = "0.1.60"
 features = ["runtime"]
 default-features = false
 
