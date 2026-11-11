@@ -90,30 +90,30 @@ features = [ "tensor-host-storage", "serde", "shared-bytes", "tensor-data", "id"
 [dependencies.rufft-host]
 package = "ruFFT-host"
 path = "../../ruFFT/host"
-version = "0.2.9"
+version = "0.3.0"
 default-features = false
 
 [dependencies.rublas-host]
 path = "../../ruBLAS/host"
-version = "0.2.9"
+version = "0.3.0"
 default-features = false
 
 [dependencies.rudnn-host]
 package = "ruDNN-host"
 path = "../../ruDNN/host"
-version = "0.2.9"
+version = "0.3.0"
 default-features = false
 
 [dependencies.ruprim-host]
 package = "ruPRIM-host"
 path = "../../ruPRIM/host"
-version = "0.2.9"
+version = "0.3.0"
 default-features = false
 
 [dependencies.rurand-host]
 package = "ruRAND-host"
 path = "../../ruRAND/host"
-version = "0.2.9"
+version = "0.3.0"
 default-features = false
 
 [dependencies.rusparse]
