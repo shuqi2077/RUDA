@@ -1,6 +1,6 @@
 [package]
 name = "ruda-train"
-version = "0.1.11"
+version = "0.1.12"
 edition.workspace = true
 description = "Backend-generic supervised training and evaluation for Ruda."
 license = "MIT OR Apache-2.0"
