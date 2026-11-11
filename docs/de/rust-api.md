@@ -4,7 +4,7 @@
 
 Wählen Sie das tatsächlich verwendete Crate und die Version. Cargo-Features bestimmen verfügbare Module; veröffentlichte rustdoc-Seiten garantieren nicht die Unterstützung aller Features und Backends.
 
-Die Tabelle folgt den Manifesten des dokumentierten `main`-Snapshots. Versionierte rustdoc-Seiten beschreiben das veröffentlichte Paket, nicht spätere APIs nur auf `main`; siehe dafür den [Quellcode-/API-Index](../en/api-reference.md). `ruda-triton` und die native PyTorch-Komponente werden aus Quellcode gebaut.
+Die Tabelle verlinkt veröffentlichte rustdoc-Snapshots und Quellmanifeste. Die Manifeste bestimmen die genauen Versionen dieses Releases; spätere Ergänzungen im Quellcode sind nicht im älteren rustdoc enthalten. Dafür dient der [Quell-/API-Index](../en/api-reference.md). `ruda-triton` und die native PyTorch-Komponente werden aus Quellcode gebaut.
 
 | Paket | Version | Rust-Import | API | Cargo-Konfiguration |
 | --- | --- | --- | --- | --- |

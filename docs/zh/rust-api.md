@@ -4,7 +4,7 @@
 
 选择应用实际使用的 crate 与版本。Cargo feature 决定可用模块；已发布的 rustdoc 不表示所有后端和 feature 都可用。
 
-下表版本与本手册所对应 `main` 快照的 Cargo 清单一致。版本化 rustdoc 描述相应发布包，不包含之后仅合入 `main` 的接口；这部分请查阅[源码／API 索引](api-reference.md)。`ruda-triton` 与原生 PyTorch 组件均为源码构建组件。
+下表链接已发布的 rustdoc 快照和源码清单；本次发布的精确源码版本以清单为准。版本化 rustdoc 不覆盖之后仅存在于源码的接口，这部分请查看[源码／API 索引](api-reference.md)。`ruda-triton` 与原生 PyTorch 组件为源码构建组件。
 
 | 包名 | 版本 | Rust 导入名 | API | Cargo 配置 |
 | --- | --- | --- | --- | --- |

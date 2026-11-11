@@ -4,7 +4,7 @@
 
 Select the crate and version used by your application. Cargo features determine which modules are available; a published rustdoc build is not an all-feature backend support guarantee.
 
-The table follows the manifests on the documented `main` snapshot. Versioned rustdoc describes the corresponding published package, not later `main`-only additions; use the [source/API index](api-reference.md) for those. `ruda-triton`, like the native PyTorch component, is source-build only.
+This table links published rustdoc snapshots and source manifests. The manifests specify the exact versions for this release; a rustdoc snapshot does not cover later source-only additions. Use the [source/API index](api-reference.md) for those. `ruda-triton` and the native PyTorch component are source-build only.
 
 | Package | Version | Rust import | API | Manifest |
 | --- | --- | --- | --- | --- |

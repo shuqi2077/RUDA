@@ -60,7 +60,7 @@ path = "tests/lib.rs"
 
 [dependencies.ruda-test-utils]
 path = "../ruda-test-utils"
-version = "0.2.12"
+version = "0.3.0"
 optional = true
 default-features = false
 
@@ -107,7 +107,7 @@ optional = true
 [dependencies.ruprim]
 package = "ruPRIM"
 path = "../ruPRIM"
-version = "0.2.12"
+version = "0.3.0"
 default-features = false
 features = ["indexing"]
 optional = true

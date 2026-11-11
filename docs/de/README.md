@@ -6,7 +6,7 @@
 
 Von Ihrem ersten GPU-Kernel bis hin zu Rechenbibliotheken, Tensortraining und lokaler Modellinferenz. Beginnen Sie mit Ihrer Aufgabe und erkunden Sie dann die Programmierhandbücher und API-Referenzen.
 
-Diese Anleitungen beziehen sich auf Remote-`main` bei `04fb9b6b` (2026-10-16), Workspace-Version `0.1.98`. Die einzelnen Crate-Versionen stehen in der [Rust-API-Referenz](rust-api.md). Die Wheel-Anleitung gilt weiterhin für die veröffentlichten `v0.1.96`-Wheels; APIs nur auf `main` benötigen einen passenden Quellcode-Build.
+Diese Anleitungen beschreiben die Release-Reihe `v0.3.0`. Rust-Crates behalten unabhängige Versionen; die Cargo-Manifeste enthalten die genauen Quellversionen und die [Rust-API-Referenz](rust-api.md) verlinkt veröffentlichte rustdoc-Snapshots. Verwenden Sie das passende Release-Wheel `ruda-torch==0.3.0` oder die zugehörige Quellrevision. Spätere APIs nur auf `main` benötigen einen passenden Quellcode-Build.
 
 ## Beginnen Sie hier
 

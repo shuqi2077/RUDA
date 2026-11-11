@@ -6,7 +6,7 @@
 
 ## 1. Build and install
 
-To skip local Rust/C++ compilation, use the [v0.2.0 release wheels](../../ruda-torch/README.md#release-wheels): CPython 3.13, Linux x86_64 with PyTorch `2.10.0+cu126` (Ubuntu 24.04 build), or Windows x86_64 with `2.13.0+cu130`. Install the matching wheel/PyTorch pair, then set the compiler environment below. Otherwise, build from source:
+To skip local Rust/C++ compilation, use the [v0.3.0 release wheels](../../ruda-torch/README.md#release-wheels): CPython 3.13, Linux x86_64 with PyTorch `2.10.0+cu126` (Ubuntu 24.04 build), or Windows x86_64 with `2.13.0+cu130`. Install the matching wheel/PyTorch pair, then set the compiler environment below. Otherwise, build from source:
 
 Prepare the [NVIDIA build environment](getting-started.md), Python with PyTorch and setuptools, and a C++20 compiler. On Windows, run in an x64 MSVC developer shell. From the repository root:
 

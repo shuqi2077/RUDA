@@ -25,7 +25,7 @@ gpu-kv = ["serving", "nvidia", "ruda-driver-cuda/ucx-bridge"]
 distributed = ["ruda-optim/collective", "dep:ruccl"]
 
 [dependencies]
-ruda-driver-cann = { version = "0.2.12", path = "../ruda-driver/cann", optional = true }
+ruda-driver-cann = { version = "0.3.0", path = "../ruda-driver/cann", optional = true }
 ruda-model = { version = "0.21.77", path = "../ruda-model", default-features = false, features = ["std"] }
 ruda-autodiff = { version = "0.21.78", path = "../ruda-autodiff", default-features = false, features = ["std"] }
 ruda-optim = { version = "0.21.84", path = "../ruda-optim", default-features = false, features = ["std"] }
@@ -39,10 +39,10 @@ ruda-store = { version = "0.21.76", path = "../ruda-store", default-features = f
 ruda-kernel = { version = "0.1.59", path = "../ruda-kernel", default-features = false, features = ["frontend-std", "library", "packed-quantization"] }
 ruda-core = { version = "0.1.14", path = "../ruda-core", default-features = false, features = ["std", "ir", "tensor"] }
 ruda = { version = "0.1.60", path = "../ruda", default-features = false, features = ["runtime", "runtime-std", "runtime-storage-bytes"] }
-ruda-driver-hip = { version = "0.2.12", path = "../ruda-driver/hip", default-features = false, features = ["std"], optional = true }
-ruda-driver-cuda = { version = "0.2.12", path = "../ruda-driver/cuda", default-features = false, features = ["std"], optional = true }
-rublas = { version = "0.2.12", path = "../ruBLAS", default-features = false, features = ["tensor-int4", "tensor-matmul", "tensor-ggml", "std"] }
-rudnn = { version = "0.2.12", package = "ruDNN", path = "../ruDNN", default-features = false, features = ["tensor-gated-delta", "tensor-kda", "tensor-normalization", "tensor-paged-attention", "tensor-moe", "std"] }
+ruda-driver-hip = { version = "0.3.0", path = "../ruda-driver/hip", default-features = false, features = ["std"], optional = true }
+ruda-driver-cuda = { version = "0.3.0", path = "../ruda-driver/cuda", default-features = false, features = ["std"], optional = true }
+rublas = { version = "0.3.0", path = "../ruBLAS", default-features = false, features = ["tensor-int4", "tensor-matmul", "tensor-ggml", "std"] }
+rudnn = { version = "0.3.0", package = "ruDNN", path = "../ruDNN", default-features = false, features = ["tensor-gated-delta", "tensor-kda", "tensor-normalization", "tensor-paged-attention", "tensor-moe", "std"] }
 half = "=2.7.1"
 chacha20 = { version = "=0.10.2", default-features = false, features = ["rng"] }
 serde = { version = "1.0", features = ["derive"] }

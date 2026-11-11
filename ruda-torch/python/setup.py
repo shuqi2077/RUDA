@@ -34,7 +34,7 @@ class BuildPy(build_py):
 
 
 setup(
-    name="ruda-torch", version="0.2.0", packages=["ruda_torch"],
+    name="ruda-torch", version="0.3.0", packages=["ruda_torch"],
     description="Native RUDA backend for PyTorch",
     long_description=(ROOT / "ruda-torch/README.md").read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",

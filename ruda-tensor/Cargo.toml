@@ -161,32 +161,32 @@ features = ["tensor-host-data", "tensor-device-settings", "serde", "shared-bytes
 
 [dependencies.ruda-driver-cpu]
 path = "../ruda-driver/cpu"
-version = "0.2.12"
+version = "0.3.0"
 default-features = false
 optional = true
 
 [dependencies.ruda-driver-cuda]
 path = "../ruda-driver/cuda"
-version = "0.2.12"
+version = "0.3.0"
 default-features = false
 optional = true
 
 [dependencies.ruda-driver-hip]
 path = "../ruda-driver/hip"
-version = "0.2.12"
+version = "0.3.0"
 default-features = false
 optional = true
 
 [dependencies.ruda-driver-wgpu]
 path = "../ruda-driver/wgpu"
-version = "0.2.12"
+version = "0.3.0"
 default-features = false
 optional = true
 
 [dependencies.rudnn]
 package = "ruDNN"
 path = "../ruDNN"
-version = "0.2.12"
+version = "0.3.0"
 default-features = false
 features = ["attention-fallback"]
 

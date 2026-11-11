@@ -4,7 +4,7 @@
 
 从第一个 GPU Kernel，到领域计算库、张量训练和本地模型推理。按任务开始，再查阅概念指南与 API 参考。
 
-本手册以远端 `main` 的 `04fb9b6b`（2026-10-16）为源码基准，workspace 版本为 `0.1.98`；各 crate 的独立版本见 [Rust API 参考](rust-api.md)。Release wheel 安装说明仍对应已发布的 `v0.1.96`，仅存在于 `main` 的 API 需使用匹配的源码构建。
+本手册对应 `v0.3.0` 发布系列。Rust 子库继续独立版本管理，源码版本以各自 Cargo 清单为准，已发布的 rustdoc 快照见 [Rust API 参考](rust-api.md)。请安装匹配的 `ruda-torch==0.3.0` Release wheel，或构建对应源码版本；之后仅存在于 `main` 的 API 需要匹配的源码构建。
 
 ## 从这里开始
 
@@ -12,7 +12,7 @@
 | --- | --- |
 | 运行第一个 GPU Kernel | [安装与快速开始](getting-started.md) → [编程指南](programming-guide.md) |
 | 在 `ruda:0` 上使用 PyTorch | [原生 PyTorch 快速上手](native-pytorch-quickstart.md) → [原生 API](native-pytorch-api.md) |
-| 安装 v0.1.96 wheel 或使用压缩量化 | [Release 安装](../../ruda-torch/README.md#release-wheels) → [GPTQ／GGUF 与量化 KV](native-pytorch-api.md#packed-量化与权重导入) |
+| 安装 v0.3.0 wheel 或使用压缩量化 | [Release 安装](../../ruda-torch/README.md#release-wheels) → [GPTQ／GGUF 与量化 KV](native-pytorch-api.md#packed-量化与权重导入) |
 | 使用矩阵、稀疏或神经网络算子 | [计算库](libraries/README.md) → [张量与框架](tensor-framework.md) |
 | 训练模型、累积梯度与保存状态 | [训练与状态保存](training.md) |
 | 使用 LoRA 或 NF4 微调本地模型 | [微调与恢复](finetuning.md) |

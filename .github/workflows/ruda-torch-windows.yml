@@ -405,7 +405,7 @@ jobs:
                   names = archive.namelist()
                   metadata_name, = [n for n in names if n.endswith('.dist-info/METADATA')]
                   metadata = email.message_from_bytes(archive.read(metadata_name))
-                  if metadata['Name'] != 'ruda-torch' or metadata['Version'] != '0.2.0':
+                  if metadata['Name'] != 'ruda-torch' or metadata['Version'] != version:
                       raise SystemExit(f'Unexpected package metadata in {wheel.name}')
                   if set(metadata['Requires-Python'].split(',')) != {f'>={python}', f'<{major}.{minor + 1}'}:
                       raise SystemExit(f'Unexpected Python requirement in {wheel.name}')
@@ -436,7 +436,7 @@ jobs:
           fi
           gh release create "$RELEASE_TAG" release/*.whl release/manifest.json release/SHA256SUMS \
             --target "$GITHUB_SHA" --draft --title "RUDA $RELEASE_TAG" \
-            --notes "RUDA source release with ruda-torch 0.2.0 binary wheels. The wheels include the Python package, C++ extension, optimized Rust release library and license notices (native ABI 10).
+            --notes "RUDA source release with ruda-torch ${RELEASE_TAG#v} binary wheels. The wheels include the Python package, C++ extension, optimized Rust release library and license notices (native ABI 10).
 
           Linux x86_64 / CPython $LINUX_PYTHON_VERSION ($LINUX_ABI_TAG) / PyTorch $LINUX_TORCH_VERSION (Ubuntu 24.04 build); Windows x86_64 / CPython $WINDOWS_PYTHON_VERSION ($WINDOWS_ABI_TAG) / PyTorch $WINDOWS_TORCH_VERSION. These builds are not interchangeable. SHA256SUMS and manifest.json describe the downloads.
 

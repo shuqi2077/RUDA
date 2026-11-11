@@ -4,7 +4,7 @@
 
 アプリケーションで使用する crate とバージョンを選択してください。公開 rustdoc がすべての feature やバックエンドの対応を保証するわけではありません。
 
-表のバージョンは本書の `main` スナップショットの Cargo manifest に対応します。バージョン付き rustdoc は公開パッケージを記述し、その後の `main` 専用 API は含みません。[ソース索引](../en/api-reference.md)を参照してください。`ruda-triton` と native PyTorch コンポーネントはソースビルド専用です。
+この表は公開済み rustdoc のスナップショットとソース manifest を示します。本リリースの正確なソースバージョンは manifest を参照してください。rustdoc は以後のソース限定 API を含みません。[ソース索引](../en/api-reference.md)を参照してください。`ruda-triton` と native PyTorch コンポーネントはソースビルド専用です。
 
 | パッケージ | バージョン | Rust インポート | API | Cargo 設定 |
 | --- | --- | --- | --- | --- |

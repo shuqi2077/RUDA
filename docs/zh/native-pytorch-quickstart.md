@@ -6,18 +6,18 @@
 
 ## 1. 构建与安装
 
-无需本地编译 Rust／C++ 时，可使用 [v0.2.0 Release wheel](../../ruda-torch/README.md#release-wheels)：CPython 3.13，Linux x86_64 搭配 PyTorch `2.10.0+cu126`（Ubuntu 24.04 构建），或 Windows x86_64 搭配 `2.13.0+cu130`。安装匹配的 wheel／PyTorch 后，设置下方编译器环境即可；需要源码构建时再执行以下步骤。
+无需本地编译 Rust／C++ 时，可使用 [v0.3.0 Release wheel](../../ruda-torch/README.md#release-wheels)：CPython 3.13，Linux x86_64 搭配 PyTorch `2.10.0+cu126`（Ubuntu 24.04 构建），或 Windows x86_64 搭配 `2.13.0+cu130`。安装匹配的 wheel／PyTorch 后，设置下方编译器环境即可；需要源码构建时再执行以下步骤。
 
-该版本的 Python 包为 `ruda-torch==0.2.0`，内含 release 优化构建的 Rust 库、C++ 扩展及许可证。下载对应 wheel、`SHA256SUMS` 和 `manifest.json`，核对 SHA-256 后安装：
+该版本的 Python 包为 `ruda-torch==0.3.0`，内含 release 优化构建的 Rust 库、C++ 扩展及许可证。下载对应 wheel、`SHA256SUMS` 和 `manifest.json`，核对 SHA-256 后安装：
 
 ```sh
 # Linux x86_64 / CPython 3.13
-python -m pip install ./ruda_torch-0.2.0-cp313-cp313-linux_x86_64.whl --index-url https://download.pytorch.org/whl/cu126
+python -m pip install ./ruda_torch-0.3.0-cp313-cp313-linux_x86_64.whl --index-url https://download.pytorch.org/whl/cu126
 ```
 
 ```powershell
 # Windows x86_64 / CPython 3.13
-python -m pip install ./ruda_torch-0.2.0-cp313-cp313-win_amd64.whl --index-url https://download.pytorch.org/whl/cu130
+python -m pip install ./ruda_torch-0.3.0-cp313-cp313-win_amd64.whl --index-url https://download.pytorch.org/whl/cu130
 ```
 
 包元数据约束 Python `>=3.13,<3.14` 和对应 PyTorch 的完整版本（含 CUDA 后缀）。Linux wheel 未声明 manylinux 兼容，不保证旧发行版可用。升级旧版 wheel 后重启 Python 进程，并移除指向旧库的 `RUDA_TORCH_LIBRARY` 设置；NVIDIA 驱动与所选编译器路径的运行时依赖仍需自行准备。

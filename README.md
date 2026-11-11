@@ -95,7 +95,7 @@ x = torch.arange(4, dtype=torch.float32).to("ruda:0")
 print((x + x).cpu())
 ```
 
-[v0.2.0](https://github.com/shuqi2077/RUDA/releases/tag/v0.2.0) provides Linux and Windows x86_64 wheels containing the Python package, C++ extension and Rust native library. Both require CPython 3.13; Linux uses PyTorch `2.10.0+cu126` (built on Ubuntu 24.04), Windows uses `2.13.0+cu130`. The wheel package version is `ruda-torch==0.2.0`. See [release installation](ruda-torch/README.md#release-wheels) for matching packages and commands. `ruda-torch-native` is a source-build component, not a crates.io package.
+[v0.3.0](https://github.com/shuqi2077/RUDA/releases/tag/v0.3.0) provides Linux and Windows x86_64 wheels containing the Python package, C++ extension and Rust native library. Both require CPython 3.13; Linux uses PyTorch `2.10.0+cu126` (built on Ubuntu 24.04), Windows uses `2.13.0+cu130`. The wheel package version is `ruda-torch==0.3.0`. See [release installation](ruda-torch/README.md#release-wheels) for matching packages and commands. `ruda-torch-native` is a source-build component, not a crates.io package.
 
 Linux/Colab users can use [precompiled bundles](ruda-torch/README.md#linuxcolab-precompiled-bundle) from GitHub Releases without compiling Rust or C++ locally. These are not pip wheels; use the matching source revision and the Python, PyTorch and glibc requirements recorded in the bundle manifest.
 
