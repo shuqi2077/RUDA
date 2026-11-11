@@ -30,7 +30,7 @@ ruda-runtime = { version = "0.1.34", path = "../../ruda-runtime", default-featur
 ruda-kernel = { version = "0.1.59", path = "../../ruda-kernel", default-features = false, features = ["library"], optional = true }
 ruda-tensor = { version = "0.21.93", path = "..", default-features = false }
 ruda-core = { version = "0.1.14", path = "../../ruda-core", default-features = false, features = ["ir"] }
-ruda-autodiff = { version = "0.21.77", path = "../../ruda-autodiff", default-features = false }
+ruda-autodiff = { version = "0.21.78", path = "../../ruda-autodiff", default-features = false }
 ruda-fusion = { version = "0.21.92", path = "../../ruda-fusion", default-features = false, features = ["std"], optional = true }
 ruda-tensor-host = { version = "0.21.90", path = "../host", default-features = false }
 ruda-tensor-capture = { version = "0.2.11", path = "../capture", default-features = false, optional = true }
