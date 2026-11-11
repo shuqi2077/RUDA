@@ -34,7 +34,7 @@ version = "0.16"
 
 [dependencies.ruda-fusion]
 path = "../../ruda-fusion"
-version = "0.21.92"
+version = "0.21.93"
 default-features = false
 features = ["std"]
 optional = true
