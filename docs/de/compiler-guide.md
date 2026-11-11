@@ -61,3 +61,9 @@ Setzen Sie `TRITON_DEFAULT_BACKEND=ruda` vor dem Triton-Import. Standardmäßig 
 Triton wird akzeptiert, Gluon nicht; unbekannte TTIR-Operationen erzeugen Lowering-Fehler. Dieser Pfad ist vom Rust-Kernel-DSL getrennt und garantiert keine Kompatibilität mit jedem Triton-Kernel. GX1-Modus benötigt eine separate Bibliothek außerhalb dieses Software-Workspaces.
 
 [Installation](../../ruda-triton/python/pyproject.toml), [Compilerstufen](../../ruda-triton/python/ruda_triton/compiler.py), [Geräte-/Streamadapter](../../ruda-triton/python/ruda_triton/driver.py).
+
+## 7. Grenzen der direkten PTX-Optimierung
+
+Das direkte Backend optimiert geeignete konstante U32/U64-Divisionen und -Reste, Vektorarithmetik und Konvertierungen, ausgerichtete Speicherzugriffe und Warp-Reduktionen automatisch. Die [PTX-Referenz](ptx.md) beschreibt exakte Ganzzahlsemantik, SM/PTX-Bedingungen, Ausrichtungs-Fallback und Teilnahmeregeln.
+
+Kooperative Zeilenlayout-Suche ist eine explizite API für das IR des Aufrufers, keine automatische Operatorerkennung oder Laufzeit-Autotuning. Reduzierte Genauigkeit ist separat zu aktivieren. Weniger PTX-Befehle beweisen keine schnellere Ausführung; prüfen Sie Registerdruck und Gerätezeiten. Die standardmäßige Wahl von `nvrtc` bleibt unverändert.

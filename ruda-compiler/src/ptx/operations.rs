@@ -239,68 +239,16 @@ impl Emitter {
             return Err(invalid(format!("{opcode} operand types differ: output {:?}, lhs {:?}, rhs {:?}", out.ty, op.lhs, op.rhs)));
         }
         let lhs = self.value(op.lhs)?;
-        if matches!(ty, Scalar::U32 | Scalar::U64) && matches!(opcode, "div" | "rem")
-            && let VariableKind::Constant(ConstantValue::UInt(divisor)) = op.rhs.kind
-            && divisor.is_power_of_two() && (ty == Scalar::U64 || divisor <= u32::MAX as u64)
+        let dst = self.destination(out)?;
+        if matches!(opcode, "div" | "rem")
+            && let Some(ConstantValue::UInt(divisor)) = op.rhs.as_const()
+            && self.unsigned_constant_division(ty, &dst, &lhs, divisor, opcode == "rem")
         {
-            let dst = self.destination(out)?;
-            if opcode == "div" {
-                self.line(format!("shr.{} {dst}, {lhs}, {};", ty.suffix(), divisor.trailing_zeros()));
-            } else {
-                self.line(format!("and.{} {dst}, {lhs}, {};", ty.bits(), divisor - 1));
-            }
             return Ok(());
         }
         let rhs = self.value(op.rhs)?;
-        let dst = self.destination(out)?;
-        if matches!(opcode, "div" | "rem") {
-            if let Some(ruda_core::ir::ConstantValue::UInt(divisor)) = op.rhs.as_const() {
-                if self.unsigned_constant_division(ty, &dst, &lhs, divisor, opcode == "rem") {
-                    return Ok(());
-                }
-            }
-        }
         self.line(format!("{opcode}.{} {dst}, {lhs}, {rhs};", ty.suffix()));
         Ok(())
-    }
-
-    pub(super) fn unsigned_constant_division(
-        &mut self, ty: Scalar, destination: &str, source: &str, divisor: u64, remainder: bool,
-    ) -> bool {
-        let divisor = match ty {
-            Scalar::U32 => divisor as u32 as u64,
-            Scalar::U64 => divisor,
-            _ => return false,
-        };
-        if divisor == 0 { return false; }
-        let suffix = ty.suffix();
-        if divisor.is_power_of_two() {
-            if remainder {
-                self.line(format!("and.{} {destination}, {source}, {};", ty.bits(), divisor - 1));
-            } else {
-                self.line(format!("shr.{suffix} {destination}, {source}, {};", divisor.trailing_zeros()));
-            }
-            return true;
-        }
-        // floor(2^bits / divisor) underestimates the quotient by at most one.
-        // Its product cannot exceed source, so the correction cannot overflow.
-        let reciprocal = (1u128 << (ty.bytes() * 8)) / divisor as u128;
-        let quotient = self.reg(ty);
-        let residual = self.reg(ty);
-        let correction = self.reg(ty);
-        let predicate = self.reg(Scalar::Pred);
-        self.line(format!("mul.hi.{suffix} {quotient}, {source}, {reciprocal};"));
-        self.line(format!("mul.lo.{suffix} {residual}, {quotient}, {divisor};"));
-        self.line(format!("sub.{suffix} {residual}, {source}, {residual};"));
-        self.line(format!("setp.ge.{suffix} {predicate}, {residual}, {divisor};"));
-        if remainder {
-            self.line(format!("selp.{suffix} {correction}, {divisor}, 0, {predicate};"));
-            self.line(format!("sub.{suffix} {destination}, {residual}, {correction};"));
-        } else {
-            self.line(format!("selp.{suffix} {correction}, 1, 0, {predicate};"));
-            self.line(format!("add.{suffix} {destination}, {quotient}, {correction};"));
-        }
-        true
     }
 
     fn arithmetic(&mut self, op: Arithmetic, out: Variable) -> Result<()> {
@@ -367,11 +315,18 @@ impl Emitter {
                 self.binary(out, op, if ty.float() { "div.rn" } else { "div" }, ty)
             }
             Arithmetic::Remainder(op) if ty.integer() => {
-                let source_rhs = self.value(op.rhs)?;
-                let rhs = self.reg(ty);
-                self.line(format!("mov.{} {rhs}, {source_rhs};", ty.suffix()));
+                // Signed remainder needs the divisor after writing the result.
+                // Preserve it for in-place IR; unsigned remainder needs no copy.
+                let rhs = if ty.signed() {
+                    let source_rhs = self.value(op.rhs)?;
+                    let rhs = self.reg(ty);
+                    self.line(format!("mov.{} {rhs}, {source_rhs};", ty.suffix()));
+                    Some(rhs)
+                } else {
+                    None
+                };
                 self.binary(out, op, "rem", ty)?;
-                if ty.signed() {
+                if let Some(rhs) = rhs {
                     let dst = self.destination(out)?;
                     let negative_rem = self.reg(Scalar::Pred);
                     let negative_rhs = self.reg(Scalar::Pred);

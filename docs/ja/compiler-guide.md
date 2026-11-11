@@ -61,3 +61,9 @@ Triton の import 前に `TRITON_DEFAULT_BACKEND=ruda` を設定します。既�
 Triton が対象で Gluon は対象外です。未対応 TTIR は lowering エラーになります。Rust Kernel DSL とは別経路で、すべての Triton kernel への対応を意味しません。GX1 モードにはこの workspace 外の独立ライブラリが必要です。
 
 [依存関係](../../ruda-triton/python/pyproject.toml)・[コンパイラー](../../ruda-triton/python/ruda_triton/compiler.py)・[デバイス／stream](../../ruda-triton/python/ruda_triton/driver.py)。
+
+## 7. 直接 PTX の最適化範囲
+
+直接バックエンドは、条件を満たす U32/U64 の定数除算・剰余、ベクトル算術・変換、整列メモリアクセス、warp リダクションを自動的に lowering します。[PTX リファレンス](ptx.md)に、厳密な整数の意味、SM/PTX の条件、アラインメントのフォールバック、参加マスクの規則を記載しています。
+
+協調行レイアウトの探索は呼び出し側の IR に対する明示的 API であり、自動演算子認識や実行時の自動チューニングではありません。低精度は別の明示的オプションです。PTX 命令数が少なくても高速化を証明しないため、レジスタ使用量とデバイス上の時間を確認してください。デフォルトの `nvrtc` 選択は変わりません。

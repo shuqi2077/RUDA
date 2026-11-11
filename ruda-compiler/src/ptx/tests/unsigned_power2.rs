@@ -49,8 +49,8 @@ fn unsigned_power_of_two_division_and_remainders_are_exact_integer_operations() 
                 assert!(source.contains(&format!("div.{name}")));
             } else {
                 assert!(!source.contains("div.u"));
-                assert!(source.contains(&format!("mul.hi.{name}")));
-                assert!(source.contains(&format!("setp.ge.{name}")));
+                assert!(source.contains(&format!("mul.hi.{name}"))
+                    || source.contains(&format!("selp.{name}")));
             }
             assert!(!source.contains("cvt.f"));
         }

@@ -59,3 +59,9 @@ CUDA 驱动中的直接 PTX 缓存命名空间包含后端标识、SM 与 PTX �
 此前端接收 Triton 而非 Gluon，不支持的 TTIR 操作会返回 lowering 错误。它独立于 Rust Kernel DSL，选择该后端不表示兼容全部 Triton Kernel。GX1 模式需要此软件 workspace 未包含的独立 GX1 库。
 
 源码：[Python 安装元数据](../../ruda-triton/python/pyproject.toml)、[编译阶段](../../ruda-triton/python/ruda_triton/compiler.py)、[设备／流适配](../../ruda-triton/python/ruda_triton/driver.py)。
+
+## 7. 直接 PTX 的优化边界
+
+直接后端自动处理满足条件的 U32／U64 常量除法和取余、向量算术／转换、对齐访存以及 warp 归约。[PTX 参考](ptx.md)说明精确整数语义、SM／PTX 条件、对齐回退和参与掩码规则。
+
+协作行排布探索是作用于调用方 IR 的显式 API，不是自动算子识别或运行时自动调优。低精度是另一个独立的显式选项。PTX 指令更少本身不证明执行更快，还应检查寄存器压力和设备计时。默认的 `nvrtc` 编译器选择不变。

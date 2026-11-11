@@ -48,3 +48,17 @@ Definitionen: [PTX-Modul](../../ruda-compiler/src/ptx/mod.rs), [Compiler-Tests](
 `CoopMma::ExecuteScaled` akzeptiert nur SM 120 mit PTX ab 8.7, ein `16×8×64`-Tile, gepacktes E2M1x2 für A/B, F32 für C/D, E4M3-Skalen und `scales_factor = 4`. Es erzeugt `mxf4nvf4.block_scale.scale_vec::4X` und setzt das Ausgabeziel auf `sm_120a`. Andere Architekturen, Tile-Formen, Skalenformate oder Faktoren werden abgelehnt; ausreichende Fragmentregister sind ebenfalls erforderlich.
 
 [Packed-Verarbeitung](../../ruda-compiler/src/ptx/packed.rs), [Scaled-MMA](../../ruda-compiler/src/ptx/matrix/scaled.rs), [Transport-/Layoutbeispiel](../../ruda-driver/cuda/examples/ptx_packed.rs). Das Beispiel liest exportierte PTX-Dateien und prüft Bytetransport sowie Fragmentkoordinaten, führt aber keine NVFP4-MMA-Arithmetik aus.
+
+## 6. Automatisches Lowering und explizite Layoutwahl
+
+U32/U64-Division und -Rest mit einer zur Kompilierzeit bekannten, von null verschiedenen Konstanten nutzen exakte ganzzahlige Stärkereduktion über den gesamten vorzeichenlosen Eingabebereich. Zweierpotenzen verwenden Shift oder Maske; geeignete andere Divisoren das obere Produktwort und Shift; große Divisoren mit Quotient null oder eins einen Vergleich. Die übrigen verwenden reziproke Multiplikation und eine ganzzahlige Korrektur. Der Rest kann durch Multiply-Add mit dem unteren Produktwort entstehen. Eingabe- und Ausgaberegister dürfen identisch sein. Dies geschieht automatisch bei IR-Konstanten, nicht anhand von Operatornamen oder festen Formen, ohne zusätzliche Einschränkung des Zählers oder Gleitkommakonvertierung. Dynamische Divisoren, Nullteiler und vorzeichenbehaftete Division behalten ihr bisheriges Lowering. Siehe [Ganzzahl-Lowering](../../ruda-compiler/src/ptx/constant_division.rs).
+
+Weitere automatische direkte PTX-Pfade:
+
+- Paarweise FP16/BF16-Arithmetik und Konvertierungen, wenn Typ und Ziel dies unterstützen; paarweise FP32-Addition, -Subtraktion, -Multiplikation und explizites FMA auf SM100+ mit PTX 8.6+. Getrennte Multiplikation und Addition behalten getrennte Rundung; reduzierte Genauigkeit wird nicht implizit aktiviert.
+- Packed-/Vektorbefehle für zusammenhängende Vektorzugriffe, mit Ausrichtungsprüfung und skalarem Fallback bei nicht bewiesener Ausrichtung. Globale Zugriffe erlauben bis zu 32 Byte pro Befehl auf SM100+ mit PTX 8.8+, sonst bis zu 16 Byte auf unterstützten Zielen. Beliebige Slices sind dadurch nicht automatisch ausgerichtet.
+- Warp-Reduktionen lassen dynamische Teilnahmemasken nur weg, wenn Blockgeometrie und Kontrollfluss die Teilnahme beweisen. Partielle oder divergente Warps behalten den Active-Lane-Pfad.
+
+Die [Zeilenlayout-Helfer](../../ruda-compiler/src/ptx/row.rs) `compile_row_variants` und `select_row_variant` kompilieren vom Aufrufer bereitgestelltes IR und wählen Varianten über dessen Korrektheits- und Zeitmessungs-Callback. Sie erkennen keinen Operator anhand seines Kernelnamens und führen beim normalen Kompilieren keine Benchmarks aus. Layout und Genauigkeit sind getrennte Entscheidungen; `FastMath::ReducedPrecision` muss explizit angefordert werden.
+
+PTX ist kein finaler Maschinencode. NVIDIA-Assemblierung kann Befehlsanzahl und Registerbelegung ändern; weniger Befehle garantieren keine kürzere Laufzeit. Vergleichen Sie assemblierten Code und Gerätemessungen für den Zielworkload. Kompilierung oder Assemblierung allein ist kein Leistungsnachweis. Die standardmäßige NVRTC-Auswahl sowie Start- und Argumentverträge bleiben gleich.

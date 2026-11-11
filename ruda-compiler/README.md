@@ -29,6 +29,20 @@ Default features: `ptx`, `cpp-default`.
 | `spirv` | Enable SPIR-V generation. |
 | `mlir` | Enable the MLIR backend and its LLVM dependencies. |
 
+## Integer indexing on NVIDIA
+
+Unsigned U32/U64 division and remainder by compile-time constants use exact
+integer strength reduction. Eligible non-power-of-two divisors use a high-word
+multiply and shift; large divisors use a comparison; remaining divisors use a
+one-step integer correction. Eligible remainder formation uses low-word multiply-add.
+This covers the full unsigned input range, including in-place IR operations,
+without enabling fast math or specializing a kernel for a benchmark shape.
+Dynamic divisors, zero divisors and signed division retain their existing paths.
+The divisor must be visible as an IR constant; this does not specialize runtime
+dimensions automatically. Fewer PTX instructions do not guarantee fewer physical
+registers or shorter GPU execution time; inspect assembled code and measure
+representative workloads before drawing performance conclusions.
+
 ## Vector and warp lowering on NVIDIA
 
 Use vector IR for independent adjacent elements, and plane reductions for
@@ -67,7 +81,9 @@ device, operator, dtype and geometry. Layout selection never opts into
 lower precision. When the application's numerical contract permits it, an
 inverse-square-root instruction may separately opt into the existing
 `FastMath::ReducedPrecision` mode; validate that mode independently.
-The default scalar/NVRTC path is unchanged.
+These layout choices do not change the default NVRTC path or opt scalar kernels
+into reduced precision. See the [PTX reference](../docs/en/ptx.md) for automatic
+lowering and its limits.
 
 ## Links
 

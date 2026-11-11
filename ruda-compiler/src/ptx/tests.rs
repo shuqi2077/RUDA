@@ -17,6 +17,7 @@ mod unsigned_power2;
 mod scaled;
 mod register_arrays;
 mod integer_division;
+mod constant_division;
 mod matrix_registers;
 mod async_groups;
 mod warp_reduce;

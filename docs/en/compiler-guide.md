@@ -59,3 +59,9 @@ Set `TRITON_DEFAULT_BACKEND=ruda` before importing Triton. `RUDA_TRITON_DEVICE=c
 This frontend accepts Triton, not Gluon, and unsupported TTIR operations raise lowering errors. It is separate from the Rust kernel DSL; selecting it does not imply compatibility with every Triton kernel. GX1 mode requires a separate GX1 library not included in this software workspace.
 
 Source: [Python installation metadata](../../ruda-triton/python/pyproject.toml), [compiler stages](../../ruda-triton/python/ruda_triton/compiler.py), [device/stream adapter](../../ruda-triton/python/ruda_triton/driver.py).
+
+## 7. Direct-PTX optimization boundaries
+
+The direct backend automatically lowers eligible constant U32/U64 division and remainder, vector arithmetic/conversions, aligned memory operations and warp reductions. The [PTX reference](ptx.md) explains exact integer semantics, SM/PTX gates, alignment fallback and participation rules.
+
+Cooperative row-layout exploration is an explicit API over caller-provided IR, not automatic operator recognition or runtime autotuning. Reduced precision is a separate opt-in. Fewer PTX instructions alone do not establish faster execution; check register pressure and device timings. The default `nvrtc` compiler choice is unchanged.
