@@ -32,7 +32,7 @@ ruda-tensor = { version = "0.21.94", path = "..", default-features = false }
 ruda-core = { version = "0.1.14", path = "../../ruda-core", default-features = false, features = ["ir"] }
 ruda-autodiff = { version = "0.21.78", path = "../../ruda-autodiff", default-features = false }
 ruda-fusion = { version = "0.21.93", path = "../../ruda-fusion", default-features = false, features = ["std"], optional = true }
-ruda-tensor-host = { version = "0.21.90", path = "../host", default-features = false }
+ruda-tensor-host = { version = "0.21.91", path = "../host", default-features = false }
 ruda-tensor-capture = { version = "0.3.0", path = "../capture", default-features = false, optional = true }
 ruda-tensor-device = { version = "0.21.93", path = "../device", default-features = false, optional = true }
 ruda-driver-cpu = { version = "0.3.0", path = "../../ruda-driver/cpu", optional = true }

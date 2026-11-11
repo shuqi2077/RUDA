@@ -14,7 +14,7 @@ mmap = ["onnx-ir/mmap", "ruda-store/memmap"]
 onnx-ir = { version = "=0.22.0", default-features = false }
 burn-tensor = { version = "=0.22.0", default-features = false }
 ruda-tensor = { version = "0.21.94", path = "../ruda-tensor", features = ["api-std"] }
-ruda-tensor-host = { version = "0.21.90", path = "../ruda-tensor/host" }
+ruda-tensor-host = { version = "0.21.91", path = "../ruda-tensor/host" }
 ruda-model = { version = "0.21.77", path = "../ruda-model", default-features = false, features = ["std"] }
 ruda-nn = { version = "0.21.86", path = "../ruda-nn", default-features = false, features = ["std"] }
 ruda-store = { version = "0.21.76", path = "../ruda-store", default-features = false, features = ["std", "rudapack"] }
