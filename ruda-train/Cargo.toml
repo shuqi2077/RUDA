@@ -21,7 +21,7 @@ path = "examples/mnist.rs"
 required-features = ["mnist"]
 
 [dependencies]
-ruda-model = { version = "0.21.77", path = "../ruda-model", default-features = false, features = ["std", "dataset"] }
+ruda-model = { version = "0.21.78", path = "../ruda-model", default-features = false, features = ["std", "dataset"] }
 ruda-optim = { version = "0.21.84", path = "../ruda-optim", default-features = false, features = ["std"] }
 ruda-nn = { version = "0.21.86", path = "../ruda-nn", optional = true, default-features = false, features = ["std"] }
 ruda-store = { version = "0.21.76", path = "../ruda-store", optional = true, default-features = false, features = ["std", "pytorch"] }
