@@ -40,7 +40,7 @@ toml = ["ruda-runtime/toml"]
 [dependencies]
 ruda-core = { path = "../ruda-core", version = "0.1.14", default-features = false, features = ["ir", "tensor"], optional = true }
 ruda-runtime = { path = "../ruda-runtime", version = "0.1.34", default-features = false }
-ruda-kernel = { path = "../ruda-kernel", version = "0.1.58", optional = true }
+ruda-kernel = { path = "../ruda-kernel", version = "0.1.59", optional = true }
 ruda-driver-cuda = { path = "../ruda-driver/cuda", version = "0.2.11", optional = true }
 ruda-driver-hip = { path = "../ruda-driver/hip", version = "0.2.11", optional = true }
 ruda-driver-wgpu = { path = "../ruda-driver/wgpu", version = "0.2.11", optional = true }
