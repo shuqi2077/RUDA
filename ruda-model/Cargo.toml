@@ -261,7 +261,7 @@ default-features = false
 optional = true
 default-features = false
 path = "../ruda-tensor/device"
-version = "0.21.93"
+version = "0.21.94"
 features = [ "cuda",]
 
 [target."cfg(target_has_atomic = \"ptr\")".dependencies.ruda-fusion]
