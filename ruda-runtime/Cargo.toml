@@ -17,7 +17,7 @@ runtime-default = [ "runtime", "runtime-std", "runtime-persistence", "runtime-ch
 runtime-persistence = ["runtime-std", "ruda-core/environment-persistence"]
 runtime-exclusive-memory-only = [ "runtime",]
 runtime-profile-tracy = [ "runtime", "dep:tracy-client",]
-runtime-std = [ "runtime", "ruda-core/std", "ruda-core/compiler-std", "toml", "dirs", "thiserror/std",]
+runtime-std = [ "runtime", "ruda-core/std", "ruda-core/compiler-std", "toml", "dirs", "thiserror/std", "dep:libc",]
 runtime-storage-bytes = [ "runtime",]
 runtime-tracing = [ "runtime", "dep:tracing", "ruda-core/tracing", "ruda-core/tracing",]
 runtime-monitoring = ["monitoring-amdgpu-busy-percent", "monitoring-intel-idle-residency", "monitoring-nvml", "monitoring-gpu-engine-counters", "monitoring-io-accelerator"]
@@ -29,6 +29,11 @@ monitoring-io-accelerator = ["runtime-std", "dep:objc2-core-foundation", "dep:ob
 
 [target.'cfg(target_os = "linux")'.dependencies.nvml-wrapper]
 version = "0.13"
+optional = true
+
+[target.'cfg(target_os = "linux")'.dependencies.libc]
+version = "0.2"
+default-features = false
 optional = true
 
 [target.'cfg(target_os = "windows")'.dependencies.windows-sys]

@@ -7,16 +7,24 @@
 extern crate derive_new;
 extern crate alloc;
 
+mod backend;
 /// Backend implementations of tensor operations.
 pub mod dispatch;
 /// Scalar element contracts for device tensor operations.
 pub mod element;
-mod backend;
 mod runtime;
 
 pub use backend::DeviceBackend;
+pub use element::{BoolElement, FloatElement, IntElement, TensorElement};
 pub use runtime::DeviceRuntime;
-pub use element::{BoolElement, TensorElement, FloatElement, IntElement};
+/// Native inference operators over the same RudaTensor/runtime as this backend.
+#[cfg(feature = "native-inference")]
+pub mod inference {
+    pub use rublas::tensor_float_quant as quantization;
+    pub use rudnn::inference::*;
+    pub use ruprim::{bitpack, topk};
+    pub use rurand::tensor::sampling;
+}
 pub use ruda_kernel::tensor::RudaTensor;
 
 #[cfg(feature = "fusion")]

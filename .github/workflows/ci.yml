@@ -78,7 +78,13 @@ jobs:
               cargo check --locked -p ruDNN-host --no-default-features --features std --example attention_broadcast_bench
           - name: Attention strategy contract tests
             key: attention-contract
-            command: cargo test --locked -p ruDNN --features std,tensor-attention-autotune --lib attention::tensor::support::tests
+            command: |
+              cargo test --locked -p ruDNN --features std,tensor-attention-autotune --lib attention::tensor::support::tests
+              cargo test --locked -p ruDNN --features tensor-inference --test native-inference-ptx
+              cargo test --locked -p ruDNN --features tensor-inference --test native-inference-all-ptx
+              cargo check --locked -p ruda-llm --features native-inference
+              cargo check --locked -p ruda-tensor-device --features native-inference
+              cargo test --locked -p ruDNN --features tensor-inference --lib paged_attention::plan::tests
           - name: FFT scalar and no_std
             key: fft-scalar
             command: |
@@ -142,6 +148,7 @@ jobs:
               cargo test --locked -p ruda-llm --lib --test generation_control --test api_compatibility
               cargo test --locked -p ruda-llm --features tensor-parallel --lib huggingface::tests::tensor_parallel_config_retains_mistral_and_qwen_window_policy
               cargo check --locked -p ruda-llm --example sampling_bench --example runtime_replicas
+              cargo check --locked -p ruda-llm --features device-sampling
           - name: Device libraries compile
             key: device-libraries
             command: cargo check --locked --lib -p rublas -p ruPRIM -p ruDNN -p ruRAND -p ruda-fft -p ruSPARSE -p ruTENSOR -p ruCCL -p ruda-llm -p ruda-optim --features ruda-optim/gradient-guard-device

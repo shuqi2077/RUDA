@@ -207,7 +207,10 @@ pub enum Instruction<D: Dialect> {
     IsNan(UnaryInstruction<D>),
     IsInf(UnaryInstruction<D>),
     SyncThreads,
-    SyncStorage { device_scope: bool },
+    SyncStorage {
+        device_scope: bool,
+    },
+    FenceSystem,
     SyncWarp,
     ThreadFence,
     ProxyAsyncToSharedFence,
@@ -234,7 +237,10 @@ pub enum Instruction<D: Dialect> {
     NativeAddress(BinaryInstruction<D>),
     NativeLoad(UnaryInstruction<D>),
     WorkgroupUniformLoad(IndexInstruction<D>),
-    NativeStore { address: Variable<D>, value: Variable<D> },
+    NativeStore {
+        address: Variable<D>,
+        value: Variable<D>,
+    },
     AtomicLoad(UnaryInstruction<D>),
     AtomicStore(UnaryInstruction<D>),
     AtomicSwap(BinaryInstruction<D>),
@@ -389,7 +395,10 @@ impl<D: Dialect> Display for Instruction<D> {
                 len,
             } => {
                 for i in 0..*len {
-                    writeln!(f, "{out}[{offset_out} + {out_index} + {i}] = {input}[{offset_input} + {in_index} + {i}];")?;
+                    writeln!(
+                        f,
+                        "{out}[{offset_out} + {out_index} + {i}] = {input}[{offset_input} + {in_index} + {i}];"
+                    )?;
                 }
                 Ok(())
             }
@@ -476,8 +485,10 @@ for ({i_ty} {i} = {start}; {i} {cmp} {end}; {increment}) {{
                 let vf = usize::max(vf, vf_then);
                 let vf = usize::max(vf, vf_or_else);
                 if item_out.is_atomic() {
-                    assert!(vf_cond == 1 && item_then == item_out && item_or_else == item_out,
-                        "atomic pointer selection requires matching pointees and a scalar condition");
+                    assert!(
+                        vf_cond == 1 && item_then == item_out && item_or_else == item_out,
+                        "atomic pointer selection requires matching pointees and a scalar condition"
+                    );
                 }
                 let should_broadcast = vf > 1 && !item_out.is_atomic();
 
@@ -598,7 +609,10 @@ for ({i_ty} {i} = {start}; {i} {cmp} {end}; {increment}) {{
             Instruction::IsNan(it) => IsNan::format(f, &it.input, &it.out),
             Instruction::IsInf(it) => IsInf::format(f, &it.input, &it.out),
             Instruction::SyncThreads => D::compile_instruction_sync_threads(f),
-            Instruction::SyncStorage { device_scope } => D::compile_instruction_sync_storage(f, *device_scope),
+            Instruction::SyncStorage { device_scope } => {
+                D::compile_instruction_sync_storage(f, *device_scope)
+            }
+            Instruction::FenceSystem => writeln!(f, "__threadfence_system();"),
             Instruction::SyncWarp => D::compile_instruction_sync_warp(f),
             Instruction::ThreadFence => f.write_str("__threadfence();\n"),
             Instruction::Round(it) => Round::format(f, &it.input, &it.out),
@@ -643,14 +657,22 @@ for ({i_ty} {i} = {start}; {i} {cmp} {end}; {increment}) {{
             }
             Instruction::NativeAddress(BinaryInstruction { lhs, rhs, out }) => {
                 let output = out.fmt_left();
-                writeln!(f, "{output} = reinterpret_cast<unsigned long long>(&{lhs}[{rhs}]);")
+                writeln!(
+                    f,
+                    "{output} = reinterpret_cast<unsigned long long>(&{lhs}[{rhs}]);"
+                )
             }
             Instruction::NativeLoad(UnaryInstruction { input, out }) => {
                 let ty = out.item();
                 let output = out.fmt_left();
                 writeln!(f, "{output} = *reinterpret_cast<const {ty}*>({input});")
             }
-            Instruction::WorkgroupUniformLoad(IndexInstruction { list, index, vector_size, out }) => {
+            Instruction::WorkgroupUniformLoad(IndexInstruction {
+                list,
+                index,
+                vector_size,
+                out,
+            }) => {
                 D::compile_instruction_sync_threads(f)?;
                 let mut item = list.item();
                 if *vector_size != 0 {
@@ -665,11 +687,17 @@ for ({i_ty} {i} = {start}; {i} {cmp} {end}; {increment}) {{
                 };
                 if matches!(item.elem, Elem::Atomic(_)) {
                     let pointer = Variable::tmp_declared(item);
-                    writeln!(f, "{address_space}{item}* {pointer} = reinterpret_cast<{address_space}{item}*>({base}) + {index};")?;
+                    writeln!(
+                        f,
+                        "{address_space}{item}* {pointer} = reinterpret_cast<{address_space}{item}*>({base}) + {index};"
+                    )?;
                     D::compile_atomic_load(f, &pointer, out)
                 } else {
                     let output = out.fmt_left();
-                    writeln!(f, "{output} = reinterpret_cast<const {address_space}{item}*>({base})[{index}];")
+                    writeln!(
+                        f,
+                        "{output} = reinterpret_cast<const {address_space}{item}*>({base})[{index}];"
+                    )
                 }
             }
             Instruction::NativeStore { address, value } => {
@@ -965,14 +993,23 @@ impl<D: Dialect> Remainder<D> {
 
         let is_int = matches!(
             out.elem(),
-            Elem::I8 | Elem::I16 | Elem::I32 | Elem::I64 | Elem::U8 | Elem::U16 | Elem::U32 | Elem::U64
+            Elem::I8
+                | Elem::I16
+                | Elem::I32
+                | Elem::I64
+                | Elem::U8
+                | Elem::U16
+                | Elem::U32
+                | Elem::U64
         );
         let out_elem = out.elem();
         let rem_expr = |lhs, rhs, floor: &str| {
             if is_int {
                 let rem = format!("(({lhs}) % ({rhs}))");
                 if matches!(out_elem, Elem::I8 | Elem::I16 | Elem::I32 | Elem::I64) {
-                    format!("({out_elem})(({rhs}) == -1 ? 0 : ({rem} + (({rem} != 0 && (({rem} < 0) != (({rhs}) < 0))) ? ({rhs}) : 0)))")
+                    format!(
+                        "({out_elem})(({rhs}) == -1 ? 0 : ({rem} + (({rem} != 0 && (({rem} < 0) != (({rhs}) < 0))) ? ({rhs}) : 0)))"
+                    )
                 } else {
                     format!("({out_elem}){rem}")
                 }
@@ -1177,22 +1214,42 @@ impl<V: Display, D: Dialect> Display for EnsureBoolArg<'_, V, D> {
 #[cfg(test)]
 mod atomic_pointer_tests {
     use super::*;
-    use crate::cpp::{cuda::{CudaDialect, mma::CudaWmmaCompiler}, shared::AtomicKind};
+    use crate::cpp::{
+        cuda::{CudaDialect, mma::CudaWmmaCompiler},
+        shared::AtomicKind,
+    };
 
     type D = CudaDialect<CudaWmmaCompiler>;
 
     #[test]
     fn integer_remainder_preserves_width_and_divisor_sign() {
-        for elem in [Elem::I8, Elem::I16, Elem::I32, Elem::I64, Elem::U8, Elem::U16, Elem::U32, Elem::U64] {
+        for elem in [
+            Elem::I8,
+            Elem::I16,
+            Elem::I32,
+            Elem::I64,
+            Elem::U8,
+            Elem::U16,
+            Elem::U32,
+            Elem::U64,
+        ] {
             for width in [1, 2, 4] {
                 let item = Item::<D>::new(elem, width, false);
                 let source = Instruction::Remainder(BinaryInstruction {
                     lhs: Variable::Named { name: "lhs", item },
                     rhs: Variable::Named { name: "rhs", item },
                     out: Variable::LocalConst { id: 0, item },
-                }).to_string();
-                assert!(!source.contains("float") && !source.contains("floor"), "{source}");
-                assert_eq!(source.contains("!= 0"), matches!(elem, Elem::I8 | Elem::I16 | Elem::I32 | Elem::I64), "{source}");
+                })
+                .to_string();
+                assert!(
+                    !source.contains("float") && !source.contains("floor"),
+                    "{source}"
+                );
+                assert_eq!(
+                    source.contains("!= 0"),
+                    matches!(elem, Elem::I8 | Elem::I16 | Elem::I32 | Elem::I64),
+                    "{source}"
+                );
                 assert!(source.contains('%'), "{source}");
             }
         }
@@ -1200,19 +1257,34 @@ mod atomic_pointer_tests {
 
     fn bitcast(from: Item<D>, to: Item<D>) -> String {
         Instruction::Bitcast(UnaryInstruction {
-            input: Variable::Named { name: "address", item: from },
+            input: Variable::Named {
+                name: "address",
+                item: from,
+            },
             out: Variable::LocalConst { id: 1, item: to },
-        }).to_string()
+        })
+        .to_string()
     }
 
     #[test]
     fn native_atomic_address_cast_preserves_pointee_width() {
-        for kind in [AtomicKind::F16, AtomicKind::BF16, AtomicKind::F32, AtomicKind::F64,
-            AtomicKind::I32, AtomicKind::U32, AtomicKind::I64, AtomicKind::U64] {
+        for kind in [
+            AtomicKind::F16,
+            AtomicKind::BF16,
+            AtomicKind::F32,
+            AtomicKind::F64,
+            AtomicKind::I32,
+            AtomicKind::U32,
+            AtomicKind::I64,
+            AtomicKind::U64,
+        ] {
             for width in [1, 2, 4, 8] {
                 let item = Item::new(Elem::Atomic(kind), width, false);
                 let source = bitcast(Item::scalar(Elem::U64, false), item);
-                assert!(source.contains(&format!("reinterpret_cast<{item}*>(address)")), "{source}");
+                assert!(
+                    source.contains(&format!("reinterpret_cast<{item}*>(address)")),
+                    "{source}"
+                );
                 assert!(!source.contains('&'), "{source}");
             }
         }
@@ -1220,21 +1292,38 @@ mod atomic_pointer_tests {
 
     #[test]
     fn ordinary_bitcast_keeps_reference_semantics() {
-        let source = bitcast(Item::scalar(Elem::U32, false), Item::scalar(Elem::F32, false));
-        assert!(source.contains("reinterpret_cast<float const&>(address)"), "{source}");
+        let source = bitcast(
+            Item::scalar(Elem::U32, false),
+            Item::scalar(Elem::F32, false),
+        );
+        assert!(
+            source.contains("reinterpret_cast<float const&>(address)"),
+            "{source}"
+        );
     }
 
     #[test]
     #[should_panic(expected = "native atomic pointer must be reinterpreted from a u64 address")]
     fn atomic_address_cast_rejects_non_address_input() {
-        bitcast(Item::scalar(Elem::U32, false), Item::scalar(Elem::Atomic(AtomicKind::U32), false));
+        bitcast(
+            Item::scalar(Elem::U32, false),
+            Item::scalar(Elem::Atomic(AtomicKind::U32), false),
+        );
     }
 
     #[test]
     fn mutable_atomic_bindings_declare_once_and_select_whole_pointers() {
         use ruda_core::ir::ConstantValue;
-        for kind in [AtomicKind::F16, AtomicKind::BF16, AtomicKind::F32, AtomicKind::F64,
-            AtomicKind::I32, AtomicKind::U32, AtomicKind::I64, AtomicKind::U64] {
+        for kind in [
+            AtomicKind::F16,
+            AtomicKind::BF16,
+            AtomicKind::F32,
+            AtomicKind::F64,
+            AtomicKind::I32,
+            AtomicKind::U32,
+            AtomicKind::I64,
+            AtomicKind::U64,
+        ] {
             for width in [1, 2, 4, 8] {
                 let item = Item::<D>::new(Elem::Atomic(kind), width, false);
                 let out = Variable::LocalMut { id: 1, item };
@@ -1243,14 +1332,28 @@ mod atomic_pointer_tests {
                 assert_eq!(declaration, format!("{item}* {out};\n"));
                 let index = Instruction::Index(IndexInstruction {
                     list: Variable::SharedArray(0, item, 1),
-                    index: Variable::Constant(ConstantValue::UInt(0), Item::scalar(Elem::U32, false)),
-                    out, vector_size: 0,
-                }).to_string();
+                    index: Variable::Constant(
+                        ConstantValue::UInt(0),
+                        Item::scalar(Elem::U32, false),
+                    ),
+                    out,
+                    vector_size: 0,
+                })
+                .to_string();
                 assert!(index.starts_with(&format!("{out} = &")), "{index}");
                 let copy = Instruction::Assign(UnaryInstruction { input: other, out }).to_string();
                 assert_eq!(copy, format!("{out} = {other};\n"));
-                let cond = Variable::Named { name: "condition", item: Item::scalar(Elem::Bool, false) };
-                let select = Instruction::Select { cond, then: out, or_else: other, out }.to_string();
+                let cond = Variable::Named {
+                    name: "condition",
+                    item: Item::scalar(Elem::Bool, false),
+                };
+                let select = Instruction::Select {
+                    cond,
+                    then: out,
+                    or_else: other,
+                    out,
+                }
+                .to_string();
                 assert_eq!(select, format!("{out} = (condition) ? {out} : {other};\n"));
             }
         }

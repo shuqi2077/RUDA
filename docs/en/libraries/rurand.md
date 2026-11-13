@@ -117,3 +117,5 @@ The function does not invoke a tensor allocator. Other handles sharing that stor
 Tensor-level functions panic if launching returns an error; the underlying entry point above returns `Result<(), LaunchError>`. Successful submission does not mean GPU execution has finished. Read the tensor back or await client synchronization. `into_data_sync` panics on readback failure; use asynchronous `into_data(tensor).await` to propagate readback errors.
 
 API reference: [Tensor interfaces](../../../ruRAND/src/tensor/mod.rs), [Seed state](../../../ruRAND/src/state.rs), [Distributions](../../../ruRAND/src/distributions/mod.rs).
+
+Feature `tensor` also exposes [native device filtering, categorical sampling and speculative verification](../flashinfer.md) through `rurand::tensor::sampling`.

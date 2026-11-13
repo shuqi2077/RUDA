@@ -26,6 +26,8 @@
 
 ## 编程指南
 
+- [FlashInfer 原生迁移](flashinfer.md)：Rust 接口、数据格式与设备缓冲区约定（不包含于 v0.3.0 wheel）。
+
 - [Ruda 编程指南](programming-guide.md)：主机与设备、执行层级、内存、同步及安全边界。
 - [张量与框架指南](tensor-framework.md)：设备张量、领域库分发、融合与自动微分。
 - [张量实用示例](tensor-recipes.md)：矩阵乘、布局、dtype 选择与梯度的完整 CPU 示例。

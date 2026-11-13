@@ -1,7 +1,7 @@
+use petgraph::{graph::EdgeIndex, visit::EdgeRef};
 use ruda_core::ir::{
     Builtin, Operation, OperationReflect, Plane, Synchronization, Variable, VariableKind,
 };
-use petgraph::{graph::EdgeIndex, visit::EdgeRef};
 use std::collections::{HashMap, HashSet};
 
 use crate::optimizer::{ControlFlow, NodeIndex, Optimizer};
@@ -27,7 +27,8 @@ impl Uniformity {
     fn run(&mut self, opt: &Optimizer) {
         for parameter in &opt.root_scope.parameters {
             self.variable_uniformity.insert(*parameter, false);
-            if let VariableKind::LocalMut { id } | VariableKind::LocalConst { id } = parameter.kind {
+            if let VariableKind::LocalMut { id } | VariableKind::LocalConst { id } = parameter.kind
+            {
                 self.variable_uniformity.insert(
                     Variable::new(VariableKind::Versioned { id, version: 0 }, parameter.ty),
                     false,
@@ -98,7 +99,7 @@ impl Uniformity {
                     Synchronization::SyncRuda | Synchronization::SyncStorage => {
                         block_uniform = true;
                     }
-                    Synchronization::SyncAsyncProxyShared => {}
+                    Synchronization::SyncAsyncProxyShared | Synchronization::FenceSystem => {}
                     Synchronization::SyncPlane => {
                         // TODO: not sure
                     }

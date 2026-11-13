@@ -1,5 +1,5 @@
-use ruda_core::ir::Synchronization;
 use melior::{dialect::func, ir::attribute::FlatSymbolRefAttribute};
+use ruda_core::ir::Synchronization;
 
 use crate::mlir::visitor::prelude::*;
 
@@ -20,6 +20,9 @@ impl<'a> Visitor<'a> {
             Synchronization::SyncPlane => {} // NOOP plane size is 1 on CPU
             Synchronization::SyncStorage => {
                 panic!("SyncStorage is not supported")
+            }
+            Synchronization::FenceSystem => {
+                panic!("native peer memory fence is not supported in MLIR")
             }
             Synchronization::SyncAsyncProxyShared => {
                 panic!("SyncProxyShared is not supported")

@@ -1,19 +1,30 @@
 use crate::runtime::id::KernelId;
 use core::hash::Hash;
-use ruda_core::hash::{StableHash, StableHasher};
 use hashbrown::HashMap;
 #[cfg(persistence)]
 use ruda_core::environment::persistence::{CacheOption, Namespace, StoreOptions};
 use ruda_core::environment::persistence::{Store, StoreKey, StoreValue};
 use ruda_core::environment::records::{Record, RecordEffect, RecordLevel, Span};
+use ruda_core::hash::{StableHash, StableHasher};
 
 /// Platform-specific build identifier, changes on rebuild
 pub type BuildId = Option<&'static [u8]>;
 
-/// Pre-hashed build ID
+/// Cached identity of the compiled image (build ID or image contents).
 pub fn build_id_hash() -> StableHash {
-    StableHasher::hash_one(&buildid::build_id())
+    #[cfg(all(target_os = "linux", feature = "runtime-std"))]
+    {
+        linux_image::build_hash()
+    }
+    #[cfg(not(all(target_os = "linux", feature = "runtime-std")))]
+    {
+        StableHasher::hash_one(&buildid::build_id())
+    }
 }
+
+#[cfg(all(target_os = "linux", feature = "runtime-std"))]
+#[path = "linux_image.rs"]
+mod linux_image;
 
 /// A store for `backend`'s compiled artifacts, or `None` when compilation
 /// caching is disabled or the target has nowhere durable to put them.
@@ -31,7 +42,10 @@ pub fn compilation_store<K: StoreKey, V: StoreValue>(
     {
         use crate::runtime::config::RuntimeConfig;
 
-        if !crate::runtime::config::RudaRuntimeConfig::get().compilation.environment_cache {
+        if !crate::runtime::config::RudaRuntimeConfig::get()
+            .compilation
+            .environment_cache
+        {
             return None;
         }
 
@@ -140,14 +154,18 @@ impl CompilationRecording {
     /// Start recording `kernel_id`'s trip.
     pub fn new(kernel_id: &KernelId) -> Self {
         use crate::runtime::config::{RudaRuntimeConfig, RuntimeConfig};
-        let open = RudaRuntimeConfig::get().compilation.environment_cache
-            .then(Span::new).flatten().map(|span| OpenRecording {
-            span,
-            kernel: kernel_id.type_name(),
-            key: KernelCacheKey::new(kernel_id, build_id_hash()),
-            ir: None,
-            source: None,
-        });
+        let open = RudaRuntimeConfig::get()
+            .compilation
+            .environment_cache
+            .then(Span::new)
+            .flatten()
+            .map(|span| OpenRecording {
+                span,
+                kernel: kernel_id.type_name(),
+                key: KernelCacheKey::new(kernel_id, build_id_hash()),
+                ir: None,
+                source: None,
+            });
         Self { open }
     }
 
@@ -217,7 +235,7 @@ impl CompilationRecording {
 pub struct KernelCacheKey {
     /// Hash of the [kernel id](KernelId).
     pub id: StableHash,
-    /// Hash of the [build id](buildid::build_id).
+    /// Hash of the compiled image identity, invalidating rebuilt kernel bodies.
     pub build_id: StableHash,
 }
 
@@ -263,9 +281,7 @@ impl<K: Eq + Hash, V> CompilationCache<K, V> {
     pub fn mirroring<SK: StoreKey, SV: StoreValue>(store: &Option<Store<SK, SV>>) -> Self {
         Self {
             entries: HashMap::new(),
-            generation: store
-                .is_some()
-                .then(ruda_core::environment::generation),
+            generation: store.is_some().then(ruda_core::environment::generation),
         }
     }
 

@@ -176,3 +176,5 @@ Integer powers are in `ruprim::elementwise::binary::integer_power`:
 Use `Scalar::Int(-2)` for a negative exponent rather than converting the exponent to floating point. Indexing and elementwise interfaces return device tensors directly. To retain an input for other operations, pass cloned handles as in the example and keep the tensor returned by each operation.
 
 API reference: [Reductions](../../../ruPRIM/src/reduce/tensor/base.rs), [Scans](../../../ruPRIM/src/scan/tensor.rs), [Indexing](../../../ruPRIM/src/indexing/mod.rs), [Integer powers](../../../ruPRIM/src/elementwise/binary/integer_power.rs).
+
+Feature `tensor-bitpack` exposes `ruprim::bitpack::{packbits,segment_packbits}`; see [native inference operators](../flashinfer.md).

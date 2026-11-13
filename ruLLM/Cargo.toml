@@ -10,6 +10,8 @@ repository = "https://github.com/shuqi2077/RUDA"
 name = "rullm"
 
 [features]
+native-inference = ["device-sampling", "rudnn/tensor-inference", "rublas/tensor-float-quant", "ruda-tensor-device/native-inference"]
+device-sampling = ["dep:rurand", "rurand/tensor"]
 default = []
 stack-autotune = ["ruda-tensor-device/stack-autotune"]
 cann = ["dep:ruda-driver-cann", "rublas/cann", "rudnn/cann"]
@@ -25,6 +27,7 @@ gpu-kv = ["serving", "nvidia", "ruda-driver-cuda/ucx-bridge"]
 distributed = ["ruda-optim/collective", "dep:ruccl"]
 
 [dependencies]
+rurand = { package = "ruRAND", version = "0.3.0", path = "../ruRAND", default-features = false, features = ["std"], optional = true }
 ruda-driver-cann = { version = "0.3.0", path = "../ruda-driver/cann", optional = true }
 ruda-model = { version = "0.21.78", path = "../ruda-model", default-features = false, features = ["std"] }
 ruda-autodiff = { version = "0.21.79", path = "../ruda-autodiff", default-features = false, features = ["std"] }
@@ -82,6 +85,11 @@ required-features = ["nvidia"]
 
 [dev-dependencies]
 ruda-tensor-host = { path = "../ruda-tensor/host", default-features = false, features = ["std"] }
+
+[[test]]
+name = "device-sampling-cuda"
+path = "tests/device_sampling_cuda.rs"
+required-features = ["device-sampling", "nvidia-ptx"]
 
 [[example]]
 name = "qwen2_stream"

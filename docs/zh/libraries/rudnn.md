@@ -244,3 +244,5 @@ fn delta_prefill<R: Runtime>(
 4. 将 `dweights` 传入路由训练反向，得到 logits 梯度。
 
 `combine_backward` 默认使用 `CombineGradientStrategy::Serial`，`combine_backward_with_strategy` 可选择 `Plane`。专家 `backward` 独立于前向策略，默认 scalar；`backward_with_strategy` 接收 `GroupedStrategy::Scalar`、`Auto` 或 `TensorCore`。Tensor Core 反向要求受支持的 F16/BF16 硬件；`Auto` 只针对能力不支持回退，不吞掉编译或执行错误。
+
+新增原生推理能力与兼容范围见 [FlashInfer 原生迁移](../flashinfer.md)。

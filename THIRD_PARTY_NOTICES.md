@@ -4,6 +4,19 @@ Ruda reuses some operators and optimization implementations from open-source pro
 
 Ruda 复用了 CubeCL、Burn 等开源项目的部分算子和优化实现。相关代码保留其原有版权及许可证声明。
 
+## FlashInfer native inference interfaces and storage formats
+
+The native inference modules in `ruDNN/src/inference`, block-float formats in
+`ruBLAS/src/tensor_float_quant.rs`, and sampling/selection interfaces in
+`ruRAND` / `ruPRIM` reference FlashInfer v0.7.4, revision
+`77039051b0be921788dc2784ec41423b558878ec`:
+https://github.com/flashinfer-ai/flashinfer/tree/v0.7.4.
+Copyright 2025-2026 NVIDIA; Copyright 2023-2026 FlashInfer community.
+The NVFP4 attention centering, K permutation and 64-row scale format also
+reference SageAttention, Copyright (c) 2025 by SageAttention team.
+These references are licensed under Apache-2.0 (license text below). The Rust
+implementations use RUDA-generated kernels, not bundled FlashInfer CUDA/PTX.
+
 ## Recursive SOL-ExecBench routing
 
 `ruDNN/src/warp_routing.rs` adapts the warp-per-row grouped routing design from

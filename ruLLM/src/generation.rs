@@ -1,9 +1,9 @@
 use crate::{LlamaConfig, LlamaForCausalLm, LlamaKvCache, PackedLlamaForCausalLm};
+use ruda::runtime::server::ComputeServer;
+use ruda_tensor::DeviceOps;
 use ruda_tensor::api::backend::Backend;
 use ruda_tensor::api::{FloatDType, Int, Tensor, TensorData};
-use ruda_tensor::DeviceOps;
 use ruda_tensor_device::{BoolElement, DeviceBackend, DeviceRuntime, FloatElement, IntElement};
-use ruda::runtime::server::ComputeServer;
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -11,24 +11,29 @@ use std::fmt::{Display, Formatter};
 mod awq;
 mod control;
 use control::StopSequenceMatcher;
-use std::ops::ControlFlow;
 pub use control::{
-    ControlledGenerationOutput, GenerationCancellation, GenerationControl,
-    GenerationEvent, GenerationFinishReason,
+    ControlledGenerationOutput, GenerationCancellation, GenerationControl, GenerationEvent,
+    GenerationFinishReason,
 };
+use std::ops::ControlFlow;
+#[cfg(feature = "device-sampling")]
+pub mod device_sampling;
 mod sampling;
-mod speculative;
+#[cfg(feature = "device-sampling")]
+pub use device_sampling::{DeviceTokenSampler, generate_causal_sampled_device};
 mod session;
-pub use session::*;
-pub use speculative::{
-    SpeculativeGenerationConfig, SpeculativeGenerationOutput, SpeculativeModel,
-    SpeculativeStats, generate_causal_speculative, generate_causal_speculative_stream,
-};
+mod speculative;
 pub use awq::{generate_greedy_awq, generate_sampled_awq};
 pub use sampling::{
-    SamplingConfig, SamplingOptions, SamplingGenerationConfig, TokenSampler, TokenSamplerState, generate_causal_sampled, generate_sampled,
-    generate_sampled_packed, generate_sampled_packed_ruda, generate_causal_sampled_stream,
-    generate_causal_sampled_stream_with_options,
+    SamplingConfig, SamplingGenerationConfig, SamplingOptions, TokenSampler, TokenSamplerState,
+    generate_causal_sampled, generate_causal_sampled_stream,
+    generate_causal_sampled_stream_with_options, generate_sampled, generate_sampled_packed,
+    generate_sampled_packed_ruda,
+};
+pub use session::*;
+pub use speculative::{
+    SpeculativeGenerationConfig, SpeculativeGenerationOutput, SpeculativeModel, SpeculativeStats,
+    generate_causal_speculative, generate_causal_speculative_stream,
 };
 
 /// Deterministic autoregressive decoding options. Sampling is deliberately not
@@ -142,10 +147,17 @@ where
     I: IntElement,
     BT: BoolElement;
 
-impl<'a,R,F,I,BT> RudaPackedModel<'a,R,F,I,BT>
-where R: DeviceRuntime,F: FloatElement,I: IntElement,BT: BoolElement {
+impl<'a, R, F, I, BT> RudaPackedModel<'a, R, F, I, BT>
+where
+    R: DeviceRuntime,
+    F: FloatElement,
+    I: IntElement,
+    BT: BoolElement,
+{
     /// Borrow actual packed projection storage; no weights are copied or repacked.
-    pub fn new(model: &'a PackedLlamaForCausalLm<DeviceBackend<R,F,I,BT>>) -> Self {Self(model)}
+    pub fn new(model: &'a PackedLlamaForCausalLm<DeviceBackend<R, F, I, BT>>) -> Self {
+        Self(model)
+    }
 }
 
 impl<R, F, I, BT> CausalModel<DeviceBackend<R, F, I, BT>> for RudaPackedModel<'_, R, F, I, BT>
@@ -261,7 +273,13 @@ fn generate_greedy_impl<B: Backend, M: CausalModel<B>>(
     generation: &GreedyGenerationConfig,
     device: &B::Device,
 ) -> Result<TokenGenerationOutput, GenerationError> {
-    generate_causal_greedy(model, &model_config.into(), prompt_token_ids, generation, device)
+    generate_causal_greedy(
+        model,
+        &model_config.into(),
+        prompt_token_ids,
+        generation,
+        device,
+    )
 }
 
 pub fn generate_causal_greedy<B: Backend, M: CausalModel<B>>(
@@ -271,9 +289,14 @@ pub fn generate_causal_greedy<B: Backend, M: CausalModel<B>>(
     generation: &GreedyGenerationConfig,
     device: &B::Device,
 ) -> Result<TokenGenerationOutput, GenerationError> {
-    generate_with_selector(model, model_limits, prompt_token_ids, generation, device, |model, logits| {
-        model.greedy_token(logits)
-    })
+    generate_with_selector(
+        model,
+        model_limits,
+        prompt_token_ids,
+        generation,
+        device,
+        |model, logits| model.greedy_token(logits),
+    )
 }
 
 /// Cached greedy generation with token-level streaming and request controls.
@@ -290,8 +313,14 @@ pub fn generate_causal_greedy_stream<B: Backend, M: CausalModel<B>>(
     on_token: impl FnMut(GenerationEvent<'_>) -> ControlFlow<()>,
 ) -> Result<ControlledGenerationOutput, GenerationError> {
     generate_with_selector_stream(
-        model, model_limits, prompt_token_ids, generation, control, device,
-        |model, logits| model.greedy_token(logits), on_token,
+        model,
+        model_limits,
+        prompt_token_ids,
+        generation,
+        control,
+        device,
+        |model, logits| model.greedy_token(logits),
+        on_token,
     )
 }
 
@@ -304,10 +333,16 @@ fn generate_with_selector<B: Backend, M: CausalModel<B>>(
     select: impl FnMut(&M, Tensor<B, 3>) -> Result<i32, GenerationError>,
 ) -> Result<TokenGenerationOutput, GenerationError> {
     Ok(generate_with_selector_stream(
-        model, model_config, prompt_token_ids, generation,
-        &GenerationControl::default(), device, select,
+        model,
+        model_config,
+        prompt_token_ids,
+        generation,
+        &GenerationControl::default(),
+        device,
+        select,
         |_| ControlFlow::Continue(()),
-    )?.output)
+    )?
+    .output)
 }
 
 pub(crate) fn validate_generation(
@@ -316,7 +351,9 @@ pub(crate) fn validate_generation(
     generation: &GreedyGenerationConfig,
 ) -> Result<BTreeSet<i32>, GenerationError> {
     if model_config.vocab_size == 0 || model_config.vocab_size - 1 > i32::MAX as usize {
-        return Err(GenerationError("model requires a nonempty i32-indexed vocabulary".into()));
+        return Err(GenerationError(
+            "model requires a nonempty i32-indexed vocabulary".into(),
+        ));
     }
     if prompt_token_ids.is_empty() {
         return Err(GenerationError(
@@ -393,7 +430,8 @@ fn generate_with_selector_stream<B: Backend, M: CausalModel<B>>(
     let mut matcher = StopSequenceMatcher::new(&control.stop_token_sequences);
     let mut cache = model.new_cache();
     let prompt = Tensor::<B, 2, Int>::from_data(
-        TensorData::new(prompt_token_ids.to_vec(), [1, prompt_token_ids.len()]), device,
+        TensorData::new(prompt_token_ids.to_vec(), [1, prompt_token_ids.len()]),
+        device,
     );
     let mut logits = model.try_forward_cached_last(prompt, &mut cache)?;
     let mut finish_reason = GenerationFinishReason::MaxNewTokens;
@@ -413,7 +451,8 @@ fn generate_with_selector_stream<B: Backend, M: CausalModel<B>>(
         let token = select(model, logits)?;
         if token < 0 || token as usize >= model_config.vocab_size {
             return Err(GenerationError(format!(
-                "selected token {token} is outside vocabulary [0, {})", model_config.vocab_size
+                "selected token {token} is outside vocabulary [0, {})",
+                model_config.vocab_size
             )));
         }
         output.token_ids.push(token);
@@ -447,7 +486,10 @@ fn generate_with_selector_stream<B: Backend, M: CausalModel<B>>(
     }
     B::sync(device)
         .map_err(|error| GenerationError(format!("generation did not complete: {error}")))?;
-    Ok(ControlledGenerationOutput { output, finish_reason })
+    Ok(ControlledGenerationOutput {
+        output,
+        finish_reason,
+    })
 }
 
 fn read_last_logits<B: Backend>(logits: Tensor<B, 3>) -> Result<Vec<f32>, GenerationError> {
@@ -457,7 +499,8 @@ fn read_last_logits<B: Backend>(logits: Tensor<B, 3>) -> Result<Vec<f32>, Genera
             "expected non-empty batch-one logits, got [{batch}, {sequence}, {vocabulary}]"
         )));
     }
-    logits.slice([0..1, sequence - 1..sequence, 0..vocabulary])
+    logits
+        .slice([0..1, sequence - 1..sequence, 0..vocabulary])
         .cast(FloatDType::F32)
         .try_into_data()
         .map_err(|error| GenerationError(format!("cannot read sampling logits: {error}")))?
@@ -476,18 +519,29 @@ fn greedy_token<B: Backend>(logits: Tensor<B, 3>) -> Result<i32, GenerationError
         .slice([0..1, sequence - 1..sequence, 0..vocabulary])
         .cast(FloatDType::F32);
     let valid = row.clone().is_nan().bool_not();
-    let maximum = row.clone().mask_fill(valid.clone().bool_not(), f32::NEG_INFINITY).max_dim(2);
-    let candidates = row.clone().equal(maximum).bool_and(valid.clone())
-        .int().cast(ruda_tensor::api::IntDType::I64);
+    let maximum = row
+        .clone()
+        .mask_fill(valid.clone().bool_not(), f32::NEG_INFINITY)
+        .max_dim(2);
+    let candidates = row
+        .clone()
+        .equal(maximum)
+        .bool_and(valid.clone())
+        .int()
+        .cast(ruda_tensor::api::IntDType::I64);
     let empty = candidates.clone().max_dim(2).equal_elem(0);
-    let index = candidates.mask_where(empty, valid.int().cast(ruda_tensor::api::IntDType::I64)).argmax(2);
+    let index = candidates
+        .mask_where(empty, valid.int().cast(ruda_tensor::api::IntDType::I64))
+        .argmax(2);
     let invalid = row.gather(2, index.clone()).is_nan();
-    let selected = index.mask_fill(invalid, -1)
+    let selected = index
+        .mask_fill(invalid, -1)
         .try_into_data()
         .map_err(|error| GenerationError(format!("cannot read generation argmax: {error}")))?
         .to_vec::<i64>()
         .map_err(|error| GenerationError(format!("cannot decode generation argmax: {error}")))?;
-    let index = *selected.first()
+    let index = *selected
+        .first()
         .ok_or_else(|| GenerationError("generation argmax was empty".into()))?;
     if index == -1 {
         return Err(GenerationError("all vocabulary logits are NaN".into()));
@@ -516,10 +570,12 @@ where
     BT: BoolElement,
 {
     match mode {
-        crate::runtime::KernelMode::Automatic =>
-            generate_greedy_packed_ruda(model, model_config, prompt_token_ids, generation, device),
-        crate::runtime::KernelMode::Portable =>
-            generate_greedy_packed(model, model_config, prompt_token_ids, generation, device),
+        crate::runtime::KernelMode::Automatic => {
+            generate_greedy_packed_ruda(model, model_config, prompt_token_ids, generation, device)
+        }
+        crate::runtime::KernelMode::Portable => {
+            generate_greedy_packed(model, model_config, prompt_token_ids, generation, device)
+        }
     }
 }
 
@@ -540,9 +596,11 @@ where
     BT: BoolElement,
 {
     match mode {
-        crate::runtime::KernelMode::Automatic =>
-            generate_sampled_packed_ruda(model, model_config, prompt_token_ids, generation, device),
-        crate::runtime::KernelMode::Portable =>
-            generate_sampled_packed(model, model_config, prompt_token_ids, generation, device),
+        crate::runtime::KernelMode::Automatic => {
+            generate_sampled_packed_ruda(model, model_config, prompt_token_ids, generation, device)
+        }
+        crate::runtime::KernelMode::Portable => {
+            generate_sampled_packed(model, model_config, prompt_token_ids, generation, device)
+        }
     }
 }

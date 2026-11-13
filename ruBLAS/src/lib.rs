@@ -3,8 +3,6 @@
 #[cfg(feature = "cann")]
 pub mod cann;
 
-
-
 #[cfg(feature = "kernel-ir")]
 #[allow(unsafe_code)]
 pub mod kernel_ir;
@@ -18,6 +16,9 @@ pub mod tensor_matmul;
 
 #[cfg(feature = "tensor-int4")]
 pub mod tensor_int4;
+
+#[cfg(feature = "tensor-float-quant")]
+pub mod tensor_float_quant;
 
 #[cfg(feature = "tensor-nf4")]
 #[allow(unsafe_code)]

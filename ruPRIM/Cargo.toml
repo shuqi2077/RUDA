@@ -14,6 +14,8 @@ default = ["kernel-ir", "std"]
 tensor-reduce = ["kernel-ir", "ruda-kernel/device-tensor", "dep:ruda-core"]
 tensor-reduce-autotune = ["tensor-reduce"]
 tensor-scan = ["kernel-ir", "ruda-kernel/device-tensor", "dep:ruda-core"]
+tensor-bitpack = ["kernel-ir", "ruda-kernel/device-tensor", "dep:ruda-core", "dep:bytemuck"]
+tensor-topk = ["kernel-ir", "ruda-kernel/device-tensor", "dep:ruda-core", "dep:bytemuck"]
 device-primitives = ["kernel-ir", "ruda-kernel/device-tensor", "dep:ruda-core"]
 cuda-tests = ["device-primitives", "ruda-test-runtime/cuda"]
 indexing = ["elementwise"]
@@ -26,6 +28,7 @@ extended = ["heavy"]
 full = ["extended", "device-primitives"]
 
 [dependencies]
+bytemuck = { version = "1.16.1", optional = true }
 ruda = { version = "0.1.61", path = "../ruda", default-features = false }
 half = { version = "=2.7.1", features = ["alloc", "num-traits", "serde"] }
 

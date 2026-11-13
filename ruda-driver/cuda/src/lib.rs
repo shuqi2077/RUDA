@@ -2,12 +2,12 @@
 extern crate derive_new;
 extern crate alloc;
 
-mod execution;
-mod device;
-mod runtime;
-mod compiler_backend;
 #[cfg(test)]
 mod atomic_tests;
+mod compiler_backend;
+mod device;
+mod execution;
+mod runtime;
 #[cfg(feature = "ucx-bridge")]
 pub mod ucx_bridge;
 
@@ -94,6 +94,8 @@ pub use diagnostics::{CudaDriverProbeError, query_driver_api_version};
 
 /// Checked stream/event integration using the native RUDA device service.
 pub mod interop;
+/// Owned CUDA IPC allocations and stream-ordered cross-rank events.
+pub mod peer;
 
 /// Explicit fixed-buffer native kernel graphs (not arbitrary stream capture).
 pub mod graph;

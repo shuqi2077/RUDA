@@ -81,7 +81,9 @@ impl<P: WgslLowering> WgslCompiler<P> {
             }
             ruda::Operation::NonSemantic(_) => {}
             ruda::Operation::TypedMemory(_) => unreachable!(),
-            ruda::Operation::Pointer(_) => unreachable!("pointer values are lowered before WGSL emission"),
+            ruda::Operation::Pointer(_) => {
+                unreachable!("pointer values are lowered before WGSL emission")
+            }
             ruda::Operation::Barrier(_) => {
                 panic!("Barrier isn't supported on wgpu.")
             }
@@ -180,7 +182,11 @@ impl<P: WgslLowering> WgslCompiler<P> {
         instructions.push(wgsl::Instruction::Subgroup(op));
     }
 
-    pub(super) fn compile_branch(&mut self, instructions: &mut Vec<wgsl::Instruction>, branch: ruda::Branch) {
+    pub(super) fn compile_branch(
+        &mut self,
+        instructions: &mut Vec<wgsl::Instruction>,
+        branch: ruda::Branch,
+    ) {
         match branch {
             ruda::Branch::If(mut op) => instructions.push(wgsl::Instruction::If {
                 cond: self.compile_variable(op.cond),
@@ -203,7 +209,9 @@ impl<P: WgslLowering> WgslCompiler<P> {
                     .collect(),
             }),
             ruda::Branch::Return => instructions.push(wgsl::Instruction::Return),
-            ruda::Branch::ReturnValue(_) => panic!("Scalar matrix callbacks are not supported by WGSL"),
+            ruda::Branch::ReturnValue(_) => {
+                panic!("Scalar matrix callbacks are not supported by WGSL")
+            }
             // No unreachable hint in WGSL
             ruda::Branch::Unreachable => instructions.push(wgsl::Instruction::Return),
             ruda::Branch::Break => instructions.push(wgsl::Instruction::Break),
@@ -239,11 +247,18 @@ impl<P: WgslLowering> WgslCompiler<P> {
                 instructions.push(wgsl::Instruction::StorageBarrier);
                 instructions.push(wgsl::Instruction::WorkgroupBarrier)
             }
+            ruda::Synchronization::FenceSystem => {
+                panic!("system-scope peer memory is not supported in WGSL")
+            }
             ruda::Synchronization::SyncAsyncProxyShared => panic!("TMA is not supported in WGSL"),
         };
     }
 
-    pub(super) fn compile_comment(&mut self, instructions: &mut Vec<wgsl::Instruction>, content: String) {
+    pub(super) fn compile_comment(
+        &mut self,
+        instructions: &mut Vec<wgsl::Instruction>,
+        content: String,
+    ) {
         instructions.push(wgsl::Instruction::Comment { content })
     }
 

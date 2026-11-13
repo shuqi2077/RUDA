@@ -7,11 +7,11 @@
 //! before and after the launch.
 
 use ruda_kernel::dsl as kernel_dsl;
-use ruda_test_runtime::TestRuntime;
 use ruda_kernel::dsl::prelude::ComputeClient;
-use ruda_kernel::dsl::server::self;
+use ruda_kernel::dsl::server;
 use ruda_kernel::dsl::server::LaunchError;
 use ruda_kernel::dsl::server::ServerError;
+use ruda_test_runtime::TestRuntime;
 
 use crate::ExecutionOutcome;
 

@@ -12,6 +12,10 @@ repository = "https://github.com/shuqi2077/RUDA"
 name = "rudnn"
 
 [features]
+tensor-inference = ["dep:serde_json", "tensor-paged-attention", "rublas/tensor-float-quant", "dep:ruprim", "ruprim/tensor-topk"]
+inference-autotune = ["tensor-inference", "std"]
+inference-cuda = ["tensor-inference", "dep:ruda-driver-cuda"]
+inference-cuda-tests = ["tensor-inference", "dep:ruda-driver-cuda", "ruda-driver-cuda/direct-ptx"]
 ptx-export = ["kernel-ir", "ruda-kernel/device-tensor", "ruda-kernel/packed-quantization", "rublas/ptx-export"]
 tensor-paged-attention = ["kernel-ir", "ruda-kernel/device-tensor", "ruda-kernel/packed-quantization"]
 cann = ["dep:ruda-driver-cann"]
@@ -39,6 +43,8 @@ extended = ["heavy"]
 full = ["extended"]
 
 [dependencies]
+serde_json = { version = "1.0", optional = true }
+ruda-driver-cuda = { version = "0.3.0", path = "../ruda-driver/cuda", default-features = false, features = ["std"], optional = true }
 ruda-driver-cann = { version = "0.3.0", path = "../ruda-driver/cann", optional = true }
 rublas = { version = "0.3.0", path = "../ruBLAS", default-features = false, optional = true }
 ruda-kernel = { version = "0.1.59", path = "../ruda-kernel", default-features = false, features = ["kernel-ir"], optional = true }
@@ -50,11 +56,23 @@ serde = { version = "1.0.204", default-features = false, features = ["derive", "
 ruda-test-utils = { version = "0.3.0", path = "../ruda-test-utils", default-features = false, optional = true }
 
 [dev-dependencies]
+rurand = { package = "ruRAND", path = "../ruRAND", default-features = false, features = ["std", "tensor"] }
+ruprim = { package = "ruPRIM", path = "../ruPRIM", default-features = false, features = ["std", "tensor-bitpack"] }
 ruda-compiler = { path = "../ruda-compiler", default-features = false, features = ["ptx"] }
 ruda-test-runtime = { path = "../ruda-test-runtime", default-features = false, features = ["test-runtime"] }
 ruda-test-utils = { path = "../ruda-test-utils", default-features = false }
 pretty_assertions = "1.4"
 trybuild = "1"
+
+[[test]]
+name = "native-inference-cuda"
+path = "tests/native_inference_cuda.rs"
+required-features = ["inference-cuda-tests"]
+
+[[test]]
+name = "native-inference-ptx"
+path = "tests/native_inference_ptx.rs"
+required-features = ["tensor-inference"]
 
 [[test]]
 name = "attention"
@@ -103,3 +121,12 @@ version = "0.2.19"
 default-features = false
 features = ["libm"]
 optional = true
+
+[[test]]
+name = "native-inference-all-ptx"
+path = "tests/native_inference_all_ptx.rs"
+required-features = ["tensor-inference"]
+[[test]]
+name = "native-inference-expanded-cuda"
+path = "tests/native_inference_expanded_cuda.rs"
+required-features = ["inference-cuda-tests"]

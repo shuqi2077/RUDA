@@ -244,3 +244,5 @@ For expert training, call `SwiGluExperts::forward_dispatched_training(&dispatche
 4. Pass `dweights` to the router-training backward for logits gradients.
 
 `combine_backward` defaults to `CombineGradientStrategy::Serial`; `combine_backward_with_strategy` permits `Plane`. Expert `backward` defaults to scalar independently of the forward strategy; `backward_with_strategy` accepts `GroupedStrategy::Scalar`, `Auto` or `TensorCore`. Tensor Core backward requires supported F16/BF16 hardware; `Auto` falls back only for unsupported capabilities, not compilation or execution failures.
+
+See [native inference migration](../flashinfer.md) for planned paged attention, LSE-state composition, cache transfers and the pinned FlashInfer coverage.

@@ -7862,14 +7862,17 @@ dependencies = [
  "num-traits",
  "pretty_assertions",
  "ruPRIM",
+ "ruRAND",
  "rublas",
  "ruda-compiler",
  "ruda-core",
  "ruda-driver-cann",
+ "ruda-driver-cuda",
  "ruda-kernel",
  "ruda-test-runtime",
  "ruda-test-utils",
  "serde",
+ "serde_json",
  "trybuild",
 ]
 
@@ -7904,6 +7907,7 @@ dependencies = [
 name = "ruPRIM"
 version = "0.3.0"
 dependencies = [
+ "bytemuck",
  "half",
  "num-traits",
  "pretty_assertions",
@@ -7934,6 +7938,7 @@ dependencies = [
 name = "ruRAND"
 version = "0.3.0"
 dependencies = [
+ "bytemuck",
  "half",
  "num-traits",
  "pretty_assertions",
@@ -8459,6 +8464,7 @@ dependencies = [
  "rmp-serde",
  "ruCCL",
  "ruDNN",
+ "ruRAND",
  "rublas",
  "ruda",
  "ruda-autodiff",
@@ -8636,6 +8642,7 @@ dependencies = [
  "enumset",
  "futures-util",
  "hashbrown 0.16.1",
+ "libc",
  "log",
  "md5",
  "num-traits",

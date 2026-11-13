@@ -1,7 +1,7 @@
 use super::{Result, emit::Emitter, invalid, types::Scalar, unsupported};
 use ruda_core::ir::{
-    Arithmetic, BinaryOperator, Branch, Comparison, ConstantValue, Instruction, Metadata, Operation, Operator,
-    Synchronization, Variable, VariableKind,
+    Arithmetic, BinaryOperator, Branch, Comparison, ConstantValue, Instruction, Metadata,
+    Operation, Operator, Synchronization, Variable, VariableKind,
 };
 
 impl Emitter {
@@ -13,26 +13,39 @@ impl Emitter {
         if let Operation::Branch(branch) = instruction.operation {
             let before = self.static_warp_mask.take();
             let epoch = self.lane_exit_epoch;
-            if matches!(branch, Branch::Return | Branch::ReturnValue(_) | Branch::Break | Branch::Unreachable) {
+            if matches!(
+                branch,
+                Branch::Return | Branch::ReturnValue(_) | Branch::Break | Branch::Unreachable
+            ) {
                 self.lane_exit_epoch += 1;
             }
             self.branch(branch)?;
-            if self.lane_exit_epoch == epoch { self.static_warp_mask = before; }
+            if self.lane_exit_epoch == epoch {
+                self.static_warp_mask = before;
+            }
             return Ok(());
         }
-        if matches!(instruction.operation, Operation::NonSemantic(ruda_core::ir::NonSemantic::Print { .. })) {
+        if matches!(
+            instruction.operation,
+            Operation::NonSemantic(ruda_core::ir::NonSemantic::Print { .. })
+        ) {
             self.lane_exit_epoch += 1;
             self.static_warp_mask = None;
         }
         let output = instruction.out;
         self.instruction_inner(instruction)?;
         if let Some(out) = output
-            && matches!(out.kind, ruda_core::ir::VariableKind::LocalMut { .. }
-                | ruda_core::ir::VariableKind::LocalConst { .. }
-                | ruda_core::ir::VariableKind::Versioned { .. })
-            && !matches!(out.ty,
+            && matches!(
+                out.kind,
+                ruda_core::ir::VariableKind::LocalMut { .. }
+                    | ruda_core::ir::VariableKind::LocalConst { .. }
+                    | ruda_core::ir::VariableKind::Versioned { .. }
+            )
+            && !matches!(
+                out.ty,
                 ruda_core::ir::Type::Scalar(ruda_core::ir::StorageType::Atomic(_))
-                | ruda_core::ir::Type::Vector(ruda_core::ir::StorageType::Atomic(_), _))
+                    | ruda_core::ir::Type::Vector(ruda_core::ir::StorageType::Atomic(_), _)
+            )
             && let Ok(ty) = Scalar::memory_element(out.ty)
             && ty.narrow()
         {
@@ -61,7 +74,11 @@ impl Emitter {
                 .ok_or_else(|| invalid("instruction requires an output"))
         };
         match instruction.operation {
-            Operation::Copy(value) if matches!(value.kind, ruda_core::ir::VariableKind::Matrix { .. }) => self.matrix_copy(out()?, value),
+            Operation::Copy(value)
+                if matches!(value.kind, ruda_core::ir::VariableKind::Matrix { .. }) =>
+            {
+                self.matrix_copy(out()?, value)
+            }
             Operation::Copy(value) => self.copy(out()?, value),
             Operation::Arithmetic(op) => self.arithmetic(op, out()?),
             Operation::Bitwise(op) => self.bitwise(op, out()?),
@@ -91,8 +108,18 @@ impl Emitter {
                 }
                 Operator::Cast(op) => self.cast(out()?, op.input),
                 Operator::Reinterpret(op) => self.reinterpret(out()?, op.input),
-                Operator::CopyMemory(op) => self.copy_memory(op.input, op.in_index, None, out()?, op.out_index, None, 1),
-                Operator::CopyMemoryBulk(op) => self.copy_memory(op.input, op.in_index, Some(op.offset_input), out()?, op.out_index, Some(op.offset_out), op.len),
+                Operator::CopyMemory(op) => {
+                    self.copy_memory(op.input, op.in_index, None, out()?, op.out_index, None, 1)
+                }
+                Operator::CopyMemoryBulk(op) => self.copy_memory(
+                    op.input,
+                    op.in_index,
+                    Some(op.offset_input),
+                    out()?,
+                    op.out_index,
+                    Some(op.offset_out),
+                    op.len,
+                ),
                 Operator::And(op) => self.binary(out()?, op, "and", Scalar::Pred),
                 Operator::Or(op) => self.binary(out()?, op, "or", Scalar::Pred),
                 Operator::Not(op) => {
@@ -151,22 +178,37 @@ impl Emitter {
             Operation::Branch(branch) => self.branch(branch),
             Operation::Barrier(operation) => self.barrier(operation, instruction.out),
             Operation::Tma(operation) => self.tma(operation, instruction.out),
-            Operation::NonSemantic(ruda_core::ir::NonSemantic::EnterDebugScope | ruda_core::ir::NonSemantic::ExitDebugScope) => Ok(()),
-            Operation::NonSemantic(ruda_core::ir::NonSemantic::Print { format_string, args })
-                if format_string.starts_with(super::inline_asm::INLINE_ASM_MARKER) =>
-            {
+            Operation::NonSemantic(
+                ruda_core::ir::NonSemantic::EnterDebugScope
+                | ruda_core::ir::NonSemantic::ExitDebugScope,
+            ) => Ok(()),
+            Operation::NonSemantic(ruda_core::ir::NonSemantic::Print {
+                format_string,
+                args,
+            }) if format_string.starts_with(super::inline_asm::INLINE_ASM_MARKER) => {
                 self.inline_asm(&format_string, &args)
             }
-            Operation::NonSemantic(ruda_core::ir::NonSemantic::Print { format_string, args }) => {
-                self.printf(&format_string, &args)
-            }
+            Operation::NonSemantic(ruda_core::ir::NonSemantic::Print {
+                format_string,
+                args,
+            }) => self.printf(&format_string, &args),
             Operation::NonSemantic(ruda_core::ir::NonSemantic::Comment { content }) => {
-                for line in content.lines() { self.line(format!("// {line}")); }
+                for line in content.lines() {
+                    self.line(format!("// {line}"));
+                }
                 Ok(())
             }
             Operation::Marker(ruda_core::ir::Marker::Free(var))
-                if matches!(var.kind, ruda_core::ir::VariableKind::SharedArray { .. } | ruda_core::ir::VariableKind::Shared { .. }) =>
+                if matches!(
+                    var.kind,
+                    ruda_core::ir::VariableKind::SharedArray { .. }
+                        | ruda_core::ir::VariableKind::Shared { .. }
+                ) =>
             {
+                Ok(())
+            }
+            Operation::Synchronization(Synchronization::FenceSystem) => {
+                self.line("membar.sys;");
                 Ok(())
             }
             Operation::Synchronization(Synchronization::SyncRuda) => {
@@ -190,7 +232,9 @@ impl Emitter {
             }
             Operation::Synchronization(Synchronization::SyncAsyncProxyShared) => {
                 if self.target.sm < 90 || self.target.version < (8, 0) {
-                    return Err(unsupported("async proxy fence requires SM >= 90 and PTX >= 8.0"));
+                    return Err(unsupported(
+                        "async proxy fence requires SM >= 90 and PTX >= 8.0",
+                    ));
                 }
                 self.line("fence.proxy.async.shared::cta;");
                 Ok(())
@@ -236,7 +280,10 @@ impl Emitter {
         ty: Scalar,
     ) -> Result<()> {
         if out.ty != op.lhs.ty || out.ty != op.rhs.ty || Scalar::of(out.ty)? != ty {
-            return Err(invalid(format!("{opcode} operand types differ: output {:?}, lhs {:?}, rhs {:?}", out.ty, op.lhs, op.rhs)));
+            return Err(invalid(format!(
+                "{opcode} operand types differ: output {:?}, lhs {:?}, rhs {:?}",
+                out.ty, op.lhs, op.rhs
+            )));
         }
         let lhs = self.value(op.lhs)?;
         let dst = self.destination(out)?;
@@ -253,7 +300,9 @@ impl Emitter {
 
     fn arithmetic(&mut self, op: Arithmetic, out: Variable) -> Result<()> {
         let ty = Scalar::of(out.ty)?;
-        if ty.fp8() { return self.fp8_arithmetic(op, out, ty); }
+        if ty.fp8() {
+            return self.fp8_arithmetic(op, out, ty);
+        }
         if let Arithmetic::Neg(op) = &op {
             return self.numeric_sign(out, op.input, false);
         }
@@ -283,8 +332,12 @@ impl Emitter {
             Arithmetic::ArcTan2(op) => return self.binary_math(out, op.clone(), true),
             Arithmetic::Degrees(op) => return self.angle_conversion(out, op.input, true),
             Arithmetic::Radians(op) => return self.angle_conversion(out, op.input, false),
-            Arithmetic::Modulo(op) if ty.float() => return self.floating_remainder(out, op.clone(), false),
-            Arithmetic::Remainder(op) if ty.float() => return self.floating_remainder(out, op.clone(), true),
+            Arithmetic::Modulo(op) if ty.float() => {
+                return self.floating_remainder(out, op.clone(), false);
+            }
+            Arithmetic::Remainder(op) if ty.float() => {
+                return self.floating_remainder(out, op.clone(), true);
+            }
             Arithmetic::Erf(op) => return self.error_function(out, op.input),
             Arithmetic::Recip(op) => return self.reciprocal(out, op.input),
             Arithmetic::InverseSqrt(op) => return self.emit_square_root(out, op.input, true),
@@ -297,7 +350,9 @@ impl Emitter {
             Arithmetic::Trunc(op) => return self.round_float(out, op.input, "rzi"),
             _ => {}
         }
-        if ty.half() { return self.half_arithmetic(op, out, ty); }
+        if ty.half() {
+            return self.half_arithmetic(op, out, ty);
+        }
         if ty == Scalar::Pred {
             return Err(invalid("predicate arithmetic"));
         }
@@ -334,10 +389,15 @@ impl Emitter {
                     let nonzero = self.reg(Scalar::Pred);
                     self.line(format!("setp.lt.{} {negative_rem}, {dst}, 0;", ty.suffix()));
                     self.line(format!("setp.lt.{} {negative_rhs}, {rhs}, 0;", ty.suffix()));
-                    self.line(format!("xor.pred {adjust}, {negative_rem}, {negative_rhs};"));
+                    self.line(format!(
+                        "xor.pred {adjust}, {negative_rem}, {negative_rhs};"
+                    ));
                     self.line(format!("setp.ne.{} {nonzero}, {dst}, 0;", ty.suffix()));
                     self.line(format!("and.pred {adjust}, {adjust}, {nonzero};"));
-                    self.line(format!("@{adjust} add.{} {dst}, {dst}, {rhs};", ty.suffix()));
+                    self.line(format!(
+                        "@{adjust} add.{} {dst}, {dst}, {rhs};",
+                        ty.suffix()
+                    ));
                 }
                 Ok(())
             }
@@ -345,9 +405,7 @@ impl Emitter {
             Arithmetic::MulHi(op) if ty.integer() => self.binary(out, op, "mul.hi", ty),
             Arithmetic::SaturatingAdd(op) if ty.integer() => self.saturating(out, op, false),
             Arithmetic::SaturatingSub(op) if ty.integer() => self.saturating(out, op, true),
-            Arithmetic::Modulo(op) if ty.integer() => {
-                self.binary(out, op, "rem", ty)
-            }
+            Arithmetic::Modulo(op) if ty.integer() => self.binary(out, op, "rem", ty),
             Arithmetic::Fma(op) if ty.float() => {
                 if op.a.ty != out.ty || op.b.ty != out.ty || op.c.ty != out.ty {
                     return Err(invalid("FMA operand types differ"));
@@ -390,7 +448,10 @@ impl Emitter {
         let rhs_ty = Scalar::of(operands.rhs.ty)?;
         let ty = if lhs_ty == rhs_ty {
             lhs_ty
-        } else if matches!((lhs_ty, rhs_ty), (Scalar::U32, Scalar::U64) | (Scalar::U64, Scalar::U32)) {
+        } else if matches!(
+            (lhs_ty, rhs_ty),
+            (Scalar::U32, Scalar::U64) | (Scalar::U64, Scalar::U32)
+        ) {
             Scalar::U64
         } else {
             return Err(invalid("comparison operand types differ"));
@@ -424,9 +485,14 @@ impl Emitter {
             a = self.half_to_f32(ty, &a)?;
             b = self.half_to_f32(ty, &b)?;
             Scalar::F32
-        } else { ty };
+        } else {
+            ty
+        };
         let dst = self.destination(out)?;
-        self.line(format!("setp.{code}.{} {dst}, {a}, {b};", comparison_ty.suffix()));
+        self.line(format!(
+            "setp.{code}.{} {dst}, {a}, {b};",
+            comparison_ty.suffix()
+        ));
         Ok(())
     }
 
@@ -455,20 +521,32 @@ impl Emitter {
             let source = self.value(input)?;
             let (source, from) = if from.half() {
                 (self.half_to_f32(from, &source)?, Scalar::F32)
-            } else { (source, from) };
+            } else {
+                (source, from)
+            };
             let dst = self.destination(out)?;
             let nan = self.reg(Scalar::Pred);
-            self.line(format!("setp.nan.{} {nan}, {source}, {source};", from.suffix()));
+            self.line(format!(
+                "setp.nan.{} {nan}, {source}, {source};",
+                from.suffix()
+            ));
             let suffix = match to {
-                Scalar::I8 => "s8", Scalar::U8 => "u8",
-                Scalar::I16 => "s16", Scalar::U16 => "u16",
+                Scalar::I8 => "s8",
+                Scalar::U8 => "u8",
+                Scalar::I16 => "s16",
+                Scalar::U16 => "u16",
                 _ => to.suffix(),
             };
-            self.line(format!("cvt.rzi.{suffix}.{} {dst}, {source};", from.suffix()));
+            self.line(format!(
+                "cvt.rzi.{suffix}.{} {dst}, {source};",
+                from.suffix()
+            ));
             self.line(format!("@{nan} mov.{} {dst}, 0;", to.suffix()));
             return Ok(());
         }
-        if to.half() || from.half() { return self.half_cast(out, input, to, from); }
+        if to.half() || from.half() {
+            return self.half_cast(out, input, to, from);
+        }
         if !to.integer() || !from.integer() {
             return Err(unsupported("non-integer cast"));
         }

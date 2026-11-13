@@ -26,6 +26,8 @@ These guides describe the `v0.3.0` release line. Rust crates keep independent ve
 
 ## Programming guides
 
+- [Native inference operators and FlashInfer migration](flashinfer.md): native Rust APIs, formats and device-buffer contracts (not bundled in v0.3.0 wheels).
+
 - [Ruda programming guide](programming-guide.md): host and device code, execution hierarchy, memory, synchronization, and safety.
 - [Tensors and frameworks](tensor-framework.md): device tensors, library dispatch, fusion, and automatic differentiation.
 - [Tensor recipes](tensor-recipes.md): complete CPU examples for matrix multiplication, layouts, dtype selection, and gradients.

@@ -14,17 +14,29 @@ pub mod workgroup_uniform_load {
     use ruda_core::ir::{Instruction, PointerOp};
 
     pub fn expand<E: RudaPrimitive>(scope: &mut Scope, value: NativeExpand<E>) -> NativeExpand<E> {
-        let pointer = scope.reference_pointer(*value.expand).expect("uniform load requires an address-preserving reference");
-        let out = scope.create_local(pointer.ty.pointer_type().expect("reference pointer").pointee());
+        let pointer = scope
+            .reference_pointer(*value.expand)
+            .expect("uniform load requires an address-preserving reference");
+        let out = scope.create_local(
+            pointer
+                .ty
+                .pointer_type()
+                .expect("reference pointer")
+                .pointee(),
+        );
         let operation = PointerOp::UniformLoad { pointer };
-        operation.validate(Some(*out)).expect("uniform load requires a matching shared-memory pointee");
+        operation
+            .validate(Some(*out))
+            .expect("uniform load requires a matching shared-memory pointee");
         scope.register(Instruction::new(operation, *out));
         out.into()
     }
 }
 
 /// Atomically load a shared-memory value uniformly after synchronizing the workgroup.
-pub fn workgroup_uniform_load_atomic<E: crate::dsl::frontend::RudaPrimitive<Scalar: crate::dsl::frontend::Numeric>>(
+pub fn workgroup_uniform_load_atomic<
+    E: crate::dsl::frontend::RudaPrimitive<Scalar: crate::dsl::frontend::Numeric>,
+>(
     _value: &crate::dsl::frontend::Atomic<E>,
 ) -> E {
     unexpanded!()
@@ -36,13 +48,25 @@ pub mod workgroup_uniform_load_atomic {
     use ruda_core::ir::{Instruction, PointerOp};
 
     pub fn expand<E: RudaPrimitive<Scalar: Numeric>>(
-        scope: &mut Scope, value: NativeExpand<Atomic<E>>,
+        scope: &mut Scope,
+        value: NativeExpand<Atomic<E>>,
     ) -> NativeExpand<E> {
-        let pointer = scope.reference_pointer(*value.expand).expect("uniform atomic load requires an address-preserving reference");
-        let pointee = pointer.ty.pointer_type().expect("reference pointer").pointee();
-        let out = scope.create_local(ruda_core::ir::Type::scalar(pointee.elem_type()).with_vector_size(pointee.vector_size()));
+        let pointer = scope
+            .reference_pointer(*value.expand)
+            .expect("uniform atomic load requires an address-preserving reference");
+        let pointee = pointer
+            .ty
+            .pointer_type()
+            .expect("reference pointer")
+            .pointee();
+        let out = scope.create_local(
+            ruda_core::ir::Type::scalar(pointee.elem_type())
+                .with_vector_size(pointee.vector_size()),
+        );
         let operation = PointerOp::UniformLoad { pointer };
-        operation.validate(Some(*out)).expect("uniform atomic load requires a matching shared-memory atomic pointee");
+        operation
+            .validate(Some(*out))
+            .expect("uniform atomic load requires a matching shared-memory atomic pointee");
         scope.register(Instruction::new(operation, *out));
         out.into()
     }
@@ -112,5 +136,18 @@ pub mod sync_async_proxy_shared {
 
     pub fn expand(scope: &mut Scope) {
         scope.register(Synchronization::SyncAsyncProxyShared)
+    }
+}
+
+/// Publish/acquire global writes across peer devices. This is a memory fence,
+/// not a CTA barrier; each publishing unit must call it before its ready flag.
+/// Supported on native CUDA/HIP; shader-only targets reject system scope.
+pub fn fence_system() {
+    unexpanded!()
+}
+pub mod fence_system {
+    use super::*;
+    pub fn expand(scope: &mut Scope) {
+        scope.register(Synchronization::FenceSystem);
     }
 }

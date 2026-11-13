@@ -6,6 +6,12 @@
     clippy::type_complexity
 )]
 
+#[cfg(feature = "tensor-bitpack")]
+pub mod bitpack;
+
+#[cfg(feature = "tensor-topk")]
+pub mod topk;
+
 #[cfg(feature = "kernel-ir")]
 pub mod collective;
 
@@ -18,8 +24,6 @@ pub mod block;
 #[cfg(feature = "device-primitives")]
 #[allow(unsafe_code)]
 pub mod device;
-
-
 
 #[cfg(feature = "kernel-ir")]
 #[allow(unsafe_code)]

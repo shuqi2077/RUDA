@@ -5,6 +5,9 @@ pub mod cann;
 
 pub mod attention;
 
+#[cfg(feature = "tensor-inference")]
+pub mod inference;
+
 #[cfg(any(feature = "tensor-moe", feature = "ptx-export"))]
 mod warp_routing;
 
@@ -50,24 +53,20 @@ pub mod grid_sample;
 #[cfg(feature = "ctc")]
 pub mod ctc;
 
-
-
-
-
 #[cfg(feature = "tensor-paged-attention")]
 pub mod paged_attention;
 
 #[cfg(feature = "tensor-paged-attention")]
 pub mod dense_attention;
 #[cfg(feature = "tensor-paged-attention")]
-pub mod dense_attention_split;
-#[cfg(feature = "tensor-paged-attention")]
 pub mod dense_attention_rounded;
+#[cfg(feature = "tensor-paged-attention")]
+pub mod dense_attention_split;
 
 #[cfg(feature = "tensor-paged-attention")]
 pub mod flash_training;
 
 #[cfg(feature = "tensor-paged-attention")]
-pub mod varlen_attention;
-#[cfg(feature = "tensor-paged-attention")]
 pub mod ring_attention;
+#[cfg(feature = "tensor-paged-attention")]
+pub mod varlen_attention;

@@ -23,6 +23,7 @@ name = "ruda_tensor_device"
 path = "src/lib.rs"
 
 [features]
+native-inference = ["rudnn/tensor-inference", "rublas/tensor-float-quant", "ruprim/tensor-topk", "ruprim/tensor-bitpack"]
 cuda = ["dep:ruda-driver-cuda", "ruda-tensor/cuda"]
 cuda-fusion = ["cuda", "fusion", "ruda-fusion/std", "ruda-fusion/tracing"]
 cuda-default = ["cuda-fusion", "default", "ruda-driver-cuda/default"]
