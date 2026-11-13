@@ -25,11 +25,11 @@ def main():
             proc=subprocess.run(command,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=120)
             (out/f'command-{i}.log').write_text(proc.stdout)
             if proc.returncode:raise RuntimeError(f'production Rust command {i} failed: {proc.returncode}')
-        if not re.search(r'test result: ok\. 18 passed; 0 failed; 0 ignored;',proc.stdout):
-            raise RuntimeError('expected exactly 18 executed production host tests')
+        if not re.search(r'test result: ok\. 20 passed; 0 failed; 0 ignored;',proc.stdout):
+            raise RuntimeError('expected exactly 20 executed production host tests')
         result['source_sha256']={name:hashlib.sha256((src/name).read_bytes()).hexdigest()
                                 for name in ('history_compaction.rs','plan.rs')}
-        result['tests_executed']=18
+        result['tests_executed']=20
         result['rust_host_executed']=True
     except Exception as e:result['errors'].append(str(e))
     (out/'summary.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result,indent=2))
